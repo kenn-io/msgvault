@@ -54,6 +54,9 @@ emitted `cursor` back with the same filters and format to continue. A different
 archive, request, or authorization scope can invalidate continuation; retry the
 original request when `cursor_expired` is returned.
 
+Budget stubs preserve counts, times, and status. `truncated` marks omitted text
+and lists, and `omitted.budget.entry_fields` counts these entries.
+
 Text copied from the archive is untrusted content. JSON labels it
 `untrusted_text`; Markdown quotes snippets. `hidden_text` warns that hidden text
 was detected and suppresses the snippet. In Markdown, `↓` and `↑` count inbound

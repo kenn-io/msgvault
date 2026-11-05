@@ -60,28 +60,3 @@ func TestTimelineJSONGolden(t *testing.T) {
 	require.NoError(t, err)
 	golden(t, "timeline_full.json", b)
 }
-func TestEntryValidateExactlyOnePayload(t *testing.T) {
-	requirements := require.New(t)
-	for _, e := range sampleTimeline().History {
-		requirements.NoError(e.Validate())
-		e.Note = &NoteEntry{}
-		if e.Kind == "note" {
-			e.Call = &CallEntry{}
-		}
-		requirements.ErrorIs(e.Validate(), ErrInvalidRequest)
-	}
-	requirements.ErrorIs((Entry{Kind: "message"}).Validate(), ErrInvalidRequest)
-	requirements.ErrorIs((Entry{Kind: "unknown", Message: &MessageEntry{}}).Validate(), ErrInvalidRequest)
-}
-func TestEntryAnchorRefPerKind(t *testing.T) {
-	for _, e := range sampleTimeline().History {
-		require.NoError(t, e.Validate())
-		e.AnchorRef = "conv:2"
-		require.ErrorIs(t, e.Validate(), ErrInvalidRequest)
-	}
-}
-func TestEntryValidateRejectsMalformedAnchor(t *testing.T) {
-	for _, e := range []Entry{{Kind: "meeting", Ref: "evt:garbage", AnchorRef: "evt:garbage", Meeting: &MeetingEntry{}}, {Kind: "message", Ref: "msg:0", AnchorRef: "msg:0", Message: &MessageEntry{}}, {Kind: "burst", Key: "burst:1:2:bad", AnchorRef: "burst:1:2:bad", Burst: &BurstEntry{}}} {
-		require.ErrorIs(t, e.Validate(), ErrInvalidRequest)
-	}
-}

@@ -212,8 +212,8 @@ func entryRow(e Entry, loc *time.Location) string {
 	clock := e.Time.In(loc).Format("15:04")
 	var body string
 	switch {
-	case isEntryStub(e):
-		body = clock + " " + e.Kind
+	case e.Truncated:
+		body = clock + " " + e.Kind + " [details omitted]"
 	case e.Meeting != nil:
 		m := e.Meeting
 		clock = e.Time.In(loc).Format("15:04")
@@ -358,24 +358,4 @@ func textLine(t UntrustedText, limit int) string {
 		s += "…"
 	}
 	return s
-}
-func isEntryStub(e Entry) bool {
-	switch {
-	case e.Meeting != nil:
-		p := e.Meeting
-		return p.Title.Text == "" && p.Start.IsZero() && p.Time.IsZero() && len(p.People) == 0 && len(p.Attendees) == 0
-	case e.Message != nil:
-		p := e.Message
-		return p.Direction == "" && p.Snippet.Text == "" && len(p.People) == 0
-	case e.Burst != nil:
-		p := e.Burst
-		return p.Channel == "" && len(p.People) == 0 && p.Inbound == 0 && p.Outbound == 0
-	case e.Call != nil:
-		return e.Call.Outcome == "" && len(e.Call.People) == 0
-	case e.Loop != nil:
-		return e.Loop.Kind == "" && e.Loop.Person.Name == ""
-	case e.Note != nil:
-		return e.Note.Text.Text == "" && len(e.Note.People) == 0
-	}
-	return false
 }

@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -321,5 +322,5 @@ func shellArgument(value string) string {
 	if value != "" && !strings.ContainsAny(value, " \t\r\n'\"`$;&|<>()*?!#\\") && !strings.HasPrefix(value, "-") {
 		return value
 	}
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	return oauth.ShellQuote(value)
 }

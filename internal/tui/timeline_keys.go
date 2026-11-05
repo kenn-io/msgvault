@@ -42,10 +42,22 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			if err != nil {
 				loc = time.UTC
 			}
-			date := m.timelineState.result.Window.From
-			day, err := time.ParseInLocation(time.DateOnly, date, loc)
-			if err != nil {
-				return m, nil
+			result := m.timelineState.result
+			day := result.Now.In(loc)
+			switch result.Mode {
+			case timeline.ModeAnchor:
+				if result.Anchor != nil {
+					day = result.Anchor.Time.In(loc)
+				}
+			case timeline.ModeRelationship:
+				if entry := m.highlightedTimelineEntry(); entry != nil {
+					day = entry.Time.In(loc)
+				}
+			default:
+				day, err = time.ParseInLocation(time.DateOnly, result.Window.From, loc)
+				if err != nil {
+					return m, nil
+				}
 			}
 			delta := 1
 			if msg.String() == "[" {
@@ -308,15 +320,13 @@ func timelineFirstPerson(entry timeline.Entry) string {
 	case entry.Note != nil:
 		people = entry.Note.People
 	}
-	if len(people) == 0 {
-		return ""
-	}
-	p := people[0]
-	if p.PersonID > 0 {
-		return "person:" + strconv.FormatInt(p.PersonID, 10)
-	}
-	if p.ParticipantID > 0 {
-		return "participant:" + strconv.FormatInt(p.ParticipantID, 10)
+	for _, p := range people {
+		if p.PersonID > 0 {
+			return "person:" + strconv.FormatInt(p.PersonID, 10)
+		}
+		if p.ParticipantID > 0 {
+			return "participant:" + strconv.FormatInt(p.ParticipantID, 10)
+		}
 	}
 	return ""
 }

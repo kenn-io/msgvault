@@ -1678,12 +1678,18 @@ func (s *Store) GetLastSuccessfulSyncByType(sourceID int64, syncType string) (*S
 	return s.getLastSuccessfulSyncContext(context.Background(), sourceID, syncType, true)
 }
 
-func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool, excludedTypes ...string) (*SyncRun, error) {
 	whereType := ""
 	args := []any{sourceID}
 	if filterByType {
 		whereType = " AND sync_type = ?"
 		args = append(args, syncType)
+	}
+	if len(excludedTypes) > 0 {
+		whereType += " AND sync_type NOT IN (" + placeholders(len(excludedTypes)) + ")"
+		for _, syncType := range excludedTypes {
+			args = append(args, syncType)
+		}
 	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,

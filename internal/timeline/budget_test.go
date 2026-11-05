@@ -155,7 +155,6 @@ func TestFitForwardProgressStub(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotEmpty(out.History)
 	assertions.Equal("msg:1", out.History[0].Ref)
-	requirements.NoError(out.History[0].Validate())
 	assertions.Equal(v.History[0].Open, out.History[0].Open)
 	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
 }
@@ -232,7 +231,7 @@ func TestFitStubRendersKind(t *testing.T) {
 	}
 	out, err := Fit(v, "json", 2048)
 	require.NoError(t, err)
-	assert.Contains(t, Markdown(out), "13:30 message · #1")
+	assert.Contains(t, Markdown(out), "13:30 message [details omitted] · #1")
 }
 func TestFitTruncatedTextStaysMarkedInMarkdown(t *testing.T) {
 	v := budgetTimeline(1)
@@ -347,4 +346,25 @@ func TestFitUpcomingStubKeepsOpenTarget(t *testing.T) {
 	requirements.Len(out.Upcoming, 1)
 	assertions.Empty(out.Upcoming[0].Meeting.Title.Text)
 	assertions.Equal(v.Upcoming[0].Open, out.Upcoming[0].Open)
+}
+
+func TestFitStubPreservesCountsAndDisclosesOmissions(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := budgetTimeline(0)
+	entry := sampleTimeline().History[2]
+	entry.Burst.Inbound, entry.Burst.Outbound = 2, 1
+	entry.Burst.People = make([]Person, 8)
+	for i := range entry.Burst.People {
+		entry.Burst.People[i] = Person{Name: strings.Repeat("<", 80)}
+	}
+	v.History = []Entry{entry}
+	out, err := Fit(v, "json", 2048)
+	requirements.NoError(err)
+	requirements.Len(out.History, 1)
+	requirements.NotNil(out.History[0].Burst)
+	assertions.Equal(2, out.History[0].Burst.Inbound)
+	assertions.Equal(1, out.History[0].Burst.Outbound)
+	assertions.Contains(out.Omitted.Budget, "entry_fields")
+	assertions.Contains(Markdown(out), "details omitted")
+	assertions.Len(v.History[0].Burst.People, 8)
 }

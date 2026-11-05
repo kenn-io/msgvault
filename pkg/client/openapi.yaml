@@ -17088,6 +17088,8 @@ components:
         time:
           format: date-time
           type: string
+        truncated:
+          type: boolean
       required:
         - kind
         - key

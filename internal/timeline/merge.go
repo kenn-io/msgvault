@@ -517,8 +517,15 @@ func (c *composer) groupDays(entries []Entry) {
 					summary.Meetings++
 				}
 				for _, p := range entryPeople(e) {
-					key := fmt.Sprintf("%d:%d:%s", p.PersonID, p.ParticipantID, p.Name)
-					people[key] = p
+					key := "name:" + p.Name
+					if p.PersonID > 0 {
+						key = fmt.Sprintf("person:%d", p.PersonID)
+					} else if p.ParticipantID > 0 {
+						key = fmt.Sprintf("participant:%d", p.ParticipantID)
+					}
+					if _, exists := people[key]; !exists {
+						people[key] = p
+					}
 				}
 			}
 			for _, p := range people {

@@ -17202,6 +17202,7 @@ type TimelineEntry struct {
 	Open       []TimelineOpen        `json:"open" validate:"required"`
 	Ref        string                `json:"ref" validate:"required"`
 	Time       time.Time             `json:"time" validate:"required"`
+	Truncated  *bool                 `json:"truncated,omitempty"`
 }
 
 func (t TimelineEntry) Validate() error {

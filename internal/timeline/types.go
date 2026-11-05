@@ -1,11 +1,7 @@
 // Package timeline defines bounded, read-only views over archived activity.
 package timeline
 
-import (
-	"fmt"
-	"strings"
-	"time"
-)
+import "time"
 
 type Mode string // "day" | "relationship" | "anchor"
 type Request struct {
@@ -62,6 +58,8 @@ type Open struct {
 
 // Entry is a tagged union. Kind: "meeting" | "transcript" | "burst" | "message" | "call" | "loop" | "note".
 type Entry struct {
+	// Truncated reports omitted text and lists; scalar values are preserved.
+	Truncated  bool          `json:"truncated,omitzero"`
 	Kind       string        `json:"kind"`
 	Key        string        `json:"key"`        // stable identity
 	Ref        string        `json:"ref"`        // display ref
@@ -243,48 +241,4 @@ type NoteEntry struct {
 	PeopleTruncated bool          `json:"people_truncated,omitzero"`
 	Text            UntrustedText `json:"untrusted_text"`
 	People          []Person      `json:"people"`
-}
-
-// Validate checks the tagged union and its independently resolvable anchor.
-func (e Entry) Validate() error {
-	count := 0
-	for _, present := range []bool{e.Meeting != nil, e.Burst != nil, e.Message != nil, e.Call != nil, e.Loop != nil, e.Note != nil} {
-		if present {
-			count++
-		}
-	}
-	valid := false
-	switch e.Kind {
-	case "meeting", "transcript":
-		valid = e.Meeting != nil
-	case "burst":
-		valid = e.Burst != nil
-	case "message":
-		valid = e.Message != nil
-	case "call":
-		valid = e.Call != nil
-	case "loop":
-		valid = e.Loop != nil
-	case "note":
-		valid = e.Note != nil
-	}
-	if count != 1 || !valid {
-		return fmt.Errorf("%w: entry must have exactly its kind's payload", ErrInvalidRequest)
-	}
-	switch e.Kind {
-	case "meeting":
-		valid = strings.HasPrefix(e.AnchorRef, "evt:") && e.AnchorRef == e.Ref
-	case "burst":
-		valid = strings.HasPrefix(e.Key, "burst:") && e.AnchorRef == e.Key
-	case "note":
-		_, err := time.Parse(time.DateOnly, e.AnchorRef)
-		valid = err == nil
-	default:
-		valid = strings.HasPrefix(e.Ref, "msg:") && e.AnchorRef == e.Ref
-	}
-	parsed, err := ParseAnchor(e.AnchorRef, time.UTC)
-	if err != nil || !valid || (e.Kind == "meeting" && parsed.Kind != "meeting") || (e.Kind == "burst" && parsed.Kind != "burst") || (e.Kind == "note" && parsed.Kind != "date") || ((e.Kind == "message" || e.Kind == "transcript" || e.Kind == "call" || e.Kind == "loop") && parsed.Kind != "message") {
-		return fmt.Errorf("%w: invalid entry anchor", ErrInvalidRequest)
-	}
-	return nil
 }

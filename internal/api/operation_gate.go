@@ -413,9 +413,8 @@ var operationGateExemptPaths = map[string]bool{
 // as explore candidate snapshots and preflight operation tokens). They use
 // POST solely because their requests are structured predicate bodies, so
 // queueing them on the operation gate would serialize pure reads behind long
-// archive mutations. GET and HEAD timelines persist text-free loop evidence,
-// so they participate in the gate. Other reads rely on committed-cache
-// revisions and snapshots for consistency.
+// archive mutations. Reads rely on committed-cache revisions and snapshots
+// for consistency.
 //
 // The classification stays deny-by-default: a POST route not listed here
 // still gates. TestReadOnlyPostRoutePatternsMatchExplorationRoutes keeps this
@@ -537,9 +536,6 @@ func (discardResponseWriter) WriteHeader(int)             {}
 func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, string, error) {
 	if r.URL.Path == DaemonShutdownPath {
 		return false, "", nil
-	}
-	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == "/api/v1/timeline" {
-		return true, operationGateLabelFromPath(r.URL.Path), nil
 	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:

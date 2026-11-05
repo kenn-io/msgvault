@@ -28,7 +28,7 @@ func (c *composer) readActivity(q store.BurstQuery) (activityWindow, error) {
 		if err != nil {
 			return result, err
 		}
-		if q.FromDate == "" || page.NextKey == nil {
+		if page.NextKey == nil {
 			break
 		}
 		q.AfterKey = page.NextKey

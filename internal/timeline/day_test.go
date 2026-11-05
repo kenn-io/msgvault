@@ -37,7 +37,6 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions.True(entries[0].Meeting.Attended)
 	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
 	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
-	requirements.NoError(entries[0].Validate())
 }
 func TestBuildDayOverlappingCallDoesNotSetAttended(t *testing.T) {
 	assertions := assert.New(t)
@@ -578,4 +577,50 @@ func TestReadActivityConsumesDayPages(t *testing.T) {
 	requirements.Len(got.bursts, 3)
 	assertions.Equal([]int64{3}, got.bursts[2].LatestMessageIDs)
 	assertions.False(got.more)
+}
+
+func TestReadActivityConsumesTimestampPages(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	for i := range 3 {
+		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("timestamp-page-%d", i), "Synthetic conversation")
+		requirements.NoError(err)
+		f.add(f.now.Add(time.Duration(i)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
+	}
+	f.project()
+	from, to := f.now.Add(-time.Hour), f.now.Add(time.Hour)
+	c := composer{ctx: t.Context(), src: f.src, loc: time.UTC, t: &Timeline{Window: Window{From: "2026-10-22", To: "2026-10-22"}}}
+	got, err := c.readActivity(store.BurstQuery{After: &from, Before: &to, Filters: f.src.Filters, Limit: 2})
+	requirements.NoError(err)
+	requirements.Len(got.bursts, 3)
+	assertions.Equal([]int64{3}, got.bursts[2].LatestMessageIDs)
+	assertions.False(got.more)
+}
+
+func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.savePerson()
+	sibling := f.EnsureParticipant("alice-work@example.com", "Alice Work", "example.com")
+	_, err := f.Store.LinkParticipants(f.peer, sibling)
+	requirements.NoError(err)
+	at := f.now.AddDate(0, 0, -3)
+	for i, participant := range []int64{f.peer, sibling} {
+		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("summary-%d", i), "Synthetic conversation")
+		requirements.NoError(err)
+		id := f.add(at, false, func(m *store.Message) {
+			m.ConversationID = conv
+			m.SenderID.Int64 = participant
+		})
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
+	}
+	f.project()
+	f.src.Loops, f.src.Inventory = nil, nil
+	req := dayRequest()
+	req.Date, req.Days = "", 5
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	requirements.NotNil(got.Days[0].Summary)
+	assertions.Equal(1, got.Days[0].Summary.PeopleCount)
 }

@@ -190,28 +190,50 @@ func appendItem(t *Timeline, item pageItem, stub bool) {
 	}
 }
 func entryStub(e Entry) Entry {
-	e.Meeting = nil
-	e.Burst = nil
-	e.Message = nil
-	e.Call = nil
-	e.Loop = nil
-	e.Note = nil
-	switch e.Kind {
-	case "meeting", "transcript":
-		e.Meeting = &MeetingEntry{}
-	case "burst":
-		e.Burst = &BurstEntry{}
-	case "message":
-		e.Message = &MessageEntry{}
-	case "call":
-		e.Call = &CallEntry{}
-	case "loop":
-		e.Loop = &LoopEntry{}
-	case "note":
-		e.Note = &NoteEntry{}
+	e.Truncated = true
+	if e.Meeting != nil {
+		p := *e.Meeting
+		p.Title = UntrustedText{Truncated: true}
+		p.Attendees, p.People = nil, nil
+		p.AttendeesTruncated, p.PeopleTruncated = p.AttendeeCount > 0, p.PeopleCount > 0
+		p.LinkedTranscriptIDs, p.PossiblyRelated = nil, nil
+		e.Meeting = &p
+	}
+	if e.Burst != nil {
+		p := *e.Burst
+		p.People, p.LatestMessageIDs, p.Copies = nil, nil, nil
+		p.PeopleTruncated = p.PeopleCount > 0
+		p.Snippet = UntrustedText{Truncated: true}
+		e.Burst = &p
+	}
+	if e.Message != nil {
+		p := *e.Message
+		p.People = nil
+		p.PeopleTruncated = p.PeopleCount > 0
+		p.Snippet = UntrustedText{Truncated: true}
+		e.Message = &p
+	}
+	if e.Call != nil {
+		p := *e.Call
+		p.People = nil
+		p.PeopleTruncated = p.PeopleCount > 0
+		e.Call = &p
+	}
+	if e.Loop != nil {
+		p := *e.Loop
+		p.Person.Name, p.Person.Truncated = "", true
+		e.Loop = &p
+	}
+	if e.Note != nil {
+		p := *e.Note
+		p.People = nil
+		p.PeopleTruncated = p.PeopleCount > 0
+		p.Text = UntrustedText{Truncated: true}
+		e.Note = &p
 	}
 	return e
 }
+
 func clonePage(t Timeline) Timeline {
 	t.History = append([]Entry(nil), t.History...)
 	t.Upcoming = append([]Entry(nil), t.Upcoming...)
@@ -233,6 +255,15 @@ func clonePage(t Timeline) Timeline {
 }
 func preparePage(t, original *Timeline, totals, counts map[string]int, format string) error {
 	t.Omitted.Budget = copyMap(original.Omitted.Budget)
+	truncated := 0
+	for _, item := range timelineItems(t) {
+		if item.entry != nil && item.entry.Truncated {
+			truncated++
+		}
+	}
+	if truncated > 0 {
+		t.Omitted.Budget["entry_fields"] = truncated
+	}
 	needsCursor := false
 	for section, total := range totals {
 		lost := total - counts[section]

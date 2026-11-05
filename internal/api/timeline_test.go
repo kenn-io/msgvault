@@ -146,12 +146,16 @@ func TestTimelineDelegatedAdmission(t *testing.T) {
 		})
 	}
 }
-func TestTimelineMutationGate(t *testing.T) {
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		gated, _, err := operationGateRequest(httptest.NewRequest(method, "/api/v1/timeline", nil), requestAuthentication{})
-		require.NoError(t, err)
-		assert.True(t, gated, "owner timelines may cache loop evidence")
-	}
+func TestTimelineDuringSync(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	gate := NewSerialOperationGate()
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Logger: testLogger(), OperationGate: gate})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	done, ok := gate.BeginWork()
+	require.True(t, ok)
+	defer done()
+	w := timelineGET(srv, "?date=2027-03-01", "")
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 func TestTimelinePersonAuthorizationAndAmbiguity(t *testing.T) {

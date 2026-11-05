@@ -25,5 +25,6 @@ export interface TimelineEntry {
   open: TimelineOpen[];
   ref: string;
   time: string;
+  truncated?: boolean;
   [key: string]: unknown;
 }

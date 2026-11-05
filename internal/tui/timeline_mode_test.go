@@ -666,3 +666,46 @@ func TestTimelineReaderKeepsLocalNavigationKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestTimelineDayKeysUseViewSubject(t *testing.T) {
+	for _, mode := range []timeline.Mode{timeline.ModeAnchor, timeline.ModeRelationship} {
+		for _, tc := range []struct {
+			key  rune
+			date string
+		}{{'[', "2027-03-13"}, {']', "2027-03-15"}} {
+			t.Run(string(mode)+string(tc.key), func(t *testing.T) {
+				m := timelineModeModel()
+				m.timelineState.result.Mode = mode
+				m.timelineState.result.Window = timeline.Window{From: "2027-02-11", To: "2027-04-14"}
+				m.timelineState.result.Anchor = &timeline.Anchor{Time: time.Date(2027, 3, 14, 8, 30, 0, 0, time.UTC)}
+				updated, cmd := sendKey(t, m, key(tc.key))
+				require.NotNil(t, cmd)
+				assert.Equal(t, tc.date, updated.timelineState.request.Date)
+			})
+		}
+	}
+	m := timelineModeModel()
+	m.timelineState.result.Mode = timeline.ModeRelationship
+	m.timelineState.result.Now = time.Date(2027, 3, 14, 8, 30, 0, 0, time.UTC)
+	m.timelineState.result.Days = nil
+	m.timelineState.result.Window.From = "2027-03-12"
+	m.rebuildTimelineRows()
+	updated, cmd := sendKey(t, m, key(']'))
+	require.NotNil(t, cmd)
+	assert.Equal(t, "2027-03-15", updated.timelineState.request.Date)
+}
+
+func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {
+	for _, person := range []timeline.Person{{PersonID: 9}, {ParticipantID: 10}} {
+		m := timelineModeModel()
+		m.timelineState.result.Days[0].Bursts[0].Burst.People = []timeline.Person{{Name: "Unresolved"}, person}
+		m.rebuildTimelineRows()
+		updated, cmd := sendKey(t, m, key('w'))
+		require.NotNil(t, cmd)
+		want := "person:9"
+		if person.ParticipantID > 0 {
+			want = "participant:10"
+		}
+		assert.Equal(t, want, updated.timelineState.request.With)
+	}
+}

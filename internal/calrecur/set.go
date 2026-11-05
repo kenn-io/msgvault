@@ -208,12 +208,8 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 		return nil, unsupported(line, err)
 	}
 	seen := map[string]bool{}
-	untilValue := ""
 	for part := range strings.SplitSeq(strings.TrimPrefix(line, "RRULE:"), ";") {
-		key, value, ok := strings.Cut(part, "=")
-		if key == "UNTIL" {
-			untilValue = value
-		}
+		key, _, ok := strings.Cut(part, "=")
 		if !ok || seen[key] || key == "DTSTART" || key == "BYEASTER" {
 			return nil, unsupported(line, errors.New("invalid or repeated rule parameter"))
 		}
@@ -236,19 +232,6 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 	}
 	if err := supportedRule(opt, seen, anchor); err != nil {
 		return nil, unsupported(line, err)
-	}
-	// A date-only UNTIL on a timed rule includes that whole local date, as
-	// Google's own end-of-day UNTIL values do.
-	if !s.AllDay && len(untilValue) == len(keyDateLayout) {
-		until, err := time.Parse(keyDateLayout, untilValue)
-		if err != nil {
-			return nil, unsupported(line, err)
-		}
-		next, _, err := CivilDateBoundary(until.AddDate(0, 0, 1).Format(dateLayout), loc)
-		if err != nil {
-			return nil, unsupported(line, err)
-		}
-		opt.Until = next.Add(-time.Second)
 	}
 	opt.Dtstart = start
 	return opt, nil
