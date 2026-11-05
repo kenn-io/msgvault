@@ -368,7 +368,7 @@ func TestMeetingLinksReadDecisions(t *testing.T) {
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	note := granolaLinkFixture(t, st, "event")
-	links, err := st.MeetingLinksContext(t.Context(), note)
+	links, err := meetingLinksForTest(t, st, note)
 	requirements.NoError(err)
 	assertions.Empty(links)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "linked@example.org"))
@@ -379,7 +379,7 @@ func TestMeetingLinksReadDecisions(t *testing.T) {
 		if step == 2 {
 			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 		}
-		links, err = st.MeetingLinksContext(t.Context(), note)
+		links, err = meetingLinksForTest(t, st, note)
 		requirements.NoError(err)
 		if step == 2 {
 			assertions.Empty(links)
@@ -391,7 +391,7 @@ func TestMeetingLinksReadDecisions(t *testing.T) {
 		assertions.Equal("2027-03-14T10:00:00Z", links[0].Start.Format(time.RFC3339))
 		assertions.Equal("2027-03-14T11:00:00Z", links[0].End.Format(time.RFC3339))
 	}
-	_, err = st.MeetingLinksContext(t.Context(), event)
+	_, err = meetingLinksForTest(t, st, event)
 	assertions.ErrorIs(err, sql.ErrNoRows)
 }
 
@@ -400,7 +400,7 @@ func linkedMeetingRefs(t *testing.T, st *Store, ids ...int64) map[int64]string {
 	t.Helper()
 	out := make(map[int64]string, len(ids))
 	for _, id := range ids {
-		links, err := st.MeetingLinksContext(t.Context(), id)
+		links, err := meetingLinksForTest(t, st, id)
 		require.NoError(t, err)
 		var refs []string
 		for _, link := range links {
@@ -418,7 +418,7 @@ func testMeetingLinksPrimaryCalendar(t *testing.T) {
 	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "primary@example.org"))
 	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"primary","account_email":"Calendar@Example.COM","primary":true,"time_zone":"UTC"}`))
 	note := granolaLinkFixture(t, st, "event")
-	links, err := st.MeetingLinksContext(t.Context(), note)
+	links, err := meetingLinksForTest(t, st, note)
 	requirements.NoError(err)
 	requirements.Len(links, 1)
 	assertions.Equal(fmt.Sprintf("evt:%d", event), links[0].Ref)
@@ -432,7 +432,7 @@ func TestMeetingLinksTwoOccurrenceAliases(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
-	links, err := st.MeetingLinksContext(t.Context(), note)
+	links, err := meetingLinksForTest(t, st, note)
 	requirements.NoError(err)
 	requirements.Len(links, 1)
 	assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
@@ -448,13 +448,13 @@ func TestMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
 
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first}))
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second}))
-	links, err := st.MeetingLinksContext(t.Context(), note)
+	links, err := meetingLinksForTest(t, st, note)
 	requirements.NoError(err)
 	requirements.Len(links, 2)
 	assertions.ElementsMatch([]string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{links[0].Ref, links[1].Ref})
 
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first}))
-	links, err = st.MeetingLinksContext(t.Context(), note)
+	links, err = meetingLinksForTest(t, st, note)
 	requirements.NoError(err)
 	requirements.Len(links, 1)
 	assertions.Equal(fmt.Sprintf("evt:%d", second), links[0].Ref)
@@ -470,14 +470,14 @@ func testMeetingLinksDecisionLifetime(t *testing.T) {
 			noteData, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
 			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 			requirements.NoError(st.RemoveSource(data.Message.SourceID))
-			links, err := st.MeetingLinksContext(t.Context(), note)
+			links, err := meetingLinksForTest(t, st, note)
 			requirements.NoError(err)
 			assertions.Empty(links)
 			var count int
 			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&count))
 			assertions.Zero(count, "decisions follow the target message's lifetime")
 			calendarFixture(t, st, "event", singleLinkRaw("event", uid))
-			links, err = st.MeetingLinksContext(t.Context(), note)
+			links, err = meetingLinksForTest(t, st, note)
 			requirements.NoError(err)
 			assertions.Empty(links)
 			requirements.NoError(st.RemoveSource(noteData.Message.SourceID))
@@ -519,4 +519,10 @@ func TestMeetingOwnCalendar(t *testing.T) {
 	} {
 		t.Run(tc.name, tc.run)
 	}
+}
+
+func meetingLinksForTest(t *testing.T, st *Store, id int64) ([]MeetingLink, error) {
+	t.Helper()
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: id})
+	return record.Links, err
 }

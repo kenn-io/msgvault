@@ -173,7 +173,7 @@ func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	assert.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		links, err := meetingLinksForTest(t, st, note)
 		require.NoError(err)
 		require.Len(links, 1)
 		assert.True(listed.Start.Equal(links[0].Start), "resolved start must match the calendar listing")
@@ -218,7 +218,7 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 
 	t.Run("saved link", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		links, err := meetingLinksForTest(t, st, note)
 		require.NoError(err)
 		require.Len(links, 1)
 		assert.Equal(listed.Ref, links[0].Ref)
@@ -240,7 +240,7 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 		t.Run(fmt.Sprintf("link/%d", target.MessageID), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			require.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			links, err := st.MeetingLinksContext(t.Context(), note)
+			links, err := meetingLinksForTest(t, st, note)
 			require.NoError(err)
 			require.Len(links, 1)
 			assert.Equal(listed.Ref, links[0].Ref)

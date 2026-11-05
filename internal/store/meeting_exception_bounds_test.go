@@ -113,7 +113,7 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	assertions.True(from.AddDate(0, 0, 1).Equal(listed.End))
 	t.Run("saved link", func(t *testing.T) {
 		requirements, assertions := require.New(t), assert.New(t)
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		links, err := meetingLinksForTest(t, st, note)
 		requirements.NoError(err)
 		requirements.Len(links, 1)
 		assertions.Equal(listed.Ref, links[0].Ref)
@@ -132,12 +132,12 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 		t.Run(fmt.Sprintf("link and unlink/%d", target.MessageID), func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			links, err := st.MeetingLinksContext(t.Context(), note)
+			links, err := meetingLinksForTest(t, st, note)
 			requirements.NoError(err)
 			requirements.Len(links, 1)
 			assertions.Equal(listed.Ref, links[0].Ref)
 			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
-			links, err = st.MeetingLinksContext(t.Context(), note)
+			links, err = meetingLinksForTest(t, st, note)
 			requirements.NoError(err)
 			assertions.Empty(links)
 		})
@@ -161,7 +161,7 @@ func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		links, err := meetingLinksForTest(t, st, note)
 		requirements.NoError(err)
 		requirements.Len(links, 1)
 		assertions.True(listed.Start.Equal(links[0].Start))

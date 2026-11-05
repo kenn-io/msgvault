@@ -129,7 +129,11 @@ func (s *Server) handleMeetingLinkSuggestions(w http.ResponseWriter, r *http.Req
 func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		writeError(w, 404, "meeting_not_found", "Meeting or event occurrence not found")
+		message := "Meeting or event occurrence not found"
+		if err != sql.ErrNoRows {
+			message = strings.TrimSuffix(err.Error(), ": "+sql.ErrNoRows.Error())
+		}
+		writeError(w, 404, "meeting_not_found", message)
 	case errors.Is(err, store.ErrQueryTooBroad), errors.Is(err, calrecur.ErrBudgetExceeded):
 		writeError(w, 400, "query_too_broad", err.Error())
 	case errors.Is(err, calrecur.ErrUnsupportedRecurrence):
