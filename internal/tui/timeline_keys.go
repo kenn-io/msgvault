@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -53,13 +54,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.loading = false
 		if m.timelineState.reader != timelineReaderNone {
 			m.timelineState.err = nil
-			if m.timelineState.reader == timelineReaderMessage && m.timelineState.readerFromThread {
-				m.timelineState.reader = timelineReaderThread
-				m.timelineState.readerID = m.timelineState.threadID
-				m.timelineState.readerFromThread = false
-			} else {
-				m.timelineState.reader = timelineReaderNone
-			}
+			m.timelineState.reader = timelineReaderNone
 			return m, nil
 		}
 		m.popTimelineHistory()
@@ -81,28 +76,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m.handleMessageDetailKeys(msg)
 	case timelineReaderMeeting:
 		return m.handleTimelineMeetingKey(msg)
-	case timelineReaderThread:
-		if msg.String() == keyNameEnter {
-			i := m.timelineState.threadCursor
-			if i >= 0 && i < len(m.timelineState.messages) {
-				m.messageDetail = nil
-				m.timelineState.readerFromThread = true
-				return m.openTimelineReader(timelineReaderMessage, m.timelineState.messages[i].ID)
-			}
-			return m, nil
-		}
-		// Reuse thread navigation against a value copy, leaving Email untouched.
-		parked := m.viewState
-		m.threadMessages = m.timelineState.messages
-		m.threadCursor, m.threadScrollOffset = m.timelineState.threadCursor, m.timelineState.threadScroll
-		updated, cmd := m.handleThreadViewKeys(msg)
-		next, ok := updated.(Model)
-		if !ok {
-			return m, cmd
-		}
-		next.timelineState.threadCursor, next.timelineState.threadScroll = next.threadCursor, next.threadScrollOffset
-		next.viewState = parked
-		return next, cmd
+
 	}
 	switch msg.String() {
 	case "r":
@@ -200,15 +174,11 @@ func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
-	// A burst's exact anchor can fall beyond the bounded thread prefix.
-	if entry.Kind == "burst" {
-		for _, open := range entry.Open {
-			if open.Tool == "get_message" {
-				if id := timelineOpenID(open.Args["id"]); id > 0 {
-					m.messageDetail = nil
-					m.timelineState.readerFromThread = false
-					return m.openTimelineReader(timelineReaderMessage, id)
-				}
+	if entry.Kind == "note" {
+		if key, ok := strings.CutPrefix(entry.Key, "note:"); ok {
+			if id, err := strconv.ParseInt(key, 10, 64); err == nil && id > 0 {
+				m.timelineState.noteDate, m.timelineState.note = entry.Ref, nil
+				return m.openTimelineReader(timelineReaderNote, id)
 			}
 		}
 	}
@@ -216,12 +186,6 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 	var calendarRef string
 	for _, open := range entry.Open {
 		switch open.Tool {
-		case "get_daily_note":
-			date, _ := open.Args["date"].(string)
-			if id := timelineOpenID(open.Args["id"]); date != "" && id > 0 {
-				m.timelineState.noteDate, m.timelineState.note = date, nil
-				return m.openTimelineReader(timelineReaderNote, id)
-			}
 		case "get_calendar_event":
 			if ref, ok := open.Args["ref"].(string); ok && ref != "" {
 				calendarRef = ref
@@ -230,15 +194,7 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 		case "get_message":
 			if id := timelineOpenID(open.Args["id"]); id > 0 {
 				m.messageDetail = nil
-				m.timelineState.readerFromThread = false
 				return m.openTimelineReader(timelineReaderMessage, id)
-			}
-		case "list_messages":
-			if id := timelineOpenID(open.Args["conversation_id"]); id > 0 {
-				m.timelineState.messages = nil
-				m.timelineState.threadID = id
-				m.timelineState.readerFromThread = false
-				return m.openTimelineReader(timelineReaderThread, id)
 			}
 		case "get_meeting_context":
 			var first any
@@ -312,24 +268,7 @@ func timelineOpenID(value any) int64 {
 }
 
 func timelineFirstPerson(entry timeline.Entry) string {
-	var people []timeline.Person
-	switch {
-	case entry.Meeting != nil:
-		people = entry.Meeting.Attendees
-		if entry.Kind == "transcript" {
-			people = entry.Meeting.People
-		}
-	case entry.Burst != nil:
-		people = entry.Burst.People
-	case entry.Message != nil:
-		people = entry.Message.People
-	case entry.Call != nil:
-		people = entry.Call.People
-	case entry.Loop != nil:
-		people = []timeline.Person{entry.Loop.Person}
-	case entry.Note != nil:
-		people = entry.Note.People
-	}
+	people := timeline.EntryPeople(entry)
 	for _, p := range people {
 		if p.PersonID > 0 {
 			return "person:" + strconv.FormatInt(p.PersonID, 10)

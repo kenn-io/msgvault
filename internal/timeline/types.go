@@ -1,7 +1,11 @@
 // Package timeline defines bounded, read-only views over archived activity.
 package timeline
 
-import "time"
+import (
+	"time"
+
+	"go.kenn.io/msgvault/internal/freshness"
+)
 
 type Mode string // "day" | "relationship" | "anchor"
 type Request struct {
@@ -91,20 +95,11 @@ type UntrustedText struct {
 	Truncated bool   `json:"truncated"`
 }
 type Freshness struct {
-	AsOf           time.Time             `json:"as_of"`
-	StaleThreshold int64                 `json:"stale_threshold"` // seconds
-	Sources        []SourceFreshness     `json:"sources"`
-	Projections    []ProjectionFreshness `json:"projections"`
-	Warnings       []string              `json:"warnings"`
-}
-type SourceFreshness struct {
-	SourceID    *int64   `json:"source_id"`
-	Source      string   `json:"source"`
-	Status      string   `json:"status"`
-	LastRun     string   `json:"last_run"`
-	Scheduling  string   `json:"scheduling"`
-	Warnings    []string `json:"warnings"`
-	SyncCommand string   `json:"sync_command"`
+	AsOf           time.Time                   `json:"as_of"`
+	StaleThreshold int64                       `json:"stale_threshold"` // seconds
+	Sources        []freshness.SourceFreshness `json:"sources"`
+	Projections    []ProjectionFreshness       `json:"projections"`
+	Warnings       []string                    `json:"warnings"`
 }
 type ProjectionFreshness struct {
 	Name     string     `json:"name"`

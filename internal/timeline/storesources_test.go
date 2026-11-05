@@ -25,11 +25,11 @@ func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
 		{name: "current"},
 		{name: "caldav never synced", caldav: true, status: "never_synced", keep: true},
 		{name: "stale", stale: true, status: "stale", keep: true},
-		{name: "failed", outcome: "failed", status: "current", keep: true},
-		{name: "cancelled", outcome: "cancelled", status: "current", keep: true},
-		{name: "paused", outcome: "paused", status: "current", keep: true},
-		{name: "partial", errors: 2, status: "current", keep: true},
-		{name: "disabled", disabled: true, status: "current", keep: true},
+		{name: "failed", outcome: "failed", keep: true},
+		{name: "cancelled", outcome: "cancelled", keep: true},
+		{name: "paused", outcome: "paused", keep: true},
+		{name: "partial", errors: 2, keep: true},
+		{name: "disabled", disabled: true, keep: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -66,7 +66,7 @@ func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
 			assertions.Equal(now, report.AsOf)
 			if tc.keep {
 				requirements.Len(report.Sources, 1)
-				assertions.Equal(tc.status, report.Sources[0].Status)
+				assertions.Equal(tc.status, report.Sources[0].Reason)
 				if tc.caldav {
 					assertions.Equal("msgvault sync-caldav personal", report.Sources[0].SyncCommand)
 				} else {

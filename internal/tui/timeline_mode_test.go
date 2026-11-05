@@ -40,7 +40,7 @@ func timelineModeFixture() *timeline.Timeline {
 		Days: []timeline.Day{{Date: "2027-03-14", Bursts: []timeline.Entry{{
 			Kind: "burst", Key: "burst:1:7:2027-03-14", Ref: "conv:7",
 			AnchorRef: "burst:1:7:2027-03-14", Time: at,
-			Open: []timeline.Open{{Tool: "list_messages", Args: map[string]any{"conversation_id": jsontext.Value("7")}}},
+			Open: []timeline.Open{{Tool: "get_message", Args: map[string]any{"id": jsontext.Value("7")}}},
 			Burst: &timeline.BurstEntry{Channel: "email", Inbound: 1,
 				People:  []timeline.Person{{PersonID: 42, Name: "Example Contact"}},
 				Snippet: timeline.UntrustedText{Text: "Project update"}},
@@ -262,17 +262,17 @@ func TestTimelineOpenUsesEmittedTargets(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := timelineModeModel()
-	m.timelineState.result.Days[0].Bursts[0].Open[0].Args["conversation_id"] = jsontext.Value("9007199254740993")
+	m.timelineState.result.Days[0].Bursts[0].Open[0].Args["id"] = jsontext.Value("9007199254740993")
 	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
-	assert.Equal(timelineReaderThread, opened.timelineState.reader)
+	assert.Equal(timelineReaderMessage, opened.timelineState.reader)
 	assert.Equal(int64(9007199254740993), opened.timelineState.readerID)
 	m.timelineState.result.Days[0].Bursts[0].HiddenText = true
 	m.rebuildTimelineRows()
 	hidden, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
-	assert.Equal(timelineReaderThread, hidden.timelineState.reader)
+	assert.Equal(timelineReaderMessage, hidden.timelineState.reader)
 	assert.Equal(int64(9007199254740993), hidden.timelineState.readerID)
 }
 
@@ -620,7 +620,7 @@ func TestTimelineCalendarRejectsMismatchedResponse(t *testing.T) {
 }
 
 func TestTimelineReaderKeepsLocalNavigationKeys(t *testing.T) {
-	for _, reader := range []timelineReader{timelineReaderMessage, timelineReaderThread, timelineReaderCalendar, timelineReaderMeeting} {
+	for _, reader := range []timelineReader{timelineReaderMessage, timelineReaderCalendar, timelineReaderMeeting} {
 		for _, k := range []rune{'a', 'w', '[', ']'} {
 			t.Run(fmt.Sprintf("%d/%c", reader, k), func(t *testing.T) {
 				m := timelineModeModel()
@@ -746,7 +746,7 @@ func TestTimelineDailyNoteOpensDetail(t *testing.T) {
 	require.True(t, ok)
 	backend.note = &store.DailyNoteEntry{ID: 7, LocalDate: "2027-03-14", Body: strings.Repeat("Full note line\n", 50) + "Final note line"}
 	m.timelineState.result.Days[0].Bursts = nil
-	m.timelineState.result.Days[0].Notes = []timeline.Entry{{Kind: "note", Key: "note:7", Ref: "2027-03-14", Note: &timeline.NoteEntry{Text: timeline.UntrustedText{Text: "Short preview", Truncated: true}}, Open: []timeline.Open{{Tool: "get_daily_note", Args: map[string]any{"date": "2027-03-14", "id": jsontext.Value("7")}}}}}
+	m.timelineState.result.Days[0].Notes = []timeline.Entry{{Kind: "note", Key: "note:7", Ref: "2027-03-14", Note: &timeline.NoteEntry{Text: timeline.UntrustedText{Text: "Short preview", Truncated: true}}, Open: []timeline.Open{}}}
 	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(t, cmd)

@@ -10,14 +10,14 @@ import (
 )
 
 type BurstQuery struct {
-	FromDate, ToDate string
-	After, Before    *time.Time
-	ConversationID   int64
-	Subject          ActivitySubject
-	Filters          ActivityFilters
-	Descending       bool
-	AfterKey         *BurstKey
-	Limit            int
+	FromDate, ToDate     string
+	After, Before, Until *time.Time
+	ConversationID       int64
+	Subject              ActivitySubject
+	Filters              ActivityFilters
+	Descending           bool
+	AfterKey             *BurstKey
+	Limit                int
 }
 type BurstKey struct {
 	FirstAt time.Time
@@ -78,7 +78,7 @@ func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	if err != nil {
 		return page, err
 	}
-	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{FromDate: q.FromDate, ToDate: q.ToDate, After: q.After, Before: q.Before, ConversationID: q.ConversationID, Subject: q.Subject}, filters)
+	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{FromDate: q.FromDate, ToDate: q.ToDate, After: q.After, Before: q.Before, Until: q.Until, ConversationID: q.ConversationID, Subject: q.Subject}, filters)
 	if err != nil {
 		return page, err
 	}

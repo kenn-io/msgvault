@@ -28,27 +28,11 @@ func (s storeInventory) Build(ctx context.Context, now time.Time) (Freshness, er
 	if err != nil {
 		return Freshness{}, err
 	}
-	result := Freshness{AsOf: now, StaleThreshold: report.StaleAfterSeconds, Sources: []SourceFreshness{}, Projections: []ProjectionFreshness{}, Warnings: report.Warnings}
+	result := Freshness{AsOf: now, StaleThreshold: report.StaleAfterSeconds, Sources: []freshness.SourceFreshness{}, Projections: []ProjectionFreshness{}, Warnings: report.Warnings}
 	for _, source := range report.Sources {
-		status := source.Reason
-		if status == "" {
-			status = "current"
+		if source.Reason != "" || source.Outcome == "failed" || source.Outcome == "cancelled" || source.Outcome == "paused" || source.Scheduling == "disabled" || source.LastSyncErrors > 0 {
+			result.Sources = append(result.Sources, source)
 		}
-		last := source.Outcome
-		if last != "failed" && last != "cancelled" && last != "paused" {
-			last = "ok"
-		}
-		warnings := []string{}
-		if source.Scheduling == "disabled" {
-			warnings = append(warnings, "sync disabled")
-		}
-		if source.LastSyncErrors > 0 {
-			warnings = append(warnings, "last successful sync had errors")
-		}
-		if status == "current" && last == "ok" && len(warnings) == 0 {
-			continue
-		}
-		result.Sources = append(result.Sources, SourceFreshness{SourceID: source.SourceID, Source: source.SourceType + ":" + source.Identifier, Status: status, LastRun: last, Scheduling: source.Scheduling, Warnings: warnings, SyncCommand: source.SyncCommand})
 	}
 	projection := ProjectionFreshness{Name: "activity", State: "current"}
 	if state.Queued > 0 {

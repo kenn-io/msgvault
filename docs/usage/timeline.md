@@ -7,7 +7,7 @@ The timeline is unreleased. It combines archived messages, meetings, calls,
 open loops, and notes.
 It reads the archive through the daemon and shows where a source is missing or
 out of date. Start here to find activity, then follow an entry's `open` targets
-to read its details. The `get_daily_note` tool opens an authored note in full.
+to read its details.
 
 ```bash
 msgvault timeline

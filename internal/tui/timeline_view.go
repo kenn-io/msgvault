@@ -38,12 +38,6 @@ func (m Model) renderTimelineView() string {
 	case timelineReaderMeeting:
 		m.meetingState = m.timelineState.meeting
 		body = m.meetingDetailView()
-	case timelineReaderThread:
-		m.threadMessages = m.timelineState.messages
-		m.threadConversationID = m.timelineState.readerID
-		m.threadCursor, m.threadScrollOffset = m.timelineState.threadCursor, m.timelineState.threadScroll
-		m.threadTruncated = m.timelineState.threadTruncated
-		body = m.threadView()
 	default:
 		lines := make([]string, 0, m.visibleRows())
 		selectedLine := -1

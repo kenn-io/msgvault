@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -41,7 +42,7 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	t := &Timeline{Mode: req.Mode, Timezone: loc.String(), TimezoneIsDefault: src.ZoneDefault, Now: now, Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []SourceFreshness{}, Projections: []ProjectionFreshness{}, Warnings: []string{}}, Omitted: Omitted{Budget: map[string]any{}}}
+	t := &Timeline{Mode: req.Mode, Timezone: loc.String(), TimezoneIsDefault: src.ZoneDefault, Now: now, Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []freshness.SourceFreshness{}, Projections: []ProjectionFreshness{}, Warnings: []string{}}, Omitted: Omitted{Budget: map[string]any{}}}
 	c := composer{ctx: ctx, src: src, req: req, t: t, loc: loc, positions: map[string]string{}, keys: map[string]string{}, entryDates: map[string]string{}, more: map[string]bool{}}
 	windowAt := func(at time.Time) (Window, error) { return resolveWindow(req, at, loc) }
 	var target anchorTarget

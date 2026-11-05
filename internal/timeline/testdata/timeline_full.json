@@ -13,13 +13,13 @@
 		"sources": [
 			{
 				"source_id": 1,
-				"source": "mail",
-				"status": "stale",
-				"last_run": "failed",
+				"source_type": "mail",
+				"identifier": "",
 				"scheduling": "manual",
-				"warnings": [
-					"failed"
-				],
+				"last_successful_sync_at": null,
+				"last_sync_errors": 0,
+				"outcome": "failed",
+				"reason": "stale",
 				"sync_command": "msgvault sync"
 			}
 		],

@@ -156,9 +156,6 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 							call := rawCallTool(t, opts, open.Tool, open.Args)
 							assertions.NotEqual(true, call["isError"], fmt.Sprint(call))
 							opened = append(opened, open.Tool)
-							if open.Tool == ToolGetDailyNote {
-								assert.Contains(t, fmt.Sprint(call["structuredContent"]), "Full daily note ends here.")
-							}
 						}
 					}
 				}
@@ -166,11 +163,6 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 			assertions.Contains(opened, "get_message")
 			assertions.Contains(opened, "list_messages")
 			assertions.Contains(opened, "get_calendar_event")
-			if delegated {
-				assertions.NotContains(opened, ToolGetDailyNote)
-			} else {
-				assertions.Contains(opened, ToolGetDailyNote)
-			}
 		})
 	}
 }
@@ -189,8 +181,4 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 		assertions.Zero(backend.req.Before)
 		assertions.Zero(backend.req.After)
 	}
-}
-
-func (f *timelineTestBackend) GetDailyNoteContext(context.Context, string, int64) (*store.DailyNoteEntry, error) {
-	return nil, f.err
 }

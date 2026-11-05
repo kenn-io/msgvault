@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/freshness"
 )
 
 var update = flag.Bool("update", false, "update timeline goldens")
@@ -36,7 +37,7 @@ func sampleTimeline() *Timeline {
 	entries[3].HiddenText = true
 	entries[3].Message.Snippet = UntrustedText{}
 	return &Timeline{Mode: ModeDay, Timezone: "UTC", TimezoneIsDefault: true, Window: Window{From: "2026-10-21", To: "2026-10-22"}, Now: now,
-		Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []SourceFreshness{{SourceID: new(int64(1)), Source: "mail", Status: "stale", LastRun: "failed", Scheduling: "manual", Warnings: []string{"failed"}, SyncCommand: "msgvault sync"}}, Projections: []ProjectionFreshness{{Name: "activity", Frontier: &now, State: "reconciling"}}, Warnings: []string{"incomplete"}},
+		Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []freshness.SourceFreshness{{SourceID: new(int64(1)), SourceType: "mail", Reason: "stale", Outcome: "failed", Scheduling: "manual", SyncCommand: "msgvault sync"}}, Projections: []ProjectionFreshness{{Name: "activity", Frontier: &now, State: "reconciling"}}, Warnings: []string{"incomplete"}},
 		Person:    &PersonHeader{Person: person, Ref: "person:7", Channels: []string{"email"}, FirstAt: &now, LastAt: &now, LastInboundAt: &now, LastOutboundAt: &now, InteractionCount: 3, CadenceStatus: "due", DueAt: &now, InitiatedByContact: 2, InitiatedByOwner: 1, Monthly: [12]int{1, 2, 3}, Brief: &UntrustedText{Text: "Talked about plans"}, Agenda: []UntrustedText{{Text: "Review"}}},
 		Anchor:    &Anchor{Ref: "msg:31", Kind: "message", Time: now, Filtered: true}, Candidates: []Candidate{{PersonID: 7, PersonUID: "synthetic-7", ParticipantIDs: []int64{8}, DisplayName: "Alice", Address: "alice@example.com"}},
 		OpenLoops: &OpenLoops{Items: []Entry{entries[5]}, Truncated: true, CoverageIncomplete: true, SkippedUnparseable: 1}, Upcoming: []Entry{entries[0]}, Days: []Day{{Date: "2026-10-22", Meetings: entries[:2], Bursts: entries[2:4], Calls: entries[4:5], Notes: entries[6:]}, {Date: "2026-10-20", Summary: &DaySummary{Meetings: 1, PeopleCount: 1, People: []Person{person}}}}, History: entries,

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -124,7 +125,7 @@ func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQue
 				_ = rows.Close()
 				return result, fmt.Errorf("read activity month: %w", parseErr)
 			}
-			index := 11 - ((now.Year()-yearMonth.Year())*12 + int(now.Month()-yearMonth.Month()))
+			index := ActivityMonthIndex(yearMonth, now)
 			if index >= 0 && index < 12 {
 				result.Monthly[index] += count
 			}
@@ -229,4 +230,9 @@ func (s *Store) CadenceForPersonContext(ctx context.Context, personID int64, las
 		return "", nil, fmt.Errorf("read contact cadence: %w", err)
 	}
 	return state.CadenceStatus, state.CadenceDueAt, nil
+}
+
+// ActivityMonthIndex returns the oldest-to-newest index in a twelve-month window.
+func ActivityMonthIndex(at, now time.Time) int {
+	return 11 - ((now.Year()-at.Year())*12 + int(now.Month()-at.Month()))
 }

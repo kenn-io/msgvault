@@ -71,16 +71,13 @@ func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	p := f.savePerson()
-	want := [12]int{}
+	want := [12]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 23}
 	for month := range 12 {
 		at := time.Date(2025, time.Month(11+month), 5, 10, 0, 0, 0, time.UTC)
 		f.add(at, false)
-		want[month] = 1
 	}
 	for day := range 25 {
 		f.add(f.now.AddDate(0, 0, day-24), day%2 == 0)
-		index := 11 - ((f.now.Year()-atForDay(f.now, day).Year())*12 + int(f.now.Month()-atForDay(f.now, day).Month()))
-		want[index]++
 	}
 	f.project()
 	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
@@ -112,8 +109,6 @@ func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
 	requirements.Len(next.History, 4)
 	assertions.Empty(next.Cursor)
 }
-
-func atForDay(now time.Time, day int) time.Time { return now.AddDate(0, 0, day-24) }
 
 func TestRelationshipCuratedProfileIncludesFreshness(t *testing.T) {
 	assertions := assert.New(t)

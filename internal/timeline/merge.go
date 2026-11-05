@@ -229,9 +229,9 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			}
 		}
 		e.Meeting.PossiblyRelated = slices.Compact(slices.Sorted(slices.Values(e.Meeting.PossiblyRelated)))
-		date := at.In(c.loc).Format(time.DateOnly)
+		date := max(at.In(c.loc).Format(time.DateOnly), c.t.Window.From)
 		if o.AllDay {
-			date = o.StartDate
+			date = max(o.StartDate, c.t.Window.From)
 		}
 		c.entryDates[e.Key] = date
 		if c.req.Mode != ModeDay || date >= c.t.Window.From && date <= c.t.Window.To {
@@ -306,7 +306,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		at, _, _ := calrecur.CivilDateBoundary(note.LocalDate, c.loc)
-		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: c.open("get_daily_note", map[string]any{"date": note.LocalDate, "id": note.ID}), Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
+		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
 	}
@@ -511,7 +511,7 @@ func (c *composer) groupDays(entries []Entry) {
 				if e.Meeting != nil {
 					summary.Meetings++
 				}
-				for _, p := range entryPeople(e) {
+				for _, p := range EntryPeople(e) {
 					key := "name:" + p.Name
 					if p.PersonID > 0 {
 						key = fmt.Sprintf("person:%d", p.PersonID)
@@ -567,7 +567,9 @@ func (c *composer) groupDays(entries []Entry) {
 		c.t.Days = append(c.t.Days, day)
 	}
 }
-func entryPeople(e Entry) []Person {
+
+// EntryPeople returns the people represented by an entry.
+func EntryPeople(e Entry) []Person {
 	switch {
 	case e.Burst != nil:
 		return e.Burst.People

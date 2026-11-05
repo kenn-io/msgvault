@@ -21,7 +21,7 @@ import (
 )
 
 // SourceType is the sources.source_type value for a Graph mail account.
-const SourceType = "msmail"
+const SourceType = store.SourceTypeMSMail
 
 // walkPrefix marks the saved nextLink of a walk. A walk must finish in one
 // run, because its end looks up the archived messages it did not return, so

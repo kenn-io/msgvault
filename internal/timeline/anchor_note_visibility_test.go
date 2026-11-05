@@ -93,7 +93,7 @@ func TestEventAnchorSurvivesTierFilter(t *testing.T) {
 	assertions.Equal("get_calendar_event", got.History[0].Open[0].Tool)
 }
 
-func TestDailyNoteHasDetailAction(t *testing.T) {
+func TestDailyNoteHasNoToolTarget(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
@@ -103,7 +103,8 @@ func TestDailyNoteHasDetailAction(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(got.Days, 1)
 	requirements.Len(got.Days[0].Notes, 1)
-	assertions.Equal([]Open{{Tool: "get_daily_note", Args: map[string]any{"date": "2026-10-22", "id": note.ID}}}, got.Days[0].Notes[0].Open)
+	assertions.Equal(fmt.Sprintf("note:%d", note.ID), got.Days[0].Notes[0].Key)
+	assertions.Empty(got.Days[0].Notes[0].Open)
 }
 
 func TestDailyNoteDetailBeyondFirstPage(t *testing.T) {

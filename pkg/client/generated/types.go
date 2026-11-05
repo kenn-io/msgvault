@@ -15896,6 +15896,22 @@ func (s SourceCount) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type SourceFreshness struct {
+	Identifier           string     `json:"identifier" validate:"required"`
+	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at" validate:"required"`
+	LastSyncErrors       int64      `json:"last_sync_errors"`
+	Outcome              string     `json:"outcome" validate:"required"`
+	Reason               *string    `json:"reason,omitzero"`
+	Scheduling           string     `json:"scheduling" validate:"required"`
+	SourceID             int64      `json:"source_id"`
+	SourceType           string     `json:"source_type" validate:"required"`
+	SyncCommand          string     `json:"sync_command" validate:"required"`
+}
+
+func (s SourceFreshness) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SourceIdentitiesResponse struct {
 	Account    string                   `json:"account" validate:"required"`
 	Identities []SourceIdentityResponse `json:"identities" validate:"required"`
@@ -17283,7 +17299,7 @@ func (t TimelineEntry) Validate() error {
 type TimelineFreshness struct {
 	AsOf           time.Time                     `json:"as_of" validate:"required"`
 	Projections    []TimelineProjectionFreshness `json:"projections" validate:"required"`
-	Sources        []TimelineSourceFreshness     `json:"sources" validate:"required"`
+	Sources        []SourceFreshness             `json:"sources" validate:"required"`
 	StaleThreshold int64                         `json:"stale_threshold"`
 	Warnings       []string                      `json:"warnings" validate:"required"`
 }
@@ -17736,20 +17752,6 @@ type TimelineRow struct {
 }
 
 func (t TimelineRow) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
-}
-
-type TimelineSourceFreshness struct {
-	LastRun     string   `json:"last_run" validate:"required"`
-	Scheduling  string   `json:"scheduling" validate:"required"`
-	Source      string   `json:"source" validate:"required"`
-	SourceID    int64    `json:"source_id"`
-	Status      string   `json:"status" validate:"required"`
-	SyncCommand string   `json:"sync_command" validate:"required"`
-	Warnings    []string `json:"warnings" validate:"required"`
-}
-
-func (t TimelineSourceFreshness) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 

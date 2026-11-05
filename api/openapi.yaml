@@ -16000,6 +16000,44 @@ components:
         - source_type
         - count
       type: object
+    SourceFreshness:
+      additionalProperties: true
+      properties:
+        identifier:
+          type: string
+        last_successful_sync_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        last_sync_errors:
+          format: int64
+          type: integer
+        outcome:
+          type: string
+        reason:
+          type: string
+        scheduling:
+          type: string
+        source_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        source_type:
+          type: string
+        sync_command:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - identifier
+        - scheduling
+        - last_successful_sync_at
+        - last_sync_errors
+        - outcome
+        - sync_command
+      type: object
     SourceIdentitiesResponse:
       additionalProperties: true
       properties:
@@ -17348,7 +17386,7 @@ components:
           type: array
         sources:
           items:
-            $ref: "#/components/schemas/TimelineSourceFreshness"
+            $ref: "#/components/schemas/SourceFreshness"
           type: array
         stale_threshold:
           format: int64
@@ -17755,37 +17793,6 @@ components:
         - message_count
         - source_id
         - has_attachments
-      type: object
-    TimelineSourceFreshness:
-      additionalProperties: true
-      properties:
-        last_run:
-          type: string
-        scheduling:
-          type: string
-        source:
-          type: string
-        source_id:
-          format: int64
-          type:
-            - integer
-            - "null"
-        status:
-          type: string
-        sync_command:
-          type: string
-        warnings:
-          items:
-            type: string
-          type: array
-      required:
-        - source_id
-        - source
-        - status
-        - last_run
-        - scheduling
-        - warnings
-        - sync_command
       type: object
     TimelineUntrustedText:
       additionalProperties: true

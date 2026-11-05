@@ -49,7 +49,7 @@ func (c *composer) matchesSubject(e Entry) bool {
 	if c.subject.PersonID == 0 && len(c.subject.ParticipantIDs) == 0 {
 		return true
 	}
-	for _, p := range entryPeople(e) {
+	for _, p := range EntryPeople(e) {
 		if c.subject.PersonID > 0 && p.PersonID == c.subject.PersonID || slices.Contains(c.participants, p.ParticipantID) {
 			return true
 		}
@@ -94,7 +94,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Until: &c.t.Now, Descending: true, Limit: maxBursts}
 	c.parallel(
 		func() {
 			messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
@@ -224,7 +224,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 func monthlyAt(at, now time.Time, loc *time.Location) [12]int {
 	var monthly [12]int
 	at, now = at.In(loc), now.In(loc)
-	index := 11 - ((now.Year()-at.Year())*12 + int(now.Month()-at.Month()))
+	index := store.ActivityMonthIndex(at, now)
 	if index >= 0 && index < 12 {
 		monthly[index] = 1
 	}

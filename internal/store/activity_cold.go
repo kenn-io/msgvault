@@ -220,7 +220,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		if dateErr != nil {
 			continue
 		}
-		if (q.FromDate != "" && dating.LocalDate < q.FromDate) || (q.ToDate != "" && dating.LocalDate > q.ToDate) {
+		if (q.FromDate != "" && dating.LocalDate < q.FromDate) || (q.ToDate != "" && dating.LocalDate > q.ToDate) || (q.Until != nil && dating.OccurredAt.After(*q.Until)) {
 			continue
 		}
 		classified := ClassifyActivityCandidate(c, filters.directLimit())

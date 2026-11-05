@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
 )
@@ -20,7 +19,6 @@ type timelineReader uint8
 const (
 	timelineReaderNone timelineReader = iota
 	timelineReaderMessage
-	timelineReaderThread
 	timelineReaderMeeting
 	timelineReaderCalendar
 	timelineReaderNote
@@ -38,31 +36,26 @@ type timelineNavigation struct {
 }
 
 type timelineState struct {
-	request                    timeline.Request
-	result                     *timeline.Timeline
-	lines                      []string
-	entries                    []timelineSelectableEntry
-	cursor, scroll             int
-	history                    []timelineNavigation
-	requestID                  uint64
-	cancel                     context.CancelFunc
-	loading                    bool
-	needsLoad                  bool
-	err                        error
-	reader                     timelineReader
-	readerID                   int64
-	threadID                   int64
-	readerFromThread           bool
-	messages                   []query.MessageSummary
-	threadCursor, threadScroll int
-	threadTruncated            bool
-	meeting                    meetingState
-	calendarRef                string
-	calendar                   *store.CalendarOccurrenceDetail
-	calendarScroll             int
-	noteDate                   string
-	note                       *store.DailyNoteEntry
-	noteScroll                 int
+	request        timeline.Request
+	result         *timeline.Timeline
+	lines          []string
+	entries        []timelineSelectableEntry
+	cursor, scroll int
+	history        []timelineNavigation
+	requestID      uint64
+	cancel         context.CancelFunc
+	loading        bool
+	needsLoad      bool
+	err            error
+	reader         timelineReader
+	readerID       int64
+	meeting        meetingState
+	calendarRef    string
+	calendar       *store.CalendarOccurrenceDetail
+	calendarScroll int
+	noteDate       string
+	note           *store.DailyNoteEntry
+	noteScroll     int
 }
 
 func (m *Model) cancelTimelineRequest() {

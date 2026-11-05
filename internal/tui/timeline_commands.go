@@ -22,8 +22,6 @@ type timelineReaderLoadedMsg struct {
 	detail                *query.MessageDetail
 	calendar              *store.CalendarOccurrenceDetail
 	note                  *store.DailyNoteEntry
-	messages              []query.MessageSummary
-	truncated             bool
 	err                   error
 	requestID, generation uint64
 }
@@ -97,7 +95,7 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.timelineState.cancel = cancel
 	requestID, generation := m.timelineState.requestID, m.presentationGeneration
-	engine, limit := m.engine, m.threadMessageLimit
+	engine := m.engine
 	backend, ref := m.timelineBackend, m.timelineState.calendarRef
 	date := m.timelineState.noteDate
 	return safeCmdWithPanic(func() tea.Msg {
@@ -117,16 +115,6 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 				} else {
 					msg.calendar = &detail
 				}
-			}
-		case timelineReaderThread:
-			msg.messages, msg.err = engine.ListMessages(ctx, query.MessageFilter{
-				ConversationID: &id,
-				Sorting:        query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortAsc},
-				Pagination:     query.Pagination{Limit: limit + 1},
-			})
-			if len(msg.messages) > limit {
-				msg.messages = msg.messages[:limit]
-				msg.truncated = true
 			}
 		default:
 			msg.detail, msg.err = engine.GetMessage(ctx, id)
@@ -159,10 +147,6 @@ func (m Model) handleTimelineReaderLoaded(msg timelineReaderLoadedMsg) (tea.Mode
 	case timelineReaderCalendar:
 		m.timelineState.calendar = msg.calendar
 		m.timelineState.calendarScroll = 0
-	case timelineReaderThread:
-		m.timelineState.messages = msg.messages
-		m.timelineState.threadTruncated = msg.truncated
-		m.timelineState.threadCursor, m.timelineState.threadScroll = 0, 0
 	case timelineReaderMeeting:
 		m.timelineState.meeting.detail = msg.detail
 		m.timelineState.meeting.detailScroll = 0
@@ -199,11 +183,7 @@ func (m *Model) activateTimeline() tea.Cmd {
 				m.loading = false
 				return nil
 			}
-		case timelineReaderThread:
-			if m.timelineState.messages != nil {
-				m.loading = false
-				return nil
-			}
+
 		}
 		return m.loadTimelineReader(m.timelineState.reader, m.timelineState.readerID)
 	}
