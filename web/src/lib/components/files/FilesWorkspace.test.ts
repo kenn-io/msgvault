@@ -776,7 +776,7 @@ describe('FilesWorkspace', () => {
     await screen.findByRole('row', { name: /fixture.pdf/ });
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });
-    expect(onSelectedKey).toHaveBeenCalledWith('file:7');
+    expect(onSelectedKey).toHaveBeenCalledWith('file:7', undefined);
     expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledWith('message:11');
@@ -1343,4 +1343,36 @@ describe('FilesWorkspace', () => {
     await view.rerender({ mimeFamilies: ['pdf'] });
     expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).disabled).toBe(true);
   });
+});
+
+it.each([false, true])('steps across loaded pages and keeps the current file on paging failure=%s', async (failPage) => {
+  const first = response().files[0]!;
+  const second = { ...first, id: 8, key: 'file:8', filename: 'second.txt' };
+  const onSelectedKey = vi.fn();
+  const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).pathname.endsWith('/files/search')) {
+      const body = await request.json();
+      if (body.cursor) return failPage ? Response.json({ message: 'Page unavailable' }, { status: 500 }) : Response.json({ ...response(), files: [second], total_count: 2 });
+      return Response.json({ ...response(), total_count: 2, next_cursor: 'page-2' });
+    }
+    return Response.json({ ...(new URL(request.url).pathname.endsWith('/8') ? second : first), content_state: 'metadata_only' });
+  });
+  renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' }, onSelectedKey });
+  await screen.findByText('fixture.pdf');
+  const grid = screen.getByRole('grid', { name: 'Files results' });
+  grid.focus();
+  await fireEvent.keyDown(grid, { key: 'Enter' });
+  await screen.findByRole('dialog', { name: 'View fixture.pdf' });
+  expect(screen.getByRole('button', { name: 'Previous file' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+  if (failPage) {
+    await screen.findByText('Page unavailable');
+    expect(screen.getByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+    expect(onSelectedKey).toHaveBeenCalledTimes(1);
+  } else {
+    await screen.findByRole('dialog', { name: 'View second.txt' });
+    expect(onSelectedKey).toHaveBeenLastCalledWith('file:8', { replace: true });
+    expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  }
 });

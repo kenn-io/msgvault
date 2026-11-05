@@ -88,7 +88,7 @@ export async function renderPDF(
       const text = await page.getTextContent();
       if (destroyed || signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
       const textLayer = host.ownerDocument.createElement('div');
-      textLayer.className = 'pdf-text';
+      textLayer.className = 'pdf-text kit-sr-only';
       textLayer.setAttribute('aria-label', `Text from PDF page ${pageNumber}`);
       textLayer.textContent = text.items
         .map((item) => ('str' in item ? item.str : ''))

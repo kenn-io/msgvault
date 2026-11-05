@@ -233,7 +233,8 @@ Type, source, containing message, and person-file direction are hidden at this w
 
 Files is the single file view. It is a searchable table of attachment date,
 filename, type, size, person or domain, source, Message, and content
-availability. Archived images and PDFs open in application-controlled viewers.
+availability. Archived images, PDFs, text, CSV/TSV, and audio open in the file viewer.
+Use Previous/Next or the ←/→ keys to move through the current results.
 Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
 conversation.
