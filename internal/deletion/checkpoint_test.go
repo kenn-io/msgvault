@@ -140,6 +140,92 @@ func TestExecutor_FinalizeIgnoresStaleJournal(t *testing.T) {
 	tc.AssertManifestExecution(m.ID, 3, 0)
 }
 
+func TestManager_ResumeTerminalManifestRequiresJournalCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
+	}
+	for _, status := range []Status{StatusCompleted, StatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			mgr := testManager(t)
+			m := setupInProgress(t, mgr, "terminal resume")
+			path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+			m.Execution.LastProcessedIndex = 1
+			m.Execution.Failed = 1
+			m.Execution.FailedIDs = []string{"a"}
+			require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+			m.Status = status
+			m.Execution.LastProcessedIndex = 2
+			m.Execution.Succeeded = 2
+			m.Execution.Failed = 0
+			m.Execution.FailedIDs = nil
+			m.Execution.CompletedAt = new(time.Now())
+			require.NoError(os.Chmod(mgr.baseDir, 0o500))
+			t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
+			require.NoError(mgr.WriteInProgressManifest(m, m.ID))
+			targetDir := mgr.dirForStatus(status)
+			require.NoError(os.Chmod(targetDir, 0o500))
+			t.Cleanup(func() { require.NoError(os.Chmod(targetDir, 0o700)) })
+			require.ErrorIs(mgr.FinalizeInProgress(m.ID, status), os.ErrPermission)
+
+			for range 3 {
+				_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+				require.ErrorIs(err, os.ErrPermission)
+				loaded, err := LoadManifest(path)
+				require.NoError(err)
+				assert.Equal(status, loaded.Status)
+				assert.Equal(2, loaded.Execution.LastProcessedIndex)
+				assert.Equal(2, loaded.Execution.Succeeded)
+				assert.Zero(loaded.Execution.Failed)
+				assert.Empty(loaded.Execution.FailedIDs)
+				_, err = os.Stat(journalPath(path))
+				require.NoError(err)
+			}
+
+			require.NoError(os.Chmod(mgr.baseDir, 0o700))
+			for range 2 {
+				_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+				require.NoError(err)
+				loaded, err := LoadManifest(path)
+				require.NoError(err)
+				assert.Equal(StatusInProgress, loaded.Status)
+				assert.Equal(2, loaded.Execution.LastProcessedIndex)
+				assert.Equal(2, loaded.Execution.Succeeded)
+				assert.Zero(loaded.Execution.Failed)
+				assert.Empty(loaded.Execution.FailedIDs)
+				_, err = os.Stat(journalPath(path))
+				require.ErrorIs(err, os.ErrNotExist)
+			}
+		})
+	}
+}
+
+func TestManager_CancelManifest_AtomicFold(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "atomic cancel progress")
+	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+	original, err := os.Stat(path)
+	require.NoError(err)
+	m.Execution.LastProcessedIndex = 2
+	m.Execution.Succeeded = 2
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+	require.NoError(mgr.CancelManifest(m.ID))
+	cancelledPath := filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json")
+	published, err := os.Stat(cancelledPath)
+	require.NoError(err)
+	assert.False(os.SameFile(original, published), "cancellation must replace the file instead of rewriting it in place")
+	_, err = os.Stat(journalPath(path))
+	require.ErrorIs(err, os.ErrNotExist)
+	loaded, err := LoadManifest(cancelledPath)
+	require.NoError(err)
+	assert.Equal(StatusCancelled, loaded.Status)
+	assert.Equal(2, loaded.Execution.LastProcessedIndex)
+	assert.Equal(2, loaded.Execution.Succeeded)
+}
+
 func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -169,9 +255,9 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 }
 
 func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
-	for _, rewriteFails := range []bool{false, true} {
-		t.Run(fmt.Sprintf("rewriteFails=%v", rewriteFails), func(t *testing.T) {
-			if rewriteFails && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+	for _, readOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("readOnly=%v", readOnly), func(t *testing.T) {
+			if readOnly && (runtime.GOOS == "windows" || os.Getuid() == 0) {
 				t.Skip("requires Unix file permissions enforced for the current user")
 			}
 			require := require.New(t)
@@ -181,13 +267,11 @@ func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
 			path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
 			tc.MockAPI.BeforeTrash = func(id string) error {
 				if id == "msg1" {
-					if rewriteFails {
-						// The rename succeeds, but saving the moved file fails.
+					if readOnly {
+						// Atomic publication replaces even a read-only manifest.
 						require.NoError(os.Chmod(path, 0o400))
-						require.ErrorIs(tc.Mgr.CancelManifest(m.ID), os.ErrPermission)
-					} else {
-						require.NoError(tc.Mgr.CancelManifest(m.ID))
 					}
+					require.NoError(tc.Mgr.CancelManifest(m.ID))
 				}
 				return nil
 			}
@@ -205,7 +289,7 @@ func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
 }
 
 func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
-	for _, failure := range []string{"none", "rewrite", "cleanup"} {
+	for _, failure := range []string{"none", "readonly", "cleanup"} {
 		t.Run(failure, func(t *testing.T) {
 			if failure != "none" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
 				t.Skip("requires Unix file permissions enforced for the current user")
@@ -225,8 +309,8 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			_, err := os.Stat(journalPath(path))
 			require.NoError(err)
 			switch failure {
-			case "rewrite":
-				// The rename succeeds, but saving the moved file fails.
+			case "readonly":
+				// Atomic publication replaces even a read-only manifest.
 				require.NoError(os.Chmod(path, 0o400))
 				t.Cleanup(func() { require.NoError(os.Chmod(cancelledPath, 0o600)) })
 			case "cleanup":
@@ -235,18 +319,13 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 				t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
 			}
 
-			err = mgr.CancelManifest(m.ID)
-			if failure == "rewrite" {
-				require.ErrorIs(err, os.ErrPermission)
-			} else {
-				require.NoError(err)
-			}
+			require.NoError(mgr.CancelManifest(m.ID))
 			assert.True(mgr.ManifestCancelled(m.ID))
 			_, err = os.Stat(journalPath(path))
-			if failure == "none" {
+			if failure != "cleanup" {
 				require.ErrorIs(err, os.ErrNotExist)
 			} else {
-				require.NoError(err, "journal remains when saving or cleanup fails")
+				require.NoError(err, "journal remains when cleanup fails")
 			}
 			if failure == "cleanup" {
 				// Reload without the journal to prove the fold saved progress.
@@ -256,11 +335,7 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			loaded, status, err := mgr.GetManifestWithStatus(m.ID)
 			require.NoError(err)
 			assert.Equal(StatusCancelled, status)
-			if failure == "rewrite" {
-				assert.Equal(StatusInProgress, loaded.Status, "the failed rewrite leaves the old inline status")
-			} else {
-				assert.Equal(StatusCancelled, loaded.Status)
-			}
+			assert.Equal(StatusCancelled, loaded.Status)
 			require.NotNil(loaded.Execution)
 			assert.Equal(2, loaded.Execution.LastProcessedIndex)
 			assert.Equal(1, loaded.Execution.Succeeded)

@@ -618,6 +618,12 @@ func requireManifestDigest(manifest *Manifest, expected string) error {
 // freshly-initialized Execution changed, republished so the on-disk record
 // matches what is returned in memory.
 func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath string, method Method) (*Manifest, error) {
+	if manifest.Status == StatusCompleted || manifest.Status == StatusFailed {
+		// Republishing as in_progress would make superseded records apply again.
+		if err := os.Remove(journalPath(inProgressPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("remove checkpoint journal before resuming %s: %w", manifest.ID, err)
+		}
+	}
 	needsWrite := manifest.Status != StatusInProgress
 	if manifest.Execution == nil {
 		manifest.Execution = &Execution{StartedAt: time.Now(), Method: method}
@@ -964,10 +970,9 @@ func (m *Manager) cancelManifestLocked(id string) error {
 			return fmt.Errorf("reload manifest %s after move: %w", id, err)
 		}
 		manifest.Status = StatusCancelled
-		if err := manifest.Save(toPath); err != nil {
+		if err := writeManifestAtomic(manifest, toPath); err != nil {
 			return fmt.Errorf("update inline status for %s: %w", id, err)
 		}
-		removeCheckpointJournal(fromPath, id, "cancelled")
 		return nil
 	}
 	return fmt.Errorf("manifest %s not found in pending or in_progress", id)
