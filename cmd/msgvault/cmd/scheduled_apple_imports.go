@@ -20,6 +20,14 @@ const defaultWhatsAppAppleStorePath = "Library/Group Containers/group.net.whatsa
 
 func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.WhatsAppAppleSource) (retErr error) {
 	state := invocationFromContext(ctx)
+	source, err := s.GetSourceByTypeAndIdentifier("whatsapp", src.Phone)
+	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
+		return fmt.Errorf("get whatsapp apple source %q: %w", src.Name, err)
+	}
+	if source != nil && source.MergedIntoSourceID != 0 {
+		state.logger.Info("skipping retired whatsapp apple source", "source", src.Name)
+		return nil
+	}
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
 	}()
