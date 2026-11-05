@@ -1430,9 +1430,6 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		}
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
-	if statsRequireSourceNative(opts) {
-		conditions = append(conditions, store.SourceNativeMessagesWhere("m", "sources"))
-	}
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)

@@ -375,7 +375,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 				}
 			}
 			value := prop.Value
-			if (name == "RDATE" || name == "EXDATE") && prop.Params.Get("TZID") == "" && prop.ValueType() != ical.ValueDate {
+			if (name == "RDATE" || name == "EXDATE") && prop.Params.Get("TZID") == "" && prop.ValueType() == ical.ValueDateTime {
 				values := strings.Split(value, ",")
 				for i, v := range values {
 					date := prop

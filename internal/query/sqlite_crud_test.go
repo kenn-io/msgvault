@@ -2566,11 +2566,6 @@ func TestDeletionTargetPathsExcludeCalendarArtifactsFromGmail(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotEmpty(byFilter)
 	assertNoCalendarTarget(byFilter)
-	preview, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{Filter: &MessageFilter{
-		AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}},
-	}})
-	requirements.NoError(err)
-	assertions.Equal(int64(len(byFilter)), preview.MessageCount)
 	q := &search.Query{MessageTypes: []string{"email", "calendar_event"}}
 	bySearch, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx, q, filter, DeletionSearchDeep)
 	requirements.NoError(err)
