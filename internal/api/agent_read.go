@@ -79,7 +79,7 @@ type agentReadSnapshotStore interface {
 // The returned release frees the snapshot and its concurrency slot.
 func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission) (func(), *apiHTTPError) {
 	if operation == "getTimeline" && req.URL.Query().Get("with") != "" {
-		return nil, agentReadDenied(permission)
+		return nil, newAPIHTTPError(http.StatusForbidden, "permission_denied", "Relationship filters require owner access")
 	}
 	snapshotStore, ok := s.store.(agentReadSnapshotStore)
 	if !ok {

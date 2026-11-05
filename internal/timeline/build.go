@@ -111,11 +111,25 @@ func normalizeRequest(req Request) (Request, error) {
 			req.Mode = ModeAnchor
 		}
 	}
+	if req.Conversation && req.Around == "" {
+		return req, fmt.Errorf("%w: conversation requires around", ErrInvalidRequest)
+	}
 	if req.Mode == ModeRelationship && req.With == "" || req.Mode == ModeAnchor && req.Around == "" {
 		return req, ErrInvalidRequest
 	}
 	if req.Mode != ModeDay && req.Mode != ModeRelationship && req.Mode != ModeAnchor {
 		return req, ErrInvalidRequest
+	}
+	if req.Around != "" && req.Mode != ModeAnchor {
+		return req, fmt.Errorf("%w: around conflicts with mode=%s", ErrInvalidRequest, req.Mode)
+	}
+	if req.Date != "" {
+		if req.Mode == ModeRelationship {
+			return req, fmt.Errorf("%w: date conflicts with with in relationship mode", ErrInvalidRequest)
+		}
+		if req.Mode == ModeAnchor {
+			return req, fmt.Errorf("%w: date conflicts with around", ErrInvalidRequest)
+		}
 	}
 	if req.Format == "" {
 		req.Format = "markdown"

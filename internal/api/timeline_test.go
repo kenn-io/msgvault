@@ -179,6 +179,8 @@ func TestTimelinePersonAuthorizationAndAmbiguity(t *testing.T) {
 	} {
 		w := timelineGET(srv, query, secret)
 		assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
+		assertions.Contains(w.Body.String(), `"error":"permission_denied"`)
+		assertions.Contains(w.Body.String(), "Relationship filters require owner access")
 		assertions.NotContains(w.Body.String(), "candidates")
 	}
 	owner := timelineGET(srv, fmt.Sprintf("?with=person:%d", people[0].ID), "")
