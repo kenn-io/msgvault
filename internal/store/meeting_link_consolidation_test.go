@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -194,8 +195,12 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 			requirements.NoError(st.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, note).Scan(&archived))
 			requirements.True(archived)
 			ids := []int64{note}
-			_, err = st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+			result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
 			requirements.NoError(err, "a unique archived note remains readable")
+			var packet meetingcontent.Packet
+			requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+			requirements.Len(packet.Meetings, 1)
+			assertions.Equal(note, packet.Meetings[0].Meeting.MessageID)
 			if mode == "new decision" {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}

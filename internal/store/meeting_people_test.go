@@ -42,20 +42,10 @@ func TestParticipantsByEmailMapsSavedAndUnsaved(t *testing.T) {
 				tc.primaryKey:       {ParticipantID: participant},
 				tc.aliasKey:         {ParticipantID: participant},
 			}, got)
-			if tc.name == "non-ASCII" {
-				for _, address := range []string{tc.lookup, tc.aliasLookup} {
-					id, err := st.EmailParticipantContext(t.Context(), address)
-					require.NoError(err)
-					assert.Equal(participant, id)
-				}
-			}
-			if tc.name == "ASCII" {
-				// Ambiguous aliases must not pick a participant by row order.
-				_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'apple_id',?,FALSE)`, alice, tc.primaryKey)
+			for _, address := range []string{tc.lookup, tc.aliasLookup} {
+				id, err := st.EmailParticipantContext(t.Context(), address)
 				require.NoError(err)
-				got, err = st.ParticipantsByEmailContext(t.Context(), []string{tc.primaryKey})
-				require.NoError(err)
-				assert.Empty(got)
+				assert.Equal(participant, id)
 			}
 		})
 	}
@@ -88,9 +78,6 @@ func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: into.ID})
 		require.NoError(err)
 		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{into.ID})
-		identity, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
-		require.NoError(err)
-		require.Contains(identity.ByTranscript, note)
 		got, err := st.ParticipantsByEmailContext(ctx, []string{"attendee@example.org"})
 		require.NoError(err)
 		assert.Equal(map[string]AddressParticipant{"attendee@example.org": {ParticipantID: participant}}, got)
@@ -113,6 +100,23 @@ func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(map[string]AddressParticipant{"alias@example.com": {ParticipantID: visible}}, got)
 		got, err = st.ParticipantsByEmailContext(t.Context(), []string{"alias@example.com"})
+		require.NoError(err)
+		assert.Empty(got)
+	})
+	t.Run("ambiguity primary address", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+		require.NoError(err)
+		_, _, err = st.CreatePersonFromParticipant(alice)
+		require.NoError(err)
+		primary, err := st.EnsureParticipant("bob@example.com", "Example", "example.com")
+		require.NoError(err)
+		_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'email',?,FALSE)`, primary, "Alias@Example.com")
+		require.NoError(err)
+		_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'apple_id',?,FALSE)`, alice, "bob@example.com")
+		require.NoError(err)
+		got, err := st.ParticipantsByEmailContext(t.Context(), []string{"bob@example.com"})
 		require.NoError(err)
 		assert.Empty(got)
 	})
