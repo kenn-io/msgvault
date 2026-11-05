@@ -10,6 +10,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 func fixtureMeeting(t *testing.T, root, id, status string) string {
@@ -114,6 +115,32 @@ func TestDecodeTranscriptSerdeVariants(t *testing.T) {
 			assert.Len(t, entries, tc.entries)
 			assert.Equal(t, tc.warnings, warnings)
 			assert.Equal(t, tc.warnings > 0, partial)
+		})
+	}
+}
+
+func TestReaderEmptyRollingTranscriptIsMissing(t *testing.T) {
+	for _, text := range []string{"", "{\"covered_ms\":{\"system\":1000,\"microphone\":null}}\n"} {
+		t.Run(text, func(t *testing.T) {
+			must := require.New(t)
+			check := assert.New(t)
+			root := t.TempDir()
+			dir := fixtureMeeting(t, root, "empty-rolling", "recording")
+			must.NoError(os.WriteFile(filepath.Join(dir, "transcript.rolling.ndjson"), []byte(text), 0600))
+			reader, err := Open(t.Context(), root)
+			must.NoError(err)
+			defer func() { _ = reader.Close() }()
+			scan, err := reader.ListMeetings(t.Context())
+			must.NoError(err)
+			must.Len(scan.Meetings, 1)
+			check.Zero(scan.Warnings)
+			check.Equal("missing", scan.Meetings[0].TranscriptState)
+			check.Empty(scan.Meetings[0].Entries)
+			snapshot, err := scan.Meetings[0].ArchiveSnapshot(1, "recorder", "you@example.com")
+			must.NoError(err)
+			content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
+			check.Equal(meetingcontent.StateUnavailable, content.Transcript.State)
+			check.Equal("hex_missing", content.Transcript.Reason)
 		})
 	}
 }

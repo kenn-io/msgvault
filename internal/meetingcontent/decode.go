@@ -22,6 +22,9 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	if len(raw) > maxRawBytes {
 		return unavailableContent("raw_too_large")
 	}
+	if rawFormat == "hex_json" {
+		return decodeHex(raw)
+	}
 	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return unavailableContent("invalid_raw")
@@ -37,8 +40,6 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodePlaud(fields)
 	case "notion_meeting_json":
 		return decodeNotion(fields)
-	case "hex_json":
-		return decodeHex(raw)
 	case "muesli_json":
 		return decodeMuesli(fields)
 	case "pocket_json":

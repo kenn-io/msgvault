@@ -1,6 +1,8 @@
 package meetingcontent
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"time"
@@ -10,6 +12,14 @@ import (
 
 func decodeHex(raw []byte) Content {
 	envelope, err := evidence.Decode(raw)
+	if err != nil {
+		// Preserve invalid_raw for malformed/non-object input without building
+		// a raw field map on the successful typed decode path.
+		var fields map[string]jsontext.Value
+		if json.Unmarshal(raw, &fields) != nil || fields == nil {
+			return unavailableContent("invalid_raw")
+		}
+	}
 	if errors.Is(err, evidence.ErrUnsupportedVersion) {
 		return unavailableContent("unsupported_version")
 	}

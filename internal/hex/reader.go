@@ -121,6 +121,9 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			var warnings int64
 			m.Entries, m.TranscriptPartial, warnings = decodeTranscript(data, m.TranscriptState == "rolling")
 			out.Warnings += warnings
+			if m.TranscriptState == "rolling" && len(m.Entries) == 0 {
+				m.TranscriptState = "missing"
+			}
 		}
 
 		finalPublished := m.TranscriptState == "final"
