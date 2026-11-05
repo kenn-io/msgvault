@@ -150,7 +150,7 @@ func (e *DuckDBEngine) CompletePeople(
 		), deduplicated AS (
 			SELECT *, row_number() OVER (
 				PARTITION BY participant_id, kind, match_value
-				ORDER BY source_rank, lower(display_value), source
+				ORDER BY source_rank, lower(display_value), source, display_value
 			) AS duplicate_rank
 			FROM candidates
 		)

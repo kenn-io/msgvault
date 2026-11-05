@@ -36,6 +36,28 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	assert.NotEmpty(response.CacheRevision)
 }
 
+func TestPeopleCompletionDeduplicatesCaseOnlyObservedNames(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.test")
+	primary := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	alias := b.AddParticipant("alias@example.test", "example.test", "ALICE")
+	b.LinkCluster(primary, alias)
+	when := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	message := b.AddMessage(MessageOpt{SourceID: source, SentAt: when})
+	b.AddFrom(message, primary, "Alice")
+	b.AddTo(message, alias, "ALICE")
+	engine := b.BuildEngine()
+
+	response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "alice"})
+	require.NoError(t, err)
+	require.Len(t, response.Rows, 2)
+	assert.Equal(t, PeopleCompletion{
+		ParticipantID: primary, DisplayLabel: "Alice", Kind: PeopleCompletionName,
+		Value: "ALICE", MatchValue: "alice", Source: "observed", LastAt: when,
+	}, response.Rows[0])
+}
+
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
