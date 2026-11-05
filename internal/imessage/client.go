@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -266,6 +267,15 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 			break
 		}
 
+		messageIDs := make([]string, 0, len(rows))
+		for _, msg := range rows {
+			messageIDs = append(messageIDs, strconv.FormatInt(msg.ROWID, 10))
+		}
+		stored, err := s.StoredMessagesContext(ctx, sourceID, "imessage_json", messageIDs)
+		if err != nil {
+			return summary, fmt.Errorf("load stored messages: %w", err)
+		}
+
 		for _, msg := range rows {
 			if err := ctx.Err(); err != nil {
 				return summary, err
@@ -276,7 +286,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 
 			lastROWID = msg.ROWID
 			if err := c.importMessage(
-				ctx, s, sourceID, &msg,
+				ctx, s, sourceID, &msg, stored,
 				imessageLabelID, smsLabelID,
 				phoneCache, emailCache, convCache,
 				ownerPID, summary,
@@ -409,6 +419,7 @@ func (c *Client) importMessage(
 	s *store.Store,
 	sourceID int64,
 	msg *messageRow,
+	stored map[string]store.StoredMessage,
 	imessageLabelID, smsLabelID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
@@ -510,56 +521,44 @@ func (c *Client) importMessage(
 	if err != nil {
 		return err
 	}
-	stored, err := s.StoredMessagesContext(ctx, sourceID, "imessage_json", []string{sourceMessageID})
-	if err != nil {
-		return err
-	}
+	recipients := c.messageRecipients(s, msg, senderID, ownerPID, phoneCache, emailCache, summary)
 	existing, exists := stored[sourceMessageID]
 	if exists && existing.Matches(message, raw) {
-		if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
-			c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
+		matches, err := s.MessageRecipientsMatchContext(ctx, existing.ID, recipients)
+		if err != nil {
+			return fmt.Errorf("compare message recipients: %w", err)
 		}
-		return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
+		if matches {
+			if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
+				c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
+			}
+			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
+		}
 	}
-	msgID, err := s.UpsertMessage(message)
-	if err != nil {
-		return fmt.Errorf("upsert message: %w", err)
-	}
-
-	// Store body text directly (no MIME), including an empty body so reimports
-	// clear text removed from the source.
-	if err := s.UpsertMessageBody(
-		msgID,
-		sql.NullString{String: body, Valid: true},
-		sql.NullString{},
-	); err != nil {
-		return fmt.Errorf("upsert body: %w", err)
-	}
-
-	// Write message_recipients rows
-	if err := c.writeMessageRecipients(
-		s, msgID, msg, senderID, ownerPID,
-		phoneCache, emailCache, summary,
-	); err != nil {
-		return fmt.Errorf("write message recipients: %w", err)
-	}
-
-	if err := s.IndexStoredMessageContext(ctx, msgID); err != nil {
-		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
-	}
-
-	// Label: iMessage or SMS
 	labelID := imessageLabelID
 	if msgType == "sms" {
 		labelID = smsLabelID
 	}
-	if err := s.LinkMessageLabel(msgID, labelID); err != nil {
-		return fmt.Errorf("link label: %w", err)
+	var labels []int64
+	if exists {
+		labels, err = s.MessageLabelIDsContext(ctx, existing.ID)
+		if err != nil {
+			return fmt.Errorf("load message labels: %w", err)
+		}
 	}
-
-	// Write raw last so an interrupted message is compared and repaired next run.
-	if err := s.UpsertMessageRawWithFormat(msgID, raw, "imessage_json"); err != nil {
-		return fmt.Errorf("write message raw: %w", err)
+	if !slices.Contains(labels, labelID) {
+		labels = append(labels, labelID)
+	}
+	msgID, err := s.PersistMessageContext(ctx, &store.MessagePersistData{
+		Message: message, BodyText: sql.NullString{String: body, Valid: true},
+		RawMIME: raw, RawFormat: "imessage_json", Recipients: recipients,
+		LabelIDs: labels,
+	})
+	if err != nil {
+		return fmt.Errorf("persist message: %w", err)
+	}
+	if err := s.IndexStoredMessageContext(ctx, msgID); err != nil {
+		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
 	}
 	if exists {
 		summary.MessagesUpdated++
@@ -587,59 +586,25 @@ func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, m
 	return nil
 }
 
-// writeMessageRecipients creates from/to rows in message_recipients.
-// For is_from_me: from=owner, to=other chat participants.
-// For !is_from_me: from=sender handle, to=owner.
-func (c *Client) writeMessageRecipients(
+// messageRecipients builds the from/to snapshots for this import.
+func (c *Client) messageRecipients(
 	s *store.Store,
-	msgID int64,
 	msg *messageRow,
 	senderID sql.NullInt64,
 	ownerPID int64,
-	phoneCache map[string]int64,
-	emailCache map[string]int64,
+	phoneCache, emailCache map[string]int64,
 	summary *ImportSummary,
-) error {
-	if msg.IsFromMe != 0 {
-		// Sender is the device owner
-		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{ownerPID}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// Recipients are the other chat participants
-		toPIDs := c.getChatParticipantIDs(
-			s, msg, phoneCache, emailCache, summary,
-		)
-		if len(toPIDs) > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", toPIDs, nil,
-			); err != nil {
-				return err
-			}
-		}
-	} else {
-		// Sender is the external handle
-		if senderID.Valid {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from",
-				[]int64{senderID.Int64}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// Recipient is the device owner
-		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", []int64{ownerPID}, nil,
-			); err != nil {
-				return err
-			}
-		}
+) []store.RecipientSet {
+	sets := []store.RecipientSet{{Type: "from"}, {Type: "to"}}
+	if senderID.Valid {
+		sets[0].ParticipantIDs = []int64{senderID.Int64}
 	}
-	return nil
+	if msg.IsFromMe != 0 {
+		sets[1].ParticipantIDs = c.getChatParticipantIDs(s, msg, phoneCache, emailCache, summary)
+	} else if ownerPID > 0 {
+		sets[1].ParticipantIDs = []int64{ownerPID}
+	}
+	return sets
 }
 
 // getChatParticipantIDs returns participant IDs for the chat members
