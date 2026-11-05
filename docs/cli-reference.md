@@ -3645,7 +3645,7 @@ shipped definitions and complete workflow.
 
 ## person delivery policies
 
-On unreleased `main`, owners can read, set, and clear delivery policies with daemon API schema 3.15.0 or newer. Use the canonical `vcard_uid` from `person get` or `person list --json`.
+On unreleased `main`, owners can read, set, and clear delivery policies with daemon API schema 3.44.0 or newer. Use the canonical `vcard_uid` from `person get` or `person list --json`.
 
 ```bash
 msgvault person read-delivery-policy <person-uid> --endpoint alice@example.test --json
@@ -4561,7 +4561,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-On unreleased `main`, contact delivery policy tools require daemon API schema 3.15.0. The owner can
+On unreleased `main`, contact delivery policy tools require daemon API schema 3.44.0. The owner can
 inspect `get_delivery_policy`. Expose `set_delivery_policy` and
 `clear_delivery_policy` with `msgvault mcp --allow-delivery-policy-writes`. Each MCP edit requires client
 confirmation of its exact scope and revision. Delegated draft credentials do
