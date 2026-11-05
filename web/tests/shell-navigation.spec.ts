@@ -78,6 +78,25 @@ test.describe('touch navigation', () => {
     await rename.click();
     await expect(drawer.getByRole('textbox', { name: 'Rename View 20' })).toBeVisible();
   });
+
+  test('retrying saved views is usable by touch', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    let attempts = 0;
+    await page.route('**/api/v1/saved-views', route => {
+      attempts += 1;
+      return attempts === 1
+        ? route.fulfill({ status: 500, json: { error: 'Unavailable' } })
+        : route.fulfill({ json: { saved_views: [saved] } });
+    });
+    await page.goto('/?workspace=everything');
+    await page.getByRole('button', { name: 'Open navigation' }).tap();
+    const drawer = page.getByRole('dialog', { name: 'Navigation' });
+    const retry = drawer.getByRole('button', { name: 'Retry' });
+    await expect(retry).toBeVisible();
+    expect((await retry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await retry.tap();
+    await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
+  });
 });
 
 test('mouse navigation retains compact control sizes', async ({ page }) => {

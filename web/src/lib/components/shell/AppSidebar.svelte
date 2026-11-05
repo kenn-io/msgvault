@@ -229,6 +229,7 @@
   }
 
   .sidebar__views-error button {
+    min-height: var(--control-h);
     padding: 0;
     border: 0;
     background: transparent;
