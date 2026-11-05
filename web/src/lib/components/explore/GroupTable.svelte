@@ -102,7 +102,7 @@
     const element = gridElement;
     densityRebasing = true;
     const preservedKey = activeKey;
-    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, measuredViewport(element));
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport), measuredViewport(element));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey

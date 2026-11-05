@@ -424,21 +424,11 @@ func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[
 	if len(ids) == 0 {
 		return labels, nil
 	}
-	summaries, err := s.getMessagesSummariesByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
+	labeler, ok := s.queryEngineForContext(ctx).(query.SenderLabeler)
+	if !ok {
+		return labels, nil
 	}
-	for _, summary := range summaries {
-		label := summary.FromName
-		if label == "" {
-			label = summary.FromPhone
-		}
-		if label == "" {
-			label = summary.FromEmail
-		}
-		labels[summary.ID] = label
-	}
-	return labels, nil
+	return labeler.SenderLabels(ctx, ids)
 }
 
 // addExploreTiming reports milliseconds in the browser's request timing panel.

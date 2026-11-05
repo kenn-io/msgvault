@@ -162,6 +162,27 @@ test.describe('phone interactions', () => {
     });
   }
 
+  for (const workspace of ['everything', 'files'] as const) {
+    test(`${workspace} keeps a focused row visible when rotating to landscape`, async ({ page }) => {
+      await page.route(`**/api/v1/${workspace === 'files' ? 'files/search' : 'explore'}`, route => route.fulfill({ json:
+        workspace === 'files'
+          ? { files: Array.from({ length: total }, (_, i) => file(i + 1)), total_count: total, cache_revision: 'landscape' }
+          : { rows: Array.from({ length: total }, (_, i) => entry(i + 1)), total_count: total, cache_revision: 'landscape' }
+      }));
+      await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace, activeRow: workspace === 'files' ? 'file:250' : 'message:250' })))}`);
+      const grid = page.getByRole('grid', { name: workspace === 'files' ? 'Files results' : 'Messages results' });
+      await expect(grid).toHaveAttribute('aria-activedescendant', /250/);
+      await grid.evaluate((el, height) => {
+        el.scrollTop = 249 * height - (el.clientHeight - height - 30);
+        el.dispatchEvent(new Event('scroll'));
+      }, workspace === 'files' ? 58 : 72);
+      const current = grid.locator('[aria-rowindex="251"]');
+      await expect(current).toBeInViewport();
+      await page.setViewportSize({ width: 844, height: 390 });
+      await expect(current).toBeInViewport();
+    });
+  }
+
   test('labels a group with one item in the singular', async ({ page }) => {
     await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
       rows: [group(1), group(2)], total_count: 2, cache_revision: 'singular', search_provenance: {}

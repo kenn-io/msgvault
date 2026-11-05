@@ -98,7 +98,7 @@
     scrollIntent += 1;
     const preservedKey = activeKey;
     const focusedIndex = activeKey ? rows.findIndex((row) => row.key === activeKey) : -1;
-    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, focusedIndex, measuredViewport(element));
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, focusedIndex, untrack(() => viewport), measuredViewport(element));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey

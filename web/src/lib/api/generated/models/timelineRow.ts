@@ -12,6 +12,7 @@ export interface TimelineRow {
   message_count: number;
   occurred_at: string;
   preview: string;
+  sender_label?: string;
   source_id: number;
   title: string;
   [key: string]: unknown;

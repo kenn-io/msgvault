@@ -375,7 +375,7 @@
     previousRowHeight = nextHeight;
     if (!grid || nextHeight === undefined || previousHeight === undefined || previousHeight === nextHeight) return;
     const element = grid;
-    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, measuredViewport(element, headerElement));
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport), measuredViewport(element, headerElement));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(element, nextHeight, expectedScrollHeight, rebased));
   });

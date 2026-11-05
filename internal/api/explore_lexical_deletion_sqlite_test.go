@@ -11,8 +11,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestExploreSourceDeletedMessageKeepsSender(t *testing.T) {
+	f := storetest.New(t)
+	sender := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	require.Equal(t, int64(1), sender)
+	id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "deleted", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
+	require.NoError(t, f.Store.MarkMessageDeleted(f.Source.ID, "deleted"))
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'deleted', 101::BIGINT, 'Archived', 'snippet', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', 1::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, 1)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: f.Store, Engine: engine, Logger: testLogger()})
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"deletion","values":["deleted"]}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1)
+	assert.Equal(t, "Alice", body.Rows[0].SenderLabel)
+}
 
 // TestExploreFullTextHonorsDeletionScope drives the explore handler
 // end-to-end with a real store resolving lexical candidates: the FTS index
