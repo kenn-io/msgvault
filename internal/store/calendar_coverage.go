@@ -22,6 +22,13 @@ type CalendarSourceCoverage struct {
 	AsOf       *time.Time `json:"as_of"`
 }
 
+const (
+	CalendarSourceCoverageStatusComplete   = "complete"
+	CalendarSourceCoverageStatusStale      = "stale"
+	CalendarSourceCoverageStatusSyncFailed = "sync_failed"
+	CalendarSourceCoverageStatusNoBaseline = "no_baseline"
+)
+
 const calendarCoverageNotice = "Archived calendar data, not live availability. An empty or short result does not prove free time: only registered calendars are archived, and coverage may be stale or incomplete (see sources). Use live free/busy for scheduling."
 
 func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpandable bool, now time.Time) (CalendarCoverage, error) {
@@ -47,7 +54,6 @@ func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpan
 		return CalendarCoverage{}, fmt.Errorf("read calendar coverage: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	hasCalendar := false
 	coverage.Complete = !unexpandable
 	for rows.Next() {
 		var c CalendarSourceCoverage
@@ -57,22 +63,21 @@ func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpan
 		if err := rows.Scan(&c.SourceID, &c.SourceType, &c.Name, &hasCursor, &asof, &failed); err != nil {
 			return CalendarCoverage{}, fmt.Errorf("scan calendar coverage: %w", err)
 		}
-		hasCalendar = true
 		if asof.Valid {
 			at := asof.Time.UTC()
 			c.AsOf = &at
 		}
 		switch {
 		case !hasCursor || !asof.Valid:
-			c.Status = "no_baseline"
+			c.Status = CalendarSourceCoverageStatusNoBaseline
 		case failed:
-			c.Status = "sync_failed"
+			c.Status = CalendarSourceCoverageStatusSyncFailed
 		case now.Sub(asof.Time) > 24*time.Hour:
-			c.Status = "stale"
+			c.Status = CalendarSourceCoverageStatusStale
 		default:
-			c.Status = "complete"
+			c.Status = CalendarSourceCoverageStatusComplete
 		}
-		if c.Status != "complete" {
+		if c.Status != CalendarSourceCoverageStatusComplete {
 			coverage.Complete = false
 		}
 		coverage.Sources = append(coverage.Sources, c)
@@ -80,6 +85,6 @@ func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpan
 	if err := rows.Err(); err != nil {
 		return CalendarCoverage{}, fmt.Errorf("iterate calendar coverage: %w", err)
 	}
-	coverage.Complete = coverage.Complete && hasCalendar
+	coverage.Complete = coverage.Complete && len(coverage.Sources) > 0
 	return coverage, nil
 }

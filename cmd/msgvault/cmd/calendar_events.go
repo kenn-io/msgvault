@@ -182,9 +182,9 @@ func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCov
 	for _, source := range coverage.Sources {
 		status := source.Status
 		switch status {
-		case "no_baseline":
+		case store.CalendarSourceCoverageStatusNoBaseline:
 			status = "not fully synced"
-		case "sync_failed":
+		case store.CalendarSourceCoverageStatusSyncFailed:
 			status = "sync failed"
 		}
 		if source.AsOf != nil {

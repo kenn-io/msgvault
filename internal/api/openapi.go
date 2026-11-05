@@ -1493,7 +1493,10 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		},
 		"CalendarSourceCoverage": {
 			"status": qualifiedEnumNames("CalendarSourceCoverageStatus", []string{
-				"complete", "stale", "sync_failed", "no_baseline",
+				store.CalendarSourceCoverageStatusComplete,
+				store.CalendarSourceCoverageStatusStale,
+				store.CalendarSourceCoverageStatusSyncFailed,
+				store.CalendarSourceCoverageStatusNoBaseline,
 			}),
 		},
 		"ExploreSelection": {"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"}},
