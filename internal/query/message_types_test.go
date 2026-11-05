@@ -8,7 +8,7 @@ import (
 
 func TestIsKnownMessageType(t *testing.T) {
 	t.Parallel()
-	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix", "telegram"}
+	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix", "telegram", "call_record"}
 	for _, mt := range known {
 		assert.True(t, IsKnownMessageType(mt), "%q should be known", mt)
 	}
@@ -17,10 +17,6 @@ func TestIsKnownMessageType(t *testing.T) {
 	for _, mt := range unknown {
 		assert.False(t, IsKnownMessageType(mt), "%q should be unknown", mt)
 	}
-}
-
-func TestCallRecordMessageTypeAccepted(t *testing.T) {
-	assert.True(t, IsKnownMessageType("call_record"))
 }
 
 func TestKnownMessageTypesIncludesTextTypes(t *testing.T) {

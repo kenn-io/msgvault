@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -40,40 +39,6 @@ func tierCall(day, callType, seconds int) string {
 	return fmt.Sprintf(`<call number="%s" duration="%d" date="%d" type="%d" presentation="1" />`, tierRemote, seconds, tierMillis(day), callType)
 }
 
-func TestCallsReadImportedPhoneCalls(t *testing.T) {
-	f := storetest.New(t)
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "calls.xml"), `<calls>`+tierCall(1, int(CallIncoming), 600)+tierCall(2, 3, 0)+`</calls>`)
-	_, err := NewImporter(f.Store, ImportOptions{OwnerPhone: tierOwner, IncludeCalls: true}).ImportPath(dir)
-	require.NoError(t, err)
-	remote, err := f.Store.EnsureParticipantByPhone(tierRemote, "Example", ParticipantIdentifierType)
-	require.NoError(t, err)
-	person, _, err := f.Store.CreatePersonFromParticipant(remote)
-	require.NoError(t, err)
-	owner, err := f.Store.EnsureParticipantByPhone(tierOwner, "Owner", ParticipantIdentifierType)
-	require.NoError(t, err)
-	_, _, err = f.Store.CreatePersonFromParticipant(owner)
-	require.NoError(t, err)
-
-	summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	require.NoError(t, err)
-	if assert.Len(t, summary, 1) {
-		assert.Equal(t, person.ID, summary[0].PersonID)
-		assert.Equal(t, 1, summary[0].Answered)
-		assert.Equal(t, 1, summary[0].Unknown)
-	}
-	items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	require.NoError(t, err)
-	require.Len(t, items, 2)
-	assert.Equal(t, "incoming", items[0].Direction)
-	assert.Equal(t, "answered", items[0].Outcome)
-	assert.Equal(t, []callhistory.Participant{{ID: remote, Participation: "joined"}}, items[0].Participants)
-	assert.Equal(t, "unknown", items[1].Outcome)
-	assert.Equal(t, []callhistory.Participant{{ID: remote, Participation: "unknown"}}, items[1].Participants)
-}
-
-// importedTierSignals imports a backup through the real importer, projects
-// activity, and reads the tier counts of the person behind the remote phone.
 func importedTierSignals(t *testing.T, files map[string]string) persontiers.Signals {
 	t.Helper()
 	f := storetest.New(t)

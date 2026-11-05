@@ -1082,6 +1082,8 @@ func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
 }
 
 func TestGetPersonExcludesCallRecipients(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.com", "imap")
 	person := b.AddParticipant("peer@example.com", "example.com", "Peer")
@@ -1093,13 +1095,25 @@ func TestGetPersonExcludesCallRecipients(t *testing.T) {
 		b.AddRecipient(call, person, role, "Peer")
 	}
 	engine := b.BuildEngine()
-	for name, scope := range map[string]Context{"filtered": {SourceIDs: []int64{source}}, "unfiltered": {}} {
-		t.Run(name, func(t *testing.T) {
-			got, err := engine.GetPerson(t.Context(), person, scope, nil)
-			require.NoError(t, err)
-			require.NotNil(t, got)
-			assert.Equal(t, int64(1), got.ActivityCount)
-			assert.Equal(t, at, got.LastAt)
+	got, err := engine.GetPerson(t.Context(), person, Context{SourceIDs: []int64{source}}, nil)
+	require.NoError(err)
+	require.NotNil(got)
+	assert.Equal(int64(1), got.ActivityCount)
+	assert.Equal(at, got.LastAt)
+	for _, scope := range []Context{{}, {SourceIDs: []int64{source}}} {
+		result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+			Explore: ExploreRequest{Context: scope}, Page: PageSpec{Limit: 25},
 		})
+		require.NoError(err)
+		require.Len(result.Rows, 1)
+		assert.Equal(person, result.Rows[0].ID)
+		assert.Equal(int64(1), result.Rows[0].ActivityCount)
+		assert.Equal(at, result.Rows[0].LastAt)
 	}
+	legacy, err := engine.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, nil, nil, false)
+	require.NoError(err)
+	require.Len(legacy.Rows, 1)
+	assert.Equal(person, legacy.Rows[0].ID)
+	assert.Equal(int64(1), legacy.Rows[0].ActivityCount)
+	assert.Equal(at, legacy.Rows[0].LastAt)
 }
