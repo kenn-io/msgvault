@@ -151,7 +151,8 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 			if pending {
 				return invalidSourceMerge("sources with pending LINE webhook work cannot be merged; process the inbox with sync-line first")
 			}
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts WHERE source_id=? AND state NOT IN ('sent','provider_rejected','remote_unknown_expired','accepted_unresolved_expired'))`, req.FromSourceID).Scan(&pending); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts a WHERE source_id=? AND state NOT IN ('sent','provider_rejected','remote_unknown_expired','accepted_unresolved_expired')
+ AND (state <> 'admitted' OR EXISTS(SELECT 1 FROM chat_drafts d WHERE d.draft_id=a.draft_id)))`, req.FromSourceID).Scan(&pending); err != nil {
 				return fmt.Errorf("check LINE replies before merge: %w", err)
 			}
 			if pending {
@@ -184,6 +185,14 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		}
 		if req.DryRun {
 			return nil
+		}
+		// An admitted attempt has never reached LINE. Once its draft is gone,
+		// retirement can stop it without waiting for sending policy or credentials.
+		if from.SourceType == lineSourceType {
+			if _, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='remote_unknown_expired'
+ WHERE source_id=? AND state='admitted' AND NOT EXISTS(SELECT 1 FROM chat_drafts d WHERE d.draft_id=line_reply_attempts.draft_id)`, req.FromSourceID); err != nil {
+				return fmt.Errorf("retire unsubmitted LINE replies: %w", err)
+			}
 		}
 		if err := s.applySourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, plan); err != nil {
 			return fmt.Errorf("transfer source archive: %w", err)

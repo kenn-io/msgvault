@@ -37,10 +37,7 @@ type ReplySender struct {
 func replyReceipt(a store.LineReplyAttempt) ReplyReceipt {
 	r := ReplyReceipt{DraftID: a.DraftID, Revision: a.Revision, SourceID: a.SourceID, ConversationID: a.ConversationID,
 		Status: a.State, RemoteMessageID: a.RemoteMessageID, MessageID: a.MessageID, RequestID: a.RequestID}
-	switch a.State {
-	case store.LineReplySent, store.LineReplyRemoteAccepted, store.LineReplyAcceptedUnresolved, store.LineReplyAcceptedUnresolvedExpired:
-		r.Accepted = true
-	}
+	r.Accepted = store.LineReplyHasAcceptance(a.State)
 	if a.State == store.LineReplyRemoteAccepted {
 		r.Status = "sent_archive_pending"
 	}

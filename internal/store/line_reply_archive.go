@@ -99,6 +99,9 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if err != nil {
 			return errors.New("encode LINE push receipt")
 		}
+		if a.ConversationType == "group_chat" {
+			return s.setLineMembershipClockTx(ctx, tx, a.SourceID, a.SourceConversationID, lineidentity.UserIdentifier(a.ChannelID, a.BotUserID), true, a.AdmittedAt)
+		}
 		return nil
 	}
 	build := func([]int64) *MessagePersistData {
@@ -117,6 +120,11 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		}
 	}
 	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
+		if a.ConversationType == "group_chat" {
+			if err := s.projectLineMembershipTx(ctx, tx, a.SourceID, a.ConversationID, sender, lineidentity.UserIdentifier(a.ChannelID, a.BotUserID)); err != nil {
+				return err
+			}
+		}
 		if err := s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = ?", a.ConversationID); err != nil {
 			return err
 		}

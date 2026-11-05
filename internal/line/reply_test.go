@@ -756,3 +756,75 @@ func TestReplyTokenFailureDatesArchiveAtFirstPush(t *testing.T) {
 	must.NoError(err)
 	checks.Equal(f.now.Add(23*time.Hour), attempt.RetryUntil)
 }
+
+func TestReplyGroupMessageProjectsBotMembership(t *testing.T) {
+	for _, kind := range []string{"group", "room"} {
+		t.Run(kind, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newReplyFixture(t, kind, nil)
+			must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+			// Receiving starts after the bot joined, so there is no join event.
+			event := line.Event{Type: "message", Timestamp: f.now.UnixMilli(), WebhookEventID: "incoming-group", Source: line.Source{Type: kind, UserID: replyUser}, Message: &line.Message{ID: "101", Type: "text", Text: "Incoming reply target"}}
+			if kind == "group" {
+				event.Source.GroupID = f.to
+			} else {
+				event.Source.RoomID = f.to
+			}
+			raw, err := json.Marshal(event)
+			must.NoError(err)
+			bot, err := f.st.LineBotUserIDContext(t.Context(), f.draft.SourceID)
+			must.NoError(err)
+			must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", bot, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now, RawJSON: string(raw)}}))
+			processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(func() time.Time { return f.now }))
+			must.NoError(processor.Process(t.Context()))
+			var count int
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&count))
+			checks.Equal(1, count)
+			parent, err := f.st.LineMessageContext(t.Context(), f.draft.SourceID, "101")
+			must.NoError(err)
+			draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, parent.ID, "Group response", func(string, string) error { return nil })
+			must.NoError(err)
+			receipt, err := f.sender().Send(t.Context(), draft.DraftID, 1)
+			must.NoError(err)
+			must.Equal(store.LineReplySent, receipt.Status)
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
+			checks.Equal(2, count)
+			var active bool
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT cp.left_at IS NULL FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+bot).Scan(&active))
+			checks.True(active)
+		})
+	}
+}
+
+func TestReplyUnsubmittedDeletedDraftAllowsSourceMerge(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	f.resetClient()
+	f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusInternalServerError})
+	sender := f.sender()
+	receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+	must.ErrorIs(err, line.ErrCredentialsUnavailable)
+	must.Equal(store.LineReplyAdmitted, receipt.Status)
+	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+	sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
+		return nil, errors.New("synthetic revoked sending policy")
+	}
+	_, err = sender.Send(t.Context(), f.draft.DraftID, 1)
+	must.ErrorContains(err, "synthetic revoked sending policy")
+	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	target, err := f.st.GetOrCreateSource("line", "2000000002")
+	must.NoError(err)
+	_, err = f.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.draft.SourceID, IntoSourceID: target.ID, DryRun: true})
+	must.NoError(err)
+	previewed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Equal(store.LineReplyAdmitted, previewed.State)
+	_, err = f.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.draft.SourceID, IntoSourceID: target.ID})
+	must.NoError(err)
+	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
+}

@@ -20,7 +20,8 @@ type LineReplyOutcome struct {
 	NextRetryAt       time.Time
 }
 
-func lineReplyHasAcceptance(state string) bool {
+// LineReplyHasAcceptance reports whether a state retains provider acceptance evidence.
+func LineReplyHasAcceptance(state string) bool {
 	return state == LineReplyAcceptedUnresolved || state == LineReplyAcceptedUnresolvedExpired || state == LineReplyRemoteAccepted || state == LineReplySent
 }
 
@@ -87,7 +88,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 			a.NextRetryAt = now
 		}
 		if lineReplyExpired(a.State) || !now.Before(a.RetryUntil) {
-			accepted := lineReplyHasAcceptance(a.State)
+			accepted := LineReplyHasAcceptance(a.State)
 			a.State = LineReplyRemoteUnknownExpired
 			if accepted {
 				a.State = LineReplyAcceptedUnresolvedExpired
@@ -132,7 +133,7 @@ func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, ou
 		if lineReplyTerminal(a.State) {
 			return nil
 		}
-		known := lineReplyHasAcceptance(a.State)
+		known := LineReplyHasAcceptance(a.State)
 		expired := lineReplyExpired(a.State)
 		if outcome.Accepted {
 			if a.RemoteMessageID != "" && outcome.MessageID != "" && a.RemoteMessageID != outcome.MessageID {
