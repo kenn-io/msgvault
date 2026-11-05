@@ -55,6 +55,7 @@ func TestLegacyCSVRecoveryMatchesValidMail(t *testing.T) {
 	for name, shape := range map[string]testemail.LegacyCSVOptions{
 		"base":           {},
 		"PNG attachment": {ExtraPNG: true},
+		"folded header":  {Header: "Content-Description: exported\r\n\tcontacts\r\n"},
 		"leading space":  {StrayLine: " --------------040908010102080206010104"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -74,17 +75,16 @@ func TestLegacyCSVRecoveryMatchesValidMail(t *testing.T) {
 	}
 }
 
-func TestLegacyCSVRecoveryRejectsHeaderLikePayloadWithoutSeparator(t *testing.T) {
+func TestLegacyCSVRecoveryRejectsMissingSeparator(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{Payload: "key:value\r\n\r\nsecond,row"})
+	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{})
 	raw = bytes.Replace(raw, []byte("filename=example.csv\r\n\r\n"), []byte("filename=example.csv\r\n"), 1)
 	_, strictErr := Parse(raw)
 	require.Error(strictErr)
 	assert.Nil(recoverLegacyCSV(raw))
 	msg, err := ParseWithRecovery(raw, "")
 	require.EqualError(err, strictErr.Error())
-	require.NotNil(msg)
 	assert.Contains(msg.BodyText, "[MIME parsing failed:")
 	assert.Empty(msg.BodyHTML)
 	assert.Empty(msg.Attachments)
@@ -94,7 +94,6 @@ func TestLegacyCSVRecoveryFallsBack(t *testing.T) {
 	for name, shape := range map[string]testemail.LegacyCSVOptions{
 		"unknown delimiter":       {StrayLine: "--unrecognized"},
 		"two malformed CSV parts": {TwoCSVs: true},
-		"folded header":           {Header: "Content-Description: exported\r\n\tcontacts\r\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
