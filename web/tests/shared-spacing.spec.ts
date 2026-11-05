@@ -290,3 +290,96 @@ test.describe('touch reading', () => {
     await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
   });
 });
+
+test('selected row keeps its accent while open in the reader', async ({ page }) => {
+  await selectWorkspace(page, 'Messages');
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.focus();
+  await page.keyboard.press('Space');
+  await expect(grid.locator('.data-row--selected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  await page.keyboard.press('Space');
+  await grid.getByText(row.title, { exact: true }).click();
+  await expect(page.getByRole('complementary', { name: `Reading pane: ${row.title}` })).toBeVisible();
+  await grid.focus();
+  await page.keyboard.press('Space');
+  const selected = grid.locator('.data-row--selected.data-row--inspected');
+  await expect(selected).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+});
+
+
+test('selected rows keep their fill on stripes and in the reader', async ({ page }) => {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [1, 2].map(id => ({ ...row, key: `message:${id}`, title: `Example ${id}` })), total_count: 2, cache_revision: 'spacing', search_provenance: {}
+  } }));
+  await selectWorkspace(page, 'Messages');
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+  const selected = grid.locator('.data-row--selected');
+  await expect(selected).toHaveCount(2);
+  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundColor));
+  expect((await colors())[0]).toBe((await colors())[1]);
+  await grid.getByText('Example 1', { exact: true }).click();
+  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
+  expect((await colors())[0]).toBe((await colors())[1]);
+});
+
+
+for (const width of [1024, 1440]) {
+  test(`selection bar stays on one row and anchors meeting context at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const meetings = Array.from({ length: 500 }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
+    const email = { ...row, key: 'message:501', title: 'Example email' };
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+      rows: [...meetings, email], total_count: 10035, cache_revision: 'spacing', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
+      count: 500, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
+      unavailable_actions: [
+        { action: 'export', reason: 'browser_export_requires_single_message' },
+        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+        { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
+      ], action_targets: []
+    } }));
+    await selectWorkspace(page, 'Messages');
+    const grid = page.getByRole('grid', { name: 'Messages results' });
+    await grid.focus();
+    await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+    await grid.focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Space');
+    const bar = page.locator('.selection-bar');
+    await expect(bar.locator('.selection-count')).toHaveText('500 selected · 128.0 MB');
+    await expect(bar.getByRole('button', { name: 'Export selection' })).toBeDisabled();
+    await expect(bar.getByRole('button', { name: 'Review deletion…' })).toBeDisabled();
+    await expect(bar.getByRole('button', { name: 'Select all 10,035 matching', exact: true })).toBeVisible();
+    const layout = await bar.evaluate(element => ({
+      tops: Array.from(element.querySelectorAll('button')).filter(button => button.getBoundingClientRect().height > 0).map(button => button.getBoundingClientRect().top),
+      clipped: element.querySelector('.selection-count')!.scrollWidth > element.querySelector('.selection-count')!.clientWidth
+    }));
+    expect(new Set(layout.tops).size).toBe(1);
+    expect(layout.clipped).toBe(false);
+    const trigger = bar.getByRole('button', { name: 'Meeting context…' });
+    for (const remounted of [false, true]) {
+      if (remounted) {
+        await grid.focus();
+        await page.keyboard.press('Space');
+        await expect(trigger).toHaveCount(0);
+        await page.keyboard.press('Space');
+      }
+      await trigger.click();
+      const panel = page.getByRole('dialog', { name: 'Meeting context', exact: true });
+      await expect(panel).toBeVisible();
+      const buttonBox = (await trigger.boundingBox())!;
+      const panelBox = (await panel.boundingBox())!;
+      expect(panelBox.x).toBeGreaterThanOrEqual(0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(0);
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(width);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(900);
+      expect(Math.abs(panelBox.x - buttonBox.x)).toBeLessThanOrEqual(1);
+      const gap = panelBox.y < buttonBox.y ? buttonBox.y - panelBox.y - panelBox.height : panelBox.y - buttonBox.y - buttonBox.height;
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(16);
+      await page.keyboard.press('Escape');
+    }
+  });
+}

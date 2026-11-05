@@ -2507,15 +2507,6 @@ describe('AppShell', () => {
         isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null,
       },
       {
-        layer: 'More selection actions',
-        open: async () => {
-          await fireEvent.keyDown(screen.getByRole('grid', { name: 'Messages results' }), { key: ' ' });
-          await clickFocused(await screen.findByRole('button', { name: 'More selection actions' }));
-          await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('menuitem'));
-        },
-        isOpen: () => screen.queryByRole('menu', { name: 'More selection actions' }) !== null
-      },
-      {
         layer: 'Display',
         open: async () => {
           await clickFocused(screen.getByRole('button', { name: 'Display' }));

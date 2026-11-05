@@ -51,7 +51,7 @@ aggregates remain email-only unless you choose another message type.
 ## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Export meeting context**. You
-can select explicit rows or **Select all matching items** for the current
+can select explicit rows or **Select all N matching** for the current
 search and filters. The export includes exactly that selection. Mixed selections
 fail with **Select meetings only**; narrow selections larger than 100 meetings.
 For one meeting, expand its message and choose **⋯ → Export meeting…**. Choose JSON or Markdown. **Include transcript** is off by default.

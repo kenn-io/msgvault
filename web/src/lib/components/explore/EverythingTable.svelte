@@ -717,11 +717,11 @@
     background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
-  .data-row--selected {
+  .data-row.data-row--selected {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
     background: var(--selected-bg);
-    box-shadow: inset 2px 0 0 var(--accent-blue), inset 0 0 0 1px var(--selected-border);
+    box-shadow: inset 3px 0 0 var(--accent-blue);
   }
 
   .cell--people :global(.kit-tooltip-trigger) { max-width: 100%; }

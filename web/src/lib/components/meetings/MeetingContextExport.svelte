@@ -14,10 +14,12 @@
     client,
     request,
     disabledReason = '',
+    open = true,
   }: {
     client: APIClient;
     request: MeetingContextRequest;
     disabledReason?: string;
+    open?: boolean;
   } = $props();
 
   const formatOptions: SegmentedControlOption[] = [
@@ -33,6 +35,13 @@
   let requestController: AbortController | undefined;
   let requestGeneration = 0;
   const requestFingerprint = $derived(JSON.stringify(request));
+
+  $effect(() => {
+    if (!open) {
+      format = 'json';
+      includeTranscript = false;
+    }
+  });
 
   $effect(() => {
     void requestFingerprint;

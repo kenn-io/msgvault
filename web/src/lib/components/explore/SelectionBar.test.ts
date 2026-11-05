@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -96,7 +96,7 @@ describe('SelectionBar', () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching' }));
 
     expect(selection.mode).toBe('all_matching');
     expect(selection.snapshot()).toMatchObject({ cacheRevision: 'cache-1' });
@@ -111,39 +111,53 @@ describe('SelectionBar', () => {
     expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
   });
 
-  it('shows preflight-supplied per-action reasons without inferring support from rows', () => {
+  it('shows count and estimated size together while announcing only the count', () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:1', 'message:2']);
+    render(SelectionBar, { selection, preflight: preflight() });
+    const count = screen.getByText('2 selected', { selector: '.selection-count' });
+    expect(count.textContent).toBe('2 selected · 20 B');
+    expect(count.closest('[aria-hidden="true"]')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('2 selected');
+  });
+
+  it('explains disabled actions on hover and keyboard focus', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
     render(SelectionBar, {
-      selection,
-      totalCount: 2,
+      selection, onExport: vi.fn(), onReviewDeletion: vi.fn(),
       preflight: preflight([
-        { action: 'export', reason: 'selection_contains_items_without_exportable_files' },
-        { action: 'open_in_source', reason: 'selection_contains_items_that_cannot_be_opened_in_source' },
+        { action: 'export', reason: 'browser_export_requires_single_message' },
+        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
       ]),
     });
-
-    expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
-    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
+    for (const [name, reason] of [
+      ['Export selection', 'Export works for one message at a time.'],
+      ['Review deletion…', 'None of the selected items can be deleted from their source.'],
+    ]) {
+      const control = screen.getByRole('button', { name }) as HTMLButtonElement;
+      expect(control.disabled).toBe(true);
+      expect(screen.queryByText(reason!)).toBeNull();
+      const wrapper = control.closest('.kit-tooltip-trigger')!;
+      await fireEvent.mouseEnter(wrapper);
+      expect((await screen.findByRole('tooltip')).textContent).toBe(reason);
+      await fireEvent.mouseLeave(wrapper);
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      await fireEvent.focusIn(wrapper);
+      expect((await screen.findByRole('tooltip')).textContent).toBe(reason);
+      await fireEvent.focusOut(wrapper);
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+    }
   });
 
-  it('lists a disabled open-in-source item with a plain reason and no raw code', async () => {
+  it('hides the source menu when source links are unavailable', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
     render(SelectionBar, {
-      selection,
-      totalCount: 2,
-      preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
-      onOpenInSource: () => undefined,
+      selection, preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
+      onOpenInSource: vi.fn(),
     });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-
-    const item = screen.getByRole('menuitem', {
-      name: 'Open selection in source Your sources don’t provide links to open these items.'
-    });
-    expect(item.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByText(/trusted_source_link_unavailable/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More selection actions' })).toBeNull();
   });
 
   it('opens the selection in source from the overflow menu when preflight allows it', async () => {
@@ -187,28 +201,9 @@ describe('SelectionBar', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('explicit');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('all_matching');
-  });
-
-  it('disables Review for deletion with the staging reason as a sentence', () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, {
-      selection,
-      totalCount: 2,
-      onReviewDeletion: vi.fn(),
-      preflight: preflight([
-        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
-      ]),
-    });
-
-    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
-    expect(review.disabled).toBe(true);
-    const reason = screen.getByText('None of the selected items can be deleted from their source.');
-    expect(review.getAttribute('aria-describedby')).toBe(reason.id);
-    expect(reason.getAttribute('title')).toBe('selection_contains_items_that_cannot_be_deleted_from_source');
   });
 
   it('keeps Review for deletion enabled when staging is available', () => {
@@ -247,7 +242,6 @@ describe('SelectionBar', () => {
       canExportMeetings: true,
     });
 
-    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
@@ -289,14 +283,14 @@ describe('SelectionBar', () => {
     const renderBar = (canExportMeetings?: boolean) => {
       const selection = new ExploreSelectionState();
       selection.selectVisible(['message:1']);
-      render(SelectionBar, {
+      const view = render(SelectionBar, {
         selection,
         totalCount: 2,
         client: createAPIClient(vi.fn<typeof fetch>()),
         meetingSelection,
         canExportMeetings,
       });
-      return selection;
+      return { selection, view };
     };
 
     it('hides meeting export for selections that cannot contain meetings', () => {
@@ -318,8 +312,80 @@ describe('SelectionBar', () => {
       expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
     });
 
+    it('claims Escape and returns focus to the meeting button', async () => {
+      renderBar(true);
+      const trigger = screen.getByRole('button', { name: 'Meeting context…' });
+      await fireEvent.click(trigger);
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.dispatchEvent(escape);
+      await tick();
+      expect(escape.defaultPrevented).toBe(true);
+      expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it('hides on focus leaving and releases Escape', async () => {
+      renderBar(true);
+      const trigger = screen.getByRole('button', { name: 'Meeting context…' });
+      trigger.focus();
+      await fireEvent.click(trigger);
+      const outside = document.createElement('button');
+      document.body.append(outside);
+      try {
+        outside.focus();
+        await tick();
+        expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+        const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        document.dispatchEvent(escape);
+        expect(escape.defaultPrevented).toBe(false);
+      } finally { outside.remove(); }
+    });
+
+    it('closes on loss of eligibility and releases Escape', async () => {
+      const { view } = renderBar(true);
+      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+      await view.rerender({ canExportMeetings: false });
+      expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+    });
+
+    it('keeps an export running when dismissed and shows its result on reopening', async () => {
+      const selection = new ExploreSelectionState();
+      selection.selectVisible(['message:1']);
+      let request!: Request;
+      let finish!: (response: Response) => void;
+      const download = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:context');
+      const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+      try {
+        render(SelectionBar, {
+          selection, meetingSelection, canExportMeetings: true,
+          client: createAPIClient(async input => {
+            request = input as Request;
+            return new Promise<Response>(resolve => { finish = resolve; });
+          }),
+        });
+        const trigger = screen.getByRole('button', { name: 'Meeting context…' });
+        await fireEvent.click(trigger);
+        const panel = screen.getByRole('dialog', { name: 'Meeting context' });
+        await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+        await waitFor(() => expect(finish).toBeTypeOf('function'));
+        await fireEvent.mouseDown(document.body);
+        expect(panel.isConnected).toBe(true);
+        expect(panel.hidden).toBe(true);
+        expect(request.signal.aborted).toBe(false);
+        finish(Response.json({ schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: true, omitted_message_ids: [2] }));
+        await waitFor(() => expect(download).toHaveBeenCalledOnce());
+        await fireEvent.click(trigger);
+        expect(screen.getByRole('dialog', { name: 'Meeting context' })).toBe(panel);
+        expect(screen.getByText(/Export was truncated/)).toBeDefined();
+      } finally { download.mockRestore(); revoke.mockRestore(); click.mockRestore(); }
+    });
+
     it('closes the meeting context controls when the bar hides', async () => {
-      const selection = renderBar(true);
+      const { selection } = renderBar(true);
       await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
 

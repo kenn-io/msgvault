@@ -146,7 +146,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('Shift+A');
     const selectedRow = page.locator('[data-row-key="message:1"]');
     await expect(selectedRow).toHaveAttribute('aria-selected', 'true');
-    await expect(selectedRow).toHaveCSS('box-shadow', /2px 0px 0px 0px inset/);
+    await expect(selectedRow).toHaveCSS('box-shadow', /3px 0px 0px 0px inset/);
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
     const palette = page.getByRole('dialog', { name: 'Messages commands' });
