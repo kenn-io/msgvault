@@ -32,6 +32,14 @@ textarea {
   }
 
   .touch-controls .kit-icon-button:not(.kit-popover-card *) { min-width: 44px; }
+
+  .touch-controls .sidebar--drawer .sidebar__brand {
+    padding-left: calc(var(--pane-pad-x) + var(--space-3));
+    padding-right: calc(var(--pane-pad-x) - var(--space-4));
+  }
+  .touch-controls .sidebar--drawer .sidebar__views { margin-bottom: 0; }
+  .people-list .toolbar.touch-controls { padding-top: var(--pane-pad-x); }
+  .touch-controls .toolbar-row .kit-segmented { padding-block: 0; }
 }
 
 /* Keep unstyled section headings below the page title (h1, --font-size-xl). */

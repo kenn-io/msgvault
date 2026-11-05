@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { appShortcuts, ROOT_SCOPE, Button, MEDIA, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
-  import { MediaQuery } from 'svelte/reactivity';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
@@ -31,7 +30,6 @@
   const selection = new ExploreSelectionState();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
-  const compact = new MediaQuery(MEDIA.compact);
   let details = $state(false);
   let selectedDate = $state<string | null>(null);
   let domainYear = $state<number | null>(null);
@@ -263,7 +261,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
   <!-- The heading repeats the tab at phone width; toolbar sizing follows touch. -->
-  <div class={compact.current && !urlState.peopleDuplicates ? 'kit-sr-only' : 'heading'}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
+  <div class="heading" class:heading--people={!urlState.peopleDuplicates}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
   {#if urlState.peopleDuplicates}
     <PossibleDuplicates controller={reviews} onDecide={(candidate, decision) => reviews.queueDecision(candidate, decision)} />
   {:else}
@@ -280,6 +278,9 @@
 <style>
   .people { display: flex; min-height: 0; height: 100%; flex-direction: column; background: var(--bg-canvas); }
   .heading { --page-header-gap: 0px; padding: var(--space-5) var(--page-gutter) var(--field-gap); }
+  @media (max-width: 640px) {
+    .heading--people { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  }
   .body { display: flex; min-height: 0; flex: 1; }
   .list { display: flex; min-height: 0; height: 100%; width: 100%; flex-direction: column; }
   .list-content { display: flex; min-height: 0; flex: 1; }

@@ -321,11 +321,6 @@
     gap: var(--control-gap);
   }
 
-  @media (hover: none), (pointer: coarse) {
-    .toolbar { padding-top: var(--pane-pad-x); }
-    .toolbar-row :global(.kit-segmented) { padding-block: 0; }
-  }
-
   .toolbar-row :global(.sort-select) {
     min-width: 0;
   }

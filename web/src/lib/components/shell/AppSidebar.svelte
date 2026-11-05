@@ -221,15 +221,6 @@
     border-left: 1px solid var(--border-muted);
   }
 
-  @media (hover: none), (pointer: coarse) {
-    .sidebar--drawer .sidebar__brand {
-      padding-left: calc(var(--pane-pad-x) + var(--space-3));
-      padding-right: calc(var(--pane-pad-x) - var(--space-4));
-    }
-
-    .sidebar--drawer .sidebar__views { margin-bottom: 0; }
-  }
-
   .sidebar__views-error {
     margin-left: calc(var(--pane-pad-x) + var(--space-4));
     padding: var(--space-2) var(--pane-pad-x);

@@ -613,7 +613,7 @@ test('People heading follows phone width and keeps the duplicates heading', asyn
   await page.goto('/?workspace=relationships');
   const heading = page.getByRole('heading', { name: 'People', exact: true });
   await expect(heading).toHaveCount(1);
-  await expect.poll(async () => (await page.locator('.kit-sr-only').filter({ has: heading }).boundingBox())!.height).toBeLessThanOrEqual(1);
+  await expect.poll(async () => (await page.locator('.heading').filter({ has: heading }).boundingBox())!.height).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('button', { name: 'Possible duplicates', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Possible duplicates', exact: true })).toBeVisible();
