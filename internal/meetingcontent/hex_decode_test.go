@@ -15,8 +15,10 @@ func TestHexDecodeFutureVersionUnavailable(t *testing.T) {
 }
 
 func TestHexDecodeTypedEnvelope(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
 	content := Decode("hex_json", []byte(`{"version":1,"meeting":{"manifest":{"schema_version":1,"id":"synthetic","title":"Example call","status":"complete","created_at_ms":1790000000000},"transcript_state":"final","entries":[{"source":"system","start_ms":0,"end_ms":1000,"text":"Synthetic decoded words"}]}}`), nil)
-	require.Equal(t, StateAvailable, content.Transcript.State)
-	assert.Contains(t, content.Transcript.Text, "Synthetic decoded words")
-	assert.Empty(t, content.Transcript.Reason)
+	must.Equal(StateAvailable, content.Transcript.State)
+	check.Contains(content.Transcript.Text, "Synthetic decoded words")
+	check.Contains(content.Transcript.Text, "Them")
+	check.Empty(content.Transcript.Reason)
 }

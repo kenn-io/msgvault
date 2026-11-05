@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +13,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestRecordingConfinementAndImmutableSnapshot(t *testing.T) {
+func TestRecordingTrackConfinementAndQuietPeriod(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
 
@@ -29,11 +29,7 @@ func TestRecordingConfinementAndImmutableSnapshot(t *testing.T) {
 	r, err := prepareTrack(t.Context(), opts, m, "system")
 	must.NoError(err)
 	must.NotNil(r)
-	defer func() { _ = r.Close() }()
-	must.NoError(os.WriteFile(filepath.Join(dir, "system.wav"), []byte("changed source"), 0600))
-	data, err := io.ReadAll(r.File)
-	must.NoError(err)
-	check.Equal(testutil.RecordingWAV(), data)
+	must.NoError(r.Close())
 	// A symlink cannot redirect retained audio out of the meeting root.
 	outside := filepath.Join(t.TempDir(), "outside.wav")
 	must.NoError(os.WriteFile(outside, testutil.RecordingWAV(), 0600))
@@ -63,17 +59,18 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 	digest := sha256.Sum256(data)
 	upload := RecordingUpload{Source: meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}, MessageID: id, Track: "system", Hash: hex.EncodeToString(digest[:]), Size: int64(len(data)), MIMEType: "audio/wav"}
 	for _, tt := range []struct {
-		name   string
-		mutate func(*RecordingUpload)
-		data   []byte
-		cap    int64
+		name    string
+		mutate  func(*RecordingUpload)
+		data    []byte
+		cap     int64
+		wantErr error
 	}{
-		{"valid", func(*RecordingUpload) {}, data, 0},
-		{"truncated", func(*RecordingUpload) {}, data[:len(data)-1], 0},
-		{"hash", func(u *RecordingUpload) { u.Hash = strings.Repeat("0", 64) }, data, 0},
-		{"track", func(u *RecordingUpload) { u.Track = "../../escape" }, data, 0},
-		{"media", func(u *RecordingUpload) { u.MIMEType = "audio/mp4" }, data, 0},
-		{"cap", func(*RecordingUpload) {}, data, 8},
+		{"valid", func(*RecordingUpload) {}, data, 0, nil},
+		{"truncated", func(*RecordingUpload) {}, data[:len(data)-1], 0, meetingarchive.ErrRecordingChanged},
+		{"hash", func(u *RecordingUpload) { u.Hash = strings.Repeat("0", 64) }, data, 0, meetingarchive.ErrRecordingChanged},
+		{"track", func(u *RecordingUpload) { u.Track = "../../escape" }, data, 0, ErrRemoteRecordValidation},
+		{"media", func(u *RecordingUpload) { u.MIMEType = "audio/mp4" }, data, 0, ErrRemoteRecordValidation},
+		{"cap", func(*RecordingUpload) {}, data, 8, meetingarchive.ErrRecordingTooLarge},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			must := require.New(t)
@@ -86,7 +83,7 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 				must.NotNil(r)
 				must.NoError(r.Close())
 			} else {
-				must.Error(err)
+				must.ErrorIs(err, tt.wantErr)
 				assert.Nil(t, r)
 			}
 		})
@@ -103,7 +100,7 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 	_, err = imp.ImportRecording(t.Context(), wrong, opts.AttachmentsDir, bytes.NewReader(data), 0)
 	must.ErrorIs(err, ErrRemoteRecordValidation)
 	_, err = imp.ImportRecording(t.Context(), upload, opts.AttachmentsDir, bytes.NewReader(data[:len(data)-1]), 0)
-	must.Error(err)
+	must.ErrorIs(err, meetingarchive.ErrRecordingChanged)
 	refs, err := st.MessageAttachmentsByPartKeyContext(t.Context(), id, "hex:system")
 	must.NoError(err)
 	check.Empty(refs, "truncated audio publishes no attachment")

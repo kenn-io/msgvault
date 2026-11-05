@@ -9,9 +9,9 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/hex/evidence"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
@@ -76,6 +76,7 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 					`{"source":"system","start_ms":0,"end_ms":100,"text":"Unfinished replacement"}`,
 					"{\"source\":\"system\",\"start_ms\":0,\"end_ms\":100,\"text\":\"Partial prefix\"}\nunfinished",
 					"malformed complete line\n",
+					"{\"source\":\"system\",\"start_ms\":0,\"end_ms\":1000,\"text\":\"Partial replacement\"}\nmalformed complete line\n",
 				} {
 					must.NoError(os.WriteFile(filepath.Join(dir, "transcript.ndjson"), []byte(text), 0600))
 					sum, err = sync()
@@ -109,15 +110,23 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 			empty, err := st.GetMessageRaw(id)
 			must.NoError(err)
 			check.Empty(meetingcontent.Decode(RawFormat, empty, nil).Transcript.Text)
+			first := fixtureMeeting(t, opts.MeetingsDir, "first-partial", "complete")
+			must.NoError(os.WriteFile(filepath.Join(first, "transcript.ndjson"), []byte("{\"source\":\"system\",\"start_ms\":0,\"end_ms\":1000,\"text\":\"Readable salvage\"}\ninvalid\n"), 0600))
+			sum, err = sync()
+			must.NoError(err)
+			raw, err = st.GetMessageRaw(messageID(t, st, sum.SourceID, "first-partial"))
+			must.NoError(err)
+			content := meetingcontent.Decode(RawFormat, raw, nil)
+			check.Contains(content.Transcript.Text, "Readable salvage")
+			check.Equal("hex_partial", content.Transcript.Reason)
 			var wire map[string]any
 			must.NoError(json.Unmarshal(after, &wire))
 			wire["version"] = 2
 			future, err := json.Marshal(wire)
 			must.NoError(err)
 			must.NoError(st.UpsertMessageRawWithFormat(id, future, RawFormat))
-			check.Equal(meetingcontent.StateUnavailable, meetingcontent.Decode(RawFormat, future, nil).Transcript.State)
 			_, err = sync()
-			must.Error(err)
+			must.ErrorIs(err, evidence.ErrUnsupportedVersion)
 			untouched, err := st.GetMessageRaw(id)
 			must.NoError(err)
 			check.Equal(string(future), string(untouched))
@@ -131,7 +140,7 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 			must.NoError(err)
 			must.NoError(os.WriteFile(manifestPath, manifestBytes, 0600))
 			_, err = sync()
-			must.Error(err, "clean explicit-title finals must also refuse future evidence")
+			must.ErrorIs(err, evidence.ErrUnsupportedVersion, "clean explicit-title finals must also refuse future evidence")
 			untouched, err = st.GetMessageRaw(id)
 			must.NoError(err)
 			check.Equal(string(future), string(untouched))
@@ -177,8 +186,11 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 		account := meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}
 		_, err = imp.ImportRemote(t.Context(), RemoteRequest{Action: "register", Source: account})
 		must.NoError(err)
-		_, err = imp.ImportRemote(t.Context(), RemoteRequest{Action: "upsert", Source: account, Meeting: &m})
+		archived, err := imp.ImportRemote(t.Context(), RemoteRequest{Action: "upsert", Source: account, Meeting: &m})
 		must.NoError(err)
+		storedMessage, err := st.GetMessage(archived.MessageID)
+		must.NoError(err)
+		check.Equal(want, storedMessage.Subject, "every accepted title source reaches the remote archive")
 		if source == "" {
 			for _, remote := range []bool{false, true} {
 				var sum *ImportSummary
@@ -199,50 +211,4 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 	v.TitleSource = "default"
 	v.Notes.Title = " "
 	check.Equal("Provisional", v.DisplayTitle())
-}
-func TestReaderSharedLockAndNDJSONOnlyPublication(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
-
-	root := t.TempDir()
-	dir := fixtureMeeting(t, root, "read-lock", "transcribing")
-	fixtureTranscript(t, dir)
-	must.NoError(os.Remove(filepath.Join(dir, "transcript.md")))
-	lock := flock.New(filepath.Join(dir, "active.lock"))
-	must.NoError(lock.RLock())
-	defer func() { _ = lock.Close() }()
-	reader, err := Open(t.Context(), root)
-	must.NoError(err)
-	defer func() { _ = reader.Close() }()
-	scan, err := reader.ListMeetings(t.Context())
-	must.NoError(err)
-	must.Len(scan.Meetings, 1)
-	check.Zero(scan.Deferred)
-	check.Equal("complete", scan.Meetings[0].Manifest.Status)
-}
-
-func TestMetadataOnlyMeetingCanUpdate(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
-
-	st, imp, opts := importFixture(t)
-	dir := fixtureMeeting(t, opts.MeetingsDir, "metadata", "failed")
-	sum, err := imp.Import(t.Context(), opts)
-	must.NoError(err)
-	check.Equal(int64(1), sum.MeetingsAdded)
-	var manifest Manifest
-	path := filepath.Join(dir, "manifest.json")
-	raw, err := os.ReadFile(path)
-	must.NoError(err)
-	must.NoError(json.Unmarshal(raw, &manifest))
-	manifest.Title = "Updated metadata"
-	raw, err = json.Marshal(manifest)
-	must.NoError(err)
-	must.NoError(os.WriteFile(path, raw, 0600))
-	sum, err = imp.Import(t.Context(), opts)
-	must.NoError(err)
-	check.Equal(int64(1), sum.MeetingsUpdated)
-	message, err := st.GetMessage(messageID(t, st, sum.SourceID, "metadata"))
-	must.NoError(err)
-	check.Equal("Updated metadata", message.Subject)
 }

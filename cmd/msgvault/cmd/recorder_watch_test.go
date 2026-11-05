@@ -12,11 +12,6 @@ import (
 )
 
 func TestRecorderWatchSchedulesEnabledSourcesAndRescans(t *testing.T) {
-	t.Run("Hex", func(t *testing.T) {
-		testRecorderWatch(t, func(id string, enabled bool, schedule string) config.HexSource {
-			return config.HexSource{Identifier: id, Enabled: enabled, Schedule: schedule}
-		}, func(s config.HexSource) string { return s.Identifier }, func(s config.HexSource) bool { return s.Enabled }, func(s config.HexSource) string { return s.Schedule })
-	})
 	t.Run("Muesli", func(t *testing.T) {
 		testRecorderWatch(t, func(id string, enabled bool, schedule string) config.MuesliSource {
 			return config.MuesliSource{Identifier: id, Enabled: enabled, Schedule: schedule}

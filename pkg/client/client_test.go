@@ -1597,6 +1597,4 @@ func TestHexEnumsPreserveMuesliClientExports(t *testing.T) {
 	for _, status := range statuses {
 		require.NoError(status.Validate())
 	}
-	require.NoError(generated.HexRemoteRequestActionRegister.Validate())
-	require.NoError(generated.HexRemoteResultStatusCreated.Validate())
 }

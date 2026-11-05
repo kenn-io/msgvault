@@ -30,22 +30,41 @@ func TestHexImportBoundary(t *testing.T) {
 	for _, tt := range []struct {
 		name, body, key, media string
 		status                 int
+		delegated              bool
 	}{
-		{"owner", `{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`, meetingImportTestAPIKey, "application/json", 200},
-		{"unauthorized", `{}`, "", "application/json", 401},
-		{"validation", `{"action":"register","source":{"identifier":"recorder","account_email":"invalid"}}`, meetingImportTestAPIKey, "application/json", 422},
-		{"unknown field", `{"action":"register","secret":"private"}`, meetingImportTestAPIKey, "application/json", 400},
-		{"duplicate field", `{"action":"register","action":"upsert"}`, meetingImportTestAPIKey, "application/json", 400},
-		{"media", `{}`, meetingImportTestAPIKey, "text/plain", 415},
-		{"oversized", strings.Repeat(" ", int(hex.MaxRemoteRequestBytes)+1), meetingImportTestAPIKey, "application/json", 413},
+		{"owner", `{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`, meetingImportTestAPIKey, "application/json", 200, false},
+		{"delegated", `{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`, "", "application/json", 401, true},
+		{"unauthorized", `{}`, "", "application/json", 401, false},
+		{"validation", `{"action":"register","source":{"identifier":"recorder","account_email":"invalid"}}`, meetingImportTestAPIKey, "application/json", 422, false},
+		{"unknown field", `{"action":"register","secret":"private"}`, meetingImportTestAPIKey, "application/json", 400, false},
+		{"duplicate field", `{"action":"register","action":"upsert"}`, meetingImportTestAPIKey, "application/json", 400, false},
+		{"media", `{}`, meetingImportTestAPIKey, "text/plain", 415, false},
+		{"oversized", strings.Repeat(" ", int(hex.MaxRemoteRequestBytes)+1), meetingImportTestAPIKey, "application/json", 413, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			st := &fakeHexImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
-			server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
+			server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, AgentAccess: tt.delegated}}, st, nil, testLogger())
+
+			var secret string
+			if tt.delegated {
+				registry := agentgrant.NewRegistry()
+				server.agentGrants = registry
+				_, token, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "user@example.com"}}, time.Time{})
+				require.NoError(t, err)
+				secret = token
+				health := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+				health.Header.Set(apiprotocol.AgentTokenHeader, secret)
+				healthOut := httptest.NewRecorder()
+				server.Router().ServeHTTP(healthOut, health)
+				require.Equal(t, http.StatusOK, healthOut.Code, "delegated token authenticates before endpoint denial")
+			}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(tt.body))
 			req.Header.Set("X-Api-Key", tt.key)
 			req.Header.Set("Content-Type", tt.media)
+			if tt.delegated {
+				req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+			}
 			out := httptest.NewRecorder()
 			server.Router().ServeHTTP(out, req)
 			assert.Equal(tt.status, out.Code)
@@ -57,29 +76,6 @@ func TestHexImportBoundary(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestHexImportRejectsDelegatedToken(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := &fakeHexImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
-	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, AgentAccess: true}}, st, nil, testLogger())
-	registry := agentgrant.NewRegistry()
-	server.agentGrants = registry
-	_, secret, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "user@example.com"}}, time.Time{})
-	require.NoError(err)
-	health := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	health.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	healthOut := httptest.NewRecorder()
-	server.Router().ServeHTTP(healthOut, health)
-	require.Equal(http.StatusOK, healthOut.Code, "delegated token must authenticate before endpoint denial")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(`{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	out := httptest.NewRecorder()
-	server.Router().ServeHTTP(out, req)
-	assert.Equal(http.StatusUnauthorized, out.Code)
-	assert.Zero(st.calls)
 }
 
 func TestHexImportWaitsForOperationGate(t *testing.T) {

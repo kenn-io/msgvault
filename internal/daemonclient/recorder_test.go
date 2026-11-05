@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -130,6 +131,40 @@ func TestRecorderImportRateLimitStopsWhenCanceled(t *testing.T) {
 				require.ErrorIs(<-done, context.Canceled)
 				assert.Equal(t, 1, attempts, "cancellation prevents another request")
 			})
+		})
+	}
+}
+
+var recorderResponseCases = []struct {
+	name        string
+	decode      func(*http.Response) error
+	recordError error
+}{
+	{"Hex", func(response *http.Response) error {
+		_, err := decodeRecorderResponse[hex.RemoteResult](response, hexRecorderErrors)
+		return err
+	}, hex.ErrRemoteValidation},
+	{"Muesli", func(response *http.Response) error { _, err := decodeMuesliResponse(response); return err }, muesli.ErrRemoteValidation},
+}
+
+func TestRecorderRemoteValidationIsFatal(t *testing.T) {
+	for _, tc := range recorderResponseCases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"error":"validation_failed"}`))}
+			err := tc.decode(response)
+			require.Error(t, err)
+			assert.NotErrorIs(t, err, tc.recordError, "server rejection can be a source mismatch and must abort")
+		})
+	}
+}
+
+func TestRecorderRemoteRecordValidationCanContinue(t *testing.T) {
+	for _, tc := range recorderResponseCases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"error":"record_validation_failed","message":"attendee@example.com"}`))}
+			err := tc.decode(response)
+			require.ErrorIs(t, err, tc.recordError)
+			assert.NotContains(t, err.Error(), "attendee@example.com")
 		})
 	}
 }

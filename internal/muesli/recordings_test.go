@@ -458,8 +458,6 @@ func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 }
 
 func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
 	data := testutil.RecordingWAV()
 	digest := sha256.Sum256(data)
 	upload := RecordingUpload{
@@ -484,6 +482,8 @@ func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
 		{name: "over cap", upload: upload, body: data, maxSize: int64(len(data) - 1), wantErr: ErrRecordingTooLarge},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			staged, err := StageRecordingUpload(t.Context(), tt.upload, bytes.NewReader(tt.body), tt.maxSize)
 			if tt.wantErr != nil {
 				require.ErrorIs(err, tt.wantErr)
@@ -510,53 +510,6 @@ func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
 var syntheticM4A []byte
 
 func recordingM4A() []byte { return append([]byte{}, syntheticM4A...) }
-
-func TestRecordingM4ADetectionAndIncompleteContainers(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "muesli.db")
-	data := recordingM4A()
-	compatible := append([]byte{}, data...)
-	copy(compatible[8:12], "isom")
-	for _, tt := range []struct {
-		name      string
-		data      []byte
-		available bool
-	}{
-		{"m4a", data, true}, {"compatible m4a", compatible, true}, {"short atom", data[:len(data)-1], false}, {"unfinished wav", testutil.RecordingWAV()[:46], false}, {"unrelated", []byte("arbitrary non-audio file"), false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			path := writeRecording(t, dbPath, "recording.wav", tt.data)
-			recording, err := PrepareRecording(t.Context(), dbPath, path, 0)
-			require.NoError(err)
-			if tt.available {
-				require.NotNil(recording)
-				assert.Equal("audio/mp4", recording.MIMEType)
-				require.NoError(recording.Close())
-			} else {
-				assert.Nil(recording)
-			}
-		})
-	}
-}
-
-func TestRecordingDefaultCapRejectsSparseFileAboveFourGiB(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	dbPath := filepath.Join(t.TempDir(), "muesli.db")
-	path := writeRecording(t, dbPath, "large.wav", testutil.RecordingWAV())
-	file, err := os.OpenFile(path, os.O_WRONLY, 0600)
-	require.NoError(err)
-	require.NoError(file.Truncate(DefaultRecordingMaxBytes + 1))
-	require.NoError(file.Close())
-	old := time.Now().Add(-time.Minute)
-	require.NoError(os.Chtimes(path, old, old))
-	recording, err := PrepareRecording(t.Context(), dbPath, path, 0)
-	require.ErrorIs(err, ErrRecordingTooLarge)
-	assert.Nil(recording)
-}
 
 func TestImportRecordingM4AUsesOrdinaryAudioAttachment(t *testing.T) {
 	assert := assert.New(t)

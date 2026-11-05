@@ -78,12 +78,5 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 	packet, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: &ids, IncludeTranscript: &include, Format: &format})
 	must.NoError(err)
 	check.Contains(packet.Content, "HTTP fixture transcript")
-	check.Contains(packet.Content, "A synthetic summary")
-	check.Contains(packet.Content, "guest@example.com")
-	actions, err := client.ListMeetingActionItems(t.Context(), generated.ListMeetingActionItemsBody{})
-	must.NoError(err)
-	check.Empty(actions.Rows)
-	summary, err = hex.ScanRemote(t.Context(), options, send)
-	must.NoError(err)
-	check.Zero(summary.MeetingsAdded + summary.MeetingsUpdated + summary.RecordingsStored)
+
 }

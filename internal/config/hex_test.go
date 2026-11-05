@@ -34,15 +34,17 @@ enabled = true
 	check.Equal(filepath.Join(support, "meetings"), HexSource{}.EffectiveMeetingsDir())
 }
 func TestLoadHexRejectsInvalidEntries(t *testing.T) {
-	for _, body := range []string{
-		`[[hex]]`,
-		"[[hex]]\naccount_email=\"invalid\"",
-		"[[hex]]\nidentifier=\"one\"\naccount_email=\"you@example.com\"\n[[hex]]\nidentifier=\"ONE\"\naccount_email=\"you@example.com\"",
-		"[[hex]]\naccount_email=\"you@example.com\"\nrecording_max_bytes=-1",
-		"[server]\nhex_recording_max_bytes=-1\n[[hex]]\naccount_email=\"you@example.com\"",
+	for _, tc := range []struct{ name, body, want string }{
+		{"missing account", `[[hex]]`, `[[hex]] identifier "default" requires account_email`},
+		{"invalid account", "[[hex]]\naccount_email=\"invalid\"", `[[hex]] identifier "default" has invalid account_email`},
+		{"duplicate identifier", "[[hex]]\nidentifier=\"one\"\naccount_email=\"you@example.com\"\n[[hex]]\nidentifier=\"ONE\"\naccount_email=\"you@example.com\"", `[[hex]]: duplicate identifier "ONE"`},
+		{"recorder cap", "[[hex]]\naccount_email=\"you@example.com\"\nrecording_max_bytes=-1", "hex recording_max_bytes must be nonnegative and below MaxInt64"},
+		{"server cap", "[server]\nhex_recording_max_bytes=-1\n[[hex]]\naccount_email=\"you@example.com\"", "server.hex_recording_max_bytes must be nonnegative and below MaxInt64"},
 	} {
-		_, err := Load(writeMeetingConfig(t, body), "")
-		require.Error(t, err)
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeMeetingConfig(t, tc.body), "")
+			require.ErrorContains(t, err, tc.want)
+		})
 	}
 }
 
