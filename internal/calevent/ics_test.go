@@ -30,17 +30,31 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 }
 
 func TestICSOutlookTZID(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
 	raw, err := os.ReadFile("testdata/outlook.ics")
-	requirements.NoError(err)
-	components, err := ParseICS(raw, "", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	e := components[0].Event
-	assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
-	assertions.Equal("America/New_York", e.EventTimeZone)
-	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
+	require.NoError(t, err)
+	for _, tc := range []struct{ windows, zone, start string }{
+		{"Eastern Standard Time", "America/New_York", "2027-07-06T13:00:00Z"},
+		{"British Columbia Standard Time", "America/Vancouver", "2027-07-06T16:00:00Z"},
+		{"Alberta Standard Time", "America/Edmonton", "2027-07-06T15:00:00Z"},
+		{"Manitoba Standard Time", "America/Winnipeg", "2027-07-06T14:00:00Z"},
+	} {
+		t.Run(tc.windows, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			input := string(raw)
+			if tc.windows != "Eastern Standard Time" {
+				start := strings.Index(input, "BEGIN:VTIMEZONE")
+				end := strings.Index(input, "END:VTIMEZONE\n") + len("END:VTIMEZONE\n")
+				input = strings.ReplaceAll(input[:start]+input[end:], "Eastern Standard Time", tc.windows)
+			}
+			components, err := ParseICS([]byte(input), "", "")
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			e := components[0].Event
+			assertions.Equal(tc.start, e.Start.Format(time.RFC3339))
+			assertions.Equal(tc.zone, e.EventTimeZone)
+			assertions.Equal([]string{"RDATE;TZID=" + tc.zone + ":20270707T090000"}, e.Recurrence)
+		})
+	}
 }
 
 func TestParseICSCustomizedTimeZone(t *testing.T) {
