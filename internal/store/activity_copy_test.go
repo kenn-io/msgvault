@@ -13,6 +13,61 @@ import (
 
 // A lower-ID observed copy must not suppress the owned copy's real contact.
 func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
+	for _, invitation := range []bool{false, true} {
+		t.Run(fmt.Sprintf("counted tie/invitation=%t", invitation), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			at := timelineContactQuery(f).Now
+			var ids []int64
+			var rooms []int64
+			for i := range 2 {
+				source, err := f.Store.GetOrCreateSource("gmail", fmt.Sprintf("archive-%d@example.com", i))
+				requirements.NoError(err)
+				requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+				room, err := f.Store.EnsureConversationWithType(source.ID, "copy", "email_thread", "Copy")
+				requirements.NoError(err)
+				id := f.add(t, room, source.ID, at, !invitation, "<display-copy@example.com>")
+				ids = append(ids, id)
+				rooms = append(rooms, room)
+				if invitation {
+					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
+					requirements.NoError(err)
+				} else if i == 0 {
+					sender := f.EnsureParticipant("noreply@example.com", "Automated sender", "example.com")
+					requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, sender}, nil))
+					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_is_from_me=FALSE WHERE id=?`), id)
+					requirements.NoError(err)
+				}
+			}
+			if invitation {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,'invite.ics','application/octet-stream','invite.ics')`), ids[1])
+				requirements.NoError(err)
+			}
+			projectTierSignals(t, f.Fixture, "UTC", 0)
+			for _, room := range rooms {
+				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: room, Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}})
+				requirements.NoError(err)
+				requirements.Len(messages, 1)
+				counted := false
+				for _, counterpart := range messages[0].Counterparts {
+					counted = counted || counterpart.Counted
+				}
+				assertions.Equal(!invitation, counted)
+			}
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal(ids[1], page.Bursts[0].AnchorMessageID)
+			assertions.Equal(2, page.Bursts[0].CopyCounts[ids[1]])
+			assertions.Zero(page.Bursts[0].Inbound)
+			if invitation {
+				assertions.Zero(page.Bursts[0].Outbound)
+			} else {
+				assertions.Equal(1, page.Bursts[0].Outbound)
+			}
+			assertions.Zero(page.NoiseOmitted)
+		})
+	}
 	for _, person := range []struct {
 		name  string
 		saved bool
