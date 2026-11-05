@@ -342,12 +342,6 @@ func defaultChatDBPath() (string, error) {
 
 // importImessageRecorded preserves partial progress even when an import fails.
 func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64) (summary *imessage.ImportSummary, retErr error) {
-	return recordImessageImport(ctx, s, sourceID, func(scoped *store.Store, progress func(imessage.ImportSummary)) (*imessage.ImportSummary, error) {
-		return client.ImportWithProgress(ctx, scoped, sourceID, progress)
-	})
-}
-
-func recordImessageImport(ctx context.Context, s *store.Store, sourceID int64, run func(*store.Store, func(imessage.ImportSummary)) (*imessage.ImportSummary, error)) (summary *imessage.ImportSummary, retErr error) {
 	syncID, err := s.StartSync(sourceID, "imessage_import")
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
@@ -370,7 +364,7 @@ func recordImessageImport(ctx context.Context, s *store.Store, sourceID int64, r
 			retErr = errors.Join(retErr, fmt.Errorf("complete sync: %w", err))
 		}
 	}()
-	return run(scoped, func(sum imessage.ImportSummary) {
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
 		_ = record(sum)
 	})
 }

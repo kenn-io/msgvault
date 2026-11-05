@@ -39,18 +39,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 	waDB, err := openReadOnlyDatabase(ctx, waDBPath)
 	if err != nil {
-		openErr := fmt.Errorf("open whatsapp db: %w", err)
-		source, err := imp.store.GetOrCreateSource("whatsapp", opts.Phone)
-		if err != nil {
-			return nil, errors.Join(openErr, fmt.Errorf("get or create source: %w", err))
-		}
-		// The database kind is unknown until it opens. Record failed opens
-		// under the common import type for both Apple and Android sources.
-		syncID, err := imp.store.StartSync(source.ID, "whatsapp_import")
-		if err != nil {
-			return nil, errors.Join(openErr, fmt.Errorf("start sync: %w", err))
-		}
-		return nil, errors.Join(openErr, imp.store.FailSync(syncID, openErr.Error()))
+		return nil, fmt.Errorf("open whatsapp db: %w", err)
 	}
 	defer func() { _ = waDB.Close() }()
 
