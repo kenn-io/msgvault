@@ -6,7 +6,9 @@
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityMutationResult, Organization, OrganizationProfile, OrganizationProfileBody } from '../../directory/models';
 
-  import DetailRow from '../people/DetailRow.svelte';
+  import { historyProvenance } from './history-format';
+  import { formatDateTime } from '../../util/format';
+  import { sentenceCase } from '../../explore/labels';
 
   interface Props {
     controller: DirectoryEntityController;
@@ -34,6 +36,7 @@
   let checkingDelete = $state(false);
   let deleteError = $state('');
   let holders = $state<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
+  const saveDisabled = $derived(loading || !name.trim() || controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
 
   onMount(() => {
@@ -72,21 +75,20 @@
     try {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       let saved = currentProfile?.organization;
-      if (!initialOrganization || !saved || Object.entries(body).some(([key, value]) => value !== (saved?.[key as keyof Organization] ?? null))) {
-        const result = initialOrganization
-          ? await controller.updateOrganization(initialOrganization.id, body)
+      if (!saved || Object.entries(body).some(([key, value]) => value !== (saved?.[key as keyof Organization] ?? null))) {
+        const result = initialOrganization || saved
+          ? await controller.updateOrganization((initialOrganization ?? saved)!.id, body)
           : await controller.createOrganization(body);
         if (!result.ok) { handleFailure(result); return; }
         saved = result.entity!;
-        if (!initialOrganization) { onDone(saved); return; }
-        currentProfile = { ...currentProfile!, organization: saved };
+        currentProfile = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [], ...currentProfile, organization: saved };
       }
       const aliasDraft = aliases === baselineAliases.join(', ') ? baselineAliases : values(aliases);
       const categoryDraft = categories === baselineCategories.join(', ') ? baselineCategories : values(categories);
       const aliasDelta = valueDelta(baselineAliases, aliasDraft);
       const categoryDelta = valueDelta(baselineCategories, categoryDraft);
       if (aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
-        const result = await controller.putOrganizationProfile(initialOrganization!.id, (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta));
+        const result = await controller.putOrganizationProfile(saved!.id, (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta));
         if (!result.ok) {
           handleFailure(result);
           message = `Aliases and categories remain unsaved. ${message}`;
@@ -132,9 +134,9 @@
   function handleFailure(result: Exclude<DirectoryEntityMutationResult<unknown, Organization | OrganizationProfile>, { ok: true }>): void {
     if (result.kind === 'conflict') {
       conflictCurrent = asProfile(result.current);
-      message = `This organization changed elsewhere. ${result.message}`;
+      message = 'This organization changed elsewhere.';
     } else if (result.kind === 'unknown' || result.kind === 'blocked') {
-      message = `The create outcome is unknown. ${result.message}`;
+      message = "We couldn't confirm it was saved. Refresh organizations before trying again.";
     } else {
       message = result.message;
     }
@@ -159,23 +161,6 @@
 
   function present(parts: Array<string | number | undefined>): string {
     return parts.filter((part) => part !== undefined && part !== '').join(' · ');
-  }
-
-  function envelopeText(envelope: Name['envelope']): string {
-    return present([
-      envelope.source,
-      envelope.source_ref,
-      envelope.type_label,
-      ...(envelope.type_tokens ?? []),
-      envelope.pref === undefined ? undefined : `preference ${envelope.pref}`,
-      envelope.confidence === undefined ? undefined : `confidence ${envelope.confidence}`,
-      envelope.active_from,
-      envelope.vcard.property,
-      envelope.vcard.group,
-      envelope.vcard.prop_id,
-      ...(envelope.vcard.pid ?? []),
-      envelope.vcard.altid
-    ]);
   }
 
   type Name = NonNullable<OrganizationProfile['names']>[number];
@@ -298,52 +283,52 @@
       <section class="deletion" aria-label="Delete organization confirmation">
         <h3>Delete {currentProfile?.organization.name}?</h3>
         {#if checkingDelete}<p role="status">Checking employment records…</p>
-        {:else if deleteError}<p role="alert">{deleteError}</p><Button label="Retry employment check" onclick={() => void checkDeletion()} />
+        {:else if deleteError}<p role="alert">{deleteError} <button type="button" class="retry" aria-label="Retry employment check" onclick={() => void checkDeletion()}>Retry</button></p>
         {:else if holders && holders.count > 0}
           <p>{currentProfile?.organization.name} has {holders.atLeast ? 'at least ' : ''}{holders.count} employment {holders.count === 1 ? 'record' : 'records'}. Remove {holders.count === 1 ? 'it' : 'them'} first.</p>
-          {#each holders.people as person}<DetailRow description="Employment record">{person}</DetailRow>{/each}
+          <ul class="saved-rows">{#each holders.people as person, index}<li><span>{person}</span><span class="meta">{holders.descriptions[index]}</span></li>{/each}</ul>
+          {#if holders.count > holders.people.length}<p class="meta">and {holders.count - holders.people.length} more</p>{/if}
         {:else}<p>This permanently removes the organization.</p>{/if}
       </section>
     {:else if loading}<p role="status">Loading current organization…</p>{:else}
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block disabled={submitting} /></label>
         <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
         <label>Primary domain<TextInput ariaLabel="Organization primary domain" bind:value={primaryDomain} block disabled={submitting} /></label>
-        {#if initialOrganization && currentProfile}
-          <label>Aliases<TextInput ariaLabel="Organization aliases" bind:value={aliases} block disabled={submitting} /></label>
-          <label>Categories<TextInput ariaLabel="Organization categories" bind:value={categories} block disabled={submitting} /></label>
-        {/if}
+        <label>Aliases<TextInput ariaLabel="Organization aliases" bind:value={aliases} block disabled={submitting} /></label>
+        <label>Categories<TextInput ariaLabel="Organization categories" bind:value={categories} block disabled={submitting} /></label>
         <label>Description<textarea aria-label="Organization description" bind:value={description} disabled={submitting}></textarea></label>
     {/if}
     {#if message}
       <div role="alert">
-        <p>{message}</p>
-        {#if conflictCurrent}
+        <p>{message}{#if initialOrganization && !currentProfile && !loading}{' '}<button type="button" class="retry" aria-label="Retry organization load" onclick={() => void loadCurrent()}>Retry</button>{/if}</p>
+        {#if conflictCurrent && !confirmDelete}
           <section class="current-data" aria-label="Current saved organization">
             <h3>Current saved organization</h3>
-            <dl>
-              <div><dt>Name</dt><dd>{conflictCurrent.organization.name}</dd></div>
-              <div><dt>Kind</dt><dd>{conflictCurrent.organization.kind}</dd></div>
-              <div><dt>Primary domain</dt><dd>{conflictCurrent.organization.primary_domain || 'None'}</dd></div>
-              <div><dt>Description</dt><dd>{conflictCurrent.organization.description || 'None'}</dd></div>
-              <div><dt>Status</dt><dd>{conflictCurrent.organization.retired_at ? `Retired ${conflictCurrent.organization.retired_at}` : 'Active'}</dd></div>
-            </dl>
-            <h4>Names</h4>
-            {#if conflictCurrent.names?.length}<ul>{#each conflictCurrent.names as item}<li>{item.name_kind}: {item.name} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
-            <h4>Categories</h4>
-            {#if conflictCurrent.categories?.length}<ul>{#each conflictCurrent.categories as item}<li>{item.category} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
-            <h4>Contact points</h4>
-            {#if conflictCurrent.contact_points?.length}<ul>{#each conflictCurrent.contact_points as item}<li>{present([item.address_kind, item.original_value, item.service_slug, item.scope_kind, item.scope_value, item.uri])} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
-            <h4>Addresses</h4>
-            {#if conflictCurrent.addresses?.length}<ul>{#each conflictCurrent.addresses as item}<li>{present([item.address_kind, item.original_value, item.post_office_box, item.extended_address, item.street_address, item.locality, item.region, item.postal_code, item.country_name, item.extended_components, item.free_text, item.place_uri, item.geo_uri, item.label, item.timezone, item.country_code])} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
-            <h4>Identifiers</h4>
-            {#if conflictCurrent.identifiers?.length}<ul>{#each conflictCurrent.identifiers as item}<li>{item.identifier_kind}: {item.identifier_value} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
-            <h4>Media</h4>
-            {#if conflictCurrent.media?.length}<ul>{#each conflictCurrent.media as item}<li>{present([item.media_kind, item.original_value, item.media_type, item.uri, item.content_hash])} · {envelopeText(item.envelope)}</li>{/each}</ul>{:else}<p>None</p>{/if}
+            <ul class="saved-rows">
+              <li><span>{conflictCurrent.organization.name}</span><span class="meta">Name</span></li>
+              <li><span>{sentenceCase(conflictCurrent.organization.kind)}</span><span class="meta">Kind</span></li>
+              <li><span>{conflictCurrent.organization.primary_domain || 'None'}</span><span class="meta">Primary domain</span></li>
+              <li><span>{conflictCurrent.organization.description || 'None'}</span><span class="meta">Description</span></li>
+              <li><span>{conflictCurrent.organization.retired_at ? `Retired ${formatDateTime(conflictCurrent.organization.retired_at)}` : 'Active'}</span><span class="meta">Status</span></li>
+            </ul>
+            {#each [
+              { title: 'Names', rows: (conflictCurrent.names ?? []).map(item => ({ value: item.name, envelope: item.envelope })) },
+              { title: 'Categories', rows: (conflictCurrent.categories ?? []).map(item => ({ value: item.category, envelope: item.envelope })) },
+              { title: 'Contact points', rows: (conflictCurrent.contact_points ?? []).map(item => ({ value: item.original_value, envelope: item.envelope })) },
+              { title: 'Addresses', rows: (conflictCurrent.addresses ?? []).map(item => ({ value: item.original_value, envelope: item.envelope })) },
+              { title: 'Identifiers', rows: (conflictCurrent.identifiers ?? []).map(item => ({ value: item.identifier_value, envelope: item.envelope })) },
+              { title: 'Media', rows: (conflictCurrent.media ?? []).map(item => ({ value: present([item.original_value, item.media_type, item.uri]), envelope: item.envelope })) }
+            ] as section}
+              {#if section.rows.length}
+                <h4>{section.title}</h4>
+                <ul class="saved-rows">{#each section.rows as item}<li><span>{item.value}</span><span class="meta">{historyProvenance(item.envelope)}</span></li>{/each}</ul>
+              {/if}
+            {/each}
           </section>
         {/if}
       </div>
     {/if}
-    {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
+    {#if controller.createBlocked.organizations}<button type="button" class="retry" disabled={submitting} onclick={() => void refreshAfterUnknown()}>Refresh organizations</button>{/if}
   </div>
   {#snippet footer()}
     <div class="organization-actions">
@@ -353,7 +338,7 @@
     {:else}
       {#if initialOrganization && currentProfile}<Button class="delete-organization" tone="danger" label="Delete organization" disabled={submitting} onclick={() => void checkDeletion()} />{/if}
       <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button tone="info" surface="solid" type="submit" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || !name.trim() || controller.createBlocked.organizations} />
+      <Button tone={saveDisabled ? 'neutral' : 'info'} surface="solid" type="submit" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={saveDisabled} />
     {/if}
     </div>
   {/snippet}
@@ -362,13 +347,23 @@
 
 <style>
   .editor { display: grid; gap: var(--field-gap); }
-  .deletion { display: grid; gap: var(--space-2); }
-  .organization-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); width: 100%; }
-  :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; border-color: transparent; background: transparent; color: var(--text-danger); }
+  .deletion { display: grid; gap: var(--field-gap); }
+  .organization-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--field-gap); width: 100%; }
+  :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; padding-inline: 0; border-color: transparent; background: transparent; color: var(--text-danger); }
   label { display: grid; gap: var(--label-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
-  h3, h4, p, dl, dd, ul { margin: 0; } [role="alert"] { color: var(--text-danger); }
-  .current-data { display: grid; gap: var(--space-2); margin-top: var(--space-2); max-height: 20rem; overflow: auto; }
-  .current-data dl { display: grid; gap: var(--space-1); } .current-data dl div { display: grid; grid-template-columns: 8rem 1fr; gap: var(--space-2); }
-  .current-data dt, .current-data h4 { font-weight: 600; } .current-data ul { padding-left: var(--space-4); }
+  h3, h4, p, ul { margin: 0; } [role="alert"] { color: var(--text-danger); }
+  .current-data { display: grid; gap: var(--space-2); margin-top: var(--space-4); color: var(--text-primary); font-weight: normal; }
+  .saved-rows { padding: 0; list-style: none; }
+  .saved-rows li { display: flex; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
+  .saved-rows li:last-child { border-bottom: 0; }
+  .saved-rows span { min-width: 0; overflow-wrap: anywhere; }
+  .meta { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .retry { justify-self: start; padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
+  @media (max-width: 640px) {
+    .saved-rows li { flex-direction: column; }
+    .organization-actions { flex-direction: column-reverse; align-items: stretch; }
+    .organization-actions :global(.kit-button) { width: 100%; }
+    .organization-actions :global(.delete-organization) { margin-right: 0; }
+  }
 </style>

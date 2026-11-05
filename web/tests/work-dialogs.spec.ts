@@ -22,6 +22,12 @@ test('keyboard End keeps errors and recovery controls opaque outside the row', a
   const panel = page.getByRole('dialog', { name: 'End employment' });
   const date = panel.getByRole('textbox', { name: 'Employment end date' });
   await expect(date).toBeFocused();
+  await expect(panel.getByRole('heading')).toHaveText('End Engineer at Example Org');
+  const triggerBox = await trigger.boundingBox();
+  const panelBox = await panel.boundingBox();
+  const rowBox = await trigger.locator('..').locator('..').boundingBox();
+  expect(panelBox!.x + panelBox!.width).toBeCloseTo(rowBox!.x + rowBox!.width, 0);
+  expect(panelBox!.y).toBeCloseTo(triggerBox!.y + triggerBox!.height + 4, 0);
   await page.mouse.move(0, 0);
   await date.press('Enter');
   await expect(panel.getByRole('alert')).toContainText('Unable to end this employment');
@@ -46,6 +52,20 @@ test('organization footer stays inside a narrow dialog', async ({ page }) => {
     expect(button!.x).toBeGreaterThanOrEqual(bounds!.x);
     expect(button!.x + button!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
   }
+});
+
+test('phone work rows keep their text width and the End panel inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const trigger = page.getByRole('button', { name: 'End employment', exact: true });
+  const row = trigger.locator('..').locator('..');
+  const value = await row.locator('.value').boundingBox();
+  const bounds = await row.boundingBox();
+  expect(value!.width).toBeCloseTo(bounds!.width, 0);
+  await trigger.click();
+  const panel = await page.getByRole('dialog', { name: 'End employment' }).boundingBox();
+  expect(panel!.height).toBeGreaterThan(100);
+  expect(panel!.y + panel!.height).toBeLessThanOrEqual(844);
+  expect(await page.locator('.app-shell').evaluate(element => element.scrollTop)).toBe(0);
 });
 
 test.describe('End employment with two current jobs', () => {
@@ -135,6 +155,7 @@ test('keeps keyboard focus in the work row after End removes its trigger', async
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'End employment' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit employment', exact: true })).toBeFocused();
+  expect(await page.locator('.app-shell').evaluate(element => element.scrollTop)).toBe(0);
 });
 
 test('Enter submits organization and employment editors through their footers', async ({ page }) => {

@@ -42,6 +42,52 @@ describe('OrganizationEditor', () => {
     expect(puts).toBe(2);
   });
 
+  it('retries loading an organization from its inline error action', async () => {
+    let reads = 0;
+    const { controller } = controllerWith(async () => ++reads === 1
+      ? Response.json({ message: 'Organization load unavailable' }, { status: 400 })
+      : Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retry organization load' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Synthetic Works'));
+    expect(reads).toBe(2);
+  });
+
+  it('creates aliases and categories with the organization and reuses it after a profile failure', async () => {
+    let creates = 0;
+    let puts = 0;
+    const created = { ...organization(), name: 'New org', primary_domain: null, description: null };
+    const onDone = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') {
+        creates++;
+        return Response.json(created, { status: 201, headers: { ETag: '"organization-21-r1"' } });
+      }
+      if (request.method === 'GET') return Response.json({ ...organizationProfile(), organization: created }, { headers: { ETag: '"organization-21-r1"' } });
+      if (request.method === 'PUT') {
+        puts++;
+        const body = await request.json();
+        expect(body.names).toContainEqual(expect.objectContaining({ name: 'New alias' }));
+        expect(body.categories).toContainEqual(expect.objectContaining({ category: 'Research' }));
+        if (puts === 1) return Response.json({ message: 'Profile unavailable' }, { status: 400 });
+        return Response.json({ ...organizationProfile(), organization: created }, { headers: { ETag: '"organization-21-r2"' } });
+      }
+      throw new Error(`unexpected ${request.method}`);
+    });
+    render(OrganizationEditor, { controller, onDone });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New org' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'New alias' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await screen.findByText(/Aliases and categories remain unsaved/);
+    expect(onDone).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(created));
+    expect(creates).toBe(1);
+    expect(puts).toBe(2);
+  });
+
   it.each(['details', 'aliases', 'categories'])('preserves untouched comma values when saving %s', async field => {
     const saved = {
       ...organizationProfile(),
@@ -241,6 +287,7 @@ describe('OrganizationEditor', () => {
     await screen.findByText(count === 1 ? 'Synthetic Org has 1 employment record. Remove it first.' : 'Synthetic Org has at least 200 employment records. Remove them first.');
     expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
     expect(screen.getByText('Example Person 1')).toBeDefined();
+    if (count === 200) expect(screen.getByText('and 198 more')).toBeDefined();
     const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
     expect(query.get('limit')).toBe('200');
     expect(query.has('current_only')).toBe(false);
@@ -267,9 +314,10 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry employment check' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await screen.findByText(/This organization changed elsewhere. Employment added elsewhere/);
+    await screen.findByText('This organization changed elsewhere.');
     await screen.findByText('Synthetic Org has 1 employment record. Remove it first.');
     expect(checks).toBe(3);
+    expect(screen.queryByRole('region', { name: 'Current saved organization' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel organization deletion' }));
     expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Kept draft');

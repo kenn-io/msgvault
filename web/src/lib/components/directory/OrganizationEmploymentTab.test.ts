@@ -118,7 +118,7 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.input(field, { target: { value: '2026' } });
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));
       expect((await screen.findByRole('alert')).textContent).toContain('Current saved role');
-      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Current Employer (22)'));
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Current Employer'));
       expect(field).toHaveProperty('value', '2026');
       expect(reads).toBe(2);
       await fireEvent.keyDown(document, { key: 'Escape' });
@@ -355,10 +355,9 @@ describe('OrganizationEmploymentTab', () => {
     expect(alert.textContent).toContain('Changed title');
     expect(alert.textContent).toContain('Concurrent research');
     expect(alert.textContent).toContain('Concurrent campus');
-    expect(alert.textContent).toContain('Concurrent Employment Org (23)');
-    expect(alert.textContent).not.toContain('Exact Employment Org (23)');
-    expect(alert.textContent).toContain('Address ID 33');
-    expect(alert.textContent).toContain('0.33');
+    expect(alert.textContent).toContain('Concurrent Employment Org');
+    expect(alert.textContent).not.toContain('Exact Employment Org');
+    expect(alert.textContent).toContain('Confidence: 0.33');
     expect(title.value).toBe('Draft title');
     expect(patches).toBe(1);
     const firstPatch = requests.find((request) => request.method === 'PATCH')!;
@@ -464,13 +463,12 @@ describe('OrganizationEmploymentTab', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('primary changed elsewhere');
-    expect(alert.textContent).toContain('Organization 22');
+    expect(alert.textContent).toContain('Employer unavailable');
     expect(alert.textContent).not.toContain('Synthetic Org (22)');
     expect(alert.textContent).toContain('Concurrent role');
     expect(alert.textContent).toContain('Concurrent primary department');
-    expect(alert.textContent).toContain('Address ID 66');
     expect(alert.textContent).toContain('0.66');
-    expect(alert.textContent).toContain('archive_observation');
+    expect(alert.textContent).toContain('Archive observation');
     expect(alert.textContent).toContain('concurrent-primary');
     expect(primaryWrites).toBe(1);
   });
@@ -510,7 +508,7 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'End employment' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete employment' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete employment' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(screen.getByText('No work yet')).toBeDefined());
     expect(requests.find((request) => request.method === 'DELETE')?.headers.get('If-Match')).toBe('"employment-11-r2"');
   });
@@ -536,7 +534,7 @@ describe('OrganizationEmploymentTab', () => {
     await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Org' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Draft role' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
+    expect((await screen.findByRole('alert')).textContent).toContain("We couldn't confirm it was saved.");
     expect((screen.getByRole('textbox', { name: 'Employment title' }) as HTMLInputElement).value).toBe('Draft role');
     expect(screen.getByRole('button', { name: 'Create employment' })).toHaveProperty('disabled', true);
     expect(posts).toBe(1);
@@ -574,14 +572,13 @@ describe('OrganizationEmploymentTab', () => {
       expect(appShortcuts.activeScope()).toBe('directory-employment-delete');
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
       expect(rootShortcut).not.toHaveBeenCalled();
-      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete employment' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
       const dialog = await screen.findByRole('dialog', { name: 'Delete employment' });
       const alert = await within(dialog).findByRole('alert');
       expect(alert.textContent).toContain('Concurrent department');
       expect(alert.textContent).toContain('Concurrent office');
       expect(alert.textContent).toContain('Concurrent description');
-      expect(alert.textContent).toContain('Address ID 88');
       expect(alert.textContent).toContain('0.88');
       expect(deletes).toBe(1);
 

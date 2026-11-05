@@ -281,7 +281,7 @@ export class DirectoryEntityController {
     if (!owner || !this.organizationRecords.has(id)) { this.organizationRecords.set(id, response.data); this.organizationETags.set(id, response.etag); }
     return response.data;
   }
-  async organizationEmploymentHolders(id: number): Promise<{ count: number; atLeast: boolean; people: string[] }> {
+  async organizationEmploymentHolders(id: number): Promise<{ count: number; atLeast: boolean; people: string[]; descriptions: string[] }> {
     const abort = this.beginEntityRequest();
     try {
       const response = await generatedListOrganizationEmployments({ id }, { limit: organizationEmploymentCheckLimit }, { ...this.client, signal: abort.signal });
@@ -296,7 +296,7 @@ export class DirectoryEntityController {
         } catch { return undefined; }
       }));
       if (!this.isActive(abort)) throw new Error('Request was cancelled.');
-      return { count: records.length, atLeast: records.length === organizationEmploymentCheckLimit, people: people.filter((name): name is string => !!name) };
+      return { count: records.length, atLeast: records.length === organizationEmploymentCheckLimit, people: people.filter((name): name is string => !!name), descriptions: ids.flatMap((id, index) => people[index] ? [records.find(record => record.person_id === id)?.title ?? records.find(record => record.person_id === id)?.role ?? ''] : []) };
     } finally { this.entityRequests.delete(abort); }
   }
 

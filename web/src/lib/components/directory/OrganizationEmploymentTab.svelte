@@ -194,7 +194,7 @@
       </div>
     {/if}
     </div>
-    {#snippet footer()}<Button label="Cancel" disabled={acting} onclick={closeDelete} /><Button tone="danger" surface="solid" label="Confirm delete employment" disabled={acting} onclick={() => void removeEmployment()} />{/snippet}
+    {#snippet footer()}<Button label="Cancel" disabled={acting} onclick={closeDelete} /><Button tone="danger" surface="solid" label="Delete" ariaLabel="Delete" disabled={acting} onclick={() => void removeEmployment()} />{/snippet}
   </Modal>
 {/if}
 
@@ -205,7 +205,7 @@
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   .records { display: grid; }
-  .delete-body { display: grid; gap: var(--space-2); }
+  .delete-body { display: grid; gap: var(--field-gap); }
   .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .org-link:hover { text-decoration: underline; }

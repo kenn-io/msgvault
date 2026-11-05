@@ -1,39 +1,41 @@
 <script lang="ts">
-  import { formatPartialDate as partialDate } from '../../directory/dates';
   import type { Employment, Organization } from '../../directory/models';
+  import { historyProvenance } from './history-format';
 
-  interface Props {
-    employment: Employment;
-    organization?: Organization;
+  let { employment, organization = undefined }: { employment: Employment; organization?: Organization } = $props();
+
+  function when(value: Employment['start_date']): string {
+    if (!value?.year) return '';
+    return new Intl.DateTimeFormat(undefined, { year: 'numeric', ...(value.month ? { month: 'short' } : {}), ...(value.day ? { day: 'numeric' } : {}), timeZone: 'UTC' }).format(new Date(Date.UTC(value.year, (value.month ?? 1) - 1, value.day ?? 1)));
   }
 
-  let { employment, organization = undefined }: Props = $props();
-
-  function organizationText(): string {
-    return organization?.id === employment.organization_id
-      ? `${organization.name} (${employment.organization_id})`
-      : `Organization ${employment.organization_id}`;
-  }
+  const rows = $derived([
+    { label: 'Organization', value: organization?.id === employment.organization_id ? organization.name : 'Employer unavailable' },
+    { label: 'Title', value: employment.title },
+    { label: 'Role', value: employment.role },
+    { label: 'Department', value: employment.department },
+    { label: 'Location', value: employment.location },
+    { label: 'Description', value: employment.description },
+    { label: 'Dates', value: `${when(employment.start_date) || 'Unspecified'} – ${employment.is_current ? 'present' : when(employment.end_date) || 'unspecified'}` },
+    { label: 'Status', value: employment.is_current ? 'Current' : 'Past work' },
+  ].filter(row => row.value));
 </script>
 
-<dl aria-label="Current saved employment">
-  <div><dt>Organization</dt><dd>{organizationText()}</dd></div>
-  <div><dt>Person</dt><dd>{employment.person_id}</dd></div>
-  <div><dt>Title</dt><dd>{employment.title || 'None'}</dd></div>
-  <div><dt>Role</dt><dd>{employment.role || 'None'}</dd></div>
-  <div><dt>Department</dt><dd>{employment.department || 'None'}</dd></div>
-  <div><dt>Location</dt><dd>{employment.location || 'None'}</dd></div>
-  <div><dt>Description</dt><dd>{employment.description || 'None'}</dd></div>
-  <div><dt>Dates</dt><dd>{partialDate(employment.start_date) || 'Unspecified'} – {employment.is_current ? 'present' : partialDate(employment.end_date) || 'unspecified'}</dd></div>
-  <div><dt>Status</dt><dd>{employment.is_current ? 'Current' : 'Historical'}; {employment.is_primary ? 'primary' : 'not primary'}</dd></div>
-  <div><dt>Address</dt><dd>{employment.address_id === undefined ? 'None' : `Address ID ${employment.address_id}`}</dd></div>
-  <div><dt>Confidence</dt><dd>{employment.confidence === undefined ? 'None' : employment.confidence}</dd></div>
-  <div><dt>Source</dt><dd>{employment.source}{#if employment.source_ref} · {employment.source_ref}{/if}</dd></div>
-</dl>
+<section aria-label="Current saved employment">
+  <h4>Current saved employment</h4>
+  <dl>
+    {#each rows as row}<div><dt>{row.label}</dt><dd>{row.value}</dd></div>{/each}
+  </dl>
+  <p>{historyProvenance(employment)}</p>
+</section>
 
 <style>
-  dl, dd { margin: 0; }
-  dl { display: grid; gap: var(--space-1); }
-  div { display: grid; grid-template-columns: 7rem 1fr; gap: var(--space-2); }
-  dt { font-weight: 600; }
+  section { display: grid; gap: var(--space-2); margin-top: var(--space-3); color: var(--text-primary); font-weight: normal; }
+  h4, dl, dd, p { margin: 0; }
+  div { display: flex; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
+  div:last-child { border-bottom: 0; }
+  dd { min-width: 0; overflow-wrap: anywhere; }
+  dt { order: 1; }
+  dt, p { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: normal; }
+  @media (max-width: 640px) { div { flex-direction: column; } }
 </style>

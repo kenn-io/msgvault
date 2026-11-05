@@ -41,6 +41,7 @@
   let conflictCurrent = $state<Employment>();
   let conflictOrganization = $state<Organization>();
   let selectedOrganization = $state<Organization>();
+  const saveDisabled = $derived(loading || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments);
   let releaseScope: (() => void) | undefined;
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
@@ -126,7 +127,7 @@
       if (creatingOrganization) {
         const created = await controller.createOrganization({ name: organizationName.trim(), kind: organizationKind as OrganizationCreateBody['kind'], primary_domain: organizationDomain.trim() || null });
         if (!created.ok) {
-          message = created.kind === 'unknown' || created.kind === 'blocked' ? `The create outcome is unknown. ${created.message}` : created.message;
+          message = created.kind === 'unknown' || created.kind === 'blocked' ? "We couldn't confirm it was saved. Refresh organizations before trying again." : created.message;
           return;
         }
         selectedOrganization = created.entity;
@@ -145,7 +146,7 @@
         if (result.current) conflictOrganization = await loadConflictOrganization(result.current.organization_id);
         message = `This employment changed elsewhere. ${result.message}`;
       } else if (result.kind === 'unknown' || result.kind === 'blocked') {
-        message = `The create outcome is unknown. ${result.message}`;
+        message = "We couldn't confirm it was saved. Refresh employment records before trying again.";
       } else {
         message = result.message;
       }
@@ -199,7 +200,7 @@
     {#if loading}
       <p role="status">Loading current employment…</p>
     {:else}
-      <div class="field">
+      <div class="field" class:inline-employer={creatingOrganization}>
         <div class="organization-heading"><span>Organization</span>
           {#if !initialEmployment}<Button size="sm" label={creatingOrganization ? 'Choose existing' : 'New organization'} disabled={submitting} onclick={() => { creatingOrganization = !creatingOrganization; }} />{/if}
         </div>
@@ -230,14 +231,14 @@
         {/if}
       </div>
     {/if}
-    {#if controller.createBlocked.employments}<Button label="Refresh employment records" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
-    {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void controller.refreshOrganizations()} />{/if}
+    {#if controller.createBlocked.employments}<button type="button" class="retry" disabled={submitting} onclick={() => void refreshAfterUnknown()}>Refresh employment records</button>{/if}
+    {#if controller.createBlocked.organizations}<button type="button" class="retry" disabled={submitting} onclick={() => void controller.refreshOrganizations()}>Refresh organizations</button>{/if}
   </div>
   {#snippet footer()}
     <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-    <Button type="submit" tone="info" surface="solid" busy={submitting}
+    <Button type="submit" tone={saveDisabled ? 'neutral' : 'info'} surface="solid" busy={submitting}
       label={initialEmployment ? 'Save employment' : 'Create employment'}
-      disabled={loading || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments} />
+      disabled={saveDisabled} />
   {/snippet}
 </Modal>
 </form>
@@ -248,6 +249,8 @@
   label, .field { display: grid; gap: var(--label-gap); align-content: start; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--field-gap); }
   .org { --typeahead-max-width: 100%; --typeahead-min-width: 100%; min-width: 0; }
+  .inline-employer { margin-bottom: var(--space-4); gap: var(--field-gap); }
+  .retry { justify-self: start; padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .organization-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font: inherit; }
   .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }
