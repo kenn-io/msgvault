@@ -758,25 +758,6 @@ func TestImportRefreshesMemberCountWithoutAttachments(t *testing.T) {
 }
 
 func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
-	t.Run("unchanged false flag performs no update statements", func(t *testing.T) {
-		testutil.SkipIfPostgres(t, "SQLite trigger counts statements")
-		require := require.New(t)
-		f := newImportFixture(t, attachmentpolicy.Policy{})
-		_, err := f.db.Exec(`DELETE FROM message_attachment_join; UPDATE message SET cache_has_attachments = 0`)
-		require.NoError(err)
-		_, err = f.c.Import(t.Context(), f.st, f.source)
-		require.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TABLE synthetic_flag_updates (message_id INTEGER);
-			CREATE TRIGGER synthetic_flag_updates AFTER UPDATE OF has_attachments ON messages
-			BEGIN INSERT INTO synthetic_flag_updates VALUES (NEW.id); END`)
-		require.NoError(err)
-		_, err = f.c.Import(t.Context(), f.st, f.source)
-		require.NoError(err)
-		var updates int
-		require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
-		require.Zero(updates, "unchanged messages must leave the archive untouched")
-	})
-
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, f importFixtureParts) *Client
@@ -814,6 +795,17 @@ func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
 				require.NoError(err)
 				require.Equal(flag == 1, hasAttachments(), "source flag %d", flag)
 				require.Equal([]int{0, 2, 2, 2, 0}[i], summary.MessagesUpdated)
+				if i == 0 && tc.name == "no join rows" && !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+					_, err := f.st.DB().Exec(`CREATE TABLE synthetic_flag_updates (message_id INTEGER);
+						CREATE TRIGGER synthetic_flag_updates AFTER UPDATE OF has_attachments ON messages
+						BEGIN INSERT INTO synthetic_flag_updates VALUES (NEW.id); END`)
+					require.NoError(err)
+					_, err = f.c.Import(t.Context(), f.st, f.source)
+					require.NoError(err)
+					var updates int
+					require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
+					require.Zero(updates, "unchanged messages must leave the archive untouched")
+				}
 			}
 		})
 	}
