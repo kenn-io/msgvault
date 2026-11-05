@@ -610,7 +610,6 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 var cliRunReadOnlyCommands = map[string]bool{
 	"export-messages":   true,
 	"export-discord":    true,
-	"create-subset":     true,
 	"list-folders":      true,
 	"policy list":       true,
 	"draft-get":         true,

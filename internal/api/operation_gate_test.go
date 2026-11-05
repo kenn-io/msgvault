@@ -377,6 +377,42 @@ func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing
 	assert.Equal(http.StatusServiceUnavailable, resp.Code, "status")
 }
 
+func TestOperationGateMiddlewareCreateSubsetWaitsForGate(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginWork()
+	require.True(ok, "occupy gate")
+	defer release()
+
+	called := make(chan struct{}, 1)
+	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	parked := &parkedContext{Context: ctx, parked: make(chan struct{})}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["create-subset","subset"]}`)).WithContext(parked)
+	resp := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(resp, req)
+		close(done)
+	}()
+	waitForParkedContext(t, parked.parked, "create-subset")
+	assert.Empty(called, "subset creation must wait while the gate is occupied")
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("subset creation did not resume after the gate was released")
+	}
+	assert.Len(called, 1)
+	assert.Equal(http.StatusNoContent, resp.Code)
+}
+
 type parkedContext struct {
 	context.Context
 
@@ -675,7 +711,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}{
 		{"export-messages", `{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`},
 		{"export-discord", `{"args":["export-discord"]}`},
-		{"create-subset", `{"args":["create-subset","subset.db"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
 		{"embeddings list", `{"args":["embeddings","list"]}`},

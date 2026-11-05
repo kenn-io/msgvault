@@ -551,10 +551,8 @@ func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
 	require := require.New(t)
 	cfg := testConfigValue()
 	cfg.Data.DataDir = t.TempDir()
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
-	_, err = st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
 	require.NoError(err)
 	require.NoError(st.Close())
 
