@@ -757,6 +757,39 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 	}
 }
 
+func TestReplyPushForbiddenThenBadRequestIsTerminal(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusForbidden})
+	_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.ErrorIs(err, line.ErrCredentialsUnavailable)
+	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Zero(f.fake.AcceptedPushes())
+
+	f.resetClient()
+	f.now = f.now.Add(31 * time.Second)
+	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusBadRequest})
+	rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	checks.Equal(store.LineReplyProviderRejected, rejected.Status)
+	checks.False(rejected.Accepted)
+	completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Equal(store.LineReplyProviderRejected, completed.State)
+	checks.Equal(http.StatusBadRequest, completed.StatusCode)
+	checks.Equal(attempt.RetryKey, completed.RetryKey)
+	checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	checks.Zero(f.fake.AcceptedPushes())
+
+	f.now = f.now.Add(31 * time.Second)
+	replayed, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	checks.Equal(rejected, replayed)
+	checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+}
+
 func TestReplyDirectRecipientFromIngestedChat(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
