@@ -321,18 +321,19 @@ func TestColdAdapterMatchesSpineNoiseAndDateRules(t *testing.T) {
 	f := newTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "room")
 	at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
-	addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
+	messageIDs := []int64{addColdTimelineMessage(t, f, room, f.Source.ID, at, false)}
 	for i := range 6 {
-		addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Duration(i+1)*time.Minute), i%2 == 0)
+		messageIDs = append(messageIDs, addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Duration(i+1)*time.Minute), i%2 == 0))
 	}
 	noiseRoom := coldTimelineRoom(t, f, f.Source.ID, "noise")
 	noise := addColdTimelineMessage(t, f, noiseRoom, f.Source.ID, at, false)
+	messageIDs = append(messageIDs, noise)
 	sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, noise)
 	requirements.NoError(err)
 	requirements.NoError(f.Store.ReplaceMessageRecipients(noise, "from", []int64{sender}, nil))
 	// Both instants stay on Nov 1 in UTC and Vancouver.
-	addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Hour), false)
+	messageIDs = append(messageIDs, addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Hour), false))
 	for _, item := range []struct {
 		source int64
 		key    string
@@ -353,7 +354,14 @@ func TestColdAdapterMatchesSpineNoiseAndDateRules(t *testing.T) {
 	}{{f.Source.ID, "room"}, {f.Source.ID, "noise"}} {
 		setTimelineConversationTier(t, f, item.source, item.key, conversationpolicy.Cold)
 	}
-	projectColdTimeline(t, f, "America/Vancouver")
+	for _, id := range messageIDs {
+		retractTimelineActivity(t, f, id)
+	}
+	for _, table := range []string{"activity_event_persons", "activity_events"} {
+		var projected int
+		requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&projected))
+		requirements.Zero(projected, "%s must be empty before cold parity comparison", table)
+	}
 	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
 	for i := range warm.Bursts {
