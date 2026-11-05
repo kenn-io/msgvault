@@ -199,7 +199,7 @@ func TestCalendarEventsSkippedDateEmptyWindow(t *testing.T) {
 	})
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"--from", "2011-12-30", "--to", "2011-12-31"})
+	command.SetArgs([]string{"--from", "2011-12-30", "--to", "2011-12-30"})
 	require.ErrorContains(t, command.Execute(), "--to must be after --from")
 }
 
@@ -382,6 +382,7 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 	}{
 		{"exclusive skipped date", "2011-12-29", "2011-12-30", []string{"Before", "Timed"}},
 		{"spanning skipped date", "2011-12-29", "2011-12-31", []string{"Before", "Skipped", "Timed"}},
+		{"only skipped date", "2011-12-30", "2011-12-31", []string{"Skipped"}},
 		{"starting skipped date", "2011-12-30", "2012-01-01", []string{"Skipped", "After", "Timed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
