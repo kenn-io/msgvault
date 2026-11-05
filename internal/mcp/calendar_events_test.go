@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type calendarEventsTestBackend struct {
@@ -68,7 +67,7 @@ func TestCalendarArchiveDefaultPageSize(t *testing.T) {
 }
 
 func TestCalendarArchiveRejectsInvalidArguments(t *testing.T) {
-	st := testutil.NewTestStore(t)
+	st := &calendarEventsTestBackend{}
 	for _, tt := range []struct {
 		name, tool string
 		args       map[string]any

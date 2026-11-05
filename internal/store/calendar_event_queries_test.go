@@ -264,9 +264,6 @@ func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 						assert.Zero(page.Occurrences[0].SeriesMessageID)
 					}
 					o := page.Occurrences[window.count-1]
-					detail, err := st.GetCalendarOccurrenceContext(t.Context(), o.Ref)
-					require.NoError(err)
-					assert.Equal(o, detail.CalendarOccurrence)
 					assert.Equal(cancelled, o.MessageID)
 					assert.Equal(master, o.SeriesMessageID)
 					assert.Equal("cancelled", o.Status)
