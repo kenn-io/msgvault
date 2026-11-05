@@ -550,6 +550,8 @@ type searchOperator struct {
 	arg       string
 }
 
+const messageSearchDateOrder = "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+
 type messageSearchSQL struct {
 	operators  []searchOperator
 	conditions []string
@@ -604,7 +606,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			plan := s.buildMessageSearchCriteria(branch, ftsAvailable, true)
 			return plan.conditions, plan.args
 		})
-		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC", fts: ftsAvailable && q.HasTextTerms()}
+		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: messageSearchDateOrder, fts: ftsAvailable && q.HasTextTerms()}
 	}
 	var conditions []string
 	var args []any
@@ -862,7 +864,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		args = append(args, arg)
 	}
 
-	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	orderBy := messageSearchDateOrder
 	var orderArgs []any
 	var rank string
 	if ftsEnabled {
@@ -911,9 +913,11 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 
 func messageSearchPageSQL(plan messageSearchSQL, offset, limit int) (string, []any) {
 	rankColumn := ""
-	outerOrder := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	innerOrder := plan.orderBy
+	outerOrder := messageSearchDateOrder
 	if plan.rank != "" {
 		rankColumn = ", " + plan.rank + " AS search_rank"
+		innerOrder = "search_rank, " + messageSearchDateOrder
 		outerOrder = "page.search_rank, " + outerOrder
 	}
 	searchSQL := fmt.Sprintf(`
@@ -947,13 +951,12 @@ func messageSearchPageSQL(plan messageSearchSQL, offset, limit int) (string, []a
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		ORDER BY %s
-	`, participantSummarySenderSQL, rankColumn, plan.join, plan.where, plan.orderBy, outerOrder)
+	`, participantSummarySenderSQL, rankColumn, plan.join, plan.where, innerOrder, outerOrder)
 
-	// Bind rank in the SELECT list before WHERE, then again in ORDER BY.
-	args := make([]any, 0, len(plan.args)+2*len(plan.orderArgs)+2)
+	// Bind rank in the SELECT list before WHERE; ORDER BY reuses its alias.
+	args := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
 	args = append(args, plan.orderArgs...)
 	args = append(args, plan.args...)
-	args = append(args, plan.orderArgs...)
 	args = append(args, limit, offset)
 	return searchSQL, args
 }

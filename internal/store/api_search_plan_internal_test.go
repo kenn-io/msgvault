@@ -3,7 +3,6 @@
 package store
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,10 +14,7 @@ import (
 
 func TestSearchFTSSelectsPageBeforeDetails(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "SQLite query plan")
-	st, err := Open(filepath.Join(t.TempDir(), "search.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	st := openTestStore(t)
 	plan := st.buildMessageSearchSQL(t.Context(), search.Parse("project"), true)
 	statement, args := messageSearchPageSQL(plan, 0, 50)
 	explain := dbtest.ExplainQueryPlan(t, st.db.DB, statement, args...)
