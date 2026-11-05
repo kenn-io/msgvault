@@ -80,19 +80,18 @@ func (s *Store) callRowsSQL() string {
 
 // callRolesSQL credits only the counterparty, whoever dialed, as personTierRows does.
 func (s *Store) callRolesSQL() string {
-	return `SELECT r.message_id, r.participant_id, r.recipient_type FROM message_recipients r
+	return `SELECT r.message_id, r.participant_id,
+		CASE WHEN r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown') THEN r.recipient_type
+			WHEN ` + s.callConnectedSecondsSQL() + ` > 0 THEN 'call_joined' ELSE 'call_unknown' END AS recipient_type
+		FROM message_recipients r JOIN messages m ON m.id = r.message_id
 		JOIN participants p ON p.id = r.participant_id
-		WHERE r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown')
+		WHERE (r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown') OR
+			(m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')
+			AND r.recipient_type = CASE WHEN m.is_from_me THEN 'to' ELSE 'from' END))
 		AND NOT EXISTS (SELECT 1 FROM account_identities ai
 			WHERE (` + ownerEmailMatch("p.email_address", "ai.address") + `) OR EXISTS (
 				SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id = p.id AND ` +
-		ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail) + `))
-		UNION ALL
-		SELECT m.id, r.participant_id,
-			CASE WHEN ` + s.callConnectedSecondsSQL() + ` > 0 THEN 'call_joined' ELSE 'call_unknown' END
-		FROM messages m JOIN message_recipients r ON r.message_id = m.id
-		WHERE m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')
-		AND r.recipient_type = CASE WHEN m.is_from_me THEN 'to' ELSE 'from' END`
+		ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail) + `))`
 }
 
 // ListCallObservationsContext includes withdrawn evidence for inspection but

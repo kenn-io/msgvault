@@ -86,6 +86,49 @@ func TestCallSummaryExcludesArchiveOwner(t *testing.T) {
 	assert.Equal(1, summary[0].Answered)
 }
 
+func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
+	for _, messageType := range []string{store.MessageTypeGoogleVoiceCall, store.MessageTypeSynctechCall} {
+		for _, outgoing := range []bool{false, true} {
+			t.Run(messageType+"/outgoing="+strconv.FormatBool(outgoing), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := storetest.New(t)
+				owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "manual")
+				require.NoError(err)
+				ownerPerson, _, err := f.Store.CreatePersonFromParticipant(owner)
+				require.NoError(err)
+				require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "+12025550102", "manual"))
+				peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Peer", "manual")
+				require.NoError(err)
+				peerPerson, _, err := f.Store.CreatePersonFromParticipant(peer)
+				require.NoError(err)
+				role := "from"
+				if outgoing {
+					role = "to"
+				}
+				message := f.NewMessage().Build()
+				message.MessageType, message.IsFromMe = messageType, outgoing
+				message.SentAt = sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}
+				id, err := f.Store.UpsertMessage(message)
+				require.NoError(err)
+				require.NoError(f.Store.ReplaceMessageRecipients(id, role, []int64{owner, peer}, nil))
+				require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
+
+				items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{})
+				require.NoError(err)
+				require.Len(items, 1)
+				assert.Equal([]callhistory.Participant{{ID: peer, Participation: "joined"}}, items[0].Participants)
+				items, err = f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: ownerPerson.ID})
+				require.NoError(err)
+				assert.Empty(items, "calls with another owned number do not credit the owner")
+				summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
+				require.NoError(err)
+				assert.Equal([]store.PersonCallSummary{{PersonID: peerPerson.ID, Answered: 1, ExampleMessageID: id}}, summary)
+			})
+		}
+	}
+}
+
 func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
