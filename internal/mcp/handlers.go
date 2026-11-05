@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
@@ -1637,6 +1638,10 @@ func lineNumberAt(body string, byteOffset int) int {
 
 type getMessageResponse struct {
 	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
+	SegmentsVersion      string                    `json:"segments_version,omitempty" jsonschema:"Segment classification version, present when plain-text ranges were requested."`
+	Segments             []msgsegment.Segment      `json:"segments,omitempty" jsonschema:"Ranges overlapping this body window, with absolute, unclipped byte offsets."`
+	SegmentsTruncated    bool                      `json:"segments_truncated,omitzero" jsonschema:"The 1 MiB scan limit was reached; unexamined bytes keep the last label."`
+	SegmentsUnavailable  string                    `json:"segments_unavailable,omitempty" jsonschema:"unsupported_format when ranges were requested for HTML."`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1731,7 +1736,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		bodyHTML = bodySlice
 	}
 
-	return jsonResult(getMessageResponse{
+	response := getMessageResponse{
 		SenderAuth:           msg.SenderAuth,
 		Calendar:             msg.Calendar,
 		WebURL:               msg.WebURL,
@@ -1762,7 +1767,31 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		HasMore:              sliceEnd < bodyLen,
 		Labels:               msg.Labels,
 		Attachments:          msg.Attachments,
-	})
+	}
+	if includeSegments, _ := args["include_segments"].(bool); includeSegments {
+		if bodyFormat == bodyFormatHTML {
+			response.SegmentsUnavailable = "unsupported_format"
+		} else {
+			response.SegmentsVersion = msgsegment.Version
+			var split msgsegment.Result
+			if store.IsEmailMessageType(msg.MessageType) {
+				split = msgsegment.Split(fullBody)
+			} else if bodyLen > 0 {
+				split.Segments = []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: bodyLen}}
+			}
+			response.SegmentsTruncated = split.Truncated
+			for _, segment := range split.Segments {
+				if segment.Start >= sliceEnd {
+					break
+				}
+				if segment.End <= sliceStart {
+					continue
+				}
+				response.Segments = append(response.Segments, segment)
+			}
+		}
+	}
+	return jsonResult(response)
 }
 
 func (h *handlers) attachVectorChunkMatches(
