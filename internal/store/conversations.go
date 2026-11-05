@@ -724,12 +724,34 @@ func (s *Store) ConversationTitlesBatchContext(ctx context.Context, sourceID int
 	return titles, nil
 }
 
-// PopulateMessageBodiesContext loads complete bodies for the supplied message metadata
-// in the caller's read snapshot.
+// PopulateMessageBodiesContext hydrates the complete classification context in
+// the caller's read snapshot, including metadata omitted by thread projections.
 func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []APIMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
 	ids := make([]int64, len(messages))
 	for i := range messages {
 		ids[i] = messages[i].ID
+	}
+	metadata := make(map[int64]APIMessage, len(ids))
+	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, '') FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
+		var msg APIMessage
+		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle); err != nil {
+			return err
+		}
+		metadata[msg.ID] = msg
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("load classification metadata: %w", err)
+	}
+	for i := range messages {
+		msg := metadata[messages[i].ID]
+		messages[i].Subject, messages[i].Snippet, messages[i].ConversationTitle = msg.Subject, msg.Snippet, msg.ConversationTitle
+	}
+	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
+		return err
 	}
 	return s.batchPopulateBodies(ctx, messages, ids)
 }

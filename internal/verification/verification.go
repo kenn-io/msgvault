@@ -14,15 +14,22 @@ import (
 const Masked = "[verification content masked]"
 const MaxFieldBytes = 1024 * 1024
 
-type Content struct{ Subject, Snippet, Text, HTML string }
+type Content struct {
+	Subject, Snippet, Title, Text, HTML string
+	Filenames                           []string
+}
 
 var (
-	codeCue = regexp.MustCompile(`(?i)\b(code|passcode|otp|one[- ]time password|pin)\b|bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드`)
+	codeCue = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`)
 	linkCue = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
 
 	compactCode    = strings.NewReplacer("-", "", " ", "", "\u00a0", "")
-	codeToken      = regexp.MustCompile(`(?:[A-Z]-)?[0-9](?:[ \x{00a0}-]?[0-9]){3,9}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
+	codeToken      = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 	directYearCode = regexp.MustCompile(`(?:` + codeCue.String() + `)\s*(?:is|:|-)?\s*[0-9]{4}$`)
+	codeGap        = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|:|-|your|the|verification|security)[\s\x{00a0}]*)*$`)
+	reverseGap     = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
+	signInAfter    = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in)\b`)
+	useBefore      = regexp.MustCompile(`(?i)\buse\s+$`)
 	uuidToken      = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
 	link           = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
@@ -30,19 +37,36 @@ var (
 // Is fails closed for oversized fields. Cue distance is at most 60 runes.
 // A bounded window includes each complete cue, independently of cue count.
 func Is(c Content) bool {
-	fields := []string{c.Subject, c.Snippet, c.Text, c.HTML}
+	fields := []string{c.Subject, c.Snippet, c.Text, c.HTML, c.Title}
+	fields = append(fields, c.Filenames...)
 	for _, field := range fields {
 		if len(field) >= MaxFieldBytes {
 			return true
 		}
 	}
 	fields[3] = strings.Join(strings.Fields(mime.StripHTML(c.HTML)), " ")
-	subjectCue := codeCue.MatchString(c.Subject)
+	for i, field := range fields {
+		fields[i] = strings.Map(func(r rune) rune {
+			if r >= '０' && r <= '９' {
+				return '0' + r - '０'
+			}
+			return r
+		}, field)
+	}
+	cueFields := make([]bool, len(fields))
+	cueCount := 0
+	for i, field := range fields {
+		cueFields[i] = trailingCue(field)
+		if cueFields[i] {
+			cueCount++
+		}
+	}
 	linkContext := false
 	for _, field := range fields {
 		linkContext = linkContext || linkCue.MatchString(field)
 	}
-	for _, field := range fields {
+	for i, field := range fields {
+		separateCue := cueCount > 1 || cueCount == 1 && !cueFields[i]
 		for _, loc := range codeToken.FindAllStringIndex(field, -1) {
 			start, end := loc[0], loc[1]
 			if start > 0 && asciiAlnum(field[start-1]) || end < len(field) && asciiAlnum(field[end]) {
@@ -80,7 +104,7 @@ func Is(c Content) bool {
 				if directYearCode.MatchString(field[left:end]) {
 					return true
 				}
-			} else if subjectCue || nearCue(field[left:start], true) || nearCue(field[end:right], false) {
+			} else if separateCue || nearCue(field[left:start], true) || nearCue(field[end:right], false) || useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right]) {
 				return true
 			}
 		}
@@ -104,7 +128,17 @@ func nearCue(window string, before bool) bool {
 		if before {
 			gap = window[loc[1]:]
 		}
-		if utf8.RuneCountInString(gap) <= 60 {
+		if utf8.RuneCountInString(gap) <= 60 && !strings.ContainsAny(gap, ".!?\n") && (codeGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
+			return true
+		}
+	}
+	return false
+}
+
+// A cue in a separate metadata field can describe a code-only representation.
+func trailingCue(field string) bool {
+	for _, loc := range codeCue.FindAllStringIndex(field, -1) {
+		if codeGap.MatchString(field[loc[1]:]) {
 			return true
 		}
 	}

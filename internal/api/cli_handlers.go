@@ -3561,9 +3561,7 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		from = msg.From[0].Email
 	}
 	msg.SenderAuth = s.senderAuth(r.Context(), msg.ID, msg.SourceID, msg.MessageType, from)
-	if !s.maskMessageDetail(w, r, msg) {
-		return
-	}
+	s.maskMessageDetail(r, msg)
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
 
@@ -3639,16 +3637,17 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var att query.AttachmentInfo
+	var attachments []query.AttachmentInfo
 	if s.requestAuthentication(r).Grant != nil {
-		attachments, apiErr := s.attachmentCandidatesForRequest(r, contentHash)
+		var apiErr *apiHTTPError
+		attachments, apiErr = s.attachmentCandidatesForRequest(r, contentHash)
 		if apiErr != nil {
 			writeAPIHTTPError(w, apiErr)
 			return
 		}
 		att = attachments[0]
 	}
-	filename := att
-	parentWithheld, ok := s.prepareVerificationAttachment(w, r, &filename)
+	withheld, ok := s.prepareVerificationAttachments(w, r, attachments)
 	if !ok {
 		return
 	}
@@ -3670,14 +3669,14 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "remote_attachment_too_large", "Attachment exceeds the remote client byte limit")
 			return
 		}
-		reader, apiErr := s.verificationAttachmentReader(rc, att, parentWithheld)
+		reader, apiErr := s.verificationAttachmentReader(rc, &att, withheld)
 		if apiErr != nil {
 			_ = rc.Close()
 			writeAPIHTTPError(w, apiErr)
 			return
 		}
-		if filename.Filename != "" {
-			w.Header().Set("Content-Disposition", contentDisposition(filename.Filename))
+		if att.Filename != "" {
+			w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
@@ -3724,14 +3723,14 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reader, apiErr := s.verificationAttachmentReader(f, att, parentWithheld)
+	reader, apiErr := s.verificationAttachmentReader(f, &att, withheld)
 	if apiErr != nil {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
 
-	if filename.Filename != "" {
-		w.Header().Set("Content-Disposition", contentDisposition(filename.Filename))
+	if att.Filename != "" {
+		w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Msgvault-Content-Hash", contentHash)
