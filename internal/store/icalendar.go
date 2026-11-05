@@ -119,16 +119,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			}
 		}
 		apply := !exists || icsRevisionNewer(item.component, old)
-		if !apply && old.Status == SyncStatusCancelled && e.Status != SyncStatusCancelled {
-			// A cancellation that arrived first keeps its revision; an earlier
-			// invite only supplies the details it lacked.
-			if apply, err = icsTombstoneLacksBounds(ctx, tx, id); err != nil {
-				return err
-			}
-			old.InviteOrganizer = item.meta.InviteOrganizer
-			item.meta = old
-			item.meta.AllDay = e.AllDay
-		}
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
@@ -153,19 +143,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		}
 	}
 	return nil
-}
-
-func icsTombstoneLacksBounds(ctx context.Context, tx *loggedTx, id int64) (bool, error) {
-	var start sql.NullTime
-	var startDate string
-	err := tx.QueryRowContext(ctx, `SELECT start_at, start_date FROM calendar_events WHERE message_id=?`, id).Scan(&start, &startDate)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read ICS tombstone bounds: %w", err)
-	}
-	return !start.Valid && startDate == "", nil
 }
 
 func (s *Store) setICSMetadataWith(ctx context.Context, tx *loggedTx, id int64, meta calevent.ICSMetadata) error {
