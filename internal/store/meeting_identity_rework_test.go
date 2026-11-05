@@ -93,7 +93,7 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 	t.Logf("one occurrence with 220 unrelated UID notes: %d reads", reads)
 }
 
-func TestMeetingIdentityUnknownICSVersionStaysSeparate(t *testing.T) {
+func TestMeetingIdentityUnknownICSVersionRefused(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -104,10 +104,8 @@ func TestMeetingIdentityUnknownICSVersionStaysSeparate(t *testing.T) {
 	_, note := identityNote(t, st, "note", "family@example.com")
 	_, err = st.db.Exec(`UPDATE messages SET metadata=? WHERE id=?`, `{"ics_version":999}`, events[0])
 	require.NoError(err)
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(events[0])}, TranscriptIDs: []int64{note}})
-	require.NoError(err)
-	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
-	assert.Empty(got.ByOccurrence[identityRef(events[0])].LinkedTranscriptIDs)
+	_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(events[0])}, TranscriptIDs: []int64{note}})
+	assert.ErrorContains(err, "unsupported ICS metadata version 999")
 }
 
 func TestCalendarRawUpsertAdvancesObservationOnce(t *testing.T) {

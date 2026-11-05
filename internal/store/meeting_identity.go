@@ -119,146 +119,163 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		}
 		aliases[value] = g
 	}
-	// Reverse discovery is deliberately limited to requested occurrences, with no
-	// activity-window predicate: a recording may arrive long after its meeting.
-	requestedGroups := map[*timelineMeetingGroup]bool{}
-	for _, value := range req.OccurrenceRefs {
-		if g := aliases[value]; g != nil {
+	// Complete every returned group, including groups first reached through a
+	// transcript or a suggestion. Discover each group once.
+	discovered := map[*timelineMeetingGroup]bool{}
+	processed := map[int64]bool{}
+	for {
+		groupCount := len(groups)
+		requestedGroups := map[*timelineMeetingGroup]bool{}
+		for _, g := range groups {
 			requestedGroups[g] = true
 		}
-	}
-	memberQueries := []meetingEventQuery{}
-	for g := range requestedGroups {
-		query, args, err := s.meetingIdentityMemberQuery(ctx, r, g.occurrence, &budget)
-		if err != nil {
-			return result, fmt.Errorf("discover meeting transcripts: %w", err)
-		}
-		memberQueries = append(memberQueries, meetingEventQuery{query, args})
-	}
-	for chunk := range slices.Chunk(memberQueries, 20) {
-		terms := []string{}
-		args := []any{}
-		for _, q := range chunk {
-			terms = append(terms, q.predicate)
-			args = append(args, q.args...)
-		}
-		rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
-		if err != nil {
-			return result, err
-		}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return result, err
+		memberQueries := []meetingEventQuery{}
+		for g := range requestedGroups {
+			if discovered[g] {
+				continue
 			}
-			members[id] = true
+			discovered[g] = true
+			query, args, err := s.meetingIdentityMemberQuery(ctx, r, g.occurrence, &budget)
+			if err != nil {
+				return result, fmt.Errorf("discover meeting transcripts: %w", err)
+			}
+			memberQueries = append(memberQueries, meetingEventQuery{query, args})
 		}
-		err = rows.Err()
-		closeErr := rows.Close()
-		if err != nil {
-			return result, err
-		}
-		if closeErr != nil {
-			return result, closeErr
-		}
-	}
-	ids := make([]int64, 0, len(members))
-	for id := range members {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	if err := s.preloadMeetingMembers(ctx, r, ids); err != nil {
-		return result, err
-	}
-	candidateQueries := []meetingEventQuery{}
-	for _, id := range ids {
-		if !r.batch.visible[id] {
-			continue
-		}
-		// Manual decisions replace automatic evidence, including absent targets.
-		manual := false
-		for _, d := range r.batch.decisions[id] {
-			predicate, args := s.meetingIdentityPredicate(d.Identity)
-			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
-			manual = manual || d.Decision == "link"
-		}
-		if !manual {
-			predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
+		for chunk := range slices.Chunk(memberQueries, 20) {
+			terms := []string{}
+			args := []any{}
+			for _, q := range chunk {
+				terms = append(terms, q.predicate)
+				args = append(args, q.args...)
+			}
+			rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
 			if err != nil {
 				return result, err
 			}
-			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return result, err
+				}
+				members[id] = true
+			}
+			err = rows.Err()
+			closeErr := rows.Close()
+			if err != nil {
+				return result, err
+			}
+			if closeErr != nil {
+				return result, closeErr
+			}
 		}
-	}
-	if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
-		return result, err
-	}
-	resolvedMembers := map[int64][]meetingMemberCandidate{}
-	memberCopies := []meetingEventQuery{}
-	for _, id := range ids {
-		if !r.batch.visible[id] {
-			continue
+		ids := make([]int64, 0, len(members))
+		for id := range members {
+			if !processed[id] {
+				ids = append(ids, id)
+				processed[id] = true
+			}
 		}
-		candidates, err := s.meetingMemberCandidates(ctx, r, id, &budget)
-		if err != nil {
-			return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
+		if len(ids) == 0 {
+			break
 		}
-		exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
-		if !explicit[id] {
-			relevant := false
-			if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
-				for _, candidate := range candidates {
-					if g := groups[candidate.Identity]; g != nil && requestedGroups[g] {
-						relevant = true
+		slices.Sort(ids)
+		if err := s.preloadMeetingMembers(ctx, r, ids); err != nil {
+			return result, err
+		}
+		candidateQueries := []meetingEventQuery{}
+		for _, id := range ids {
+			if !r.batch.visible[id] {
+				continue
+			}
+			// Manual decisions replace automatic evidence, including absent targets.
+			manual := false
+			for _, d := range r.batch.decisions[id] {
+				predicate, args := s.meetingIdentityPredicate(d.Identity)
+				candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+				manual = manual || d.Decision == "link"
+			}
+			if !manual {
+				predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
+				if err != nil {
+					return result, err
+				}
+				candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+			}
+		}
+		if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
+			return result, err
+		}
+		resolvedMembers := map[int64][]meetingMemberCandidate{}
+		memberCopies := []meetingEventQuery{}
+		for _, id := range ids {
+			if !r.batch.visible[id] {
+				continue
+			}
+			candidates, err := s.meetingMemberCandidates(ctx, r, id, &budget)
+			if err != nil {
+				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
+			}
+			exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
+			if !explicit[id] {
+				relevant := false
+				if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+					for _, candidate := range candidates {
+						if g := groups[candidate.Identity]; g != nil && requestedGroups[g] {
+							relevant = true
+						}
 					}
 				}
+				if !relevant {
+					delete(processed, id)
+					continue
+				}
 			}
-			if !relevant {
-				continue
+			resolvedMembers[id] = candidates
+			if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+				for _, candidate := range candidates {
+					predicate, args := s.meetingIdentityPredicate(candidate.Identity)
+					memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
+				}
 			}
 		}
-		resolvedMembers[id] = candidates
-		if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+		if err := s.preloadMeetingQueries(ctx, r, memberCopies, &budget); err != nil {
+			return result, err
+		}
+		for _, id := range ids {
+			candidates, ok := resolvedMembers[id]
+			if !ok {
+				continue
+			}
+			info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
+			exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
 			for _, candidate := range candidates {
-				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
-				memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
+				if !exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
+					continue
+				}
+				g, err := groupFor(candidate.linkOccurrence)
+				if err != nil {
+					return result, fmt.Errorf("resolve transcript occurrence: %w", err)
+				}
+				value := publicMeetingOccurrenceRef(g.occurrence)
+				if exact {
+					info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
+					g.linked = append(g.linked, id)
+				} else {
+					info.SuggestedOccurrenceRefs = append(info.SuggestedOccurrenceRefs, value)
+				}
 			}
-		}
-	}
-	if err := s.preloadMeetingQueries(ctx, r, memberCopies, &budget); err != nil {
-		return result, err
-	}
-	for _, id := range ids {
-		candidates, ok := resolvedMembers[id]
-		if !ok {
-			continue
-		}
-		info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
-		exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
-		for _, candidate := range candidates {
-			if !exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
-				continue
+			info.ExactOccurrenceRefs = sortedUniqueMeetingRefs(info.ExactOccurrenceRefs)
+			info.SuggestedOccurrenceRefs = sortedUniqueMeetingRefs(info.SuggestedOccurrenceRefs)
+			if len(info.ExactOccurrenceRefs) == 1 {
+				info.OccurrenceRef = info.ExactOccurrenceRefs[0]
+				info.Key = "occ:" + formatMeetingOccurrence(aliases[info.OccurrenceRef].occurrence.Ref)
 			}
-			g, err := groupFor(candidate.linkOccurrence)
-			if err != nil {
-				return result, fmt.Errorf("resolve transcript occurrence: %w", err)
-			}
-			value := publicMeetingOccurrenceRef(g.occurrence)
-			if exact {
-				info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
-				g.linked = append(g.linked, id)
-			} else {
-				info.SuggestedOccurrenceRefs = append(info.SuggestedOccurrenceRefs, value)
-			}
+			result.ByTranscript[id] = info
 		}
-		info.ExactOccurrenceRefs = sortedUniqueMeetingRefs(info.ExactOccurrenceRefs)
-		info.SuggestedOccurrenceRefs = sortedUniqueMeetingRefs(info.SuggestedOccurrenceRefs)
-		if len(info.ExactOccurrenceRefs) == 1 {
-			info.OccurrenceRef = info.ExactOccurrenceRefs[0]
-			info.Key = "occ:" + formatMeetingOccurrence(aliases[info.OccurrenceRef].occurrence.Ref)
+		if len(groups) == groupCount {
+			break
 		}
-		result.ByTranscript[id] = info
 	}
 	for value, g := range aliases {
 		ref := publicMeetingOccurrenceRef(g.occurrence)

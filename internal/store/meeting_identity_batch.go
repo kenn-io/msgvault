@@ -72,6 +72,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 	for chunk := range slices.Chunk(pending, 20) {
 		terms := make([]string, 0, len(chunk))
 		args := []any{}
+		// Scope before LIMIT so hidden copies cannot exhaust candidate bounds.
 		scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 		for i, q := range chunk {
 			terms = append(terms, fmt.Sprintf("SELECT %d,message_id FROM (SELECT e.message_id ", i)+calendarEventFrom+"("+q.predicate+")"+scope+" LIMIT ?) candidates")

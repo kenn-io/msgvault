@@ -247,7 +247,7 @@ func TestMeetingIdentityInviteReadFailurePropagates(t *testing.T) {
 	for _, want := range []error{failure, context.Canceled, context.DeadlineExceeded} {
 		t.Run(want.Error(), func(t *testing.T) {
 			observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, _ []driver.NamedValue) error {
-				if strings.Contains(q, "SELECT raw.raw_data,raw.compression") {
+				if strings.Contains(q, "SELECT m.id,r.raw_data,r.compression") {
 					return want
 				}
 				return nil
