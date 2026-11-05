@@ -138,7 +138,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
 		args = append(args, from.Add(-24*time.Hour), to.Add(48*time.Hour))
 	}
-	channel := `CASE WHEN c.conversation_type='email_thread' AND m.message_type NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`
+	channel := `CASE WHEN c.conversation_type='email_thread' AND COALESCE(m.message_type,'') NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
 	if err != nil {
 		return nil, filters, err

@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestColdEmailCopiesPreferNonNoiseWithoutCountedContact(t *testing.T) {
@@ -88,12 +89,21 @@ func TestColdEmailCopiesPreferNonNoiseWithoutCountedContact(t *testing.T) {
 // Collapsing copies before classification and hydration loses owned contact.
 func TestColdEmailCopiesPreferCountedContact(t *testing.T) {
 	for _, person := range []struct {
-		name  string
-		saved bool
-	}{{"unsaved", false}, {"saved", true}} {
+		name            string
+		saved           bool
+		nullMessageType bool
+	}{{"unsaved", false, false}, {"saved", true, false}, {"null message type", false, true}} {
 		t.Run(person.name, func(t *testing.T) {
 			requirements := require.New(t)
-			f := newTimelineActivityFixture(t)
+			var f *timelineActivityFixture
+			if person.nullMessageType {
+				st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+				f = &timelineActivityFixture{Fixture: &storetest.Fixture{T: t, Store: st, Source: &store.Source{ID: sourceID}, ConvID: conversationID}}
+				f.owner = f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+				f.peer = f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			} else {
+				f = newTimelineActivityFixture(t)
+			}
 			contact := timelineContactQuery(f)
 			if person.saved {
 				profile, _, err := f.Store.CreatePersonFromParticipant(f.peer)
@@ -113,6 +123,10 @@ func TestColdEmailCopiesPreferCountedContact(t *testing.T) {
 			observedAt := contact.Now.Add(-time.Hour)
 			observedID := f.add(t, observedRoom, observedSource.ID, observedAt, false, "<shared@example.com>")
 			countedID := f.add(t, countedRoom, countedSource.ID, contact.Now, false, "<shared@example.com>")
+			if person.nullMessageType {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=NULL WHERE id IN (?,?)`), observedID, countedID)
+				requirements.NoError(err)
+			}
 			requirements.Less(observedID, countedID)
 			setTimelineConversationTier(t, f, observedSource.ID, "observed-copy", conversationpolicy.Cold)
 			setTimelineConversationTier(t, f, countedSource.ID, "counted-copy", conversationpolicy.Cold)
