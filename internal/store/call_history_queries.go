@@ -145,6 +145,10 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 					_ = rows.Close()
 					return fmt.Errorf("decode call evidence: %w", err)
 				}
+				if view.Version != 1 {
+					_ = rows.Close()
+					return fmt.Errorf("%w: unsupported call evidence version %d", callhistory.ErrInvalid, view.Version)
+				}
 			} else {
 				view.Version, view.Precision = 1, "instant"
 			}
