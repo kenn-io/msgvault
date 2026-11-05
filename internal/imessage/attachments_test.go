@@ -210,6 +210,8 @@ func TestImportCancellationIsNotAnAttachmentFailure(t *testing.T) {
 	summary, err := c.Import(cancelOnceStored{Context: ctx, cancel: cancel, db: st.DB()}, st, source)
 	require.ErrorIs(err, context.Canceled)
 	require.NotErrorIs(err, ErrAttachmentImport)
+	assert.Equal(1, summary.MessagesAdded)
+	assert.Equal(summary.MessagesAdded+summary.MessagesUpdated, summary.MessagesImported)
 	assert.Zero(summary.AttachmentFailures)
 }
 

@@ -597,17 +597,15 @@ func (c *Client) importMessage(
 }
 
 func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, msgID int64, msg *messageRow, summary *ImportSummary, existing bool) error {
+	summary.MessagesImported++
 	if err := c.importAttachments(ctx, s, msgID, msg, summary, existing); err != nil {
 		if ctx.Err() != nil {
 			return err
 		}
-		// The message row is already persisted, so it counts as imported.
-		summary.MessagesImported++
 		summary.AttachmentFailures++
 		return fmt.Errorf("%w: %w", ErrAttachmentImport, err)
 	}
 
-	summary.MessagesImported++
 	return nil
 }
 
