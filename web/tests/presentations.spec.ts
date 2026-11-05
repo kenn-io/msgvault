@@ -111,6 +111,23 @@ test.describe('compact toolbar', () => {
     await expect(controls.getByRole('searchbox', { name: 'Search attachment pixels' })).toHaveValue('blue sky');
   });
 
+  test('compact Files shows an oversized image error inside Filter', async ({ page }) => {
+    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
+    await page.route('**/api/v1/cli/accounts', route => route.fulfill({ json: { accounts: [] } }));
+    await page.goto('/?workspace=files');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    await dialog.getByRole('switch', { name: 'Visual search' }).click();
+    const image = dialog.getByLabel('Query image');
+    await image.setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
+    const validation = dialog.getByRole('alert').filter({ hasText: 'Visual query images must be 20 MiB or smaller.' });
+    await expect(validation).toBeVisible();
+    await expect(image).toHaveValue('');
+    await image.setInputFiles({ name: 'small.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect(validation).toHaveCount(0);
+  });
+
   test('compact grouping and sort shortcuts open View', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
@@ -152,6 +169,30 @@ test.describe('compact toolbar', () => {
     await expect(page.getByRole('button', { name: 'View', exact: true })).toHaveAttribute('aria-expanded', 'false');
   });
 
+});
+
+test('desktop built-in connection heading aligns with its list', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/api/v1/settings', route => route.fulfill({ headers: { ETag: '"settings"' }, json: { groups: [], settings: [], pending_restart: false } }));
+  await page.route('**/api/v1/relationship-types', route => route.fulfill({ json: { relationship_types: [
+    { id: 31, revision: 1, slug: 'colleague', forward_label: 'Colleague', reverse_label: 'Colleague', is_symmetric: true, ownership: 'system', is_deletable: false }
+  ] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' }))}`);
+  await expect(page.getByText('Built in', { exact: true })).toBeVisible();
+  await selectWorkspace(page, 'Messages');
+  await expect(page.getByRole('grid', { name: 'Messages results' })).toBeVisible();
+  await selectWorkspace(page, 'Settings');
+  const heading = page.getByText('Built in', { exact: true });
+  const list = page.getByRole('list', { name: 'Built-in connection types' });
+  await expect(heading).toBeVisible();
+  await expect(list).toBeVisible();
+  const headingTextX = await heading.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return range.getBoundingClientRect().x;
+  });
+  const listBox = await list.boundingBox();
+  expect(headingTextX).toBe(listBox!.x);
 });
 
 test('desktop Files keeps visual search and the three selects in the toolbar', async ({ page }) => {

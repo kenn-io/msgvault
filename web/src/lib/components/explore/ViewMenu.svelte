@@ -51,10 +51,7 @@
 </div>
 
 <style>
-  :global([data-section-label]) {
+  div[data-section-label] {
     padding: var(--space-2) var(--space-4) var(--space-1);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
   }
 </style>
