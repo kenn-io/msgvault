@@ -597,6 +597,20 @@ func TestSyncRefreshesEventsWhenZoneDatabaseChanges(t *testing.T) {
 	assertions.Zero(unchanged.Events)
 }
 
+func TestSyncArchivesLowercaseCancelledStatus(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "STATUS:cancelled\r\nEND:VEVENT", 1)
+	st := testutil.NewTestStore(t)
+	result, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	assertions.Equal(1, result.Events)
+	assertions.Zero(result.Skipped)
+	var status string
+	requirements.NoError(st.DB().QueryRow(`SELECT status FROM calendar_events`).Scan(&status))
+	assertions.Equal("cancelled", status)
+}
+
 func TestSyncArchivesUnsupportedRecurrencePeriod(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
