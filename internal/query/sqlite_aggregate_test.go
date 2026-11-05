@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,36 @@ func TestAggregations(t *testing.T) {
 			assertAggRows(t, rows, tc.want)
 		})
 	}
+}
+
+func TestAggregateByTime_DateFilterAttachmentPlan(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	opts := DefaultAggregateOptions()
+	opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+	opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+
+	conditions, args := optsToFilterConditions(env.Engine.dialect, opts, "m.")
+	conditions = append(conditions, emailOnlyFilterM)
+	dim, err := aggDimensionForView(env.Engine.dialect, ViewTime, opts.TimeGranularity)
+	require.NoError(t, err)
+	sort, err := sortClause(opts)
+	require.NoError(t, err)
+	sqlText := buildAggregateSQL(dim, "", strings.Join(conditions, " AND "), sort)
+	rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+sqlText, append(args, 100)...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
+		plan.WriteString(detail + "\n")
+	}
+	require.NoError(t, rows.Err())
+	assert.Contains(t, plan.String(), "USING INDEX idx_attachments_message (message_id=?)", plan.String())
+	assert.NotContains(t, plan.String(), "SCAN attachments", plan.String())
 }
 
 func TestAggregateByLabel_AttachmentFields(t *testing.T) {
