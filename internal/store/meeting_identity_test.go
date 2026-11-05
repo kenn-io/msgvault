@@ -205,6 +205,86 @@ func TestMeetingIdentityPreservesPublicExceptionRefAndCanonicalKey(t *testing.T)
 	assert.Equal("occ:"+canonical, got.ByTranscript[note].Key)
 }
 
+func TestMeetingIdentityUpdatedExceptionOrder(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+	raw := `{"id":"edit","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	calendarFixture(t, st, "older-edit", raw)
+	_, latest := calendarFixture(t, st, "latest-edit", strings.NewReplacer("12:00:00Z", "14:00:00Z", "13:00:00Z", "15:00:00Z").Replace(raw))
+	_, note := identityNote(t, st, "note", "")
+	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
+	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	if !st.IsPostgreSQL() {
+		// Both scan directions are legal for the batch's unordered ID probe.
+		st.db.SetMaxOpenConns(1)
+		_, err := st.db.Exec("PRAGMA reverse_unordered_selects = ON")
+		require.NoError(err)
+	}
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	require.Len(links, 1)
+	public := formatMeetingOccurrence(OccurrenceRef{MessageID: latest})
+	require.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), links[0].Start)
+	canonical := formatMeetingOccurrence(ref)
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{canonical}, TranscriptIDs: []int64{note}})
+	require.NoError(err)
+	assert.Equal(public, got.ByOccurrence[canonical].OccurrenceRef)
+	assert.Equal(public, got.ByTranscript[note].OccurrenceRef)
+	assert.Equal([]int64{note}, got.ByOccurrence[canonical].LinkedTranscriptIDs)
+}
+
+func TestMeetingIdentityMergedManualBatchReadBound(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	req := MeetingIdentityRequest{}
+	var sourceID int64
+	for i := range 20 {
+		key := fmt.Sprintf("event-%d", i)
+		data, event := calendarFixture(t, st, "historical-"+key, singleLinkRaw(key, ""), "historical@example.org")
+		sourceID = data.Message.SourceID
+		_, note := identityNote(t, st, fmt.Sprintf("note-%d", i), "")
+		require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+		req.OccurrenceRefs = append(req.OccurrenceRefs, formatMeetingOccurrence(OccurrenceRef{MessageID: event}))
+		req.TranscriptIDs = append(req.TranscriptIDs, note)
+	}
+	destination, err := st.GetOrCreateSource("gcal", "live@example.org")
+	require.NoError(t, err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: sourceID, IntoSourceID: destination.ID})
+	require.NoError(t, err)
+	liveRefs := []string{}
+	for i := range 20 {
+		key := fmt.Sprintf("event-%d", i)
+		_, event := calendarFixture(t, st, "live-"+key, singleLinkRaw(key, ""), "live@example.org")
+		liveRefs = append(liveRefs, formatMeetingOccurrence(OccurrenceRef{MessageID: event}))
+	}
+	for _, mode := range []string{"both", "events", "notes"} {
+		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			request := req
+			if mode == "events" {
+				request.TranscriptIDs = nil
+			}
+			if mode == "notes" {
+				request.OccurrenceRefs = nil
+			}
+			reads := 0
+			observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, _ string, _ []driver.NamedValue) error { reads++; return nil }})
+			got, err := observed.ResolveMeetingIdentitiesContext(t.Context(), request)
+			require.NoError(err)
+			require.Len(got.ByTranscript, 20)
+			for i, ref := range liveRefs {
+				assert.Equal(ref, got.ByTranscript[req.TranscriptIDs[i]].OccurrenceRef)
+				assert.Equal([]int64{req.TranscriptIDs[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+				if mode != "notes" {
+					assert.Equal(got.ByOccurrence[ref], got.ByOccurrence[req.OccurrenceRefs[i]])
+				}
+			}
+			t.Logf("20 historical decisions: %d reads", reads)
+			assert.LessOrEqual(reads, 35)
+		})
+	}
+}
+
 func TestMeetingIdentityOccurrenceOnlyFindsGranolaWithOrphanRepresentative(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

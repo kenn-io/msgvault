@@ -18,7 +18,6 @@ type meetingIdentityBatch struct {
 	events          map[string][]CalendarEventRow
 	keys            map[int64]meetingLinkKey
 	decisions       map[int64][]meetingLinkDecision
-	visible         map[int64]bool
 }
 
 type meetingEventQuery struct {
@@ -30,11 +29,18 @@ func meetingQueryKey(predicate string, args []any) string {
 	return fmt.Sprintf("%s:%#v", predicate, args)
 }
 
+func (b *meetingIdentityBatch) eventRowsByID(id int64) []CalendarEventRow {
+	if rows := b.events[meetingQueryKey("e.message_id = ?", []any{id})]; len(rows) > 0 {
+		return rows
+	}
+	return b.events[meetingQueryKey(meetingEventAliasPredicate("?"), []any{id, id})]
+}
+
 // Load the scalar resolver's master, moved-exception, and expansion reads together.
 func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, refs []OccurrenceRef, budget *int) error {
 	queries := []meetingEventQuery{}
 	for _, ref := range refs {
-		for _, row := range r.batch.events[meetingQueryKey("e.message_id = ?", []any{ref.MessageID})] {
+		for _, row := range r.batch.eventRowsByID(ref.MessageID) {
 			if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
 				predicate, args := meetingMasterPredicate(row)
 				queries = append(queries, meetingEventQuery{predicate, args})
@@ -51,7 +57,7 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 	recurring := []recurringRef{}
 	queries = nil
 	for _, ref := range refs {
-		rows := r.batch.events[meetingQueryKey("e.message_id = ?", []any{ref.MessageID})]
+		rows := r.batch.eventRowsByID(ref.MessageID)
 		if len(rows) != 1 {
 			continue
 		}
@@ -174,6 +180,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 			if len(byQuery[i]) > 200 {
 				return ErrQueryTooBroad
 			}
+			slices.Sort(byQuery[i])
 			for _, id := range byQuery[i] {
 				found = append(found, r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})]...)
 			}
@@ -194,8 +201,6 @@ func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids 
  WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s)
  ORDER BY m.id,d.target_message_id,d.occurrence_key`
 	for _, id := range ids {
-		r.batch.visible[id] = false
-		r.batch.keys[id] = meetingLinkKey{}
 		r.batch.decisions[id] = nil
 	}
 	return queryInChunksContext(ctx, snapshot.tx, ids, args, query, func(rows *loggedRows) error {
@@ -206,7 +211,6 @@ func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids 
 		if err := rows.Scan(&id, &kind, &value, &calendar, &scheduled, &target, &key, &decision); err != nil {
 			return err
 		}
-		r.batch.visible[id] = true
 		linkKey := meetingLinkKey{Kind: kind.String, Value: value.String, CalendarID: calendar.String}
 		if scheduled.Valid {
 			linkKey.ScheduledAt = &scheduled.Time

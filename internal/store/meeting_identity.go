@@ -51,7 +51,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	}
 	defer release()
 	r := s.meetingReader()
-	r.batch = &meetingIdentityBatch{events: map[string][]CalendarEventRow{}, keys: map[int64]meetingLinkKey{}, decisions: map[int64][]meetingLinkDecision{}, visible: map[int64]bool{}}
+	r.batch = &meetingIdentityBatch{events: map[string][]CalendarEventRow{}, keys: map[int64]meetingLinkKey{}, decisions: map[int64][]meetingLinkDecision{}}
 	budget := calrecur.RequestReadBudget
 	refs := make([]OccurrenceRef, 0, len(req.OccurrenceRefs))
 	eventQueries := make([]meetingEventQuery, 0, len(req.OccurrenceRefs))
@@ -61,7 +61,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			return result, err
 		}
 		refs = append(refs, ref)
-		eventQueries = append(eventQueries, meetingEventQuery{"e.message_id = ?", []any{ref.MessageID}})
+		eventQueries = append(eventQueries, meetingEventQuery{meetingEventAliasPredicate("?"), []any{ref.MessageID, ref.MessageID}})
 	}
 	if err := s.preloadMeetingQueries(ctx, r, eventQueries, &budget); err != nil {
 		return result, err
@@ -204,11 +204,11 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		}
 		candidateQueries := []meetingEventQuery{}
 		for _, id := range ids {
-			if !r.batch.visible[id] {
+			if _, ok := r.batch.keys[id]; !ok {
 				continue
 			}
 			for _, d := range r.batch.decisions[id] {
-				candidateQueries = append(candidateQueries, meetingEventQuery{"e.message_id = ?", []any{d.Ref.MessageID}})
+				candidateQueries = append(candidateQueries, meetingEventQuery{meetingEventAliasPredicate("?"), []any{d.Ref.MessageID, d.Ref.MessageID}})
 			}
 			predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
 			if err != nil {
@@ -221,7 +221,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		}
 		candidateRefs := []OccurrenceRef{}
 		for _, id := range ids {
-			if !r.batch.visible[id] {
+			if _, ok := r.batch.keys[id]; !ok {
 				continue
 			}
 			for _, d := range r.batch.decisions[id] {
@@ -255,7 +255,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		resolvedMembers := map[int64][]linkOccurrence{}
 		memberCopies := []meetingEventQuery{}
 		for _, id := range ids {
-			if !r.batch.visible[id] {
+			if _, ok := r.batch.keys[id]; !ok {
 				continue
 			}
 			candidates, err := s.meetingMemberOccurrences(ctx, r, id, &budget)
