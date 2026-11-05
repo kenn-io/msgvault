@@ -159,23 +159,28 @@ func assertRecoveryLabels(t *testing.T, e *TestEnv, ids map[string]int64, labels
 }
 
 func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	e, f, ids := recoveryLabelsEnv(t)
-	summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
-	require.NoError(err)
-	require.Zero(summary.Errors)
-	assert.Equal(int64(4), summary.MessagesUpdated)
-	assert.Equal(uint64(2001), summary.FinalHistoryID)
-	assert.Equal([]string{"1000", "2000"}, f.historyStarts, "expire old History, then consume the empty catch-up")
-	reopenAcquisitionStore(t, e)
-	assertRecoveryLabels(t, e, ids, f.labels)
-	assert.Equal(4, f.rawGets, "already archived originals must not be downloaded again")
-	assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+	for _, fault := range []string{"", "unknown"} {
+		t.Run(fault, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			e, f, ids := recoveryLabelsEnv(t)
+			f.fault = fault
+			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+			require.NoError(err)
+			require.Zero(summary.Errors)
+			assert.Equal(int64(4), summary.MessagesUpdated)
+			assert.Equal(uint64(2001), summary.FinalHistoryID)
+			assert.Equal([]string{"1000", "2000"}, f.historyStarts, "expire old History, then consume the empty catch-up")
+			reopenAcquisitionStore(t, e)
+			assertRecoveryLabels(t, e, ids, f.labels)
+			assert.Equal(4, f.rawGets, "already archived originals must not be downloaded again")
+			assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+		})
+	}
 }
 
 func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
-	for _, fault := range []string{"read", "identity", "write", "cancel", "unknown"} {
+	for _, fault := range []string{"read", "identity", "write", "cancel"} {
 		t.Run(fault, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -188,9 +193,6 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				f.fault = fault
 			}
 			for range 2 {
-				if fault == "unknown" {
-					break
-				}
 				ctx, cancel := context.WithCancel(t.Context())
 				f.cancel = cancel
 				_, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t, e), nil)
@@ -220,9 +222,7 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				assert.Empty(debt, "metadata failures must not trigger RAW acquisition replay")
 			}
 			removeFault()
-			if fault != "unknown" {
-				f.fault = ""
-			}
+			f.fault = ""
 			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 			require.NoError(err)
 			assert.Zero(summary.Errors)
