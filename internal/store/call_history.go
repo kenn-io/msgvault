@@ -118,12 +118,21 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: text,
 				},
 				BodyText: sql.NullString{String: text, Valid: true},
-				FTS:      &FTSDoc{Subject: text, Body: text},
+				FTS:      callFTSDoc(o, text),
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 				PreserveLabels: true,
 			}
 		}, prepare, s.refreshCallConversationStatsWith)
+}
+
+// Withdrawn calls persist an empty search document, so the same upsert that
+// indexes a call leaves it unsearchable on both dialects.
+func callFTSDoc(o callhistory.Observation, text string) *FTSDoc {
+	if o.Withdrawn {
+		return &FTSDoc{}
+	}
+	return &FTSDoc{Subject: text, Body: text}
 }
 
 // Imported calls keep their conversation's denormalized stats current.
