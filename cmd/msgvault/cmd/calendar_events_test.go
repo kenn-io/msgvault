@@ -38,6 +38,23 @@ func (f *calendarEventsFakeClient) ListCalendarOccurrencesContext(_ context.Cont
 	f.queries = append(f.queries, query)
 	return f.page, f.err
 }
+func TestCalendarEventsCommandUnexpandableCoverage(t *testing.T) {
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
+		Coverage: store.CalendarCoverage{
+			Notice:  "An empty or incomplete result does not prove free time.",
+			Sources: []store.CalendarSourceCoverage{{Name: "Work", Status: "complete"}},
+		},
+		Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}},
+	}}
+	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "1 event could not be expanded: message 500 (unsupported recurrence)\n", stderr.String())
+}
+
 func TestCalendarEventsCommand(t *testing.T) {
 	start, err := time.Parse(time.RFC3339, "2027-03-02T17:00:00Z")
 	require.NoError(t, err)

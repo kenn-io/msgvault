@@ -50,14 +50,13 @@ func calendarCoverageFromAPI(decoded generated.CalendarCoverage) store.CalendarC
 	if decoded.Sources != nil {
 		coverage.Sources = make([]store.CalendarSourceCoverage, 0, len(decoded.Sources))
 		for _, source := range decoded.Sources {
-			row := store.CalendarSourceCoverage{
+			coverage.Sources = append(coverage.Sources, store.CalendarSourceCoverage{
 				SourceID:   source.SourceID,
 				SourceType: source.SourceType,
 				Name:       source.Name,
 				Status:     string(source.Status),
 				AsOf:       source.AsOf,
-			}
-			coverage.Sources = append(coverage.Sources, row)
+			})
 		}
 	}
 	return coverage

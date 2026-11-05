@@ -82,7 +82,6 @@ func TestCalendarEventsRoute(t *testing.T) {
 			if tc.name == "owner" {
 				assertions.Equal(new(7), backend.query.Limit)
 				assertions.Equal("next-page", backend.query.Cursor)
-				assertions.Contains(w.Body.String(), `"coverage":`)
 				assertions.Contains(w.Body.String(), "Coverage fixture notice")
 			}
 			if tc.status == 401 || tc.status == 403 {

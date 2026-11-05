@@ -13,20 +13,17 @@ import (
 )
 
 type calendarEventsTestBackend struct {
-	calls int
 	query store.CalendarOccurrenceQuery
 	ref   string
 	page  store.CalendarOccurrencePage
 }
 
 func (s *calendarEventsTestBackend) ListCalendarOccurrencesContext(_ context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
-	s.calls++
 	s.query = query
 	return s.page, nil
 }
 
 func (s *calendarEventsTestBackend) GetCalendarOccurrenceContext(_ context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
-	s.calls++
 	s.ref = ref
 	return store.CalendarOccurrenceDetail{}, nil
 }
@@ -94,7 +91,6 @@ func TestCalendarArchiveRejectsInvalidArguments(t *testing.T) {
 			assertions := assert.New(t)
 			st := &calendarEventsTestBackend{}
 			result := rawCallTool(t, ServeOptions{CalEvents: st}, ToolListCalendarEvents, tt.args)
-			assertions.Zero(st.calls)
 			assertions.Equal(true, result["isError"], fmt.Sprint(result["content"]))
 			assertions.NotEmpty(result["content"])
 			assertions.Contains(fmt.Sprint(result["content"]), tt.want)

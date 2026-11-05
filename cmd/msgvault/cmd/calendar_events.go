@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -173,7 +174,9 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 }
 
 func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCoverage) error {
-	if coverage.Complete || coverage.Notice == "" {
+	if coverage.Notice == "" || !slices.ContainsFunc(coverage.Sources, func(source store.CalendarSourceCoverage) bool {
+		return source.Status != store.CalendarSourceCoverageStatusComplete
+	}) {
 		return nil
 	}
 	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Coverage: %s\n", textutil.SanitizeTerminal(coverage.Notice)); err != nil {
