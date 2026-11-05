@@ -12,7 +12,7 @@ test('palette shows ordered sections, initial selection, and command icons', asy
   await page.goto('/');
   await expect(page.getByText('Synthetic archive subject')).toBeVisible();
   await setKitTheme(page, 'dark');
-  await page.keyboard.press('Control+k');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   const palette = page.getByRole('dialog', { name: 'Messages commands' });
   const input = palette.getByRole('combobox');
   await expect(input).toHaveAttribute('placeholder', 'Type a command or search…');
@@ -30,7 +30,7 @@ test('palette keeps fallback rows in Search with and without command matches', a
   await mockArchiveLayout(page);
   await page.goto('/');
   await expect(page.getByText('Synthetic archive subject')).toBeVisible();
-  await page.keyboard.press('Control+k');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   const palette = page.getByRole('dialog', { name: 'Messages commands' });
   for (const query of ['source', 'zzzxxyy']) {
     await palette.getByRole('combobox').fill(query);
