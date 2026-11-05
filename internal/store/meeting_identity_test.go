@@ -254,7 +254,7 @@ func TestMeetingIdentityTwoLongRunningDailySeriesSavedDecisions(t *testing.T) {
 	}
 }
 
-func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
+func TestMeetingIdentityInviteAndSyncedCopyShareIdentity(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H")))
@@ -269,9 +269,11 @@ func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	refs := []string{inviteRef, formatMeetingOccurrence(OccurrenceRef{MessageID: synced})}
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs})
 	require.NoError(err)
-	require.Len(got.ByOccurrence, 1)
-	assert.Equal("occ:"+refs[1], got.ByOccurrence[refs[1]].Key)
-	assert.Equal(refs[1], got.ByOccurrence[refs[1]].OccurrenceRef)
+	require.Len(got.ByOccurrence, 2)
+	for _, ref := range refs {
+		assert.Equal("occ:"+inviteRef, got.ByOccurrence[ref].Key)
+		assert.Equal(inviteRef, got.ByOccurrence[ref].OccurrenceRef)
+	}
 }
 
 func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
