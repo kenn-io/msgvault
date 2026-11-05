@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatDate } from '../../util/format';
   import type { ExploreFileFact } from '../../explore/models';
 
   let {
@@ -23,10 +24,6 @@
     return `${(value / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  function date(value: string): string {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleDateString();
-  }
 </script>
 
 <section class="attachment-rail" aria-label="Chronological files">
@@ -45,7 +42,7 @@
       {#each chronological as file (file.key)}
         <li>
           <div><strong>{file.filename || '(unnamed file)'}</strong><span>{bytes(file.size)}</span></div>
-          <div><time datetime={file.occurred_at} data-mono>{date(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
+          <div><time datetime={file.occurred_at} data-mono>{formatDate(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
         </li>
       {/each}
     </ol>

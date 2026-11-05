@@ -321,7 +321,7 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 	GROUP BY ` + spec.groupBy + `
 ), counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM grouped
-` + analyticalGroupPageSQL(spec.pageLabel, order)
+` + analyticalGroupPageSQL(spec.pageLabel, order, "")
 	args = append(args, limit, request.Page.Offset)
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {

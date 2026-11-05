@@ -10,13 +10,14 @@
   import MeetingActionFilters from './MeetingActionFilters.svelte';
   import MeetingMetrics from './MeetingMetrics.svelte';
 
-  let { client, scope, refreshKey = '', showHeading = true, compact = false, controller: suppliedController, onReloadScope = undefined, onOpenMeeting = undefined }: {
+  let { client, scope, refreshKey = '', showHeading = true, compact = false, hideWhenEmpty = false, controller: suppliedController, onReloadScope = undefined, onOpenMeeting = undefined }: {
     client: APIClient;
     scope: MeetingPanelScope;
     /** UI invalidation only; the server still resolves the durable identity. */
     refreshKey?: string;
     showHeading?: boolean;
     compact?: boolean;
+    hideWhenEmpty?: boolean;
     controller?: MeetingsController;
     /** Explore owners must reload the corresponding result before publishing new authority. */
     onReloadScope?: () => void;
@@ -44,6 +45,7 @@
 
 </script>
 
+{#if !hideWhenEmpty || errors.length > 0 || (!controller.metricsLoading && (controller.metrics?.totals.meeting_count ?? 0) > 0)}
 {#if compact}
   <div class="meeting-dialog">
     <MeetingActionFilters compact {controller} />
@@ -90,9 +92,11 @@
         {/if}
       </header>
 
-      <Card level="inset" padding="sm">
-        <MeetingActionFilters {controller} />
-      </Card>
+      {#if !hideWhenEmpty || controller.actions?.total_count !== 0 || controller.filters.status || controller.filters.assigneeEmail}
+        <Card level="inset" padding="sm">
+          <MeetingActionFilters {controller} />
+        </Card>
+      {/if}
 
       {#if controller.actions}
         <MeetingActions {client} evidence={controller.actions} {onOpenMeeting} />
@@ -104,6 +108,8 @@
     </section>
   </section>
 </Card>
+{/if}
+
 {/if}
 
 <style>

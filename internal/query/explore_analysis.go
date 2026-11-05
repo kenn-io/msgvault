@@ -2,23 +2,26 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // analyticalGroupPageSQL resolves optional labels after grouping and pagination.
-func analyticalGroupPageSQL(pageLabel, order string) string {
+func analyticalGroupPageSQL(pageLabel, order, extra string) string {
 	if pageLabel != "" {
 		return `), page AS MATERIALIZED (
 	SELECT * FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
 )
-SELECT group_key, ` + pageLabel + ` AS group_label, group_count, estimated_bytes, latest_at, total_count
+SELECT group_key, ` + pageLabel + ` AS group_label, group_count, estimated_bytes, latest_at, total_count` + extra + `
 FROM page ORDER BY ` + order
 	}
 	return `)
-SELECT group_key, group_label, group_count, estimated_bytes, latest_at, total_count
+SELECT group_key, group_label, group_count, estimated_bytes, latest_at, total_count` + extra + `
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
@@ -41,12 +44,12 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err != nil {
 		return nil, err
 	}
+	_, zone, err := validateRelationshipTimezone(request.Timezone)
+	if err != nil {
+		return nil, err
+	}
 	var groupArgs []any
-	if request.Dimension == timeGranularityDay {
-		_, zone, err := validateRelationshipTimezone(request.Timezone)
-		if err != nil {
-			return nil, err
-		}
+	if request.Dimension == timeGranularityDay || request.Dimension == "year" || request.Dimension == timeGranularityMonth {
 		groupArgs = append(groupArgs, zone)
 	}
 	order, err := exploreGroupOrder(request.Sort)
@@ -90,18 +93,29 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if request.Dimension == timeGranularityDay {
 		byteExpression = exploreEstimatedBytesSQL
 	}
+	overview := request.GroupKey != "" && request.Dimension != timeGranularityDay
+	aggregateExtra, pageExtra := "", ", total_items"
+	if overview {
+		bucketFormat := "%Y-%m"
+		if request.Dimension == timeGranularityMonth {
+			bucketFormat = "%Y-%m-%d"
+		}
+		aggregateExtra = ", MIN(occurred_at) AS first_at, " + spec.groupBy + " AS selected_group_value, CAST(to_json(histogram(strftime(timezone(?, timezone('UTC', occurred_at)), '" + bucketFormat + "'))) AS VARCHAR) AS activity"
+		args = append(args, zone)
+		pageExtra += ", first_at, activity, (" + e.exploreGroupPeopleSQL(spec, request.Dimension) + ") AS people"
+	}
 	queryText += spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
 		COUNT(*)::BIGINT AS group_count,
 		COALESCE(SUM(` + byteExpression + `), 0)::BIGINT AS estimated_bytes,
-		MAX(occurred_at) AS latest_at
+		MAX(occurred_at) AS latest_at, SUM(COUNT(*)) OVER ()::BIGINT AS total_items` + aggregateExtra + `
 	FROM ` + spec.source + spec.fromSuffix + spec.whereSuffix + `
 	GROUP BY ` + spec.groupBy + `
 ), counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM grouped` + keyFilter + `
 `
-	queryText += analyticalGroupPageSQL(spec.pageLabel, order)
+	queryText += analyticalGroupPageSQL(spec.pageLabel, order, pageExtra)
 	if request.GroupKey != "" {
 		args = append(args, request.GroupKey)
 	}
@@ -116,8 +130,33 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	}
 	for rows.Next() {
 		var row ExploreGroupRow
-		if err := rows.Scan(&row.Key, &row.Label, &row.Count, &row.EstimatedBytes, &row.LatestAt, &response.TotalCount); err != nil {
+		var totalItems int64
+		var firstAt time.Time
+		var activityJSON, peopleJSON string
+		destinations := []any{&row.Key, &row.Label, &row.Count, &row.EstimatedBytes, &row.LatestAt, &response.TotalCount, &totalItems}
+		if overview {
+			destinations = append(destinations, &firstAt, &activityJSON, &peopleJSON)
+		}
+		if err := rows.Scan(destinations...); err != nil {
 			return nil, fmt.Errorf("scan analytical group: %w", err)
+		}
+		if request.Dimension == "year" || request.Dimension == timeGranularityMonth {
+			row.TotalItems = totalItems
+		}
+		if overview {
+			detail := &ExploreGroupOverview{FirstAt: firstAt, Activity: []ExploreGroupActivity{}, CoParticipants: []ExploreGroupCoParticipant{}}
+			var buckets map[string]int64
+			if err := json.Unmarshal([]byte(activityJSON), &buckets); err != nil {
+				return nil, fmt.Errorf("decode group activity: %w", err)
+			}
+			for bucket, count := range buckets {
+				detail.Activity = append(detail.Activity, ExploreGroupActivity{Bucket: bucket, Count: count})
+			}
+			sort.Slice(detail.Activity, func(i, j int) bool { return detail.Activity[i].Bucket < detail.Activity[j].Bucket })
+			if err := json.Unmarshal([]byte(peopleJSON), &detail.CoParticipants); err != nil {
+				return nil, fmt.Errorf("decode group people: %w", err)
+			}
+			response.Overview = detail
 		}
 		response.Rows = append(response.Rows, row)
 	}
@@ -125,6 +164,23 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		return nil, fmt.Errorf("iterate analytical groups: %w", err)
 	}
 	return withDayHeatLevels(request, response), nil
+}
+
+func (e *DuckDBEngine) exploreGroupPeopleSQL(spec groupExpressions, dimension string) string {
+	restriction := "le.entry_key IN (SELECT entry_key FROM selected_entries) AND NOT a.is_owner"
+	if dimension == "participant" {
+		restriction += " AND CAST(a.canonical_id AS VARCHAR) <> group_key"
+	}
+	label := "COALESCE(" + sqlIndexedPersonGroupLabelExpr(e.parquetPath(identityindex.DatasetPeople)) + ", " + sqlPersonGroupLabelExpr(e.parquetPath(datasetParticipants), e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetPersonDisplayNames)) + ")"
+	return `WITH selected_entries AS (
+ SELECT entry_key FROM ` + spec.source + spec.fromSuffix + ` WHERE ` + spec.groupBy + ` = selected_group_value
+ ), edges AS (` + sqlActivityEntryEdges("a.canonical_id AS person_id", "a.is_direct AND "+restriction, "(a.is_direct OR a.is_conversation_member) AND "+restriction) + `
+ ), top_people AS (
+ SELECT person_id, CAST(person_id AS VARCHAR) AS group_key, COUNT(DISTINCT entry_key)::BIGINT AS count
+ FROM edges GROUP BY person_id ORDER BY count DESC, person_id LIMIT 3
+ ), labeled AS (
+ SELECT group_key AS key, ` + label + ` AS label, count FROM top_people
+ ) SELECT CAST(to_json(COALESCE(list(struct_pack(key := key, label := label, count := count)), [])) AS VARCHAR) FROM labeled`
 }
 
 // withDayHeatLevels assigns shared relationship heat levels only when the page
@@ -251,6 +307,11 @@ func exploreGroupExpressions(
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
 	}
+	timeGroup := func(format string) groupExpressions {
+		expr := "strftime(local_at, '" + format + "')"
+		return groupExpressions{key: expr, label: expr, groupBy: expr, source: "time_bucketed",
+			cte: `), time_bucketed AS (SELECT *, timezone(?, timezone('UTC', occurred_at)) AS local_at FROM logical_entries`}
+	}
 	switch dimension {
 	case "source":
 		return groupExpressions{
@@ -290,9 +351,9 @@ func exploreGroupExpressions(
 	case "kind":
 		return simple("entry_kind"), nil
 	case "year":
-		return simple("strftime(occurred_at, '%Y')"), nil
+		return timeGroup("%Y"), nil
 	case timeGranularityMonth:
-		return simple("strftime(occurred_at, '%Y-%m')"), nil
+		return timeGroup("%Y-%m"), nil
 	case timeGranularityDay:
 		return groupExpressions{
 			key: "local_day", label: "local_day", groupBy: "local_day", source: "day_bucketed", noLists: true,
@@ -355,7 +416,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 	WHERE group_value IS NOT NULL
 	GROUP BY entry_id, group_value
 ), group_entries AS (
-	SELECT ` + resultValue + `, le.occurred_at, le.estimated_bytes
+	SELECT ` + resultValue + `, le.entry_key, le.occurred_at, le.estimated_bytes
 	FROM logical_entries le
 	JOIN group_members gm ON gm.entry_id =
 		CASE WHEN le.entry_kind = 'conversation'

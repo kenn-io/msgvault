@@ -1,3 +1,4 @@
+import { groupRowName } from './labels';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -108,4 +109,12 @@ describe('entryKindPresentation', () => {
   it('prefers the server kind over the message type', () => {
     expect(entryKindPresentation('meeting', 'email').name).toBe('Meeting');
   });
+});
+
+it.each([
+ ['month', '2022-05', '2022-05', 'May 2022'],
+ ['message_type', 'meeting_transcript', 'meeting_transcript', 'Meeting transcript'],
+ ['kind', 'meeting', 'meeting', 'Meeting']
+] as const)('formats %s group names', (dimension, key, label, name) => {
+ expect(groupRowName(dimension, key, label).name).toBe(name);
 });

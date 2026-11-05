@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { groupRowName } from '../../explore/labels';
   import { tasksSettingsDestination } from './navigation';
   import { Button, PageHeader } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
@@ -55,6 +56,7 @@
   const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
+    sourceTypes?: ReadonlyMap<string, string>;
     meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
     scope?: import('../../explore/models').ExploreFilter;
     conversationStart?: string;
@@ -92,6 +94,7 @@
   }
 
   let {
+    sourceTypes = new Map(),
     meetingContext = undefined,
     scope = undefined,
     conversationStart = undefined,
@@ -216,7 +219,7 @@
       session.readingGroupDetail?.kind === 'group' &&
       session.readingGroupDetail.dimension === group.dimension &&
       session.readingGroupDetail.key === group.key
-      ? session.readingGroupDetail
+      ? { ...session.readingGroupDetail, label: groupRowName(group.dimension, group.key, session.readingGroupDetail.label, sourceTypes.get(group.key)).name }
       : undefined;
   });
 
@@ -365,6 +368,7 @@
           count: lookup.row.count,
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
+          overview: lookup.overview,
           meetingScope: exploreMeetingScope(detailPredicate, lookup.authority).explore,
         };
         session.readingDetailFingerprint = loadedKey;
@@ -751,7 +755,7 @@
             <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
           {/if}
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable {sourceTypes}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               loading={loader.loading}

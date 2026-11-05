@@ -119,7 +119,8 @@ describe('ExploreAPI routing', () => {
       grouping: ['source'],
       presentation: 'table',
       limit: 500,
-      cursor: 'groups-2'
+      cursor: 'groups-2',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
   });
 
@@ -284,4 +285,21 @@ describe('ExploreAPI routing', () => {
     await expect(api.runCoverageAction('build_index', 'incomplete'))
       .rejects.toThrow(/failed|activation/i);
   });
+});
+
+
+it.each(['month', 'year', 'participant'] as const)('keeps %s grouping order stable across Messages and Files pages', async dimension => {
+ const bodies: Record<string, unknown>[] = [];
+ const api = createExploreAPI(createAPIClient(async input => {
+  bodies.push(await (input as Request).json());
+  return Response.json({ rows: [], total_count: 0, cache_revision: 'fixture', search_provenance: {} });
+ }));
+ for (const cursor of [undefined, 'next-page']) {
+  await api.groups({ limit: 1, cursor }, dimension);
+  await api.fileGroups({ limit: 1, cursor }, '', [], dimension);
+ }
+ for (const [index, body] of bodies.entries()) {
+  expect(body.sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
+  if (index % 2 === 0) expect(body.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+ }
 });

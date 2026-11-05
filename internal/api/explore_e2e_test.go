@@ -1098,3 +1098,41 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert.Equal(t, "Pacific/Pago_Pago", engine.groupRequest.Timezone)
 	assert.True(t, engine.groupRequest.Explore.SentOnly)
 }
+
+func TestExploreGroupOverviewAndKindDrill(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
+	source := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["source"]}`)
+	require.Equal(http.StatusOK, source.Code, source.Body.String())
+	assert.NotContains(source.Body.String(), `"total_items"`)
+	assert.NotContains(source.Body.String(), `"overview"`)
+
+	months := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"]}`)
+	require.Equal(http.StatusOK, months.Code, months.Body.String())
+	var page ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(months.Body.Bytes(), &page))
+	require.NotEmpty(page.Rows)
+	assert.Positive(page.Rows[0].TotalItems)
+	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", fmt.Sprintf(`{"grouping":["month"],"group_key":%q}`, page.Rows[0].Key))
+	require.Equal(http.StatusOK, keyed.Code, keyed.Body.String())
+	var detail ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(keyed.Body.Bytes(), &detail))
+	require.NotNil(detail.Overview)
+	var sum int64
+	for _, bucket := range detail.Overview.Activity {
+		sum += bucket.Count
+	}
+	assert.Equal(page.Rows[0].Count, sum)
+	kinds := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["kind"]}`)
+	require.Equal(http.StatusOK, kinds.Code, kinds.Body.String())
+	require.NoError(json.Unmarshal(kinds.Body.Bytes(), &page))
+	require.NotEmpty(page.Rows)
+	drilled := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(`{"filters":[{"dimension":"kind","values":[%q]}]}`, page.Rows[0].Key))
+	require.Equal(http.StatusOK, drilled.Code, drilled.Body.String())
+	var entries struct {
+		TotalCount int64 `json:"total_count"`
+	}
+	require.NoError(json.Unmarshal(drilled.Body.Bytes(), &entries))
+	assert.Equal(page.Rows[0].Count, entries.TotalCount)
+}

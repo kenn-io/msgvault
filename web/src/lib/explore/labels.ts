@@ -1,3 +1,4 @@
+import { sourceDisplayName, sourceIcon } from '../sources/labels';
 import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import type {
   ExploreColumn,
@@ -201,4 +202,17 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
     return kindPresentation('◫', 'Meeting item');
   }
   return kindPresentation('◇', 'Archive item');
+}
+
+export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sourceType?: string) {
+  if (dimension === 'month' && /^\d{4}-\d{2}$/.test(key)) {
+    const [year, month] = key.split('-').map(Number);
+    return { name: new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(year!, month! - 1, 1)) };
+  }
+  if (dimension === 'source') return { name: sourceDisplayName(sourceType, label), icon: sourceType ? sourceIcon(sourceType) : undefined, title: label };
+  if (dimension === 'kind' || dimension === 'message_type') {
+    const presentation = dimension === 'kind' ? entryKindPresentation(key) : entryKindPresentation('', key);
+    return { name: dimension === 'kind' ? presentation.name : sentenceCase(key), icon: presentation.icon };
+  }
+  return { name: label };
 }

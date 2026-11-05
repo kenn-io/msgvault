@@ -1,3 +1,4 @@
+import { formatDate } from './format';
 import { describe, expect, it } from 'vitest';
 import { formatBytes, formatDateTime, formatRelativeTime } from './format';
 
@@ -18,4 +19,10 @@ describe('format', () => {
     expect(formatRelativeTime('2026-07-19T10:00:00Z', now)).toBe('now');
     expect(formatRelativeTime('soon', now)).toBe('soon');
   });
+});
+
+it('keeps the year in current-year dates and preserves invalid input', () => {
+ const year = new Date().getFullYear();
+ expect(formatDate(`${year}-05-03T12:00:00Z`)).toContain(String(year));
+ expect(formatDate('invalid')).toBe('invalid');
 });

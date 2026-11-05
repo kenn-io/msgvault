@@ -1,3 +1,5 @@
+import Mic from '@lucide/svelte/icons/mic';
+import { sourceDisplayName, sourceIcon } from './labels';
 import { describe, expect, it } from 'vitest';
 import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
@@ -63,3 +65,15 @@ it.each([
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
 });
+
+it.each([
+ ['granola', 'fixture-granola', 'Granola'],
+ ['granola', 'person@example.com', 'Granola'],
+ ['gmail', 'person@example.com', 'person@example.com'],
+ ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
+ [undefined, 'fixture-source', 'fixture-source']
+])('formats a %s source', (type, identifier, name) => {
+ expect(sourceDisplayName(type, identifier!)).toBe(name);
+});
+
+it('uses the meeting icon for Granola', () => { expect(sourceIcon('granola')).toBe(Mic); });
