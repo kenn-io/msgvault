@@ -28,37 +28,6 @@ func meetingQueryKey(predicate string, args []any) string {
 	return fmt.Sprintf("%s:%#v", predicate, args)
 }
 
-func (s *Store) preloadMeetingEvents(ctx context.Context, r reboundReader, ids []int64, budget *int) error {
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
-	for chunk := range slices.Chunk(ids, 200) {
-		var missing []int64
-		for _, id := range chunk {
-			if _, ok := r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})]; !ok {
-				missing = append(missing, id)
-			}
-		}
-		if len(missing) == 0 {
-			continue
-		}
-		args := make([]any, len(missing))
-		for i, id := range missing {
-			args[i] = id
-		}
-		rows, err := meetingEventRows(ctx, r, "e.message_id IN ("+placeholders(len(args))+")", args, budget)
-		if err != nil {
-			return err
-		}
-		for _, id := range missing {
-			r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})] = nil
-		}
-		for _, row := range rows {
-			r.batch.events[meetingQueryKey("e.message_id = ?", []any{row.MessageID})] = []CalendarEventRow{row}
-		}
-	}
-	return nil
-}
-
 // Find IDs for many predicates together, then hydrate each calendar row once.
 // Keep the predicate owners in meeting_links.go so scalar and batch reads agree.
 func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, queries []meetingEventQuery, budget *int) error {
@@ -107,8 +76,25 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 		if len(ids) > *budget {
 			return calendarRecurrenceBudgetError()
 		}
-		if err := s.preloadMeetingEvents(ctx, r, ids, budget); err != nil {
-			return err
+		// The probe selected these IDs within the source scope and snapshot.
+		// Hydrate only missing rows without applying that scope a second time.
+		slices.Sort(ids)
+		ids = slices.Compact(ids)
+		missing := []any{}
+		for _, id := range ids {
+			if _, ok := r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		for chunk := range slices.Chunk(missing, 200) {
+			rows, err := queryCalendarEventRows(ctx, r, "e.message_id IN ("+placeholders(len(chunk))+")", chunk, 0)
+			if err != nil {
+				return err
+			}
+			*budget -= len(rows)
+			for _, row := range rows {
+				r.batch.events[meetingQueryKey("e.message_id = ?", []any{row.MessageID})] = []CalendarEventRow{row}
+			}
 		}
 		for i, q := range chunk {
 			var found []CalendarEventRow

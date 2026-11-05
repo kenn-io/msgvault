@@ -353,9 +353,3 @@ func materializeCalendarOccurrence(ctx context.Context, r loggedReader, master C
 func isFractionalCalendarIdentity(identity *calrecur.Identity) bool {
 	return identity != nil && !identity.AllDay && identity.Instant.Nanosecond() != 0
 }
-func calendarExceptionIdentityKey(identity calrecur.Identity) string {
-	if isFractionalCalendarIdentity(&identity) {
-		return "fractional:" + identity.Instant.UTC().Format(time.RFC3339Nano)
-	}
-	return identity.Key()
-}

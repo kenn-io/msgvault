@@ -670,9 +670,6 @@ func meetingIdentityCopyOccurrences(ctx context.Context, r reboundReader, identi
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID, Key: identity.OccurrenceKey}
 		if row.Event.Kind == meetingExceptionKind {
-			if identity.ICalUID != "" && row.Event.Original != nil && calendarExceptionIdentityKey(*row.Event.Original) != identity.OccurrenceKey {
-				continue
-			}
 			ref.Key = ""
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
@@ -682,7 +679,9 @@ func meetingIdentityCopyOccurrences(ctx context.Context, r reboundReader, identi
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, o)
+		if o.Identity == identity {
+			out = append(out, o)
+		}
 	}
 	return out, nil
 }

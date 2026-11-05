@@ -65,6 +65,9 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r reboundReader, pr
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	predicate = "(" + predicate + ")" + scope
+	args = append(slices.Clone(args), scopeArgs...)
 	// Public callers supply a snapshot: probe only IDs before decoding event
 	// payloads or loading attendees, and stop once the budget is exceeded.
 	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates"
@@ -84,10 +87,8 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	args = append(slices.Clone(args), scopeArgs...)
 	query := fmt.Sprintf(calendarEventSelect,
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
+		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ") ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -113,7 +114,7 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 			return nil, fmt.Errorf("scan calendar event: %w", err)
 		}
 		if version > calendarEventProjectionVersion {
-			return nil, fmt.Errorf("unsupported calendar projection version %d", version)
+			return nil, fmt.Errorf("%w: unsupported calendar projection version %d", ErrMeetingProjectionUnavailable, version)
 		}
 		row.ICalUID = uid.String
 		if originalDate != "" {

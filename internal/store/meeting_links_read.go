@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"slices"
 	"strings"
@@ -68,49 +67,11 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 
 func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, target linkOccurrence, budget *int) ([]int64, error) {
 	membersOut := []int64{}
-	var copies []CalendarEventRow
-	var err error
-	if target.Identity.ICalUID != "" {
-		copies, err = s.meetingIdentityRows(ctx, r, target.Identity, budget)
-		if err != nil {
-			return membersOut, err
-		}
-	}
-	values := []any{target.Row.Event.ProviderEventID}
-	if target.Row.Event.SeriesProviderID != "" && target.Row.Event.Original != nil {
-		values = append(values, target.Row.Event.SeriesProviderID+"_"+target.Row.Event.Original.Key())
-	}
-	if target.Ref.Key != "" {
-		values = append(values, target.Row.Event.ProviderEventID+"_"+target.Ref.Key)
-	}
-	if target.Identity.ICalUID != "" {
-		values = append(values, target.Identity.ICalUID)
-	}
-	if target.Row.ICalUID != "" && target.Row.ICalUID != target.Identity.ICalUID {
-		values = append(values, target.Row.ICalUID)
-	}
-	targets := []any{target.Ref.MessageID, target.Row.MessageID}
-	starts, resolvedRows, err := meetingCopyStarts(ctx, r, target, copies, budget)
+	query, args, err := s.meetingIdentityMemberQuery(ctx, r, target, budget)
 	if err != nil {
 		return membersOut, err
 	}
-	copies = append(copies, resolvedRows...)
-	for _, row := range copies {
-		targets = append(targets, row.MessageID)
-		value := row.Event.ProviderEventID
-		if row.Event.Kind != meetingExceptionKind && target.Identity.OccurrenceKey != "" {
-			value += "_" + target.Identity.OccurrenceKey
-		}
-		values = append(values, value, row.ICalUID)
-	}
-	args := slices.Concat(values, []any{target.Row.Event.Kind}, starts, []any{target.Ref.Key, target.Identity.OccurrenceKey}, targets)
-	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
- SELECT k.message_id FROM meeting_link_key k WHERE k.kind != '' AND k.value IN (`+placeholders(len(values))+`) AND (`+s.meetingKeyStartPredicate(len(starts))+`)
- UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.occurrence_key IN ('', ?, ?) AND EXISTS (
- SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN calendar_events f ON f.message_id = d.target_message_id JOIN messages fm ON fm.id = f.message_id
- WHERE e.message_id IN (`+placeholders(len(targets))+`) AND fm.source_id = m.source_id AND COALESCE(NULLIF(f.series_provider_id, ''), f.provider_event_id) = COALESCE(NULLIF(e.series_provider_id, ''), e.provider_event_id))
- ) candidates JOIN messages m ON m.id = candidates.message_id
- WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL ORDER BY m.id LIMIT ?`, append(args, *budget+1)...)
+	rows, err := r.QueryContext(ctx, query+" ORDER BY m.id LIMIT ?", append(args, *budget+1)...)
 	if err != nil {
 		return membersOut, err
 	}
@@ -146,14 +107,103 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	return membersOut, nil
 }
 
-// meetingCopyStarts lists the occurrence's effective and original starts plus
-// each calendar copy's start and resolved exception row, resolving series copies in their own zones.
-func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, []CalendarEventRow, error) {
-	starts := []any{target.Start}
-	var resolvedRows []CalendarEventRow
-	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
+// Discover only keys or decisions that could resolve to this occurrence. The
+// forward resolver applies splits, ambiguity and provider ordering afterwards.
+func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader, o linkOccurrence, budget *int) (string, []any, error) {
+	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, budget)
+	if err != nil {
+		return "", nil, err
+	}
+	// A manual decision may retain the ID of a UID-less orphan saved before
+	// its master arrived. Include source-local exception targets, then let the
+	// forward resolver validate their current identity, splits and visibility.
+	if o.Identity.OccurrenceKey != "" {
+		_, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey)
+		if o.Row.Event.Original != nil {
+			original, ok = *o.Row.Event.Original, true
+		}
+		if ok {
+			column, value := "e.original_start_at", any(original.Instant)
+			if original.AllDay {
+				column, value = "e.original_start_date", original.Date
+			}
+			var terms []string
+			var aliasArgs []any
+			for _, copy := range copies {
+				provider := copy.Event.ProviderEventID
+				if copy.Event.Kind == meetingExceptionKind {
+					provider = copy.Event.SeriesProviderID
+				}
+				if provider == "" {
+					continue
+				}
+				terms = append(terms, `(m.source_id=? AND e.series_provider_id=?)`)
+				aliasArgs = append(aliasArgs, copy.SourceID, provider)
+			}
+			if len(terms) > 0 {
+				aliasArgs = append(aliasArgs, value)
+				aliases, err := meetingEventRows(ctx, r, `e.kind='exception' AND (`+strings.Join(terms, " OR ")+`) AND `+column+`=?`, aliasArgs, budget)
+				if err != nil {
+					return "", nil, err
+				}
+				copies = append(copies, aliases...)
+			}
+		}
+	}
+	clauses := []string{"1=0"}
+	args := []any{}
+	keyClauses, keyArgs, err := meetingIdentityUIDMemberClauses(ctx, r, o, copies, budget)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, copy := range copies {
+		clauses = append(clauses, `(d.target_message_id=? AND (d.occurrence_key=? OR d.occurrence_key=''))`)
+		args = append(args, copy.MessageID, o.Identity.OccurrenceKey)
+		// Saved decisions keep the historical target ID after a source merge.
+		// Resolve its source-local provider alias just as forward reads do.
+		clauses = append(clauses, `(EXISTS (SELECT 1 FROM calendar_events h
+ JOIN messages hm ON hm.id=h.message_id
+ JOIN source_merge_archive_only_messages ha ON ha.message_id=h.message_id
+ WHERE h.message_id=d.target_message_id AND h.provider_event_id=? AND hm.source_id=?)
+ AND (d.occurrence_key=? OR d.occurrence_key=''))`)
+		args = append(args, copy.Event.ProviderEventID, copy.SourceID, o.Identity.OccurrenceKey)
+		if provider := copy.Event.ProviderEventID; provider != "" {
+			keyClauses = append(keyClauses, `(k.kind='google_event_id' AND k.value IN (?,?))`)
+			instance := provider
+			if o.Identity.OccurrenceKey != "" {
+				instance += "_" + o.Identity.OccurrenceKey
+			}
+			keyArgs = append(keyArgs, provider, instance)
+		}
+	}
+	query := `SELECT m.id FROM messages m WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL
+ AND m.id IN (SELECT d.member_message_id FROM meeting_link_decisions d WHERE ` + strings.Join(clauses, " OR ") + `
+ UNION SELECT k.message_id FROM meeting_link_key k WHERE ` + strings.Join(keyClauses, " OR ") + `)`
+	args = append(args, keyArgs...)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(args, scopeArgs...)
+	return query + scope, args, nil
+}
+
+// Each calendar copy can move the same occurrence to a different start.
+// Discovery admits all of those starts; forward resolution decides the link.
+func meetingIdentityUIDMemberClauses(ctx context.Context, r reboundReader, o linkOccurrence, rows []CalendarEventRow, budget *int) ([]string, []any, error) {
+	uids := []any{o.Identity.ICalUID}
+	if o.Row.ICalUID != "" && o.Row.ICalUID != o.Identity.ICalUID {
+		uids = append(uids, o.Row.ICalUID)
+	}
+	clause := `(k.kind='ical_uid' AND k.value IN (` + placeholders(len(uids)) + `) AND k.value<>'')`
+	if o.Identity.OccurrenceKey == "" {
+		return []string{clause}, uids, nil
+	}
+	copies, err := meetingIdentityCopyOccurrences(ctx, r, o.Identity, rows, budget)
+	if err != nil {
+		return nil, nil, err
+	}
+	starts := []any{o.Start.UTC()}
+	if _, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok {
 		if original.AllDay {
-			zone, err := calendarEventZone(target.Row.Event)
+			zone, err := calendarEventZone(o.Row.Event)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -164,32 +214,13 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 		}
 		starts = append(starts, original.Instant)
 	}
-	for _, row := range copies {
-		ref := OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}
-		if row.Event.Kind == meetingExceptionKind {
-			ref.Key = ""
-		}
-		copied, err := resolveMeetingOccurrence(ctx, r, ref, budget)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		starts = append(starts, copied.Start)
-		if copied.Row.MessageID != row.MessageID {
-			resolvedRows = append(resolvedRows, copied.Row)
-		}
+	for _, copy := range copies {
+		starts = append(starts, copy.Start.UTC())
 	}
-	return starts, resolvedRows, nil
-}
-
-// Gather only notes scheduled at the occurrence's original or copied starts,
-// so a long series does not expand every other date's notes against the budget.
-func (s *Store) meetingKeyStartPredicate(starts int) string {
-	column, values := "k.scheduled_at", placeholders(starts)
-	if !s.IsPostgreSQL() {
+	column, values := "k.scheduled_at", placeholders(len(starts))
+	if r.dialect.DriverName() != postgresDriverName {
 		column, values = "julianday(k.scheduled_at)", strings.ReplaceAll(values, "?", "julianday(?)")
 	}
-	return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR ` + column + ` IN (` + values + `)`
+	clause = `(k.kind='ical_uid' AND k.value IN (` + placeholders(len(uids)) + `) AND k.value<>'' AND ` + column + ` IN (` + values + `))`
+	return []string{clause}, append(uids, starts...), nil
 }

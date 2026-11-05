@@ -611,9 +611,9 @@ func TestMeetingIdentityFutureProjectionRejected(t *testing.T) {
 		_, err := st.db.Exec(`UPDATE calendar_events SET projection_version=? WHERE message_id=?`, calendarEventProjectionVersion+1, event)
 		require.NoError(err)
 		_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(event)}})
-		require.Error(err)
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 		_, err = meetingLinksForTest(t, st, note)
-		require.Error(err)
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 	})
 	t.Run("meeting", func(t *testing.T) {
 		require := require.New(t)
@@ -628,4 +628,50 @@ func TestMeetingIdentityFutureProjectionRejected(t *testing.T) {
 		_, err = meetingLinksForTest(t, st, note)
 		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 	})
+}
+
+func TestMeetingIdentityUnidentifiedExceptionDoesNotAbsorbSingle(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, exception := calendarFixture(t, st, "exception", `{"id":"exception","iCalUID":"shared@example.org","recurringEventId":"missing","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, single := calendarFixture(t, st, "single", singleLinkRaw("single", "shared@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"shared@example.org"}}`)
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(exception), identityRef(single)}, TranscriptIDs: []int64{note}})
+	require.NoError(err)
+	assert.Equal(identityRef(single), got.ByTranscript[note].OccurrenceRef)
+	assert.Equal([]int64{note}, got.ByOccurrence[identityRef(single)].LinkedTranscriptIDs)
+	assert.Empty(got.ByOccurrence[identityRef(exception)].LinkedTranscriptIDs)
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	require.Len(links, 1)
+	assert.Equal(identityRef(single), links[0].Ref)
+}
+
+func TestMeetingIdentityReverseSavedTargetAfterLiveCopyArrives(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	historical, event := calendarFixture(t, st, "historical", singleLinkRaw("event", ""), "historical@example.org")
+	noteData, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+	destination, err := st.GetOrCreateSource("gcal", "live@example.org")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: historical.Message.SourceID, IntoSourceID: destination.ID})
+	require.NoError(err)
+	_, live := calendarFixture(t, st, "live", singleLinkRaw("event", ""), "live@example.org")
+	_, unrelated := calendarFixture(t, st, "unrelated", singleLinkRaw("event", ""), "unrelated@example.org")
+	_, otherNote := projectionFixture(t, st, "other-note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), otherNote, OccurrenceRef{MessageID: unrelated}))
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	require.Len(links, 1)
+	assert.Equal(identityRef(live), links[0].Ref)
+	for _, ctx := range []context.Context{t.Context(), sourcescope.WithSourceIDs(t.Context(), []int64{destination.ID, noteData.Message.SourceID})} {
+		got, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(live)}})
+		require.NoError(err)
+		assert.Equal([]int64{note}, got.ByOccurrence[identityRef(live)].LinkedTranscriptIDs)
+		assert.NotContains(got.ByTranscript, otherNote)
+		record, err := st.MeetingRecordContext(ctx, MeetingLinkRef{Kind: "evt", MessageID: live})
+		require.NoError(err)
+		assert.Equal([]int64{note}, record.MessageIDs)
+	}
 }

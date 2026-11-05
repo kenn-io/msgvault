@@ -29,12 +29,20 @@ func TestParticipantsByEmailMapsSavedAndUnsaved(t *testing.T) {
 		"bob@example.com":   {ParticipantID: bob},
 		"alias@example.com": {ParticipantID: bob},
 	}, got)
+	for address, participant := range got {
+		id, err := st.EmailParticipantContext(t.Context(), address)
+		require.NoError(err)
+		assert.Equal(participant.ParticipantID, id)
+	}
 	// Ambiguous aliases must not pick a participant by row order.
 	_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'apple_id','bob@example.com',FALSE)`, alice)
 	require.NoError(err)
 	got, err = st.ParticipantsByEmailContext(t.Context(), []string{"bob@example.com"})
 	require.NoError(err)
 	assert.Empty(got)
+	id, err := st.EmailParticipantContext(t.Context(), "BOB@example.com")
+	require.NoError(err)
+	assert.Zero(id)
 }
 
 func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {

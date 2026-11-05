@@ -46,32 +46,7 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
  AND (m.sender_id=p.id OR EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id=m.id AND mr.participant_id=p.id))` + clause + `)`
 		scopeArgs = args
 	}
-	// Bind the scope before the requested addresses for the shared chunk reader.
-	query := `WITH visible AS (SELECT p.id FROM participants p WHERE 1=1` + scope + `),
- requested(address) AS (VALUES %s), matches AS (SELECT r.address,p.id FROM requested r JOIN participants p ON LOWER(p.email_address)=r.address
- UNION SELECT r.address,p.participant_id FROM requested r JOIN participant_identifiers p ON LOWER(p.identifier_value)=r.address)
- SELECT a.address,p.id,COALESCE(pp.person_id,0) FROM matches a
- JOIN visible p ON p.id=a.id LEFT JOIN person_participants pp ON pp.participant_id=p.id`
-	ambiguous := map[string]bool{}
-	err = queryInChunksWithValueExprContext(ctx, snapshot.tx, addresses, scopeArgs, query, "(?)", func(rows *loggedRows) error {
-		var address string
-		var participant AddressParticipant
-		if err := rows.Scan(&address, &participant.ParticipantID, &participant.PersonID); err != nil {
-			return err
-		}
-		if previous, ok := result[address]; ok && previous.ParticipantID != participant.ParticipantID {
-			ambiguous[address] = true
-		}
-		result[address] = participant
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("resolve meeting attendees: %w", err)
-	}
-	for address := range ambiguous {
-		delete(result, address)
-	}
-	return result, nil
+	return emailParticipantsContext(ctx, snapshot.tx, addresses, scope, scopeArgs)
 }
 
 // MeetingActionItemCountsContext counts all archived action items for each
