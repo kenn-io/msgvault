@@ -409,7 +409,7 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   await history.getByRole('button', { name: 'Inspect merge 41' }).click();
-  await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Another profile merged into/ })).toBeVisible();
   await assertNoViolations(page, 'Directory merge history detail');
   await page.getByRole('button', { name: 'Split merged profile' }).click();
   const split = page.getByRole('dialog', { name: 'Split merged profile' });

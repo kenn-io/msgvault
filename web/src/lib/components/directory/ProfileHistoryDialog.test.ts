@@ -205,6 +205,7 @@ describe('ProfileHistoryDialog', () => {
         return response;
       }
       if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
+      if (path === '/api/v1/participants/1') return Response.json({ identifiers: [{ participant_id: 1, type: 'email', value: 'observed@example.com' }] });
       if (path === '/api/v1/person-merges/41') return Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] });
       if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'web', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
@@ -231,7 +232,8 @@ describe('ProfileHistoryDialog', () => {
       await waitFor(() => {
         expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 });
         expect(screen.getByText('Retained name')).toBeDefined();
-        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
+        for (const value of ['Moved alias', 'moved@example.com']) expect(screen.queryByText(value)).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'Seen in services' })).toBeNull();
       });
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });

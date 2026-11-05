@@ -1,6 +1,6 @@
 <script lang="ts">
   import { formatDateTime as historyTime } from '../../util/format';
-  import { Button, Spinner, Table } from '@kenn-io/kit-ui';
+  import { Button, Spinner } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -8,11 +8,15 @@
     PersonMergeHistoryController,
     type PersonSplitCommittedContext
   } from '../../directory/person-merge-history-controller.svelte';
+  import HistorySection from './HistorySection.svelte';
+  import { historySource } from './history-format';
+  import { reviewStateChip } from '../../directory/labels';
   import PersonSplitModal from './PersonSplitModal.svelte';
 
   interface Props {
     client: APIClient;
     personID: number;
+    definitions?: { id: number; label: string }[];
     onOpenPerson?: (personID: number) => void;
     onSplitCommitted?: (context: PersonSplitCommittedContext) => void | Promise<void>;
   }
@@ -20,6 +24,7 @@
   let {
     client,
     personID,
+    definitions = [],
     onOpenPerson = () => undefined,
     onSplitCommitted = () => undefined
   }: Props = $props();
@@ -52,13 +57,21 @@
     if (splitTrigger?.isConnected) splitTrigger.focus();
   }
 
-  function rowActionCounts(counts: Record<string, number>): string {
-    const entries = Object.entries(counts).sort(([left], [right]) => left.localeCompare(right));
-    return entries.length ? entries.map(([action, count]) => `${action}: ${count}`).join(', ') : 'None';
+  const labels = $derived(controller.labels?.for === controller.detail ? controller.labels : null);
+  const survivor = $derived(controller.detail ? labels?.names.get(controller.detail.merge.survivor_person_id) : undefined);
+  function addressRows(side: string) {
+    return (controller.detail?.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant => {
+      const addresses = labels?.addresses.get(participant.participant_id) ?? [];
+      return (addresses.length ? addresses : [{ title: `Participant ${participant.participant_id}`, detail: '' }]).map((address, index) => ({
+        id: `${participant.participant_id}-${index}`, value: address.title, detail: address.detail, meta: participant.split_id === undefined ? '' : 'Split out'
+      }));
+    });
   }
-
-  function disposition(splitID: number | undefined): string {
-    return splitID === undefined ? 'Not split' : `Split ${splitID}`;
+  function reviewRows(pending: boolean) {
+    return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({
+      id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field',
+      meta: pending ? 'Waiting for review' : [reviewStateChip(candidate.state).label, candidate.reviewed_by ? historySource(candidate.reviewed_by) : '', candidate.reviewed_at ? historyTime(candidate.reviewed_at) : ''].filter(Boolean).join(' · ')
+    }));
   }
 
   function snapshotText(value: unknown): string {
@@ -106,39 +119,27 @@
   {:else if controller.detailError && !controller.detail}
     <div class="message" role="alert"><p>{controller.detailError}</p><Button label="Retry merge detail" size="sm" onclick={() => void controller.retryDetail()} /></div>
   {:else if controller.detail}
-    <section class="merge-detail" aria-labelledby={`merge-${controller.detail.merge.id}-detail-heading`}>
+    <section class="merge-detail" aria-label="Merge detail">
       <div class="section-heading">
-        <div><h4 id={`merge-${controller.detail.merge.id}-detail-heading`}>Merge {controller.detail.merge.id} detail</h4><p>Recorded by {controller.detail.merge.actor} at {controller.detail.merge.created_at}.</p></div>
+        {#if labels}<div><h4>{survivor ? `Another profile merged into ${survivor}` : 'Two profiles merged'}</h4><p>{historySource(controller.detail.merge.actor)} · {historyTime(controller.detail.merge.created_at)}</p></div>
+        {:else}<p role="status"><Spinner size={12} label="Loading merge detail" /> Loading merge detail…</p>{/if}
         {#if controller.canOfferSplit}<Button label="Split merged profile" tone="info" onclick={openSplit} />
         {:else if !controller.detail.merge.current_person_id}<p>No current source profile is recorded, so this merge cannot be split.</p>{/if}
       </div>
       {#if controller.detailError}<p class="error" role="alert">{controller.detailError}</p>{/if}
 
-      <!-- Keyboard focus lets a user scroll a table wider than its pane without a pointer. -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge participants table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge participants"><thead><tr><th scope="col">Participant</th><th scope="col">Origin</th><th scope="col">Disposition</th></tr></thead>
-          <tbody>{#each controller.detail.participants ?? [] as participant}<tr><th scope="row">{participant.participant_id}</th><td>{participant.origin_side}</td><td>{disposition(participant.split_id)}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge row dispositions table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge row dispositions"><thead><tr><th scope="col">Table</th><th scope="col">Action</th><th scope="col">Origin</th><th scope="col">Provenance</th><th scope="col">Participant</th><th scope="col">Disposition</th></tr></thead>
-          <tbody>{#each controller.detail.rows ?? [] as row}<tr><th scope="row">{row.table_name}</th><td>{row.action}</td><td>{row.origin_side}</td><td>{row.provenance_kind}</td><td>{row.participant_id ?? 'None'}</td><td>{disposition(row.split_id)}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Prior splits table" tabindex="0">
-        <Table unsorted bare ariaLabel="Prior splits"><thead><tr><th scope="col">Split</th><th scope="col">Source</th><th scope="col">Created person</th><th scope="col">Revision change</th><th scope="col">Restoration</th><th scope="col">Actor</th><th scope="col">Created</th></tr></thead>
-          <tbody>{#each controller.detail.splits ?? [] as split}<tr><th scope="row">{split.id}</th><td>Person {split.source_person_id}</td><td>Person {split.new_person_id}</td><td>{split.source_revision_before} → {split.source_revision_after}</td><td>{split.exact_reversal ? 'Exact' : 'Partial'}</td><td>{split.actor}</td><td>{split.created_at}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="table-scroll" role="region" aria-label="Merge review candidates table" tabindex="0">
-        <Table unsorted bare ariaLabel="Merge review candidates"><thead><tr><th scope="col">Candidate</th><th scope="col">Person</th><th scope="col">Definition</th><th scope="col">Survivor value</th><th scope="col">Absorbed value</th><th scope="col">Resolution</th><th scope="col">State</th><th scope="col">Reviewed</th><th scope="col">Reviewer</th><th scope="col">Created</th></tr></thead>
-          <tbody>{#each controller.detail.review_candidates ?? [] as candidate}<tr><th scope="row">{candidate.id}</th><td>{candidate.person_id}</td><td>{candidate.definition_id}</td><td>{candidate.survivor_value_id}</td><td>{candidate.absorbed_value_id}</td><td>{candidate.resolution_value_id ?? 'None'}</td><td>{candidate.state}</td><td>{candidate.reviewed_at ?? 'Not reviewed'}</td><td>{candidate.reviewed_by ?? 'None'}</td><td>{candidate.created_at}</td></tr>{/each}</tbody>
-        </Table>
-      </div>
+      {#if labels}
+        {#if labels.incomplete}<div class="message"><p class="muted">Some names and addresses couldn't be loaded.</p><Button label="Retry" size="sm" onclick={() => void controller.retryDetail()} /></div>{/if}
+        {#each ['absorbed', 'survivor'] as side}
+          {@const rows = addressRows(side)}
+          {#if rows.length}<HistorySection level={5} title={side === 'absorbed' ? 'Message addresses from the merged-in profile' : `Message addresses from ${survivor ?? 'the surviving profile'}`} {rows} />{/if}
+        {/each}
+        {#if !controller.detail.participants?.length}<p class="muted">No message addresses were linked to this merge.</p>{/if}
+        {#if controller.detail.splits?.length}
+          <HistorySection level={5} title="Splits" rows={controller.detail.splits.map(split => ({ id: split.id, value: labels?.names.get(split.new_person_id) ?? 'A profile', detail: split.exact_reversal ? 'Exact restore' : 'Partial restore', meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}` }))} />
+        {/if}
+        {#if controller.detail.review_candidates?.length}<HistorySection level={5} title="Needs review" rows={reviewRows(true)} earlier={reviewRows(false)} earlierNoun="decision" />{/if}
+      {/if}
 
       {#if controller.snapshot}
         <p>Verified snapshot version {controller.snapshot.version}. SHA-256 {controller.snapshot.sha256}.</p>
@@ -168,13 +169,9 @@
   .section-heading, .pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   h3, h4, p, pre { margin: 0; }
   .section-heading p, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .table-scroll, .snapshot { max-width: 100%; overflow: auto; }
-  .table-scroll :global(table) { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-  .table-scroll :global(th),
-  .table-scroll :global(td) { padding: var(--space-2); border-bottom: var(--border-width) solid var(--border-default); text-align: left; vertical-align: top; }
-  .table-scroll :global(thead th) { color: var(--text-muted); white-space: nowrap; }
+  .snapshot { max-width: 100%; overflow: auto; }
   .snapshot { max-height: 22rem; padding: var(--space-3); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .table-scroll:focus-visible, .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
+  .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   .snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .message { display: flex; gap: var(--space-2); align-items: center; }
   .error { color: var(--text-danger); }

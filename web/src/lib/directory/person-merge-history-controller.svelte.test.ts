@@ -125,15 +125,67 @@ describe('PersonMergeHistoryController', () => {
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
     await controller.selectMerge(41);
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41']);
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/7', '/api/v1/participants/701', '/api/v1/participants/702']);
     expect(controller.snapshot).toBeNull();
 
     await controller.revealSnapshot();
     await controller.revealSnapshot();
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
       '/api/v1/person-merges/41',
+      '/api/v1/people/7',
+      '/api/v1/participants/701',
+      '/api/v1/participants/702',
       '/api/v1/person-merges/41/snapshot',
     ]);
+  });
+
+  it.each(['person', 'merge'])('offers Split during label loading and discards late labels after a newer %s', async replacement => {
+    const late = deferredResponse();
+    const requests: Request[] = [];
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const request = requestOf(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/person-merges/41') return Response.json(detail());
+      if (path === '/api/v1/people/7') return late.promise;
+      if (path === '/api/v1/person-merges/42') return Response.json(detail({ id: 42, survivor_person_id: 8 }, []));
+      if (path === '/api/v1/people/8') return Response.json(person(8, 1, [], 'New Example'));
+      return Response.json({ merges: [], identifiers: [] });
+    }), 7);
+    const first = controller.selectMerge(41);
+    await vi.waitFor(() => expect(controller.detail?.merge.id).toBe(41));
+    expect(controller.labels).toBeNull();
+    expect(controller.detailLoading).toBe(false);
+    expect(controller.canOfferSplit).toBe(true);
+    if (replacement === 'person') controller.setPerson(8);
+    else await controller.selectMerge(42);
+    late.resolve(Response.json(person(7, 1, [], 'Late Example')));
+    await first;
+    expect(requests.find(request => new URL(request.url).pathname === '/api/v1/people/7')?.signal.aborted).toBe(true);
+    expect(controller.labels?.names.get(7)).toBeUndefined();
+    if (replacement === 'merge') {
+      expect(controller.labels?.for).toBe(controller.detail);
+      expect(controller.labels?.names.get(8)).toBe('New Example');
+    } else expect(controller.labels).toBeNull();
+    controller.destroy();
+  });
+
+  it('keeps the matching labels when a detail reload fails', async () => {
+    let failed = false;
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/person-merges/41') return failed ? Response.json({}, { status: 503 }) : Response.json(detail());
+      if (path === '/api/v1/people/7') return Response.json(person(7, 1, [], 'Alex Example'));
+      return Response.json({ identifiers: [] });
+    }), 7);
+    await controller.selectMerge(41);
+    const labels = controller.labels;
+    failed = true;
+    await controller.retryDetail();
+    expect(controller.detailError).toBeTruthy();
+    expect(controller.labels).toBe(labels);
+    expect(controller.labels?.for).toBe(controller.detail);
+    controller.destroy();
   });
 
   it('uses detail current_person_id and its fresh strong ETag for the exact split request', async () => {
@@ -316,6 +368,7 @@ describe('PersonMergeHistoryController', () => {
           headers: { ETag: `"person-12-r${revision}"` },
         });
       }
+      if (request.method === 'GET') return Response.json({ identifiers: [] });
       postAttempts += 1;
       return postAttempts === 1
         ? Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 })
@@ -393,7 +446,7 @@ describe('PersonMergeHistoryController', () => {
     controller.confirmSplit();
     await controller.submitSplit();
 
-    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(2);
+    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(5);
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
     ).toEqual(['123-456-789-12', '234-567-890-23']);
@@ -507,7 +560,7 @@ describe('PersonMergeHistoryController', () => {
     const snapshotRead = controller.revealSnapshot();
     const splitWrite = controller.submitSplit();
     const detailRead = controller.selectMerge(41);
-    await vi.waitFor(() => expect(requests).toHaveLength(5));
+    await vi.waitFor(() => expect(requests).toHaveLength(8));
     controller.setPerson(8);
 
     lateDetail.resolve(Response.json(detail({ current_person_id: 99 })));
@@ -515,7 +568,7 @@ describe('PersonMergeHistoryController', () => {
     lateSplit.resolve(Response.json(splitResult()));
     await Promise.all([detailRead, snapshotRead, splitWrite]);
 
-    const lateRequests = requests.slice(2, 5);
+    const lateRequests = requests.slice(5, 8);
     expect(lateRequests.every((request) => request.signal.aborted)).toBe(true);
     expect(controller.personID).toBe(8);
     expect(controller.detail).toBeNull();
