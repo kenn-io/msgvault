@@ -2625,6 +2625,12 @@ func TestDeletionTargetPathsExcludeCalendarArtifactsFromGmail(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotEmpty(bySearch)
 	assertNoCalendarTarget(bySearch)
+	_, err = env.DB.Exec(`UPDATE messages SET list_id = '<dev@example.test>' WHERE id IN (1, ?)`, calendarID)
+	requirements.NoError(err)
+	byAggregate, err := env.Engine.GetDeletionTargetsByAggregateSearch(env.Ctx, "", filter, ViewLists, "<dev@example.test>")
+	requirements.NoError(err)
+	requirements.NotEmpty(byAggregate)
+	assertNoCalendarTarget(byAggregate)
 }
 
 func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {

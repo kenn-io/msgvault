@@ -1878,7 +1878,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
-	conditions = append(conditions, emailOnlyFilterM, archiveOnlyDeletionTargetGuard, store.SourceNativeMessagesWhere("m", "sources"))
+	conditions = append(conditions, emailOnlyFilterM, archiveOnlyDeletionTargetGuard)
 	timeGranularity := filter.TimeRange.Granularity
 	if groupBy == ViewTime {
 		timeGranularity = inferTimeGranularity(timeGranularity, key)
