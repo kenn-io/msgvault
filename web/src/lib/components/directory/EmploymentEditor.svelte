@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, Modal, Typeahead, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Checkbox, Modal, SelectDropdown, Typeahead, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-  import type { Employment, EmploymentBody, Organization } from '../../directory/models';
+  import type { Employment, EmploymentBody, Organization, OrganizationCreateBody } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
 
   interface Props {
@@ -21,6 +21,8 @@
   let creatingOrganization = $state(false);
   let organizationName = $state('');
   let organizationDomain = $state('');
+  let organizationKind = $state('company');
+  const kindOptions = ['company', 'nonprofit', 'school', 'government', 'household', 'other'].map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');
@@ -113,13 +115,20 @@
 
   async function submit(): Promise<void> {
     if (submitting || (!organizationID && !(creatingOrganization && organizationName.trim())) || startDateError || endDateError || controller.createBlocked.employments || (creatingOrganization && controller.createBlocked.organizations)) return;
+    if (isCurrent && endDate.trim()) { message = 'A current employment cannot have an end date.'; return; }
+    if (startDate.trim() && endDate.trim()) {
+      const start = startDate.trim().replaceAll('-', '');
+      const end = endDate.trim().replaceAll('-', '');
+      const precision = Math.min(start.length, end.length);
+      if (end.slice(0, precision) < start.slice(0, precision)) { message = 'End date must not precede start date.'; return; }
+    }
     submitting = true;
     message = '';
     conflictCurrent = undefined;
     conflictOrganization = undefined;
     try {
       if (creatingOrganization) {
-        const created = await controller.createOrganization({ name: organizationName.trim(), kind: 'company', primary_domain: organizationDomain.trim() || null });
+        const created = await controller.createOrganization({ name: organizationName.trim(), kind: organizationKind as OrganizationCreateBody['kind'], primary_domain: organizationDomain.trim() || null });
         if (!created.ok) {
           message = created.kind === 'unknown' || created.kind === 'blocked' ? `The create outcome is unknown. ${created.message}` : created.message;
           return;
@@ -190,6 +199,7 @@
   onclose={requestClose}
 >
   <form bind:this={formElement} class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
+    <button type="submit" hidden disabled={loading || submitting}>Save employment</button>
     {#if loading}
       <p role="status">Loading current employment…</p>
     {:else}
@@ -200,6 +210,7 @@
         {#if creatingOrganization}
           <div class="pair"><label>Name<TextInput ariaLabel="Organization name" bind:value={organizationName} required block disabled={submitting} /></label>
           <label>Domain<TextInput ariaLabel="Organization domain" bind:value={organizationDomain} block disabled={submitting} /></label></div>
+          <label>Kind<SelectDropdown title="Organization kind" value={organizationKind} options={kindOptions} onchange={(value) => { organizationKind = value; }} disabled={submitting} /></label>
         {:else}
           <div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} /></div>
         {/if}

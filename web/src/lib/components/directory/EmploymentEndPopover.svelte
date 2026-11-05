@@ -13,8 +13,6 @@
   let panel = $state<HTMLDivElement>();
   let style = $state('');
   let endDate = $state('');
-  let loading = $state(false);
-  let ready = $state(false);
   let submitting = $state(false);
   let message = $state('');
   let current = $state<Employment>();
@@ -30,27 +28,18 @@
     open = false;
     trigger?.querySelector('button')?.focus();
   }
-  async function load(): Promise<void> {
-    loading = true;
-    ready = false;
-    message = '';
-    try {
-      await controller.prepareEmploymentMutation(employment.id);
-      ready = true;
-    } catch (cause) { message = cause instanceof Error ? cause.message : 'Unable to load the employment.'; }
-    finally { loading = false; }
-  }
   async function show(): Promise<void> {
     if (open) { close(); return; }
     endDate = localDateStr(new Date());
     current = undefined;
+    message = '';
     open = true;
-    void load();
     await tick();
     position();
+    panel?.querySelector<HTMLInputElement>('input')?.focus();
   }
   async function submit(): Promise<void> {
-    if (!ready || submitting || !endDate.trim() || dateError) return;
+    if (submitting || !endDate.trim() || dateError) return;
     submitting = true;
     message = '';
     current = undefined;
@@ -74,13 +63,11 @@
 {#if open}
   <div class="end-panel kit-popover-card" role="dialog" aria-label="End employment" bind:this={panel} {style}>
     <header><h3>End employment</h3><IconButton ariaLabel="Close end employment" disabled={submitting} onclick={close}><X size={16} /></IconButton></header>
-    {#if loading}<p role="status">Loading current employment…</p>{/if}
     <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} block required disabled={loading || submitting || !ready} ariaDescribedby={dateError ? `${uid}-date-error` : undefined} /></label>
+      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} block required disabled={submitting} ariaDescribedby={dateError ? `${uid}-date-error` : undefined} /></label>
       {#if dateError}<p id="{uid}-date-error" class="error">{dateError}</p>{/if}
       {#if message}<div role="alert"><p>{message}</p>{#if current}<EmploymentCurrentData employment={current} organization={controller.organizationRecords.get(current.organization_id)?.organization ?? controller.organizations.find(item => item.id === current?.organization_id)} />{/if}</div>{/if}
-      {#if !loading && !ready}<Button label="Retry employment load" onclick={() => void load()} />{/if}
-      <div class="actions"><Button label="End" type="submit" tone="info" surface="solid" busy={submitting} disabled={loading || !ready || !endDate.trim() || !!dateError} /></div>
+      <div class="actions"><Button label="End" type="submit" tone="info" surface="solid" busy={submitting} disabled={!endDate.trim() || !!dateError} /></div>
     </form>
   </div>
 {/if}

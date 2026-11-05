@@ -82,8 +82,8 @@
         if (!initialOrganization) { onDone(saved); return; }
         currentProfile = { ...currentProfile!, organization: saved };
       }
-      const aliasDraft = values(aliases);
-      const categoryDraft = values(categories);
+      const aliasDraft = aliases === baselineAliases.join(', ') ? baselineAliases : values(aliases);
+      const categoryDraft = categories === baselineCategories.join(', ') ? baselineCategories : values(categories);
       const aliasDelta = valueDelta(baselineAliases, aliasDraft);
       const categoryDelta = valueDelta(baselineCategories, categoryDraft);
       if (aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
@@ -102,13 +102,13 @@
     }
   }
 
-  async function checkDeletion(): Promise<void> {
+  async function checkDeletion(clearMessage = true): Promise<void> {
     if (!initialOrganization) return;
     confirmDelete = true;
     checkingDelete = true;
     deleteError = '';
     holders = undefined;
-    message = '';
+    if (clearMessage) message = '';
     try {
       holders = await controller.organizationEmploymentHolders(initialOrganization.id);
     } catch (cause) {
@@ -126,6 +126,7 @@
       const result = await controller.deleteOrganization(initialOrganization.id);
       if (result.ok) { onDone(); return; }
       handleFailure(result);
+      await checkDeletion(false);
     } finally {
       submitting = false;
     }
@@ -307,6 +308,7 @@
       </section>
     {:else if loading}<p role="status">Loading current organization…</p>{:else}
       <form bind:this={formElement} onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
+        <button type="submit" hidden disabled={loading || submitting}>Save organization</button>
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block disabled={submitting} /></label>
         <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
         <label>Primary domain<TextInput ariaLabel="Organization primary domain" bind:value={primaryDomain} block disabled={submitting} /></label>

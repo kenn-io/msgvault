@@ -42,6 +42,34 @@ describe('OrganizationEditor', () => {
     expect(puts).toBe(2);
   });
 
+  it.each(['details', 'aliases', 'categories'])('preserves untouched comma values when saving %s', async field => {
+    const saved = {
+      ...organizationProfile(),
+      names: [{ ...organizationProfile().names[0], name: 'Example, Inc.' }],
+      categories: [{ organization_id: 21, category: 'Research, development', category_normalized: 'research, development', envelope: envelope(40) }]
+    };
+    const onDone = vi.fn();
+    const writes: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
+      writes.push(request.clone());
+      return Response.json(request.method === 'PATCH' ? { ...saved.organization, name: 'Renamed' } : saved, { headers: { ETag: '"organization-21-r2"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    const name = await screen.findByRole('textbox', { name: 'Organization name' });
+    await fireEvent.input(field === 'details' ? name : screen.getByRole('textbox', { name: `Organization ${field}` }), { target: { value: field === 'details' ? 'Renamed' : 'Changed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    if (field === 'details') {
+      expect(writes.map(request => request.method)).toEqual(['PATCH']);
+    } else {
+      const body = await writes.find(request => request.method === 'PUT')!.json();
+      if (field === 'categories') expect(body.names).toEqual([expect.objectContaining({ name: 'Example, Inc.' })]);
+      if (field === 'aliases') expect(body.categories).toEqual([expect.objectContaining({ category: 'Research, development' })]);
+    }
+  });
+
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -225,9 +253,10 @@ describe('OrganizationEditor', () => {
       const request = requestOf(input);
       if (pathOf(request).endsWith('/employments')) {
         if (++checks === 1) return Response.json({ message: 'Check failed' }, { status: 400 });
-        return Response.json({ employments: [] });
+        return Response.json({ employments: checks > 2 ? [{ person_id: 7 }] : [] });
       }
-      if (request.method === 'DELETE') return Response.json({ message: 'Employment added elsewhere' }, { status: 400 });
+      if (pathOf(request) === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
+      if (request.method === 'DELETE') return Response.json({ message: 'Employment added elsewhere' }, { status: 409 });
       return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     });
     render(OrganizationEditor, { controller, organization: organization() });
@@ -238,7 +267,10 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry employment check' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await screen.findByText('Employment added elsewhere');
+    await screen.findByText(/This organization changed elsewhere. Employment added elsewhere/);
+    await screen.findByText('Synthetic Org has 1 employment record. Remove it first.');
+    expect(checks).toBe(3);
+    expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel organization deletion' }));
     expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Kept draft');
   });
