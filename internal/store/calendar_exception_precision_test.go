@@ -32,10 +32,10 @@ func TestCalendarFractionalOriginalKeepsWholeSecondCancellation(t *testing.T) {
 	requirements.NoError(err)
 	defer release()
 	budget := calrecur.RequestReadBudget
-	rows, err := meetingEventRows(ctx, st.meetingReader(ctx), "e.message_id=?", []any{master}, &budget)
+	rows, err := meetingEventRows(ctx, st.meetingReader(), "e.message_id=?", []any{master}, &budget)
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
-	expanded, err := expandMeetingSeries(ctx, st.meetingReader(ctx), rows[0], from, from.AddDate(0, 0, 1), &budget)
+	expanded, err := expandMeetingSeries(ctx, st.meetingReader(), rows[0], from, from.AddDate(0, 0, 1), &budget)
 	requirements.NoError(err)
 	byRef := map[string]linkOccurrence{}
 	for _, occurrence := range expanded {
@@ -66,7 +66,7 @@ func TestCalendarExceptionAliasQueryKeepsOriginalPrecision(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	requirements.NoError(err)
 	defer release()
-	aliases, err := queryCalendarExceptionAliases(ctx, st.meetingReader(ctx), seeds, 20)
+	aliases, err := queryCalendarExceptionAliases(ctx, st.meetingReader(), seeds, 20)
 	requirements.NoError(err)
 	var ids []int64
 	for _, row := range aliases {
@@ -98,7 +98,7 @@ func TestMeetingExceptionAliasesKeepOriginalPrecisionAndBoundaries(t *testing.T)
 	budget := calrecur.RequestReadBudget
 	var occurrences []linkOccurrence
 	for _, id := range ids {
-		occurrence, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: id}, &budget)
+		occurrence, err := resolveMeetingOccurrence(ctx, st.meetingReader(), OccurrenceRef{MessageID: id}, &budget)
 		requirements.NoError(err)
 		occurrences = append(occurrences, occurrence)
 	}

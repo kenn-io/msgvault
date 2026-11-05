@@ -10,6 +10,9 @@ import (
 )
 
 func readMeetingLinkDecisions(ctx context.Context, r loggedReader, memberID int64) (out []meetingLinkDecision, err error) {
+	if rr, ok := r.(reboundReader); ok && rr.batch != nil {
+		if decisions, ok := rr.batch.decisions[memberID]; ok { return decisions, nil }
+	}
 	rows, err := r.QueryContext(ctx, `SELECT target_message_id,occurrence_key,decision FROM meeting_link_decisions WHERE member_message_id = ? ORDER BY target_message_id,occurrence_key`, memberID)
 	if err != nil {
 		return nil, err

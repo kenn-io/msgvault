@@ -53,7 +53,22 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		return result, err
 	}
 	defer release()
-	r := s.meetingReader(ctx)
+	r := s.meetingReader()
+	r.batch = &meetingIdentityBatch{events: map[string][]CalendarEventRow{}, keys: map[int64]meetingLinkKey{}, decisions: map[int64][]meetingLinkDecision{}, visible: map[int64]bool{}}
+	budget := calrecur.RequestReadBudget
+	refs := make([]OccurrenceRef, 0, len(req.OccurrenceRefs))
+	eventIDs := make([]int64, 0, len(req.OccurrenceRefs))
+	for _, value := range req.OccurrenceRefs {
+		ref, err := ParseMeetingIdentityRef(value)
+		if err != nil {
+			return result, err
+		}
+		refs = append(refs, ref)
+		eventIDs = append(eventIDs, ref.MessageID)
+	}
+	if err := s.preloadMeetingEvents(ctx, r, eventIDs, &budget); err != nil {
+		return result, err
+	}
 	groups := map[meetingIdentity]*timelineMeetingGroup{}
 	aliases := map[string]*timelineMeetingGroup{}
 	// Resolve copies through the same representative selection as meeting links.
@@ -61,7 +76,6 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		if g := groups[o.Identity]; g != nil {
 			return g, nil
 		}
-		budget := calrecur.RequestReadBudget
 		copies, err := s.resolveMeetingIdentity(ctx, r, o.Identity, &budget)
 		if err != nil {
 			return nil, err
@@ -81,12 +95,9 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		members[id] = true
 		explicit[id] = true
 	}
-	for _, value := range req.OccurrenceRefs {
-		ref, err := parseMeetingIdentityRef(value)
-		if err != nil {
-			return result, err
-		}
-		budget := calrecur.RequestReadBudget
+	requested := map[string]linkOccurrence{}
+	copyQueries := []meetingEventQuery{}
+	for i, ref := range refs {
 		o, err := resolveMeetingOccurrence(ctx, r, ref, &budget)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -94,6 +105,14 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		if err != nil {
 			return result, fmt.Errorf("resolve meeting occurrence: %w", err)
 		}
+		requested[req.OccurrenceRefs[i]] = o
+		predicate, args := s.meetingIdentityPredicate(o.Identity)
+		copyQueries = append(copyQueries, meetingEventQuery{predicate, args})
+	}
+	if err := s.preloadMeetingQueries(ctx, r, copyQueries, &budget); err != nil {
+		return result, err
+	}
+	for value, o := range requested {
 		g, err := groupFor(o)
 		if err != nil {
 			return result, fmt.Errorf("resolve meeting copies: %w", err)
@@ -108,13 +127,40 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			requestedGroups[g] = true
 		}
 	}
+	memberQueries := []meetingEventQuery{}
 	for g := range requestedGroups {
-		ids, err := s.meetingIdentityMembers(ctx, r, g.occurrence)
+		query, args, err := s.meetingIdentityMemberQuery(ctx, r, g.occurrence, &budget)
 		if err != nil {
 			return result, fmt.Errorf("discover meeting transcripts: %w", err)
 		}
-		for _, id := range ids {
+		memberQueries = append(memberQueries, meetingEventQuery{query, args})
+	}
+	for chunk := range slices.Chunk(memberQueries, 20) {
+		terms := []string{}
+		args := []any{}
+		for _, q := range chunk {
+			terms = append(terms, q.predicate)
+			args = append(args, q.args...)
+		}
+		rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
+		if err != nil {
+			return result, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return result, err
+			}
 			members[id] = true
+		}
+		err = rows.Err()
+		closeErr := rows.Close()
+		if err != nil {
+			return result, err
+		}
+		if closeErr != nil {
+			return result, closeErr
 		}
 	}
 	ids := make([]int64, 0, len(members))
@@ -122,16 +168,38 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	if err := s.preloadMeetingMembers(ctx, r, ids); err != nil {
+		return result, err
+	}
+	candidateQueries := []meetingEventQuery{}
 	for _, id := range ids {
-		visible, err := visibleMeetingTranscript(ctx, r, id)
-		if err != nil {
-			return result, err
-		}
-		if !visible {
+		if !r.batch.visible[id] {
 			continue
 		}
-		info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
-		budget := calrecur.RequestReadBudget
+		// Manual decisions replace automatic evidence, including absent targets.
+		manual := false
+		for _, d := range r.batch.decisions[id] {
+			predicate, args := s.meetingIdentityPredicate(d.Identity)
+			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+			manual = manual || d.Decision == "link"
+		}
+		if !manual {
+			predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
+			if err != nil {
+				return result, err
+			}
+			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+		}
+	}
+	if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
+		return result, err
+	}
+	resolvedMembers := map[int64][]meetingMemberCandidate{}
+	memberCopies := []meetingEventQuery{}
+	for _, id := range ids {
+		if !r.batch.visible[id] {
+			continue
+		}
 		candidates, err := s.meetingMemberCandidates(ctx, r, id, &budget)
 		if err != nil {
 			return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
@@ -150,6 +218,24 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				continue
 			}
 		}
+		resolvedMembers[id] = candidates
+		if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+			for _, candidate := range candidates {
+				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
+				memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
+			}
+		}
+	}
+	if err := s.preloadMeetingQueries(ctx, r, memberCopies, &budget); err != nil {
+		return result, err
+	}
+	for _, id := range ids {
+		candidates, ok := resolvedMembers[id]
+		if !ok {
+			continue
+		}
+		info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
+		exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
 		for _, candidate := range candidates {
 			if !exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
 				continue
@@ -200,48 +286,40 @@ func publicMeetingOccurrenceRef(o linkOccurrence) string {
 
 func sortedUniqueMeetingRefs(refs []string) []string { slices.Sort(refs); return slices.Compact(refs) }
 
-func parseMeetingIdentityRef(value string) (OccurrenceRef, error) {
+// ParseMeetingIdentityRef validates a public calendar occurrence reference.
+func ParseMeetingIdentityRef(value string) (OccurrenceRef, error) {
 	text, ok := strings.CutPrefix(value, "evt:")
 	if !ok {
 		return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence reference %q", value)
 	}
 	idText, key, _ := strings.Cut(text, "@")
 	id, err := strconv.ParseInt(idText, 10, 64)
-	if err != nil || id <= 0 {
+	if err != nil || id <= 0 || id > 9007199254740991 {
 		return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence reference %q", value)
 	}
 	if strings.Contains(text, "@") {
-		if _, _, ok := calrecur.ParseInstanceID("event_" + key); !ok {
+		if _, identity, ok := calrecur.ParseInstanceID("event_" + key); !ok || key == "" || identity.Key() != key {
 			return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence key %q", key)
 		}
 	}
 	return OccurrenceRef{MessageID: id, Key: key}, nil
 }
 
-func visibleMeetingTranscript(ctx context.Context, r reboundReader, id int64) (bool, error) {
-	scope, args := sourceScopeClause(ctx, "m.source_id")
-	args = append([]any{id}, args...)
-	var found int
-	err := r.QueryRowContext(ctx, `SELECT 1 FROM messages m WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, args...).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 // Discover only keys or decisions that could resolve to this occurrence. The
 // forward resolver applies splits, ambiguity and provider ordering afterwards.
-func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o linkOccurrence) ([]int64, error) {
-	budget := calrecur.RequestReadBudget
-	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, &budget)
+func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader, o linkOccurrence, budget *int) (string, []any, error) {
+	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, budget)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	// A manual decision may retain the ID of a UID-less orphan saved before
 	// its master arrived. Include source-local exception targets, then let the
 	// forward resolver validate their current identity, splits and visibility.
 	if o.Identity.OccurrenceKey != "" {
 		_, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey)
+		if o.Row.Event.Original != nil {
+			original, ok = *o.Row.Event.Original, true
+		}
 		if ok {
 			column, value := "e.original_start_at", any(original.Instant)
 			if original.AllDay {
@@ -250,17 +328,21 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 			var terms []string
 			var aliasArgs []any
 			for _, copy := range copies {
-				if copy.Event.Kind != meetingSeriesKind && copy.Event.Kind != meetingSingleKind {
+				provider := copy.Event.ProviderEventID
+				if copy.Event.Kind == meetingExceptionKind {
+					provider = copy.Event.SeriesProviderID
+				}
+				if provider == "" {
 					continue
 				}
 				terms = append(terms, `(m.source_id=? AND e.series_provider_id=?)`)
-				aliasArgs = append(aliasArgs, copy.SourceID, copy.Event.ProviderEventID)
+				aliasArgs = append(aliasArgs, copy.SourceID, provider)
 			}
 			if len(terms) > 0 {
 				aliasArgs = append(aliasArgs, value)
-				aliases, err := meetingEventRows(ctx, r, `e.kind='exception' AND (`+strings.Join(terms, " OR ")+`) AND `+column+`=?`, aliasArgs, &budget)
+				aliases, err := meetingEventRows(ctx, r, `e.kind='exception' AND (`+strings.Join(terms, " OR ")+`) AND `+column+`=?`, aliasArgs, budget)
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				copies = append(copies, aliases...)
 			}
@@ -270,6 +352,10 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 	args := []any{o.Identity.ICalUID, o.Identity.OccurrenceKey}
 	keyClauses := []string{`(k.kind='ical_uid' AND k.value=? AND k.value<>'')`}
 	keyArgs := []any{o.Identity.ICalUID}
+	if o.Identity.OccurrenceKey != "" {
+		keyClauses[0] = `(k.kind='ical_uid' AND k.value=? AND k.value<>'' AND k.scheduled_at=?)`
+		keyArgs = append(keyArgs, o.Start)
+	}
 	for _, copy := range copies {
 		clauses = append(clauses, `(d.target_message_id=? AND (d.occurrence_key=? OR d.occurrence_key=''))`)
 		args = append(args, copy.MessageID, o.Identity.OccurrenceKey)
@@ -288,21 +374,5 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 	args = append(args, keyArgs...)
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, scopeArgs...)
-	rows, err := r.QueryContext(ctx, query+scope+` ORDER BY m.id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
+	return query + scope, args, nil
 }

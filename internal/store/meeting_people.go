@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -36,55 +38,33 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
 		return nil, err
 	}
 	defer release()
-	r := s.meetingReader(ctx)
-	for start := 0; start < len(addresses); start += 500 {
-		batch := addresses[start:min(start+500, len(addresses))]
-		args := make([]any, 0, len(batch)*2)
-		for _, email := range batch {
-			args = append(args, email)
+	r := s.meetingReader()
+	for _, address := range addresses {
+		id, err := s.EmailParticipantContext(ctx, address)
+		if err != nil {
+			return nil, err
 		}
-		args = append(args, args...)
-		query := `WITH matches AS (
- SELECT LOWER(email_address) AS address,id AS participant_id FROM participants WHERE LOWER(email_address) IN (` + placeholders(len(batch)) + `)
- UNION
- SELECT LOWER(identifier_value) AS address,participant_id FROM participant_identifiers WHERE LOWER(identifier_value) IN (` + placeholders(len(batch)) + `)
- ) SELECT address,participant_id,COALESCE((SELECT person_id FROM person_participants pp WHERE pp.participant_id=matches.participant_id),0) FROM matches WHERE 1=1`
+		if id == 0 {
+			continue
+		}
+		query := `SELECT COALESCE((SELECT person_id FROM person_participants WHERE participant_id=p.id),0) FROM participants p WHERE p.id=?`
+		args := []any{id}
 		if sourcescope.Restricted(ctx) {
 			scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 			query += ` AND EXISTS (SELECT 1 FROM messages m WHERE m.deleted_at IS NULL
  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)
- AND (m.sender_id=matches.participant_id OR EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id=m.id AND mr.participant_id=matches.participant_id))` + scope + `)`
+ AND (m.sender_id=p.id OR EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id=m.id AND mr.participant_id=p.id))` + scope + `)`
 			args = append(args, scopeArgs...)
 		}
-		rows, err := r.QueryContext(ctx, query, args...)
+		var personID int64
+		err = r.QueryRowContext(ctx, query, args...).Scan(&personID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("look up meeting attendees: %w", err)
+			return nil, err
 		}
-		defer func() { _ = rows.Close() }()
-		ambiguous := map[string]bool{}
-		for rows.Next() {
-			var address string
-			var participant AddressParticipant
-			if err := rows.Scan(&address, &participant.ParticipantID, &participant.PersonID); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if old, ok := result[address]; ok && old.ParticipantID != participant.ParticipantID {
-				ambiguous[address] = true
-			}
-			result[address] = participant
-		}
-		readErr := rows.Err()
-		closeErr := rows.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		for address := range ambiguous {
-			delete(result, address)
-		}
+		result[address] = AddressParticipant{ParticipantID: id, PersonID: personID}
 	}
 	return result, nil
 }
@@ -104,7 +84,7 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 		return nil, err
 	}
 	defer release()
-	r := s.meetingReader(ctx)
+	r := s.meetingReader()
 	for start := 0; start < len(ids); start += 500 {
 		batch := ids[start:min(start+500, len(ids))]
 		args := make([]any, 0, len(batch))

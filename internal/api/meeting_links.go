@@ -61,17 +61,15 @@ func parseMeetingLinkRef(value string, eventOnly bool) (store.MeetingLinkRef, er
 	if !ok || kind != "evt" && (eventOnly || kind != "msg") {
 		return store.MeetingLinkRef{}, errors.New("use msg:<id> or evt:<id>[@occurrence key]; decisions require an event reference")
 	}
-	message, key, hasKey := strings.Cut(value, "@")
-	id, err := strconv.ParseInt(message, 10, 64)
-	if err != nil || id <= 0 || id > 9007199254740991 || hasKey && (kind != "evt" || key == "") {
+	if kind == "evt" {
+		ref, err := store.ParseMeetingIdentityRef("evt:" + value)
+		return store.MeetingLinkRef{Kind: kind, OccurrenceRef: ref}, err
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 || id > 9007199254740991 {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
-	if hasKey {
-		if base, _, ok := calrecur.ParseInstanceID("event_" + key); !ok || base != "event" {
-			return store.MeetingLinkRef{}, errors.New("invalid occurrence key")
-		}
-	}
-	return store.MeetingLinkRef{Kind: kind, MessageID: id, Key: key}, nil
+	return store.MeetingLinkRef{Kind: kind, OccurrenceRef: store.OccurrenceRef{MessageID: id}}, nil
 }
 
 func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Request) {

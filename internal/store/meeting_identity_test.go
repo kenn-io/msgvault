@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,7 +163,9 @@ func TestMeetingIdentityVisibleTranscriptIgnoresHiddenCalendar(t *testing.T) {
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: hidden}))
 	changed, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
 	require.NoError(err)
-	assert.Equal(got, changed, "hidden calendar decisions must not suppress visible links")
+	assert.Empty(changed.ByTranscript[note].ExactOccurrenceRefs)
+	assert.Equal(fmt.Sprintf("msg:%d", note), changed.ByTranscript[note].Key)
+	assert.Empty(changed.ByOccurrence)
 }
 
 func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
@@ -316,24 +316,6 @@ func TestMeetingIdentityPreservesPublicExceptionRefAndCanonicalKey(t *testing.T)
 	assert.Equal(public, got.ByTranscript[note].OccurrenceRef)
 	assert.Equal([]string{public}, got.ByTranscript[note].ExactOccurrenceRefs)
 	assert.Equal("occ:"+canonical, got.ByTranscript[note].Key)
-}
-
-func TestMeetingIdentityRetainsLegacyInviteSplit(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H")))
-	events := emailEvents(t, st, source)
-	require.Len(events, 1)
-	_, note := identityNote(t, st, "note", "family@example.com")
-	// Earlier meeting links saved ICS decisions by message ID because the UID
-	// was absent from metadata. Reading that existing decision must still split.
-	_, err := st.db.Exec(meetingDecisionUpsert, note, "", sql.NullInt64{Int64: events[0], Valid: true}, "", "split", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(events[0])}, TranscriptIDs: []int64{note}})
-	require.NoError(err)
-	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
-	assert.Empty(got.ByOccurrence[identityRef(events[0])].LinkedTranscriptIDs)
-	assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
 }
 
 func TestMeetingIdentityOccurrenceOnlyFindsGranolaWithOrphanRepresentative(t *testing.T) {

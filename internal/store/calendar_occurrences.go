@@ -83,7 +83,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			attendees = []calevent.Attendee{}
 		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
-		if seriesID != 0 && o.Original != (calrecur.Identity{}) && (o.Original.AllDay || o.Original.Instant.Nanosecond() == 0) {
+		if seriesID != 0 && o.Original != (calrecur.Identity{}) && !isFractionalCalendarIdentity(&o.Original) {
 			ref = OccurrenceRef{MessageID: seriesID, Key: o.Original.Key()}
 		}
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
