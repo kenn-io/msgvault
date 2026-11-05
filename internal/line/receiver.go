@@ -61,7 +61,7 @@ func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string))
 }
 
 // Handles admits only a literal POST route with one nonempty channel segment.
-// Unknown channels share this boundary and receive an opaque 404 in ServeHTTP.
+// Unknown channels receive 404 in ServeHTTP; known channels with bad signatures receive 401.
 func (r *Receiver) Handles(request *http.Request) bool {
 	if r == nil || len(r.channels) == 0 || request.Method != http.MethodPost || request.URL == nil {
 		return false

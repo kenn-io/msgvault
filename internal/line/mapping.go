@@ -62,15 +62,7 @@ func metadataFor(e Event, prior sql.NullString) (sql.NullString, error) {
 	}
 	var native map[string]jsontext.Value
 	if e.Message != nil {
-		raw := e.Message.Raw
-		if len(raw) == 0 {
-			var err error
-			raw, err = json.Marshal(e.Message)
-			if err != nil {
-				return sql.NullString{}, err
-			}
-		}
-		if err := json.Unmarshal(raw, &native); err != nil {
+		if err := json.Unmarshal(e.Message.Raw, &native); err != nil {
 			return sql.NullString{}, err
 		}
 		maps.Copy(metadata, native)
@@ -125,21 +117,10 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 			return err
 		}
 		text := bodyText(*e.Message)
-		raw := []byte(e.Raw)
-		if len(raw) == 0 {
-			raw, err = json.Marshal(e)
-			if err != nil {
-				return err
-			}
-			raw, err = SanitizeEvent(raw)
-			if err != nil {
-				return err
-			}
-		}
 		data := &store.MessagePersistData{
 			Message:      &store.Message{SourceID: p.sourceID, SourceMessageID: e.Message.ID, MessageType: SourceType, SentAt: sql.NullTime{Time: time.UnixMilli(e.Timestamp).UTC(), Valid: true}, SenderID: sql.NullInt64{Int64: pid, Valid: pid > 0}, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true},
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: kind, Title: p.groupNames[key], Participants: []store.ConversationParticipantRef{{ParticipantID: pid, Role: "member"}}, PreserveExistingParticipants: true},
-			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text},
+			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: e.Raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text},
 		}
 		recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(p.channelID, p.botID), "")
 		if err != nil {

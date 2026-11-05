@@ -82,7 +82,6 @@ type Processor struct {
 	sourceID                  int64
 	channelID, attachmentsDir string
 	now                       func() time.Time
-	lastPruned                time.Time
 	mediaPolicy               attachmentpolicy.Policy
 	groupNames                map[string]string
 	botID                     string
@@ -102,9 +101,6 @@ func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, at
 // and newly scheduled retries belong to a later drain.
 func (p *Processor) Drain(ctx context.Context) error {
 	cutoff := p.now()
-	if err := p.store.PruneLineEventsContext(ctx, p.sourceID, cutoff.Add(-30*24*time.Hour)); err != nil {
-		return err
-	}
 	throughID, err := p.store.LineInboxHighWaterContext(ctx, p.sourceID)
 	if err != nil {
 		return err
@@ -129,13 +125,6 @@ func (p *Processor) Drain(ctx context.Context) error {
 func (p *Processor) Process(ctx context.Context) error {
 	if p == nil || p.store == nil || p.client == nil {
 		return errors.New("LINE processor unavailable")
-	}
-	// A quiet receiver still expires terminal deliveries without a write per tick.
-	if now := p.now(); p.lastPruned.IsZero() || now.Sub(p.lastPruned) >= time.Hour {
-		if err := p.store.PruneLineEventsContext(ctx, p.sourceID, now.Add(-30*24*time.Hour)); err != nil {
-			return err
-		}
-		p.lastPruned = now
 	}
 	return p.process(ctx, p.now(), 0)
 }

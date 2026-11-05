@@ -56,7 +56,7 @@ handle, rather than merged into a shared anonymous direct chat.
 | `200` | Sanitized nonempty batch committed atomically, or valid signed empty check |
 | `400` | Malformed signed JSON, missing envelope/event fields, invalid event ID, or malformed message structure; no partial batch is stored |
 | `401` | Missing/invalid signature or a destination that differs from the registered bot |
-| `404` | Unknown or disabled channel on a mounted receiver; no configuration details in the body |
+| `404` | Unknown or disabled channel on a mounted receiver; empty response body, distinct from the `401` for a bad signature |
 | `413` | Request body exceeds 1 MiB |
 | `503` | Receiver concurrency bound reached, or the inbox transaction failed; delivery can be retried |
 

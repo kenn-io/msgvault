@@ -4393,10 +4393,6 @@ CREATE TABLE IF NOT EXISTS line_webhook_events (
 CREATE INDEX IF NOT EXISTS idx_line_webhook_due ON line_webhook_events(source_id,state,next_attempt_at,event_timestamp);
 CREATE INDEX IF NOT EXISTS idx_line_webhook_target ON line_webhook_events(source_id,target_message_id,state);
 
-CREATE INDEX IF NOT EXISTS idx_line_webhook_retention ON line_webhook_events(source_id,received_at)
-    WHERE state IN ('processed','ignored','failed')
-    AND NOT (state='failed' AND event_type IN ('messageEdited','unsend'));
-
 -- Operational presentation and membership state are separate from deliveries.
 CREATE TABLE IF NOT EXISTS line_profiles (
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

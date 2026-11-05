@@ -41,7 +41,7 @@ type LineInboxStatus struct {
 // EnqueueLineEventsContext acknowledges a batch only after all its events commit.
 // The mounted receiver's channel and bot identities are checked under the same
 // source lock as receipt so a stale receiver cannot target a reused source ID.
-// Event IDs deduplicate deliveries within the retained inbox window.
+// Event IDs deduplicate deliveries.
 func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, channelID, botUserID string, events []LineWebhookEvent) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
@@ -74,48 +74,16 @@ func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, ch
 		if registeredBotID == "" || registeredBotID != botUserID {
 			return errors.New("LINE inbox bot binding changed")
 		}
-		var lastReceived time.Time
 		for _, e := range events {
 			received := e.ReceivedAt
 			if received.IsZero() {
 				received = time.Now().UTC()
-			}
-			if received.After(lastReceived) {
-				lastReceived = received
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO line_webhook_events
     (source_id,webhook_event_id,event_type,target_message_id,event_timestamp,raw_json,state,received_at)
     VALUES (?,?,?,?,?,?,'pending',?) ON CONFLICT(source_id,webhook_event_id) DO NOTHING`, sourceID, e.WebhookEventID, e.EventType, e.TargetMessageID, e.EventTimestamp, e.RawJSON, received)
 			if err != nil {
 				return fmt.Errorf("enqueue LINE event: %w", err)
-			}
-		}
-		if !lastReceived.IsZero() {
-			values := map[string]jsontext.Value{}
-			if raw.Valid && raw.String != "" {
-				if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
-					return fmt.Errorf("decode LINE source state: %w", err)
-				}
-			}
-			var previous time.Time
-			if value := values["line_last_received_at"]; len(value) > 0 {
-				if err := json.Unmarshal(value, &previous); err != nil {
-					return fmt.Errorf("decode last LINE receipt: %w", err)
-				}
-			}
-			if lastReceived.After(previous) {
-				value, err := json.Marshal(lastReceived.UTC())
-				if err != nil {
-					return fmt.Errorf("encode last LINE receipt: %w", err)
-				}
-				values["line_last_received_at"] = value
-				encoded, err := json.Marshal(values)
-				if err != nil {
-					return fmt.Errorf("encode LINE source state: %w", err)
-				}
-				if _, err := tx.ExecContext(ctx, `UPDATE sources SET sync_config=`+s.dialect.JSONBindExpr()+` WHERE id=?`, string(encoded), sourceID); err != nil {
-					return err
-				}
 			}
 		}
 		return nil
@@ -216,19 +184,6 @@ func (s *Store) FinishLineEventContext(ctx context.Context, id int64, state, las
 	})
 }
 
-func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, before time.Time) error {
-	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM line_webhook_events
-   WHERE source_id=? AND state IN ('processed','ignored','failed')
-   AND NOT (state='failed' AND event_type IN ('messageEdited','unsend'))
-   AND received_at<?`, sourceID, before)
-		return err
-	})
-}
-
 func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (LineInboxStatus, error) {
 	var out LineInboxStatus
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(SUM(CASE WHEN state IN ('pending','retry') THEN 1 ELSE 0 END),0),
@@ -236,19 +191,11 @@ func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (Lin
 	if err != nil {
 		return out, fmt.Errorf("count LINE inbox: %w", err)
 	}
-	var raw sql.NullString
-	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT sync_config FROM sources WHERE id=?`), sourceID).Scan(&raw); err != nil {
+	var lastReceived nullableTimestamp
+	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT MAX(received_at) FROM line_webhook_events WHERE source_id=?`), sourceID).Scan(&lastReceived); err != nil {
 		return out, fmt.Errorf("last LINE receipt: %w", err)
 	}
-	if raw.Valid && raw.String != "" {
-		var state struct {
-			LastReceivedAt *time.Time `json:"line_last_received_at"`
-		}
-		if err := json.Unmarshal([]byte(raw.String), &state); err != nil {
-			return out, fmt.Errorf("decode LINE receipt status: %w", err)
-		}
-		out.LastReceivedAt = state.LastReceivedAt
-	}
+	out.LastReceivedAt = nullableTimePointer(lastReceived)
 	return out, nil
 }
 

@@ -562,20 +562,6 @@ func TestProcessorIdlePassSkipsSyncRunAndScopesTouchedStats(t *testing.T) {
 	checks.Equal(99, otherCount)
 }
 
-func TestProcessorIdlePassPrunesExpiredEvents(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	f.enqueue(t, f.message("1", "synthetic", f.now.UnixMilli()), time.Time{})
-	f.run(t)
-
-	f.now = f.now.Add(31 * 24 * time.Hour)
-	f.run(t)
-	var retained int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, "event-1").Scan(&retained))
-	checks.Zero(retained)
-}
-
 func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)

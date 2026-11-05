@@ -195,12 +195,8 @@ This integration has no option to purge content automatically on unsend.
 
 Reply and mark-as-read capability tokens are removed recursively before events
 are persisted. Native metadata, including `quoteToken`, may remain in the
-archive. Completed, ignored, and failed inbox events older than 30 days are deleted
-on an hourly cleanup pass,
-except for failed edits and unsends. Duplicate detection covers this 30-day
-window; a redelivery after retention can be admitted again. This cleanup does not
-remove archived message bodies or their raw evidence. Failed lifecycle evidence
-is retained for later reconciliation.
+archive. Inbox events remain available for duplicate detection and lifecycle
+reconciliation.
 
 Official Account Manager's [Chat Pro history export](https://www.lycbiz.com/jp/service/line-official-account/chat-pro-option/)
 is a separate paid feature. Check its availability for your account and region.

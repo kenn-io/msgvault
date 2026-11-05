@@ -3,7 +3,6 @@ package line
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"mime"
@@ -47,14 +46,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	if filename == "" {
 		filename = m.Type + "-" + m.ID
 	}
-	raw := m.Raw
-	if len(raw) == 0 {
-		raw, err = json.Marshal(m)
-		if err != nil {
-			return err
-		}
-	}
-	write := store.AttachmentWrite{Filename: filename, MIMEType: "application/octet-stream", SourceAttachmentID: key, SourcePartKey: key, MediaType: m.Type, DurationMS: m.Duration, Metadata: string(raw), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending, Size: max(m.FileSize, 0)}
+	write := store.AttachmentWrite{Filename: filename, MIMEType: "application/octet-stream", SourceAttachmentID: key, SourcePartKey: key, MediaType: m.Type, DurationMS: m.Duration, Metadata: string(m.Raw), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending, Size: max(m.FileSize, 0)}
 	save := func(state attachmentpolicy.DownloadState, reason attachmentpolicy.SkipReason) error {
 		write.State = state
 		write.SkipReason = reason

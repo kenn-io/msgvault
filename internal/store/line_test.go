@@ -37,6 +37,18 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	checks.Equal("event-1", rows[0].WebhookEventID)
 	checks.Equal("1", rows[0].TargetMessageID)
 	checks.Equal(src.ID, rows[0].SourceID)
+	status, err := st.LineInboxStatusContext(ctx, src.ID)
+	must.NoError(err)
+	must.NotNil(status.LastReceivedAt)
+	checks.True(at.Equal(*status.LastReceivedAt))
+	event.ReceivedAt = at.Add(time.Hour)
+	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, []store.LineWebhookEvent{event}))
+	event.WebhookEventID = "event-2"
+	must.NoError(st.EnqueueLineEventsContext(ctx, other.ID, "2000000002", otherBotID, []store.LineWebhookEvent{event}))
+	status, err = st.LineInboxStatusContext(ctx, src.ID)
+	must.NoError(err)
+	must.NotNil(status.LastReceivedAt)
+	checks.True(at.Equal(*status.LastReceivedAt), "duplicate deliveries and other sources do not advance the last receipt")
 	for _, guard := range []string{"stale channel", "changed bot", "retired source"} {
 		t.Run(guard, func(t *testing.T) {
 			require := require.New(t)
@@ -60,6 +72,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 			status, err := st.LineInboxStatusContext(t.Context(), src.ID)
 			require.NoError(err)
 			assert.Zero(t, status.Pending)
+			assert.Nil(t, status.LastReceivedAt)
 		})
 	}
 }
@@ -94,7 +107,7 @@ func TestLineInboxRetryDeadlineIgnoresCallerZone(t *testing.T) {
 	}
 }
 
-func TestLineInboxDueAndRetention(t *testing.T) {
+func TestLineInboxDueAndStatus(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
@@ -122,10 +135,6 @@ func TestLineInboxDueAndRetention(t *testing.T) {
 	must.Len(due, 1)
 	checks.Equal(1, due[0].Attempts)
 	must.NoError(st.FinishLineEventContext(ctx, rows[1].ID, "processed", "", time.Time{}))
-	must.NoError(st.PruneLineEventsContext(ctx, src.ID, now.Add(-30*24*time.Hour)))
-	var retained int
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), src.ID, "original").Scan(&retained))
-	checks.Zero(retained)
 	mutations, err := st.LineMutationsContext(ctx, src.ID, "late")
 	must.NoError(err)
 	must.Len(mutations, 1)
