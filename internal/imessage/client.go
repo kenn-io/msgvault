@@ -362,17 +362,9 @@ func (c *Client) fetchPage(
 	afterROWID int64,
 ) ([]messageRow, int, error) {
 	sqlQuery := `
-		SELECT
-			m.ROWID, m.guid, m.text, m.attributedBody,
-			m.date, m.is_from_me, m.service,
-			m.cache_has_attachments,
-			h.id,
-			c.ROWID, c.guid, c.display_name, c.chat_identifier
-		FROM message m
-		LEFT JOIN handle h ON h.ROWID = m.handle_id
-		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
-		WHERE m.ROWID > ?`
+		WITH page AS (
+			SELECT m.ROWID, m.* FROM message m
+			WHERE m.ROWID > ?`
 	args := []any{afterROWID}
 
 	if !c.afterDate.IsZero() {
@@ -393,7 +385,19 @@ func (c *Client) fetchPage(
 			pageSize = remaining
 		}
 	}
-	sqlQuery += " ORDER BY m.ROWID ASC LIMIT ?"
+	sqlQuery += ` ORDER BY m.ROWID ASC LIMIT ?
+		)
+		SELECT
+			m.ROWID, m.guid, m.text, m.attributedBody,
+			m.date, m.is_from_me, m.service,
+			m.cache_has_attachments,
+			h.id,
+			c.ROWID, c.guid, c.display_name, c.chat_identifier
+		FROM page m
+		LEFT JOIN handle h ON h.ROWID = m.handle_id
+		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
+		ORDER BY m.ROWID ASC`
 	args = append(args, pageSize)
 
 	dbRows, err := c.db.QueryContext(ctx, sqlQuery, args...)
@@ -403,6 +407,7 @@ func (c *Client) fetchPage(
 	defer func() { _ = dbRows.Close() }()
 
 	var result []messageRow
+	pageCount := 0
 	for dbRows.Next() {
 		var msg messageRow
 		if err := dbRows.Scan(
@@ -415,13 +420,16 @@ func (c *Client) fetchPage(
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan message: %w", err)
 		}
+		if len(result) == 0 || result[len(result)-1].ROWID != msg.ROWID {
+			pageCount++
+		}
 		result = append(result, msg)
 	}
 	if err := dbRows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("iterate messages: %w", err)
 	}
 
-	return result, len(result), nil
+	return result, pageCount, nil
 }
 
 // importMessage processes a single chat.db message row and writes it

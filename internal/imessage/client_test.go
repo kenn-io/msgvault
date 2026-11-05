@@ -490,6 +490,7 @@ func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	client, err := NewClient(path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
+	client.pageSize = 1
 	first, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, first.MessagesAdded)
