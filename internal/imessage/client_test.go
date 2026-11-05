@@ -48,6 +48,35 @@ func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
 	assert.Zero(t, retried.Skipped)
 }
 
+func TestImportCancellationBetweenPagesRecomputesConversationCount(t *testing.T) {
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`
+		INSERT INTO message (date, text) VALUES (725760000, 'one'), (725760001, 'two');
+		INSERT INTO chat VALUES ('any;-;synthetic', '', 'synthetic');
+		INSERT INTO chat_message_join VALUES (1, 1), (1, 2);
+		INSERT INTO chat_handle_join VALUES (1, 1);
+	`)
+	require.NoError(t, err)
+	client, err := NewClient(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	client.pageSize = 1
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+
+	summary, err := client.ImportWithProgress(ctx, st, src.ID, func(ImportSummary) { cancel() })
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, summary.MessagesAdded)
+	var committed, messageCount int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&committed))
+	assert.Equal(t, 1, committed)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT message_count FROM conversations WHERE source_id = ?`), src.ID).Scan(&messageCount))
+	assert.Equal(t, 1, messageCount)
+}
+
 func TestImportIndexesMessageBodies(t *testing.T) {
 	for _, tt := range []struct {
 		name string
