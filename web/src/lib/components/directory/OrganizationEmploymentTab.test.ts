@@ -91,8 +91,11 @@ describe('OrganizationEmploymentTab', () => {
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       if (request.method === 'POST') return Response.json({ message: 'Concurrent end', error: 'revision_conflict' }, { status: 412 });
+      if (pathOf(request) === '/api/v1/organizations/22') {
+        return Response.json({ ...organizationProfile(), organization: organization(22, 1, 'Current Employer') }, { headers: { ETag: '"organization-22-r1"' } });
+      }
       reads++;
-      return Response.json(employment(11, reads, { title: 'Current saved role' }), { headers: { ETag: `"employment-11-r${reads}"` } });
+      return Response.json(employment(11, reads, { title: 'Current saved role', organization_id: reads === 1 ? 21 : 22 }), { headers: { ETag: `"employment-11-r${reads}"` } });
     });
     controller.employments = [employment()];
     const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
@@ -108,6 +111,7 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.input(field, { target: { value: '2026' } });
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));
       expect((await screen.findByRole('alert')).textContent).toContain('Current saved role');
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Current Employer (22)'));
       expect(field).toHaveProperty('value', '2026');
       expect(reads).toBe(2);
       await fireEvent.keyDown(document, { key: 'Escape' });

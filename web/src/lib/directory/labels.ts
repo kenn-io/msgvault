@@ -1,5 +1,8 @@
 import type { ChipTone } from '@kenn-io/kit-ui';
+import { OrganizationCreateBodyKind } from '../api/generated/models/organizationCreateBodyKind';
 import { sentenceCase } from '../explore/labels';
+
+export const organizationKindOptions = Object.values(OrganizationCreateBodyKind).map(value => ({ value, label: sentenceCase(value) }));
 
 const CONTACT_STATES: Record<string, string> = { active: 'Active', inactive: 'Inactive' };
 // The directory projection uses ActivityChannel (internal/store/activity.go).

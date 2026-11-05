@@ -3,6 +3,7 @@
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import { intervalDateError } from '../../directory/dates';
+  import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization, OrganizationCreateBody } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
@@ -22,7 +23,6 @@
   let organizationName = $state('');
   let organizationDomain = $state('');
   let organizationKind = $state('company');
-  const kindOptions = ['company', 'nonprofit', 'school', 'government', 'household', 'other'].map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');

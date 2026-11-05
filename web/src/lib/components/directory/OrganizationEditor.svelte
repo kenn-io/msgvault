@@ -3,6 +3,7 @@
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
+  import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityMutationResult, Organization, OrganizationProfile, OrganizationProfileBody } from '../../directory/models';
 
   import DetailRow from '../people/DetailRow.svelte';
@@ -35,7 +36,6 @@
   let deleteError = $state('');
   let holders = $state<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   let releaseScope: (() => void) | undefined;
-  const kindOptions = ['company', 'nonprofit', 'school', 'government', 'household', 'other'].map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
 
   onMount(() => {
     releaseScope = appShortcuts.pushScope('directory-organization-editor');
@@ -93,8 +93,6 @@
           message = `Aliases and categories remain unsaved. ${message}`;
           return;
         }
-        baselineAliases = aliasDraft;
-        baselineCategories = categoryDraft;
       }
       onDone(saved);
     } finally {

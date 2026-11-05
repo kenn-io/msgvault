@@ -47,7 +47,12 @@
       const result = await controller.endEmployment(employment.id, { end_date: endDate.trim() });
       if (result.ok) { submitting = false; close(); return; }
       message = result.kind === 'conflict' ? `This employment changed elsewhere. ${result.message}` : result.message;
-      if (result.kind === 'conflict') current = result.current;
+      if (result.kind === 'conflict') {
+        current = result.current;
+        if (current) {
+          try { await controller.prepareOrganizationMutation(current.organization_id); } catch { /* Keep the conflict and date draft if the employer cannot be loaded. */ }
+        }
+      }
     } finally { submitting = false; }
   }
   $effect(() => {
