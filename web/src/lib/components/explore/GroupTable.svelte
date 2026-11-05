@@ -228,6 +228,7 @@
     }
     element.scrollTop = rebased;
     scrollTop = element.scrollTop;
+    if (!restoring) persistAnchor(height);
     suppressedScrollTop = element.scrollTop;
     if (preservedKey && rows.some((row) => stableKey(row) === preservedKey)) {
       activeKey = preservedKey;
@@ -266,9 +267,15 @@
     if (row && !restoring) {
       activeKey = stableKey(row);
       onActiveKey?.(activeKey);
-      onScrollAnchor?.(activeKey, scrollTop - first * height);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
+  }
+
+  function persistAnchor(height: number): void {
+    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
+    const row = rows[first];
+    if (row) onScrollAnchor?.(stableKey(row), scrollTop - first * height);
   }
 </script>
 

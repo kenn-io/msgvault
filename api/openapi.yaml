@@ -16673,8 +16673,6 @@ components:
           type: string
         preview:
           type: string
-        sender_label:
-          type: string
         source_id:
           format: int64
           type: integer

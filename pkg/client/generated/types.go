@@ -16545,7 +16545,6 @@ type TimelineRow struct {
 	MessageCount    int64      `json:"message_count"`
 	OccurredAt      time.Time  `json:"occurred_at" validate:"required"`
 	Preview         string     `json:"preview" validate:"required"`
-	SenderLabel     *string    `json:"sender_label,omitzero"`
 	SourceID        int64      `json:"source_id"`
 	Title           string     `json:"title" validate:"required"`
 }

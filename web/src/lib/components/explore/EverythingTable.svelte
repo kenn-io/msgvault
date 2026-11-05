@@ -273,6 +273,7 @@
       suppressedScrollTop = rebased;
       element.scrollTop = rebased;
       scrollTop = element.scrollTop;
+      if (!restoring) persistAnchor(height);
       suppressedScrollTop = element.scrollTop;
       if (preservedKey && rows.some((row) => row.key === preservedKey)) {
         activeKey = preservedKey;
@@ -385,9 +386,15 @@
         activeKey = row.key;
         onActiveKey?.(row.key);
       }
-      onScrollAnchor?.(row.key, scrollTop - first * height);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
+  }
+
+  function persistAnchor(height: number): void {
+    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
+    const row = rows[first];
+    if (row) onScrollAnchor?.(row.key, scrollTop - first * height);
   }
 
   function toggleLoadedSelection(): void {
@@ -546,7 +553,6 @@
                     {:else if column === 'attachments'}
                       {#if row.has_attachments}
                         <span class="attachment" aria-label={`${row.attachment_count} attachments`}>⌕</span>
-                        {#if !visibleColumns.includes('size')}<span class="phone-attachment-size" data-mono>{formatBytes(row.attachment_size)}</span>{/if}
                       {:else}
                         <span class="no-attachments" aria-label="No attachments">—</span>
                       {/if}
@@ -866,7 +872,7 @@
       scroll-behavior: auto !important;
     }
   }
-  .phone-sender, .phone-attachment-size { display: none; }
+  .phone-sender { display: none; }
   @media (max-width: 640px) {
     .virtual-spacer { min-width: 0; }
     .data-row {
@@ -891,7 +897,6 @@
     .cell--people { grid-area: people; font-weight: 500; }
     .cell--time { grid-area: time; font-size: var(--font-size-xs); }
     .cell--attachments { grid-area: att; }
-    .phone-attachment-size { display: inline; margin-left: var(--space-1); font-size: var(--font-size-xs); }
     .no-attachments { display: none; }
     .cell--size { grid-area: size; font-size: var(--font-size-xs); }
     .cell--title { grid-area: title; }

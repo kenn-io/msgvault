@@ -176,8 +176,6 @@ func TestRelationshipTimelineOverHTTP(t *testing.T) {
 	burst := page.Rows[0]
 	assert.Equal("chat_burst", burst.Kind)
 	assert.Equal(int64(3), burst.MessageCount)
-	assert.Empty(burst.SenderLabel)
-	assert.Equal("Pat", page.Rows[1].SenderLabel)
 	assert.Equal("email", page.Rows[1].Kind)
 	assert.Equal("event", page.Rows[2].Kind)
 }

@@ -140,13 +140,8 @@ test.describe('phone width', () => {
           expect.soft(Math.abs(check!.x - first!.x - 12), 'checkbox aligns with rows').toBeLessThanOrEqual(1);
           expect.soft(Math.abs(first!.y - head!.y - head!.height), 'no gap after selection strip').toBeLessThanOrEqual(1);
           expect.soft(await header.evaluate(el => getComputedStyle(el).boxShadow), 'single header divider').toBe('none');
-          const size = row.getByText('2 KB', { exact: true });
-          await expect.soft(size, 'attachment size is visible').toBeVisible();
-          const [hit, sizeBox, time] = await Promise.all([row.locator('.attachment').boundingBox(), size.boundingBox(), row.locator('.cell--time').boundingBox()]);
-          if (sizeBox) {
-            expect.soft(Math.abs(sizeBox.x - (hit!.x + hit!.width)), 'attachment size sits next to its mark').toBeLessThanOrEqual(8);
-            expect.soft(Math.abs(time!.x - (sizeBox.x + sizeBox.width)), 'date sits next to attachment size').toBeLessThanOrEqual(8);
-          }
+          const [hit, time] = await Promise.all([row.locator('.attachment').boundingBox(), row.locator('.cell--time').boundingBox()]);
+          expect.soft(Math.abs(time!.x - (hit!.x + hit!.width)), 'attachment mark sits next to date').toBeLessThanOrEqual(8);
           expect.soft(Math.abs((hit!.y + hit!.height / 2) - (time!.y + time!.height / 2)), 'attachment mark aligns with date').toBeLessThanOrEqual(2);
         } else {
           if (workspace === 'files') {
@@ -276,15 +271,16 @@ test.describe('phone interactions', () => {
       await expect(grid.locator('[aria-rowindex]').first()).toBeVisible();
       const phoneHeight = workspace === 'groups' ? 58 : 72;
       const key = workspace === 'groups' ? 'group:source:101' : 'message:101';
-      await grid.evaluate((el, top) => { el.scrollTop = top; el.dispatchEvent(new Event('scroll')); }, 100 * phoneHeight + 50);
-      await expect.poll(() => page.evaluate(() => history.state?.exploreState?.scrollAnchor)).toEqual({ key, offset: 50 });
+      await grid.evaluate((el, top) => { el.scrollTop = top; el.dispatchEvent(new Event('scroll')); }, 100 * phoneHeight + 20);
+      await expect.poll(() => page.evaluate(() => history.state?.exploreState?.scrollAnchor)).toEqual({ key, offset: 20 });
+      await grid.focus();
+      for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+      await expect(grid).toHaveAttribute('aria-activedescendant', /104/);
       await page.setViewportSize({ width: 1280, height: 720 });
-      await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(3635);
-      await page.evaluate(({ key }) => {
-        history.replaceState({ ...history.state, exploreState: { ...history.state.exploreState, scrollAnchor: { key, offset: 50 } } }, '');
-      }, { key });
+      await expect(grid.locator('[aria-rowindex="105"]')).toHaveCSS('height', '36px');
+      const rebased = await grid.evaluate(el => el.scrollTop);
       await page.reload();
-      await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(3635);
+      await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(rebased);
     });
   }
 });

@@ -35,8 +35,6 @@ type TimelineRow struct {
 	ConversationID  *int64    `json:"conversation_id,omitzero" nullable:"false"`
 	AnchorMessageID *int64    `json:"anchor_message_id,omitzero" nullable:"false"`
 	HasAttachments  bool      `json:"has_attachments"`
-	// SenderLabel names a single message's sender; chat bursts leave it empty.
-	SenderLabel string `json:"sender_label,omitempty"`
 }
 
 // RelationshipTimelineRequest scopes and pages one counterpart's timeline.
@@ -166,7 +164,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 		if err := rows.Scan(
 			&key, &row.Kind, &anchorMessageID, &conversationID, &row.OccurredAt, &row.FirstAt,
 			&row.SourceID, &row.Title, &row.Preview, &row.MessageCount, &row.HasAttachments,
-			&response.TotalCount, &row.SenderLabel,
+			&response.TotalCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan relationship timeline row: %w", err)
 		}
@@ -348,7 +346,7 @@ SELECT
             NULLIF(CAST(c.title AS VARCHAR), ''), CAST(m.snippet AS VARCHAR), '')
     END AS title,
     COALESCE(CAST(m.snippet AS VARCHAR), '') AS preview,
-    p.message_count, p.has_attachments, p.total_count, CASE WHEN p.entry_kind <> 'chat_burst' THEN COALESCE(` + sqlMessageSenderLabel("m") + `, '') ELSE '' END AS sender_label
+    p.message_count, p.has_attachments, p.total_count
 FROM page p
 LEFT JOIN read_parquet('` + messagesGlob + `',
     hive_partitioning=true, union_by_name=true) m ON m.id = p.anchor_message_id
