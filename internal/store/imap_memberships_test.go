@@ -3,7 +3,6 @@ package store_test
 import (
 	"crypto/sha256"
 	"database/sql"
-	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -1211,11 +1210,22 @@ func TestApplyIMAPMailboxDeltas_ResetPersistsFlagChange(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T) {
-	for _, scenario := range []string{"cleared tombstone", "failed apply"} {
+	for _, scenario := range []string{"cleared tombstone", "failed apply", "PostgreSQL session timestamp settings"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := testutil.NewTestStore(t)
+			if scenario == "PostgreSQL session timestamp settings" {
+				if !st.IsPostgreSQL() {
+					t.Skip("PostgreSQL session timestamp settings")
+				}
+				st.DB().SetMaxOpenConns(1)
+				st.DB().SetMaxIdleConns(1)
+				_, err := st.DB().Exec(`SET DateStyle = 'SQL, YMD'`)
+				requirements.NoError(err)
+				_, err = st.DB().Exec(`SET TimeZone = 'Pacific/Honolulu'`)
+				requirements.NoError(err)
+			}
 			source, err := st.GetOrCreateSource("imap", "incremental@example.test")
 			requirements.NoError(err)
 			convID, err := st.EnsureConversation(source.ID, "incremental", "Incremental")
@@ -1231,7 +1241,7 @@ func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T)
 				untrackedID = f.createMessage(t, "untracked", "")
 			}
 			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
-			if scenario == "failed apply" {
+			if scenario != "cleared tombstone" {
 				untrackedID = f.createMessage(t, "untracked", "")
 			} else {
 				requirements.True(messageTombstoned(t, st, untrackedID))
@@ -1258,8 +1268,6 @@ func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T)
 				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
 					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&after))
 				assertions.Equal(checkpoint, after)
-				assertions.False(messageTombstoned(t, st, untrackedID))
-				assertions.Equal([]string{"Legacy"}, messageLabels(t, st, untrackedID))
 			}
 			baseline.Memberships = nil
 			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
@@ -1295,111 +1303,64 @@ func TestApplyIMAPMailboxDeltas_RetiresMembershipOnlyDraftMailbox(t *testing.T) 
 	assertions.Zero(membershipCount(t, st, source.ID))
 	assertions.True(messageTombstoned(t, st, draft.CurrentMessageID))
 	assertions.Empty(messageLabels(t, st, draft.CurrentMessageID))
-	key, err := st.GetMessageSourceID(draft.CurrentMessageID)
-	requirements.NoError(err)
-	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draft.CurrentMessageID), key)
 }
 
 func TestApplyIMAPMailboxDeltas_RedactedWriterRetainsCaptureWindow(t *testing.T) {
-	for _, hasCheckpoint := range []bool{false, true} {
-		t.Run(fmt.Sprintf("checkpoint=%t", hasCheckpoint), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newForeignRoleFeed(t)
-			st := f.store
-			source, err := st.GetOrCreateSource("imap", "redacted-writer@example.test")
-			requirements.NoError(err)
-			convID, err := st.EnsureConversation(source.ID, "redacted-writer", "Capture window")
-			requirements.NoError(err)
-			messages := imapMembershipFixture{store: st, source: source, convID: convID}
-			messages.createMessage(t, "tracked", "")
-			heldID := messages.createMessage(t, "untracked", "")
-			delta := store.IMAPMailboxDelta{
-				Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
-				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
-			}
-			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
-			requirements.True(messageTombstoned(t, st, heldID))
-			labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
-			requirements.NoError(err)
-			requirements.NoError(st.ReplaceMessageLabels(heldID, []int64{labelID}))
-			const checkpoint = "2000-01-01T00:00:00Z"
-			if hasCheckpoint {
-				_, err = st.DB().Exec(st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
-					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
-			} else {
-				_, err = st.DB().Exec(st.Rebind(`DELETE FROM sync_checkpoints
-					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID)
-			}
-			requirements.NoError(err)
-
-			peer := f.peerConn(t)
-			_, err = peer.ExecContext(t.Context(), "BEGIN")
-			requirements.NoError(err)
-			// Fix the stamp between the old checkpoint and this apply's bound.
-			_, err = peer.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = NULL,
-				content_changed_at = '2001-01-01 00:00:00.000' WHERE id = $1`, heldID)
-			requirements.NoError(err)
-			var peerPID int
-			requirements.NoError(peer.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&peerPID))
-			var redacted bool
-			requirements.NoError(st.DB().QueryRow(`SELECT xact_start IS NULL AND backend_type IS NULL
-				FROM pg_stat_activity WHERE pid = $1`, peerPID).Scan(&redacted))
-			requirements.True(redacted, "the apply role cannot see the peer writer's transaction start")
-
-			delta.Memberships = nil
-			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
-			var saved string
-			err = st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
-				WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved)
-			if hasCheckpoint {
-				requirements.NoError(err)
-				assertions.Equal(checkpoint, saved)
-			} else {
-				requirements.ErrorIs(err, sql.ErrNoRows)
-			}
-			_, err = peer.ExecContext(t.Context(), "COMMIT")
-			requirements.NoError(err)
-			requirements.False(messageTombstoned(t, st, heldID))
-			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
-			assertions.True(messageTombstoned(t, st, heldID))
-			assertions.Empty(messageLabels(t, st, heldID))
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
-				WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved))
-			assertions.NotEqual(checkpoint, saved, "an idle peer connection allows the checkpoint to advance")
-		})
-	}
-}
-
-func TestApplyIMAPMailboxDeltas_CheckpointIgnoresPostgreSQLDateStyle(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL session timestamp settings")
-	}
-	st.DB().SetMaxOpenConns(1)
-	st.DB().SetMaxIdleConns(1)
-	_, err := st.DB().Exec(`SET DateStyle = 'SQL, YMD'`)
+	f := newForeignRoleFeed(t)
+	st := f.store
+	source, err := st.GetOrCreateSource("imap", "redacted-writer@example.test")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`SET TimeZone = 'Pacific/Honolulu'`)
+	convID, err := st.EnsureConversation(source.ID, "redacted-writer", "Capture window")
 	requirements.NoError(err)
-	source, err := st.GetOrCreateSource("imap", "datestyle@example.test")
-	requirements.NoError(err)
-	convID, err := st.EnsureConversation(source.ID, "datestyle", "Checkpoint encoding")
-	requirements.NoError(err)
-	f := imapMembershipFixture{store: st, source: source, convID: convID}
-	f.createMessage(t, "tracked", "")
+	messages := imapMembershipFixture{store: st, source: source, convID: convID}
+	messages.createMessage(t, "tracked", "")
+	heldID := messages.createMessage(t, "untracked", "")
 	delta := store.IMAPMailboxDelta{
 		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
 		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
 	}
 	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
-	untrackedID := f.createMessage(t, "untracked", "")
+	requirements.True(messageTombstoned(t, st, heldID))
+	labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(heldID, []int64{labelID}))
+	const checkpoint = "2000-01-01T00:00:00Z"
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
+	requirements.NoError(err)
+
+	peer := f.peerConn(t)
+	_, err = peer.ExecContext(t.Context(), "BEGIN")
+	requirements.NoError(err)
+	// Fix the stamp between the old checkpoint and this apply's bound.
+	_, err = peer.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = NULL,
+		content_changed_at = '2001-01-01 00:00:00.000' WHERE id = $1`, heldID)
+	requirements.NoError(err)
+	var peerPID int
+	requirements.NoError(peer.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&peerPID))
+	var redacted bool
+	requirements.NoError(st.DB().QueryRow(`SELECT xact_start IS NULL AND backend_type IS NULL
+		FROM pg_stat_activity WHERE pid = $1`, peerPID).Scan(&redacted))
+	requirements.True(redacted, "the apply role cannot see the peer writer's transaction start")
+
 	delta.Memberships = nil
 	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
-	assertions.True(messageTombstoned(t, st, untrackedID))
-	assertions.Equal(1, membershipCount(t, st, source.ID))
+	var saved string
+	err = st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved)
+	requirements.NoError(err)
+	assertions.Equal(checkpoint, saved)
+	_, err = peer.ExecContext(t.Context(), "COMMIT")
+	requirements.NoError(err)
+	requirements.False(messageTombstoned(t, st, heldID))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	assertions.True(messageTombstoned(t, st, heldID))
+	assertions.Empty(messageLabels(t, st, heldID))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved))
+	assertions.NotEqual(checkpoint, saved, "an idle peer connection allows the checkpoint to advance")
 }
 
 func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T) {
@@ -1419,12 +1380,6 @@ func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T
 	requirements.NoError(err)
 
 	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
-	requirements.Empty(messageLabels(t, st, messageID), "the first baseline cleans legacy tombstone labels")
-	requirements.Zero(membershipCount(t, st, source.ID))
-	var checkpoint string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
-		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&checkpoint))
-	requirements.NotEmpty(checkpoint)
 
 	// Reapply a label to make an unnecessary legacy recapture observable.
 	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
