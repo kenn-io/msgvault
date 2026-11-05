@@ -80,6 +80,7 @@ func TestMeetingLinksSeriesExpansionResolvesAliasesBeforeWindowFiltering(t *test
 }
 
 func testMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
+	t.Helper()
 	for _, tc := range []struct {
 		name       string
 		updatedRaw string
@@ -265,6 +266,7 @@ func granolaLinkFixture(t *testing.T, st *Store, event string) int64 {
 }
 
 func testMeetingLinksGranolaOwnCalendar(t *testing.T) {
+	t.Helper()
 	for _, tc := range []struct{ name, calendar, owner string }{
 		{"exact email", "calendar@example.com", "calendar@example.com"},
 		{"padded uppercase email", " Calendar@Example.COM ", " CALENDAR@example.com "},
@@ -477,6 +479,7 @@ func TestMeetingLinksUpgradeFromSchema11(t *testing.T) {
 }
 
 func testMeetingLinksIgnoreUnresolvableDecision(t *testing.T) {
+	t.Helper()
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -535,6 +538,7 @@ func linkedMeetingRefs(t *testing.T, st *Store, ids ...int64) map[int64]string {
 }
 
 func testMeetingLinksPrimaryCalendar(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "primary@example.org"))
@@ -562,6 +566,7 @@ func TestMeetingLinksTwoOccurrenceAliases(t *testing.T) {
 }
 
 func testMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	alias := func(updated, start, end string) string {
@@ -581,6 +586,7 @@ func testMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
 }
 
 func testMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, first := calendarFixture(t, st, "orphan-one", `{"id":"orphan-one","iCalUID":"shared@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
@@ -678,6 +684,7 @@ func TestMeetingLinksSplitSurvivesSourceRemoval(t *testing.T) {
 }
 
 func testMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
+	t.Helper()
 	for _, recurring := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -694,13 +701,14 @@ func testMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
 			requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 			requirements.NoError(st.RemoveSource(data.Message.SourceID))
 			requirements.Empty(linkedMeetingRefs(t, st, note)[note])
-			assertions.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 			assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
 		})
 	}
 }
 
 func testMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
+	t.Helper()
 	for _, recurring := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -735,6 +743,7 @@ func testMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
 }
 
 func testMeetingLinksDecisionLifetime(t *testing.T) {
+	t.Helper()
 	for _, uid := range []string{"lifetime@example.org", ""} {
 		t.Run("uid="+uid, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)

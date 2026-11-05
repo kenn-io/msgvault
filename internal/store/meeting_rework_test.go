@@ -69,6 +69,7 @@ func TestMeetingLinksUnsupportedMasterException(t *testing.T) {
 }
 
 func testMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds(t *testing.T) {
+	t.Helper()
 	cases := []struct {
 		name string
 		raw  string
@@ -153,6 +154,7 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 }
 
 func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
+	t.Helper()
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -165,7 +167,8 @@ func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
 	assert.Empty(t, suggestions.Suggestions)
-	suggestions, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}}, 10)
+	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
+	suggestions, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref}, 10)
 	require.NoError(err)
 	assert.Empty(t, suggestions.Suggestions)
 }
@@ -186,6 +189,7 @@ func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
 }
 
 func testMeetingLinkTargetsRequireBounds(t *testing.T) {
+	t.Helper()
 	for _, tc := range []struct{ name, raw string }{
 		{"tombstone", `{"id":"gone","status":"cancelled"}`},
 		{"orphan", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`},
@@ -254,6 +258,7 @@ func TestMeetingDedupRawBackfillProjections(t *testing.T) {
 }
 
 func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=HOURLY;COUNT=6"))

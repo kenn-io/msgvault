@@ -11,6 +11,7 @@ import (
 )
 
 func testMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
+	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -92,6 +93,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 }
 
 func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
+	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
@@ -143,6 +145,7 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 }
 
 func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
+	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"daily","iCalUID":"daily@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`)
