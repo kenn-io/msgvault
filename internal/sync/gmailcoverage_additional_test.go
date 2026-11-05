@@ -107,21 +107,23 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 }
 
 func TestGmailCoverageRejectsOldCheckpoint(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fingerprinted", true: "untyped"}[legacy], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		fingerprint any
+	}{
+		{name: "fingerprinted", fingerprint: "full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+		{name: "untyped"},
+		{name: "previous_release", fingerprint: "full:v2-spam-trash:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			require := require.New(t)
 
 			e, f := gmailCoverageTransportEnv(t)
 			f.failPage = true
 			_, err := e.Syncer.Full(e.Context, testEmail)
 			require.Error(err)
-			// Model an interrupted pre-coverage traversal whose next-page token is unsafe.
-			// This is the pre-coverage fingerprint for an unfiltered, unlimited Gmail full.
-			fingerprint := any("full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18")
-			if legacy {
-				fingerprint = nil
-			}
-			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?", fingerprint)
+			// Model an older unfiltered, unlimited Gmail full request.
+			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?", scenario.fingerprint)
 			require.NoError(err)
 			f.requests = nil
 			gmailCoverageReopen(t, e)
