@@ -43,7 +43,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	command.Flags().StringVar(&from, "from", "", "window start: YYYY-MM-DD or RFC3339")
 	command.Flags().StringVar(&to, "to", "", "exclusive window end: YYYY-MM-DD or RFC3339")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print occurrences and attendees as JSON")
-	command.Flags().IntVar(&limit, "limit", 100, "maximum occurrences, 1 to 500")
+	command.Flags().IntVar(&limit, "limit", 0, "maximum occurrences per page, 1 to 500")
 	command.Flags().StringVar(&cursor, "cursor", "", "next cursor from the same window")
 	_ = command.MarkFlagRequired("from")
 	_ = command.MarkFlagRequired("to")
