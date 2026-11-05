@@ -20,11 +20,12 @@ type Content struct {
 }
 
 var (
-	codeCue = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`)
-	linkCue = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
+	codeCue          = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`)
+	linkCue          = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
+	qualifiedCodeCue = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`)
 
-	compactCode    = strings.NewReplacer("-", "", " ", "", "\u00a0", "")
-	codeToken      = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
+	compactCode    = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
+	codeToken      = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 	directYearCode = regexp.MustCompile(`(?:` + codeCue.String() + `)\s*(?:is|:|-)?\s*[0-9]{4}$`)
 	codeGap        = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|:|-|your|the|verification|security)[\s\x{00a0}]*)*$`)
 	reverseGap     = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
@@ -43,7 +44,9 @@ func Is(c Content) bool {
 			return true
 		}
 	}
-	fields[3] = strings.Join(strings.Fields(mime.StripHTML(c.HTML)), " ")
+	// Keep block separators so a code cannot merge with a neighboring number.
+	// Single-digit cells remain recognizable through codeToken's whitespace run.
+	fields[3] = mime.StripHTML(c.HTML)
 	for i, field := range fields {
 		fields[i] = strings.Map(func(r rune) rune {
 			if r >= '０' && r <= '９' {
@@ -136,9 +139,9 @@ func nearCue(window string, before bool) bool {
 	return false
 }
 
-// A cue in a separate metadata field can describe a code-only representation.
+// Only qualified cues can describe a code in a separate field.
 func trailingCue(field string) bool {
-	for _, loc := range codeCue.FindAllStringIndex(field, -1) {
+	for _, loc := range qualifiedCodeCue.FindAllStringIndex(field, -1) {
 		if codeGap.MatchString(field[loc[1]:]) {
 			return true
 		}
