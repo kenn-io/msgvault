@@ -12,6 +12,7 @@
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
+  import RelatedCopies from './RelatedCopies.svelte';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -32,6 +33,8 @@
     onOpenPerson?: (participantID: number) => void;
     onOpenSettings?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
+    /** IDs of the messages the thread has loaded. */
+    loadedIDs?: number[];
   }
 
   let {
@@ -48,7 +51,8 @@
     onOpenPerson = undefined,
     onOpenSettings = undefined,
     onOpenMeeting = undefined,
-    client = undefined
+    client = undefined,
+    loadedIDs = []
   }: Props = $props();
 
   let tasksRefresh = $state(0);
@@ -95,6 +99,9 @@
       </a>
     {/if}
     {#if menuError}<p class="sanitize-notice" role="alert">{menuError}</p>{/if}
+    {#if client && (!message.messageType || message.messageType === 'email')}
+      <div class="card-actions"><RelatedCopies {client} messageID={message.id} {loadedIDs} /></div>
+    {/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>
@@ -243,6 +250,18 @@
   .related-message {
     display: inline-block;
     margin: var(--space-3) var(--pane-pad-x) 0;
+  }
+
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) 0;
+  }
+
+  .card-actions:not(:has(*)) {
+    display: none;
   }
 
   .card-header {
