@@ -30,6 +30,9 @@ func (s *Store) GetMeetingMetricsContext(
 		if readErr = s.validateMeetingScopePopulation(ctx, tx, scope); readErr != nil {
 			return readErr
 		}
+		if result.Totals.MeetingCount, readErr = s.countScopedMeetings(ctx, tx, statement); readErr != nil {
+			return readErr
+		}
 		var average sql.NullFloat64
 		var first, last nullableTimestamp
 		firstExpression, lastExpression := `NULL`, `NULL`
@@ -37,12 +40,11 @@ func (s *Store) GetMeetingMetricsContext(
 			firstExpression, lastExpression = `MIN(occurred_at)`, `MAX(occurred_at)`
 		}
 		readErr = tx.QueryRowContext(ctx, statement.cte+`
-			SELECT COUNT(*), COUNT(duration_seconds), COUNT(*) - COUNT(duration_seconds),
+			SELECT COUNT(duration_seconds), COUNT(*) - COUNT(duration_seconds),
 				COALESCE(SUM(duration_seconds), 0), AVG(duration_seconds),
 				`+firstExpression+`, `+lastExpression+`,
 				COALESCE(SUM(CASE WHEN occurred_at IS NULL THEN 1 ELSE 0 END), 0)
 			FROM scoped_meetings`, statement.args...).Scan(
-			&result.Totals.MeetingCount,
 			&result.Totals.KnownDurationCount,
 			&result.Totals.UnknownDurationCount,
 			&result.Totals.TotalKnownSeconds,
@@ -55,16 +57,14 @@ func (s *Store) GetMeetingMetricsContext(
 			return fmt.Errorf("read meeting duration totals: %w", readErr)
 		}
 		result.Totals.AverageKnownSeconds = nullableFloatPointer(average)
-		result.FirstMeetingAt = nullableTimePointer(first)
-		result.LastMeetingAt = nullableTimePointer(last)
 		if !s.IsPostgreSQL() {
 			first, last, readErr = readSQLiteMeetingExtrema(ctx, tx, statement)
 			if readErr != nil {
 				return readErr
 			}
-			result.FirstMeetingAt = nullableTimePointer(first)
-			result.LastMeetingAt = nullableTimePointer(last)
 		}
+		result.FirstMeetingAt = nullableTimePointer(first)
+		result.LastMeetingAt = nullableTimePointer(last)
 
 		rows, queryErr := tx.QueryContext(ctx, statement.cte+`
 			SELECT duration_basis, COUNT(*), COALESCE(SUM(duration_seconds), 0)
