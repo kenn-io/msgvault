@@ -32,7 +32,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		return record, err
 	}
 	defer release()
-	r := s.meetingReader(ctx)
+	r := s.meetingReader()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
 		var found int64

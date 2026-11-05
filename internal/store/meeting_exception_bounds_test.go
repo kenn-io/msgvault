@@ -42,7 +42,7 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	requirements.NoError(err)
 	budget := calrecur.RequestReadBudget
-	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), ref, &budget)
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(), ref, &budget)
 	release()
 	requirements.NoError(err)
 	assertions.Equal("cancelled", resolved.Row.Event.Status)
@@ -80,7 +80,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	requirements.NoError(err)
 	defer release()
 	budget := calrecur.RequestReadBudget
-	occurrences, err := st.automaticMeetingOccurrences(ctx, st.meetingReader(ctx), meetingLinkKey{
+	occurrences, err := st.automaticMeetingOccurrences(ctx, st.meetingReader(), meetingLinkKey{
 		Kind:        "ical_uid",
 		Value:       "weekly@example.org",
 		ScheduledAt: &from,

@@ -38,16 +38,9 @@ type linkOccurrence struct {
 }
 
 type reboundReader struct {
-	reader  SQLReader
-	rebind  func(string) string
-	dialect Dialect
-}
+	loggedReader
 
-func (r reboundReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return r.reader.QueryContext(ctx, r.rebind(query), args...)
-}
-func (r reboundReader) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return r.reader.QueryRowContext(ctx, r.rebind(query), args...)
+	dialect Dialect
 }
 
 func meetingEventRows(ctx context.Context, r reboundReader, predicate string, args []any, budget *int) ([]CalendarEventRow, error) {
@@ -285,7 +278,7 @@ func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row
 	return resolved, err
 }
 
-func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, error) {
+func memberLinkKey(ctx context.Context, r loggedReader, id int64) (meetingLinkKey, error) {
 	var key meetingLinkKey
 	var at sql.NullTime
 	err := r.QueryRowContext(ctx, `SELECT kind,value,calendar_id,scheduled_at FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
@@ -476,8 +469,8 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	return uniqueMeetingOccurrences(out), nil
 }
 
-func (s *Store) meetingReader(ctx context.Context) reboundReader {
-	return reboundReader{reader: ReadDBContext(ctx, s.db.DB), rebind: s.dialect.Rebind, dialect: s.dialect}
+func (s *Store) meetingReader() reboundReader {
+	return reboundReader{loggedReader: s.db, dialect: s.dialect}
 }
 
 // Choose the lowest canonical reference across copies of the same occurrence.

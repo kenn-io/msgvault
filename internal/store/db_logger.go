@@ -93,6 +93,11 @@ func ConfigureSQLLogging(opts SQLLogOptions) {
 	sqlLogMaxChars.Store(int64(maxChars))
 }
 
+type loggedReader interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // loggedDB wraps *sql.DB and emits slog records for every query
 // it executes. It embeds *sql.DB so store methods continue to
 // compile against the sql.DB method surface — the Query/Exec

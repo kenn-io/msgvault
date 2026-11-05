@@ -91,7 +91,7 @@ func formatMeetingOccurrence(ref OccurrenceRef) string {
 	return value
 }
 
-func suggestionMembers(ctx context.Context, r SQLReader, ids []int64) (out []suggestMember, err error) {
+func suggestionMembers(ctx context.Context, r loggedReader, ids []int64) (out []suggestMember, err error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -161,7 +161,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	defer release()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
-		members, err := suggestionMembers(ctx, s.meetingReader(ctx), []int64{ref.MessageID})
+		members, err := suggestionMembers(ctx, s.meetingReader(), []int64{ref.MessageID})
 		if err != nil {
 			return pageResult, err
 		}
@@ -183,14 +183,14 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	} else {
-		target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), ref.OccurrenceRef, &budget)
+		target, err := resolveMeetingOccurrence(ctx, s.meetingReader(), ref.OccurrenceRef, &budget)
 		if err != nil {
 			return pageResult, err
 		}
 		if target.Row.Event.Status == meetingCancelledStatus {
 			return pageResult, nil
 		}
-		r := s.meetingReader(ctx)
+		r := s.meetingReader()
 		// Use the longest archived duration to bound the start window without
 		// excluding a long recording that still overlaps the event.
 		var longest float64
@@ -242,7 +242,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			return pageResult, ErrQueryTooBroad
 		}
 		for start := 0; start < len(ids); start += 500 {
-			members, err := suggestionMembers(ctx, s.meetingReader(ctx), ids[start:min(start+500, len(ids))])
+			members, err := suggestionMembers(ctx, s.meetingReader(), ids[start:min(start+500, len(ids))])
 			if err != nil {
 				return pageResult, err
 			}
@@ -253,7 +253,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	}
-	pageResult.Suggestions, err = s.undecidedMeetingSuggestions(ctx, s.meetingReader(ctx), pageResult.Suggestions, limit, &budget)
+	pageResult.Suggestions, err = s.undecidedMeetingSuggestions(ctx, s.meetingReader(), pageResult.Suggestions, limit, &budget)
 	return pageResult, err
 }
 

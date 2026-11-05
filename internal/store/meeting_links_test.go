@@ -277,7 +277,7 @@ func TestMeetingLinksActualRecurrenceBudget(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	requirements.NoError(err)
 	defer release()
-	r := st.meetingReader(ctx)
+	r := st.meetingReader()
 	budget := calrecur.RequestReadBudget
 	ref := OccurrenceRef{MessageID: master, Key: "20320404T093000Z"}
 	o, err := resolveMeetingOccurrence(ctx, r, ref, &budget)
