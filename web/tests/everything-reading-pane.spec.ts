@@ -301,23 +301,36 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
   }
 });
 
+test('desktop deep link and desktop resizing leave focus on the page', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [entry(1)], total_count: 1, cache_revision: 'cache-desktop', search_provenance: {}
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ selectedRow: 'message:1' })))}`);
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeVisible();
+  await expect(page.locator('body')).toBeFocused();
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await expect(page.locator('body')).toBeFocused();
+});
+
 test('phone reader replaces results and Back restores the focused row', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/session', route => route.fulfill({ json: {
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: Array.from({ length: 120 }, (_, index) => ({ ...entry(index + 1), conversation_id: 7, anchor_message_id: 3 })), total_count: 120,
+    rows: Array.from({ length: 120 }, (_, index) => ({ ...entry(index + 1), conversation_id: 7, anchor_message_id: index + 1 })), total_count: 120,
     cache_revision: 'cache-phone', search_provenance: {}
   } }));
-  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: {
-    id: 7, anchor_id: 3, has_before: false, has_after: false, total: 3,
-    messages: [1, 2, 3].map(id => ({
-      ...recordingMessage, id, conversation_id: 7, from: 'Alexandria Example <alexandria@example.com>', to: ['reader@example.com'],
-      subject: 'Synthetic subject 1', sent_at: '2024-12-30T11:21:00Z',
-      snippet: 'Synthetic excerpt', body: 'Synthetic body', body_html: '', attachments: []
-    }))
-  } }));
+  await page.route('**/api/v1/conversations/7?*', route => {
+    const id = Number(new URL(route.request().url()).searchParams.get('anchor'));
+    return route.fulfill({ json: {
+      id: 7, anchor_id: id, has_before: false, has_after: false, total: 1,
+      messages: [{ ...recordingMessage, id, conversation_id: 7, message_type: 'email', subject: `Synthetic subject ${id}`,
+        body: `Synthetic body ${id}`, body_html: '', has_attachments: false, attachments: [] }]
+    } });
+  });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
@@ -333,6 +346,7 @@ test('phone reader replaces results and Back restores the focused row', async ({
   const resultsBox = (await page.locator('.results-split').boundingBox())!;
   expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
   await expect(reading.locator('.pane-title')).toHaveText(`Synthetic subject ${index}`);
+  await expect(reading.getByText(`Synthetic body ${index}`, { exact: true })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Back to results' })).toBeFocused();
   await reading.getByRole('button', { name: 'Back to results' }).click();
   await expect(grid).toBeVisible();
@@ -354,21 +368,22 @@ test('resizing an open reader preserves expanded messages and focus', async ({ p
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 2 }, { ...entry(2), conversation_id: 7, anchor_message_id: 3 }],
+    rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 1 }, { ...entry(2), conversation_id: 7, anchor_message_id: 2 }],
     total_count: 2, cache_revision: 'cache-resize', search_provenance: {}
   } }));
   let requests = 0;
   await page.route('**/api/v1/conversations/7?*', route => {
     requests += 1;
-    return route.fulfill({ json: { id: 7, anchor_id: 2, has_before: false, has_after: false, total: 3, messages: [1, 2, 3].map(id => ({ ...recordingMessage, id, conversation_id: 7, subject: `Message ${id}`, attachments: [] })) } });
+    return route.fulfill({ json: { id: 7, anchor_id: Number(new URL(route.request().url()).searchParams.get('anchor')), has_before: false, has_after: false, total: 3, messages: [1, 2, 3].map(id => ({ ...recordingMessage, id, conversation_id: 7, message_type: 'email', subject: `Message ${id}`, body: `Synthetic body ${id}`, body_html: '', has_attachments: false, attachments: [] })) } });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
-  await page.getByRole('button', { name: /Expand message 1/ }).click();
-  const expanded = page.getByRole('article', { name: 'Message 1' });
+  await page.getByRole('button', { name: /Expand message 2/ }).click();
+  const expanded = page.getByRole('article', { name: 'Message 2' });
   await expect(expanded).toBeVisible();
-  const collapse = expanded.getByRole('button', { name: /Collapse message 1/ });
+  await expect(page.getByText('Synthetic body 1', { exact: true })).toBeVisible();
+  const collapse = expanded.getByRole('button', { name: /Collapse message 2/ });
   await collapse.focus();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(expanded).toBeVisible();
@@ -383,6 +398,7 @@ test('resizing an open reader preserves expanded messages and focus', async ({ p
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.getByRole('button', { name: 'Close reading pane' })).toBeFocused();
   await expect(expanded).toBeVisible();
+  await expect(page.getByText('Synthetic body 1', { exact: true })).toBeVisible();
   expect(requests).toBe(1);
 });
 
@@ -428,7 +444,7 @@ for (const grouped of [false, true]) {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({
       query: 'alpha', groupingChain: grouped ? ['source'] : [], selectedRow: grouped ? 'group:source:7' : 'message:1'
     })))}`);
-    await expect(page.getByRole('button', { name: 'Back to results' })).toBeFocused();
+    await page.getByRole('button', { name: 'Back to results' }).focus();
     release();
     await expect(page.getByRole('alert').filter({ hasText: 'Search unavailable' })).toBeVisible();
     const grid = page.getByRole('grid', { name: grouped ? 'Messages grouped by source' : 'Messages results' });

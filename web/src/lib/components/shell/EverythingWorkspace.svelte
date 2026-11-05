@@ -130,9 +130,12 @@
   const compact = new MediaQuery(MEDIA.compact);
   const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
   let resultsSplit: HTMLDivElement | undefined = $state();
+  let previousSolo: boolean | undefined;
   $effect(() => {
-    void solo;
-    if (!untrack(() => readingTargetKey)) return;
+    const currentSolo = solo;
+    const changed = previousSolo !== undefined && previousSolo !== currentSolo;
+    previousSolo = currentSolo;
+    if (!changed || !untrack(() => readingTargetKey)) return;
     void tick().then(() => {
       const focused = document.activeElement;
       if (focused instanceof HTMLElement && focused !== document.body && focused.getClientRects().length > 0 && getComputedStyle(focused).visibility === 'visible') return;
