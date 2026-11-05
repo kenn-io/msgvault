@@ -13,10 +13,6 @@ import (
 
 const rawFormatMIME = "mime"
 
-const emailCalendarRepairableWhere = `NOT EXISTS (
-	SELECT 1 FROM source_merge_archive_only_messages marker WHERE marker.message_id = messages.id
-)`
-
 // Match the MIME type without allocating a lowercase copy of the email.
 func hasCalendarToken(raw []byte) bool {
 	const token = "text/calendar"
@@ -50,7 +46,7 @@ func (s *Store) refreshEmailCalendarEventsWith(ctx context.Context, tx *loggedTx
 	q := boundQuerier{ctx: ctx, q: tx}
 	var kind string
 	var sourceID int64
-	if err := q.QueryRow(`SELECT COALESCE(message_type,''),source_id FROM messages WHERE id=? AND `+emailCalendarRepairableWhere, id).Scan(&kind, &sourceID); err != nil {
+	if err := q.QueryRow(`SELECT COALESCE(message_type,''),source_id FROM messages WHERE id=?`, id).Scan(&kind, &sourceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -87,7 +83,7 @@ func (s *Store) RefreshArchivedEmailCalendarContext(ctx context.Context, sourceI
 		}
 		var kind string
 		q := boundQuerier{ctx: ctx, q: tx}
-		if err := q.QueryRow(`SELECT COALESCE(message_type,'') FROM messages WHERE id=? AND source_id=? AND `+emailCalendarRepairableWhere, item.MessageID, sourceID).Scan(&kind); err != nil {
+		if err := q.QueryRow(`SELECT COALESCE(message_type,'') FROM messages WHERE id=? AND source_id=?`, item.MessageID, sourceID).Scan(&kind); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
