@@ -14,21 +14,7 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("archive@example.test", "gmail")
-	exact := b.AddParticipant("exact@example.test", "example.test", "Alice")
-	prefix := b.AddParticipant("prefix@example.test", "example.test", "Alice Example")
-	substring := b.AddParticipant("substring@example.test", "example.test", "Malice Stone")
-	b.AddParticipantIdentifier(exact, "slack", "alice", "@alice", true)
-	when := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
-	for index, participantID := range []int64{exact, prefix, substring} {
-		message := b.AddMessage(MessageOpt{
-			SourceID: source, ConversationID: int64(100 + index),
-			Subject: "completion fixture", SentAt: when.Add(time.Duration(index) * time.Minute),
-		})
-		b.AddFrom(message, participantID, "")
-	}
-	engine := b.BuildEngine()
+	engine, exact, prefix, substring, when := newPeopleRankingFixture(t)
 
 	response, err := engine.CompletePeople(context.Background(), PeopleCompletionRequest{
 		Query: "alice", Limit: 8,
