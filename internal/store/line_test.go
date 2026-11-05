@@ -181,6 +181,13 @@ func TestLineMembershipOutOfOrder(t *testing.T) {
 	var joined, left sql.NullTime
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
 	must.True(left.Valid)
+	must.True(joined.Valid)
+	checks.WithinDuration(base, joined.Time, time.Millisecond)
+	checks.WithinDuration(base.Add(2*time.Hour), left.Time, time.Millisecond)
+	must.NoError(st.SetLineMembershipContext(ctx, conv, pid, member, true, base.Add(30*time.Minute)))
+	must.NoError(st.SetLineMembershipContext(ctx, conv, pid, member, true, base))
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
+	checks.WithinDuration(base.Add(30*time.Minute), joined.Time, time.Millisecond)
 	checks.WithinDuration(base.Add(2*time.Hour), left.Time, time.Millisecond)
 	must.NoError(st.SetLineMembershipContext(ctx, conv, pid, member, true, base.Add(3*time.Hour)))
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
@@ -225,6 +232,8 @@ func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
 		return state
 	}
 	initial := snapshot()
+	must.True(initial.joined.Valid)
+	checks.Equal(base.UnixMilli(), initial.joined.Time.UnixMilli(), "first membership uses the message timestamp")
 	persist("second", base.Add(time.Minute))
 	checks.Equal(initial, snapshot(), "an active sender's next message must preserve membership and leave existing history queued at the same revision")
 	var presence int64

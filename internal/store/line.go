@@ -360,7 +360,15 @@ func (s *Store) PersistLineGroupMessageContext(ctx context.Context, data *Messag
 		if err := s.setLineMembershipClockTx(ctx, tx, data.Message.SourceID, data.Conversation.SourceConversationID, memberIdentifier, true, data.Message.SentAt.Time); err != nil {
 			return nil, err
 		}
-		return data, nil
+		// The LINE projection inserts the sender with the event timestamp.
+		// Generic conversation persistence would insert it with processing time.
+		prepared := *data
+		conversation := *data.Conversation
+		conversation.Participants = slices.DeleteFunc(slices.Clone(conversation.Participants), func(ref ConversationParticipantRef) bool {
+			return ref.ParticipantID == data.Message.SenderID.Int64
+		})
+		prepared.Conversation = &conversation
+		return &prepared, nil
 	}
 	afterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
 		var conversationID, participantID int64
@@ -482,7 +490,10 @@ func (s *Store) projectLineMembershipTx(ctx context.Context, tx *loggedTx, sourc
 		leave = time.UnixMilli(latestLeave).UTC()
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id,participant_id,role,joined_at,left_at)
-  VALUES (?,?,'member',?,?) ON CONFLICT(conversation_id,participant_id) DO UPDATE SET joined_at=excluded.joined_at,left_at=excluded.left_at WHERE conversation_participants.left_at IS DISTINCT FROM excluded.left_at`, conversationID, participantID, join, leave)
+  VALUES (?,?,'member',?,?) ON CONFLICT(conversation_id,participant_id) DO UPDATE SET joined_at=excluded.joined_at,left_at=excluded.left_at
+  WHERE conversation_participants.left_at IS DISTINCT FROM excluded.left_at
+     OR (conversation_participants.joined_at IS NULL AND excluded.joined_at IS NOT NULL)
+     OR (excluded.left_at IS NOT NULL AND conversation_participants.joined_at IS DISTINCT FROM excluded.joined_at)`, conversationID, participantID, join, leave)
 	return err
 }
 
@@ -603,9 +614,8 @@ func (s *Store) LineMessageDeletedContext(ctx context.Context, messageID int64) 
 // bodies. MessageMetadataBatch intentionally leaves SourceConversationID unset.
 func (s *Store) LineMessageContext(ctx context.Context, sourceID int64, messageID string) (MessageMetadataRecord, error) {
 	var out MessageMetadataRecord
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id,m.metadata,c.source_conversation_id,
- COALESCE((SELECT display_name FROM message_recipients mr WHERE mr.message_id=m.id AND mr.recipient_type='from' ORDER BY mr.id LIMIT 1),'')
- FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.source_id=? AND m.source_message_id=?`), sourceID, messageID).Scan(&out.ID, &out.Metadata, &out.SourceConversationID, &out.SenderDisplayName)
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id,m.metadata,c.source_conversation_id
+ FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.source_id=? AND m.source_message_id=?`), sourceID, messageID).Scan(&out.ID, &out.Metadata, &out.SourceConversationID)
 	return out, err
 }
 

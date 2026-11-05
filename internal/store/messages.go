@@ -451,7 +451,6 @@ type MessageMetadataRecord struct {
 	ID                   int64
 	Metadata             sql.NullString
 	SourceConversationID sql.NullString
-	SenderDisplayName    string // sender name captured on the message's from recipient
 }
 
 // MessageWithRawMetadata identifies an archived message and the RFC822

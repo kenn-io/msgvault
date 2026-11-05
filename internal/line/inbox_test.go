@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
@@ -444,15 +445,17 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 
-	archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
-	checks.Equal("Original Name", archived.SenderDisplayName)
+	must.Len(archived.From, 1)
+	checks.Equal("Original Name", archived.From[0].Name)
 
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
-	checks.Equal("Original Name", archived.SenderDisplayName)
+	must.Len(archived.From, 1)
+	checks.Equal("Original Name", archived.From[0].Name)
 
 	f.now = f.now.Add(25 * time.Hour)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"Renamed Sender"}`})
@@ -467,14 +470,16 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	f.enqueue(t, edit, time.Time{})
 	f.run(t)
 
-	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
-	checks.Equal("Original Name", archived.SenderDisplayName)
+	must.Len(archived.From, 1)
+	checks.Equal("Original Name", archived.From[0].Name)
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
-	checks.Equal("Original Name", archived.SenderDisplayName)
+	must.Len(archived.From, 1)
+	checks.Equal("Original Name", archived.From[0].Name)
 }
 
 func TestProcessorEditDropsRemovedNativeTextMetadata(t *testing.T) {
@@ -586,9 +591,10 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		f := newInboxFixture(t)
 		f.enqueue(t, f.message("1", "first message text", f.now.UnixMilli()), time.Time{})
 		f.run(t)
-		archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+		archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 		must.NoError(err)
-		checks.Equal("Example User", archived.SenderDisplayName)
+		must.Len(archived.From, 1)
+		checks.Equal("Example User", archived.From[0].Name)
 		count, err := f.st.CountMessagesForSource(f.source.ID)
 		must.NoError(err)
 		checks.Equal(int64(1), count)
@@ -613,9 +619,10 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 		must.NoError(err)
 		checks.Zero(status.Pending)
-		archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
+		archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 		must.NoError(err)
-		checks.Equal("Example User", archived.SenderDisplayName)
+		must.Len(archived.From, 1)
+		checks.Equal("Example User", archived.From[0].Name)
 		count, err := f.st.CountMessagesForSource(f.source.ID)
 		must.NoError(err)
 		checks.Equal(int64(1), count)
@@ -825,6 +832,36 @@ func TestProcessorMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
 				checks.True(leftAt().Valid, "out-of-order message presence cannot override a later leave")
 			})
 		}
+	}
+}
+
+func TestProcessorExistingChatRecordsOwner(t *testing.T) {
+	for _, source := range []Source{
+		{Type: "user", UserID: testUser},
+		{Type: "group", GroupID: testGroup, UserID: testUser},
+		{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser},
+	} {
+		t.Run(source.Type, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			message := f.message("existing-chat", "received before any join event", f.now.UnixMilli())
+			message.Source = source
+			f.enqueue(t, message, time.Time{})
+			f.run(t)
+			candidates, err := f.st.LoadActivityCandidatesByIDContext(t.Context(), []int64{f.archived(t, message.Message.ID).id})
+			must.NoError(err)
+			must.Len(candidates, 1)
+			bot, err := f.st.LineBotUserIDContext(t.Context(), f.source.ID)
+			must.NoError(err)
+			var owners []string
+			for _, counterpart := range candidates[0].Counterparts {
+				if counterpart.IsOwner {
+					owners = append(owners, counterpart.OwnerAddress)
+				}
+			}
+			checks.Equal([]string{UserIdentifier(testChannel, bot)}, owners)
+		})
 	}
 }
 

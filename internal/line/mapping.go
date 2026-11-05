@@ -92,15 +92,6 @@ func metadataFor(e Event, prior sql.NullString) (sql.NullString, error) {
 	return sql.NullString{String: string(raw), Valid: true}, err
 }
 
-func (p *Processor) persistDirectMessage(ctx context.Context, data *store.MessagePersistData) (int64, error) {
-	recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(p.channelID, p.botID), "")
-	if err != nil {
-		return 0, err
-	}
-	data.Recipients = append(data.Recipients, store.RecipientSet{Type: "to", ParticipantIDs: []int64{recipient}})
-	return p.store.PersistMessageContext(ctx, data)
-}
-
 func (p *Processor) message(ctx context.Context, e Event) error {
 	key, kind, err := e.Source.ConversationID()
 	if err != nil {
@@ -150,11 +141,16 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: kind, Title: p.groupNames[key], Participants: []store.ConversationParticipantRef{{ParticipantID: pid, Role: "member"}}, PreserveExistingParticipants: true},
 			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text},
 		}
+		recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(p.channelID, p.botID), "")
+		if err != nil {
+			return err
+		}
+		data.Recipients = append(data.Recipients, store.RecipientSet{Type: "to", ParticipantIDs: []int64{recipient}})
 		if e.Source.Type == "group" || e.Source.Type == "room" {
 			identifier := participantIdentifier(p.channelID, key, e.Source.UserID)
 			messageID, err = p.store.PersistLineGroupMessageContext(ctx, data, identifier)
 		} else {
-			messageID, err = p.persistDirectMessage(ctx, data)
+			messageID, err = p.store.PersistMessageContext(ctx, data)
 		}
 		if err != nil {
 			return err
