@@ -68,8 +68,8 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 				check.Contains(packet.Content, "Synthetic transcript")
 				check.Contains(packet.Content, "60.333")
 			}
-			// Cover the written round-3 regression, a valid prefix with an unfinished
-			// suffix, and malformed complete input through both shared guard callers.
+			// Preserve archived evidence for unfinished or malformed replacements,
+			// including missing or null timestamps, through both shared guard callers.
 			for _, full := range []bool{false, true} {
 				opts.Full = full
 				for _, text := range []string{
