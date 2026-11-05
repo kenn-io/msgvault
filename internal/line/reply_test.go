@@ -845,7 +845,6 @@ func TestReplyFromIngestedChat(t *testing.T) {
 				event.Source.RoomID = f.to
 			case "user":
 				event.WebhookEventID = "incoming-direct"
-				event.Message.QuoteToken = "synthetic-direct-quote"
 			}
 			raw, err := json.Marshal(event)
 			must.NoError(err)

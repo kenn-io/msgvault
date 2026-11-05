@@ -166,7 +166,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 }
 
 func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
-	assert.NotContains(t, mcpDraftCommands(true, "3.45.0"), api.CLIRunSendLineReplyCommand)
+	assert.NotContains(t, mcpDraftCommands(true, "3.46.0"), api.CLIRunSendLineReplyCommand)
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -531,8 +531,8 @@ func TestDaemonMCPServeOptionsGatesLineReplyBySchema(t *testing.T) {
 		schemaVersion string
 		wantLineReply bool
 	}{
-		{name: "before LINE reply schema", schemaVersion: "3.44.0"},
-		{name: "LINE reply schema", schemaVersion: "3.45.0", wantLineReply: true},
+		{name: "before LINE reply schema", schemaVersion: "3.45.0"},
+		{name: "LINE reply schema", schemaVersion: "3.46.0", wantLineReply: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
