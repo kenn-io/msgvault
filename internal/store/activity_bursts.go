@@ -42,6 +42,7 @@ type ActivityBurst struct {
 	LatestMessageIDs         []int64
 	CopyCounts               map[int64]int
 	Counterparts             []ActivityMessageCounterpart
+	Cold                     bool
 }
 type BurstPage struct {
 	Bursts       []ActivityBurst
