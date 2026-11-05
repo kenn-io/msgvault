@@ -64,6 +64,24 @@ describe('keyboard command registry', () => {
     expect(command?.textContent).not.toContain('or');
   });
 
+  it.each([
+    ['shift', 'Extend selection to focused row'],
+    ['enter', 'Open or drill into focused row'],
+    ['ctrl', 'Open command palette'],
+    ['cmd', 'Open command palette']
+  ])('finds shortcuts by the readable key name %s', async (query, label) => {
+    render(KeyboardHelp, {
+      commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
+      onOpenCommands: vi.fn(),
+      onclose: vi.fn()
+    });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' }), {
+      target: { value: query }
+    });
+    expect(screen.getByText(label, { selector: 'dt' })).toBeDefined();
+    expect(screen.queryByText('Open filters')).toBeNull();
+  });
+
   it('shows review chords and offers the query to command search when no shortcut matches', async () => {
     const onOpenCommands = vi.fn();
     render(KeyboardHelp, {

@@ -54,6 +54,8 @@ test('help keeps all shortcuts visible in two columns and stays put while filter
   await page.screenshot({ path: testInfo.outputPath('artifacts/06-shell-help-no-results.png') });
   await help.getByRole('button', { name: 'Search commands instead' }).click();
   await expect(page.getByRole('dialog', { name: 'Messages commands' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Messages commands' }).getByRole('combobox')).toHaveValue('zzzxxyy');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
   await selectWorkspace(page, 'Staged deletions');
@@ -75,4 +77,30 @@ test('help scrolls vertically on narrow screens and formats Mac shortcuts', asyn
   await page.screenshot({ path: testInfo.outputPath('artifacts/keyboard-help-narrow-mac.png') });
   await help.getByRole('button', { name: 'Close' }).click();
   await expect(help).toHaveCount(0);
+});
+
+test('short laptop windows scroll every shortcut inside Help', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 720 });
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  const list = help.locator('.keyboard-help-list');
+  const bounds = await help.boundingBox();
+  expect(await list.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
+  expect(await list.evaluate(element => element.scrollWidth - element.clientWidth)).toBe(0);
+  const last = help.locator('dl > div').filter({ hasText: 'Open command palette' });
+  await last.scrollIntoViewIfNeeded();
+  const geometry = await last.evaluate(row => {
+    const list = row.closest('.keyboard-help-list')!.getBoundingClientRect();
+    const body = row.closest('.kit-modal-body')!.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    return bounds.top >= Math.max(list.top, body.top) && bounds.bottom <= Math.min(list.bottom, body.bottom);
+  });
+  expect(geometry).toBe(true);
+  await expect(help.getByRole('button', { name: /^Open command palette/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('artifacts/keyboard-help-short.png') });
+  await help.getByRole('searchbox', { name: 'Search keyboard shortcuts' }).fill('shift');
+  expect(await help.boundingBox()).toEqual(bounds);
+  await page.keyboard.press('Control+k');
+  await expect(help).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Messages commands' })).toBeVisible();
 });

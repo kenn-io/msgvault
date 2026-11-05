@@ -6,6 +6,7 @@
   let { commands, onclose, onOpenCommands }: { commands: AppCommand[]; onclose: () => void; onOpenCommands: (query: string) => void } = $props();
   let query = $state('');
   const shortcuts = $derived(commands.filter((command) => command.keys.length > 0));
+  const palette = $derived(commands.find(({ id }) => id === 'open-command-palette'));
   const filtered = $derived.by(() => {
     const needle = query.trim().toLowerCase();
     return needle
@@ -20,7 +21,7 @@
 </script>
 
 <div class="keyboard-help">
-  <Modal title="Keyboard shortcuts" ariaLabel="Keyboard shortcuts" width="min(var(--keyboard-help-width), calc(100vw - 32px))" maxWidth="calc(100vw - 32px)" maxHeight="76svh" closable {onclose}>
+  <Modal title="Keyboard shortcuts" ariaLabel="Keyboard shortcuts" width="var(--keyboard-help-width)" maxWidth="calc(100vw - 32px)" maxHeight="76svh" closable {onclose}>
     <div class="keyboard-help-search">
       <SearchInput
         value={query}
@@ -64,7 +65,7 @@
     </div>
     {#snippet footer()}
       <Button label="Open command palette" class="keyboard-help-commands" onclick={() => onOpenCommands('')}>
-        {#snippet trailing()}<KbdBadge keys={formatShortcutKeys('mod+k')} />{/snippet}
+        {#snippet trailing()}{#each palette?.keys ?? [] as combo (combo)}<KbdBadge keys={formatShortcutKeys(combo)} />{/each}{/snippet}
       </Button>
     {/snippet}
   </Modal>
@@ -82,10 +83,19 @@
 
   .keyboard-help-search {
     padding-bottom: 16px;
+    flex-shrink: 0;
+  }
+
+  .keyboard-help :global(.kit-modal-body) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .keyboard-help-list {
     height: min(520px, calc(76svh - 160px));
+    min-height: 0;
     overflow-y: auto;
   }
 
@@ -155,11 +165,8 @@
       align-content: start;
     }
 
-    .keyboard-help-track + .keyboard-help-track {
+    .keyboard-help-list > .keyboard-help-track + .keyboard-help-track {
       grid-column: 2;
-    }
-
-    .keyboard-help-track:not(:empty) + .keyboard-help-track {
       margin-top: 0;
     }
 

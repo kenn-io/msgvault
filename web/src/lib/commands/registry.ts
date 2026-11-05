@@ -3,29 +3,29 @@ import { formatShortcutKeys } from '@kenn-io/kit-ui';
 export type CommandHandler = (event?: KeyboardEvent) => void;
 
 export const COMMAND_DEFINITIONS = [
-  command('move-next', 'Move to next row', ['j', 'arrowdown'], ['j', 'arrowdown'], 'Navigate'),
-  command('move-previous', 'Move to previous row', ['k', 'arrowup'], ['k', 'arrowup'], 'Navigate'),
-  command('reader-previous', 'Previous item in reader', ['h'], ['h'], 'Navigate'),
-  command('reader-next', 'Next item in reader', ['l'], ['l'], 'Navigate'),
-  command('page-up', 'Move up one page', ['pageup'], ['pageup'], 'Navigate'),
-  command('page-down', 'Move down one page', ['pagedown'], ['pagedown'], 'Navigate'),
-  command('first-row', 'Move to first row', ['home'], ['home'], 'Navigate'),
-  command('last-row', 'Move to last row', ['end'], ['end'], 'Navigate'),
-  command('open-row', 'Open or drill into focused row', ['enter'], ['enter'], 'Navigate'),
-  command('close-layer', 'Close current layer or restore context', ['escape'], ['escape'], 'Navigate'),
-  command('focus-search', 'Focus search', ['/'], ['/'], 'Navigate', false, ['root', 'deletions']),
-  command('toggle-selection', 'Toggle focused row selection', ['space'], ['space'], 'Selection'),
-  command('extend-selection', 'Extend selection to focused row', ['shift+space'], ['shift+space'], 'Selection'),
-  command('select-visible', 'Select all visible rows', ['a'], ['a', 'shift+a'], 'Selection'),
-  command('clear-selection', 'Clear selection', ['x'], ['x'], 'Selection'),
-  command('review-delete-selected', 'Review selected messages for deletion', ['d'], ['d'], 'Safety', true),
-  command('review-delete-matching', 'Review all matching messages for deletion', ['shift+d'], ['shift+d'], 'Safety', true),
-  command('open-filters', 'Open filters', ['f'], ['f'], 'Analyze'),
-  command('open-grouping', 'Open grouping controls', ['g'], ['g'], 'Analyze'),
-  command('change-sort', 'Change sort', ['s'], ['s'], 'Analyze'),
-  command('reverse-sort', 'Show sort order', ['r'], ['r'], 'Analyze'),
-  command('open-keyboard-help', 'Open searchable keyboard help', ['shift+/'], ['shift+/'], 'Help'),
-  command('open-command-palette', 'Open command palette', ['mod+k'], ['mod+k'], 'Help')
+  command('move-next', 'Move to next row', ['j', 'arrowdown'], 'Navigate'),
+  command('move-previous', 'Move to previous row', ['k', 'arrowup'], 'Navigate'),
+  command('reader-previous', 'Previous item in reader', ['h'], 'Navigate'),
+  command('reader-next', 'Next item in reader', ['l'], 'Navigate'),
+  command('page-up', 'Move up one page', ['pageup'], 'Navigate'),
+  command('page-down', 'Move down one page', ['pagedown'], 'Navigate'),
+  command('first-row', 'Move to first row', ['home'], 'Navigate'),
+  command('last-row', 'Move to last row', ['end'], 'Navigate'),
+  command('open-row', 'Open or drill into focused row', ['enter'], 'Navigate'),
+  command('close-layer', 'Close current layer or restore context', ['escape'], 'Navigate'),
+  command('focus-search', 'Focus search', ['/'], 'Navigate', false, ['root', 'deletions']),
+  command('toggle-selection', 'Toggle focused row selection', ['space'], 'Selection'),
+  command('extend-selection', 'Extend selection to focused row', ['shift+space'], 'Selection'),
+  command('select-visible', 'Select all visible rows', ['a', 'shift+a'], 'Selection', false, ['root'], ['a']),
+  command('clear-selection', 'Clear selection', ['x'], 'Selection'),
+  command('review-delete-selected', 'Review selected messages for deletion', ['d'], 'Safety', true),
+  command('review-delete-matching', 'Review all matching messages for deletion', ['shift+d'], 'Safety', true),
+  command('open-filters', 'Open filters', ['f'], 'Analyze'),
+  command('open-grouping', 'Open grouping controls', ['g'], 'Analyze'),
+  command('change-sort', 'Change sort', ['s'], 'Analyze'),
+  command('reverse-sort', 'Show sort order', ['r'], 'Analyze'),
+  command('open-keyboard-help', 'Open searchable keyboard help', ['shift+/'], 'Help'),
+  command('open-command-palette', 'Open command palette', ['mod+k'], 'Help')
 ] as const;
 
 export type CommandID = typeof COMMAND_DEFINITIONS[number]['id'];
@@ -59,11 +59,11 @@ export function createCommandRegistry(handlers: CommandHandlers): AppCommand[] {
 function command<ID extends string>(
   id: ID,
   label: string,
-  keys: readonly string[],
   combos: readonly string[],
   section: string,
   destructive = false,
-  scopes: readonly string[] = ['root']
+  scopes: readonly string[] = ['root'],
+  keys: readonly string[] = combos
 ) {
   return {
     id,
@@ -72,7 +72,7 @@ function command<ID extends string>(
     combos,
     scopes,
     section,
-    keywords: `${section} ${label} ${keys.map((combo) => formatShortcutKeys(combo).join(' ')).join(' ')}`,
+    keywords: `${section} ${label} ${keys.map((combo) => `${combo.replaceAll('+', ' ').replace('mod', 'ctrl cmd command')} ${formatShortcutKeys(combo).join(' ')}`).join(' ')}`,
     destructive,
     review: destructive
   } as const;

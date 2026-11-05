@@ -433,7 +433,7 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `Ctrl K`, `⌘ K` on Mac | Open the command palette |
 
 Select **Help** in the sidebar, or press `?`, to search this list
-in the app. Each key has its own keycap. The list uses two columns on wide
+in the app. Each key has its own keycap, with ⌘ for Command on Mac. The list uses two columns on wide
 screens and stays in place while you filter it. The footer opens the command
 palette, and an empty search offers **Search commands instead**.
 
