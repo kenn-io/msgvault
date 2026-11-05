@@ -186,6 +186,8 @@ Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It 
 
 Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
 
+Schema 3.43.0 adds the `verification.read` modifier for delegated archive reads.
+
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
@@ -3295,3 +3297,13 @@ It never sends message content to a provider.
 See the [CLI field semantics](cli-reference.md#embeddings-status) and the
 [published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
 MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.
+
+## Verification content
+
+Delegated HTTP, CLI, and MCP reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
+
+Detection looks for 4–10 digits, including spaced digits, or uppercase codes containing at least three digits near a code cue. A subject cue also applies to the body. Years from 1900 through 2099 count only immediately after a cue. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe, preferences, tracking, and click paths are excluded. Fields of 1 MiB or more are withheld.
+
+Text attachments on detected messages, and text attachments containing detected verification content, return 403 `verification_masked`. Inspection decodes UTF-16 and MIME transfer encodings, and checks forwarded emails and nested text attachments. Text at 1 MiB and MIME inspection beyond 8 MiB are refused. Ordinary forwarded emails still download. Binary attachments, including PDFs, images, and office documents, download without content inspection. A credential-bearing filename is replaced in metadata and download headers.
+
+These heuristics can miss unfamiliar wording, languages, short link tokens, or credentials inside binary files. Search still matches stored originals, so a hit can confirm a guessed value even when its content is withheld. Add `verification.read` only when the delegated reader should receive verification content.

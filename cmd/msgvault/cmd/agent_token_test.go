@@ -453,6 +453,9 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 		"--label", "Test Agent", "--permissions", "draft.create", "--source-ids", "1", "--json")
 	require.NoError(err)
 	assert.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
+	_, err = runAgentTokenCommand(testCtx, t, agentTokenIssueCmd, "--label", "Reader", "--permissions", "message.read,verification.read", "--source-ids", "1")
+	require.NoError(err)
+	assert.Equal([]any{"message.read", "verification.read"}, gotBody["permissions"])
 }
 
 // TestAgentTokenListFormatsTable verifies that the list subcommand (row 18):
