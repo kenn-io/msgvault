@@ -2072,8 +2072,8 @@ VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
 byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
 sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
 component rejects the whole file. A series with unsupported recurrence stays
-archived and is reported as unexpandable. The command reports updated,
-unchanged, and unexpandable event counts. Floating times use UTC. The daemon
+archived and is reported as unexpandable by `calendar events`. The import command
+reports updated and unchanged counts. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
 A cancellation keeps the event's last accepted title, times, participants, and

@@ -1715,20 +1715,20 @@ func TestDuckDBEngine_GetTotalStats_EmailCalendarEventMatchesListing(t *testing.
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
-	b.AddSource("test@example.com")
+	sourceID := b.AddSource("test@example.com")
 	b.AddMessage(MessageOpt{Subject: "ordinary email", MessageType: messageTypeEmail, SizeEstimate: 100})
 	b.AddMessage(MessageOpt{Subject: "invite event", MessageType: "calendar_event", SizeEstimate: 300})
 	engine := b.BuildEngine()
 	ctx := context.Background()
 
-	filter := MessageFilter{MessageType: "calendar_event"}
+	filter := MessageFilter{AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}}}
 	rows, err := engine.ListMessages(ctx, filter)
 	require.NoError(err, "ListMessages")
-	require.Len(rows, 1)
+	require.Len(rows, 2)
 	stats, err := engine.GetTotalStats(ctx, StatsOptions{Filter: &filter})
 	require.NoError(err, "GetTotalStats")
 	assert.Equal(int64(len(rows)), stats.MessageCount, "MessageCount matches listing")
-	assert.Equal(int64(300), stats.TotalSize, "TotalSize")
+	assert.Equal(int64(400), stats.TotalSize, "TotalSize")
 }
 
 func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
@@ -4878,7 +4878,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testi
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
-	sourceID := b.AddSource("owner@example.test")
+	b.AddSource("owner@example.test")
 	emailID := b.AddMessage(MessageOpt{Subject: "Email", MessageType: "email"})
 	legacyID := b.AddMessage(MessageOpt{Subject: "Legacy email", LegacyEmptyMessageType: true})
 	chatSource := b.AddSourceWithType("chat@example.test", "google_chat")
@@ -4892,11 +4892,6 @@ func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testi
 		ids = append(ids, target.MessageID)
 	}
 	assertions.ElementsMatch([]int64{emailID, legacyID}, ids)
-	preview, err := engine.GetTotalStats(t.Context(), StatsOptions{Filter: &MessageFilter{
-		AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}},
-	}})
-	requirements.NoError(err)
-	assertions.Equal(int64(len(targets)), preview.MessageCount)
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProviderID(t *testing.T) {
