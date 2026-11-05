@@ -192,6 +192,7 @@ func decodeTranscript(data []byte, rolling bool) (entries []Entry, partial bool,
 func decodeEntry(line []byte) (Entry, bool) {
 	var wire struct {
 		Entry
+
 		StartMS *int64 `json:"start_ms"`
 		EndMS   *int64 `json:"end_ms"`
 	}
