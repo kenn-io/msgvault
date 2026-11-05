@@ -21,7 +21,7 @@ function loadingTask(pages: Array<{ width: number; height: number }>) {
   const document = {
     numPages: pages.length,
     getPage: vi.fn(async (number: number) => ({
-      getViewport: () => pages[number - 1]!,
+      getViewport: (_options: { scale: number }) => pages[number - 1]!,
       render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
       getTextContent: async () => ({ items: [] }),
       cleanup
@@ -34,6 +34,29 @@ describe('PDF preview resource bounds', () => {
   beforeEach(() => {
     pdf.getDocument.mockReset();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+  });
+
+  it.each([1, 2])('renders Letter pages within integer canvas budgets at device scale %s', async (deviceScale) => {
+    vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(deviceScale);
+    for (const count of [1, 4]) {
+      const task = loadingTask(Array.from({ length: count }, () => ({ width: 612, height: 792 })));
+      const document = await task.promise;
+      document.getPage.mockImplementation(async () => ({
+        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+        render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
+        getTextContent: async () => ({ items: [] }),
+        cleanup: task.cleanup
+      }));
+      pdf.getDocument.mockReturnValue(task);
+      const host = window.document.createElement('div');
+      Object.defineProperty(host, 'clientWidth', { value: 1200 });
+      const handle = await renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
+      const canvases = [...host.querySelectorAll('canvas')];
+      expect(canvases).toHaveLength(count);
+      expect(canvases.every((canvas) => canvas.width * canvas.height <= 16_000_000)).toBe(true);
+      expect(canvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0)).toBeLessThanOrEqual(64_000_000);
+      handle.destroy();
+    }
   });
 
   it('destroys a document with too many pages exactly once', async () => {

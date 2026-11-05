@@ -230,51 +230,56 @@ test('Back from an open file viewer closes it and restores the Files list URL', 
   await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
 });
 
-test('real PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
-  const pdf = tinyPDF('Fixture preview text', 3);
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
+for (const deviceScaleFactor of [1, 2]) {
+  test.describe(`PDF reading at device scale ${deviceScaleFactor}`, () => {
+    test.use({ deviceScaleFactor });
+    test('Letter PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
+      const pdf = tinyPDF('Fixture preview text', 3);
+      await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
 
-  const grid = page.getByRole('grid', { name: 'Files results' });
-  await grid.focus();
-  await page.keyboard.press('Enter');
-  const preview = page.getByRole('region', { name: 'PDF preview fixture.pdf' });
-  await expect(preview.getByLabel('PDF page 1', { exact: true })).toBeVisible();
-  await expect(preview.locator('.textLayer').first()).toContainText('Fixture preview text');
-  const canvas = preview.locator('canvas').first();
-  const fitWidth = (await canvas.boundingBox())!.width;
-  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
-  await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(fitWidth);
-  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
-  expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBeGreaterThanOrEqual((await canvas.boundingBox())!.width);
-  await page.getByRole('button', { name: 'Fit', exact: true }).click();
-  await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(fitWidth);
-  await preview.locator('.textLayer').first().evaluate((layer) => {
-    const range = document.createRange(); range.selectNodeContents(layer); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      const grid = page.getByRole('grid', { name: 'Files results' });
+      await grid.focus();
+      await page.keyboard.press('Enter');
+      const preview = page.getByRole('region', { name: 'PDF preview fixture.pdf' });
+      await expect(preview.getByLabel('PDF page 1', { exact: true })).toBeVisible();
+      await expect(preview.locator('.textLayer').first()).toContainText('Fixture preview text');
+      const canvas = preview.locator('canvas').first();
+      const fitWidth = (await canvas.boundingBox())!.width;
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(fitWidth);
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBeGreaterThanOrEqual((await canvas.boundingBox())!.width);
+      await page.getByRole('button', { name: 'Fit', exact: true }).click();
+      await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(fitWidth);
+      await preview.locator('.textLayer').first().evaluate((layer) => {
+        const range = document.createRange(); range.selectNodeContents(layer); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      });
+      expect(await page.evaluate(() => window.getSelection()?.toString())).toContain('Fixture preview text');
+      await expect(page.getByText('Page 1 of 3', { exact: true })).toBeVisible();
+      await page.locator('.file-viewer .preview').evaluate((element) => { element.scrollTop = (element.querySelectorAll<HTMLElement>('.pdf-page')[1]!).offsetTop - (element as HTMLElement).offsetTop; });
+      await expect(page.getByText('Page 2 of 3', { exact: true })).toBeVisible();
+      await expect(page.locator('iframe, embed, object')).toHaveCount(0);
+      await page.keyboard.press('f');
+      await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
+      await page.evaluate(() => {
+        (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = false;
+        window.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = event.defaultPrevented;
+          }
+        }, { once: true });
+      });
+
+      await page.keyboard.press('Escape');
+
+      await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
+      await expect(grid).toBeFocused();
+      await expect.poll(() => page.evaluate(() =>
+        (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented
+      )).toBe(true);
+    });
   });
-  expect(await page.evaluate(() => window.getSelection()?.toString())).toContain('Fixture preview text');
-  await expect(page.getByText('Page 1 of 3', { exact: true })).toBeVisible();
-  await page.locator('.file-viewer .preview').evaluate((element) => { element.scrollTop = (element.querySelectorAll<HTMLElement>('.pdf-page')[1]!).offsetTop - (element as HTMLElement).offsetTop; });
-  await expect(page.getByText('Page 2 of 3', { exact: true })).toBeVisible();
-  await expect(page.locator('iframe, embed, object')).toHaveCount(0);
-  await page.keyboard.press('f');
-  await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
-  await page.evaluate(() => {
-    (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = false;
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = event.defaultPrevented;
-      }
-    }, { once: true });
-  });
-
-  await page.keyboard.press('Escape');
-
-  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
-  await expect(grid).toBeFocused();
-  await expect.poll(() => page.evaluate(() =>
-    (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented
-  )).toBe(true);
-});
+}
 
 function tinyPDF(text: string, pageCount = 1): Buffer {
   const escaped = text.replace(/[()\\]/g, (character) => `\\${character}`);
@@ -284,7 +289,7 @@ function tinyPDF(text: string, pageCount = 1): Buffer {
     '<< /Type /Catalog /Pages 2 0 R >>',
     `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
     ...Array.from({ length: pageCount }, (_, index) => [
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 ${fontID} 0 R >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontID} 0 R >> >> /Contents ${4 + index * 2} 0 R >>`,
       `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
     ]).flat(),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'

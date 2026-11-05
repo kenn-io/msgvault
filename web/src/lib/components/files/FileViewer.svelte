@@ -357,15 +357,17 @@
 >
   <div class="file-viewer">
     {#if context || position || notice}
-      <div class="context-bar">
-        <span class="context" title={context}>{context}</span>
-        {#if position}
-          <div class="navigation">
-            <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
-            <span class="data-mono">{(position.index + 1).toLocaleString()} of {position.total.toLocaleString()}</span>
-            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || !canStepForward} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
-          </div>
-        {/if}
+      <div class="context-group">
+        <div class="context-bar">
+          <span class="context" title={context}>{context}</span>
+          {#if position}
+            <div class="navigation">
+              <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
+              <span class="data-mono">{(position.index + 1).toLocaleString()} of {position.total.toLocaleString()}</span>
+              <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || !canStepForward} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
+            </div>
+          {/if}
+        </div>
         {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
       </div>
     {/if}
@@ -373,12 +375,12 @@
       <div class="pdf-controls" role="group" aria-label="PDF reading controls">
         <span class="data-mono">Page {pdfPage} of {pdfPages}</span>
         <IconButton size="sm" ariaLabel="Zoom out" disabled={pdfZoom === zoomSteps[0]} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) - 1]!)}><Minus size={14} /></IconButton>
-        <Button size="sm" surface="soft" label="Fit" onclick={() => zoomPDF(1)} />
+        <Button size="sm" surface={pdfZoom === 1 ? 'soft' : 'outline'} label="Fit" onclick={() => zoomPDF(1)} />
         <IconButton size="sm" ariaLabel="Zoom in" disabled={pdfZoom === zoomSteps.at(-1)} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) + 1]!)}><Plus size={14} /></IconButton>
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
-    <div class="preview" onscroll={updatePDFPage} class:tabular={!!delimited}
+    <div class="preview" onscroll={updatePDFPage} class:tabular={!!delimited} class:pdf={metadata && isPDF(metadata)}
       class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
       {#if loading}
         <p role="status">Loading file…</p>
@@ -414,9 +416,13 @@
             {#snippet header()}{#each delimited?.header ?? [] as cell}<TableHeaderCell><span title={cell}>{cell}</span></TableHeaderCell>{/each}{/snippet}
             {#each delimited.rows as row}<tr>{#each row as cell}<td title={cell}>{cell}</td>{/each}</tr>{/each}
           </Table>
-          {#if textTruncated}<p class="truncated">Preview stops at the 2 MiB size limit.</p>
-          {:else if delimited.truncated}<p class="truncated">Showing the first 200 rows.</p>{/if}
-          {#if delimited.hasErrors}<p class="truncated" role="status">Some rows couldn't be read.</p>{/if}
+          {#if textTruncated || delimited.truncated || delimited.hasErrors}
+            <div class="preview-notes">
+              {#if textTruncated}<p>Preview stops at the 2 MiB size limit.</p>
+              {:else if delimited.truncated}<p>Showing the first 200 rows.</p>{/if}
+              {#if delimited.hasErrors}<p role="status">Some rows couldn't be read.</p>{/if}
+            </div>
+          {/if}
         {:else}
           <pre>{text}</pre>
           {#if textTruncated}<p class="truncated">Showing the start of this file.</p>{/if}
@@ -439,7 +445,7 @@
         <Button
           size="sm"
           tone="info"
-          surface="solid"
+          surface={!metadata || metadata.content_state !== 'local_content' ? 'outline' : 'solid'}
           label="Download"
           disabled={!metadata || metadata.content_state !== 'local_content'}
           ariaLabel={`Download ${displayFilename}`}
@@ -470,7 +476,7 @@
     overflow: auto;
     /* Reserve the scrollbar's width up front so centered PDF pages do not
        shift left when a later page makes the preview scroll. */
-    scrollbar-gutter: stable;
+    scrollbar-gutter: stable both-edges;
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
@@ -487,10 +493,26 @@
     margin: auto;
     object-fit: contain;
   }
-  .pdf-preview {
+  .preview.pdf {
+    padding: 0;
+  }
+  .preview.pdf:has(:global(.pdf-page)) > p[role='status'] {
+    display: none;
+  }
+  .pdf-preview :global(.pdf-pages) {
     display: grid;
-    justify-items: start;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     gap: var(--space-5);
+  }
+  .pdf-preview :global(.textLayer) {
+    color: transparent;
+  }
+  .pdf-preview :global(.textLayer ::selection) {
+    color: transparent;
+    background: rgba(0, 0, 255, 0.25);
   }
   .pdf-preview :global(.pdf-page) {
     position: relative;
@@ -546,12 +568,14 @@
     min-height: 0;
     overflow: hidden;
   }
+  .context-group {
+    margin-bottom: var(--space-3);
+  }
   .context-bar {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: var(--space-3);
-    margin-bottom: var(--space-3);
     min-height: 28px;
   }
   .context {
@@ -574,6 +598,20 @@
   .tabular {
     display: flex;
     flex-direction: column;
+  }
+  .tabular :global(.kit-table-wrapper) {
+    flex: 0 1 auto;
+  }
+  .preview-notes {
+    position: sticky;
+    bottom: 0;
+    flex-shrink: 0;
+    margin-top: var(--space-3);
+    border-top: 1px solid var(--border-muted);
+    padding-top: var(--space-2);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
   .centered {
     display: grid;
@@ -599,7 +637,7 @@
     background: var(--bg-surface);
   }
   .notice {
-    flex-basis: 100%;
+    margin-top: var(--space-1);
     color: var(--accent-red);
     font-size: var(--font-size-sm);
   }
@@ -616,8 +654,9 @@
     .viewer-footer {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto 1fr;
-      min-height: 86px;
+      grid-template-rows: auto auto;
+      min-height: 58px;
+      align-content: start;
     }
     .actions {
       justify-self: end;
