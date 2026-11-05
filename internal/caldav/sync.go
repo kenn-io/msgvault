@@ -76,7 +76,13 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 	var result Result
 	var syncErrors []error
 	found := make([]bool, len(configured))
+	discovered := make(map[string]bool, len(calendars))
 	for _, cal := range calendars {
+		identifier, err := sourceIdentifier(opts.Name, cal.URL.String())
+		if err != nil {
+			return result, err
+		}
+		discovered[identifier] = true
 		selected := len(configured) == 0
 		for i, u := range configured {
 			if carddav.SameCollectionURL(u, cal.URL) || cal.DiscoveryAliasURL != nil && carddav.SameCollectionURL(u, cal.DiscoveryAliasURL) {
@@ -99,6 +105,23 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 			continue
 		}
 		result.Calendars++
+	}
+	if len(configured) == 0 {
+		sources, err := st.ListSourcesContext(ctx, calevent.CalDAVSourceType)
+		if err != nil {
+			return result, errors.Join(append(syncErrors, err)...)
+		}
+		for _, src := range sources {
+			var identity [2]string
+			if json.Unmarshal([]byte(src.Identifier), &identity) != nil || identity[0] != opts.Name || discovered[src.Identifier] || src.HistoryOnly || src.MergedIntoSourceID != 0 {
+				continue
+			}
+			removed, err := st.ReconcileSourceMessageSnapshot(ctx, src.ID, map[string]struct{}{})
+			result.Removed += removed
+			if err != nil {
+				syncErrors = append(syncErrors, fmt.Errorf("reconcile missing CalDAV calendar: %w", err))
+			}
+		}
 	}
 	for _, ok := range found {
 		if !ok {
@@ -128,7 +151,7 @@ type batch struct {
 	retryFull bool
 }
 
-func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inventory map[string]store.MessageMetadataRecord, zone, account string) (batch, error) {
+func prepare(ctx context.Context, plan carddav.MemberPlan, inventory map[string]store.MessageMetadataRecord, times map[int64]store.CalendarEventTimes, zone, account string) (batch, error) {
 	b := batch{live: map[string]struct{}{}}
 	touched := map[string]bool{}
 	for _, href := range plan.RemovedHrefs {
@@ -154,12 +177,14 @@ func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inve
 		}
 		decoded = append(decoded, decodedResource{member: member, events: events})
 	}
+	metadata := make(map[string]calevent.CalDAVMetadata, len(inventory))
 	// Unchanged and unreadable resources retain ownership before accepting updates.
 	for key, record := range inventory {
 		var meta calevent.CalDAVMetadata
 		if err := json.Unmarshal([]byte(record.Metadata.String), &meta); err != nil {
 			return b, fmt.Errorf("CalDAV archived resource metadata: %w", err)
 		}
+		metadata[key] = meta
 		if skipped[meta.Href] || !plan.ReplaceAll && !touched[meta.Href] {
 			b.live[key] = struct{}{}
 		}
@@ -183,29 +208,15 @@ func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inve
 			key := event.Event.ProviderEventID
 			b.live[key] = struct{}{}
 			record, exists := inventory[key]
-			if exists {
-				var meta calevent.CalDAVMetadata
-				if err := json.Unmarshal([]byte(record.Metadata.String), &meta); err != nil {
-					return b, fmt.Errorf("CalDAV archived resource metadata: %w", err)
-				}
-				if meta == eventMetadata(event, member, account) {
-					matches, err := st.CalendarEventTimesMatchContext(ctx, record.ID, event.Event)
-					if err != nil {
-						return b, err
-					}
-					if matches {
-						continue
-					}
+			if exists && metadata[key] == eventMetadata(event, member, account) {
+				if stored, ok := times[record.ID]; ok && stored.Match(event.Event) {
+					continue
 				}
 			}
 			b.items = append(b.items, prepared{event: event, member: member})
 		}
 	}
-	for key, record := range inventory {
-		var meta calevent.CalDAVMetadata
-		if err := json.Unmarshal([]byte(record.Metadata.String), &meta); err != nil {
-			return b, fmt.Errorf("CalDAV archived resource metadata: %w", err)
-		}
+	for key, meta := range metadata {
 		if skipped[meta.Href] {
 			b.live[key] = struct{}{}
 		}
@@ -311,7 +322,11 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err != nil {
 		return result, err
 	}
-	b, err := prepare(ctx, st, plan, inventory, opts.TimeZone, ownerEmail)
+	times, err := st.SourceCalendarEventTimesContext(ctx, src.ID)
+	if err != nil {
+		return result, err
+	}
+	b, err := prepare(ctx, plan, inventory, times, opts.TimeZone, ownerEmail)
 	if err != nil {
 		return result, err
 	}

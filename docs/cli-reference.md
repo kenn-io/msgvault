@@ -3095,6 +3095,8 @@ Create a new SQLite archive containing the requested number of most recent
 messages and the records they reference. The destination receives its own
 `msgvault.db` and can be opened as a separate msgvault home.
 
+Calendar events, including CalDAV events and their original iCalendar data, are included.
+
 ```bash
 msgvault create-subset --output ./subset-vault --rows 1000
 MSGVAULT_HOME=./subset-vault msgvault tui

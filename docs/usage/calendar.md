@@ -51,7 +51,7 @@ To correct a wrong zone, update `time_zone` and run `msgvault sync-caldav <name>
 
 A day-based duration such as `DURATION:P1D` ends every occurrence at the same local time, including across a daylight-saving change. All-day events keep civil dates.
 
-CalDAV events are not included in subset copies yet.
+Subset copies include CalDAV events and their original iCalendar data.
 
 ## Prerequisites
 

@@ -39,6 +39,8 @@ type syncFixture struct {
 	forceSnapshot           bool
 	incompleteSnapshot      bool
 	explicitCollectionPort  bool
+	missingCollection       bool
+	failDiscovery           bool
 	getRequests             int
 	multigetSizes           []int
 }
@@ -51,6 +53,13 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 		f.Lock()
 		defer f.Unlock()
 		if body, ok := discoveryResponse(r); ok {
+			if f.failDiscovery {
+				http.Error(w, "discovery failed", http.StatusInternalServerError)
+				return
+			}
+			if r.URL.Path == "/home/" && f.missingCollection {
+				body = multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
+			}
 			if r.URL.Path == "/home/" && f.explicitCollectionPort {
 				body = strings.Replace(body, `<D:href>/home/cal/</D:href>`, `<D:href>http://203.0.113.1:80/home/cal/</D:href>`, 1)
 			}
@@ -282,6 +291,65 @@ func TestSyncRetiredCalendarSelection(t *testing.T) {
 	opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
 	_, err = c.Sync(t.Context(), st, opts)
 	require.ErrorIs(err, store.ErrSourceRetired)
+}
+
+func TestSyncMissingCollection(t *testing.T) {
+	for _, mode := range []string{"automatic", "explicit", "failed discovery"} {
+		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			st := testutil.NewTestStore(t)
+			opts := syncOpts()
+			_, err := c.Sync(t.Context(), st, opts)
+			require.NoError(err)
+			var sourceID int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM sources WHERE source_type = 'caldav'`).Scan(&sourceID))
+			other := opts
+			other.Name = "other"
+			_, err = c.Sync(t.Context(), st, other)
+			require.NoError(err)
+			f.missingCollection = true
+			f.failDiscovery = mode == "failed discovery"
+			if mode == "explicit" {
+				opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
+			}
+			result, err := c.Sync(t.Context(), st, opts)
+			if mode == "automatic" {
+				require.NoError(err)
+				assert.Equal(int64(1), result.Removed)
+				assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
+				var removedSourceID int64
+				require.NoError(st.DB().QueryRow(`SELECT source_id FROM messages WHERE deleted_from_source_at IS NOT NULL`).Scan(&removedSourceID))
+				assert.Equal(sourceID, removedSourceID)
+				result, err = c.Sync(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Zero(result.Removed)
+			} else {
+				require.Error(err)
+				assert.Zero(result.Removed)
+				assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
+			}
+			assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM message_raw`))
+		})
+	}
+}
+
+func TestSyncCalDAVSubset(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, _ := archiveFixture(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	st := testutil.NewSQLiteTestStoreAt(t, path)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	destination := t.TempDir()
+	result, err := store.CopySubset(path, destination, 1, false)
+	require.NoError(err)
+	assert.Equal(int64(1), result.Messages)
+	copied, err := store.Open(filepath.Join(destination, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(copied.Close()) })
+	assert.Equal(1, count(t, copied, `SELECT COUNT(*) FROM calendar_events`))
+	assert.Equal(1, count(t, copied, `SELECT COUNT(*) FROM message_raw`))
 }
 
 func TestSyncNonMailtoParticipants(t *testing.T) {
@@ -639,8 +707,9 @@ func TestReviewRunningDaemonZoneUpdate(t *testing.T) {
 	requirements.NoError(st.DB().QueryRow(`SELECT m.id,m.source_message_id FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&messageID, &key))
 	writeZone(-5 * 3600)
 	opts.Full = true
-	_, err = c.Sync(t.Context(), st, opts)
+	refreshed, err := c.Sync(t.Context(), st, opts)
 	requirements.NoError(err)
+	assertions.Equal(2, refreshed.Events)
 	assertions.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages`))
 	var refreshedID int64
 	var refreshedKey string
