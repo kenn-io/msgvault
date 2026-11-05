@@ -161,3 +161,16 @@ func TestICSRejectMalformed(t *testing.T) {
 		})
 	}
 }
+
+func TestICSPeriodRecurrenceRemainsArchived(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
+	raw := strings.Replace(icsExample, "SUMMARY:", period+"\r\nSUMMARY:", 1)
+	components, err := ParseICS([]byte(raw), "", "")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	e := components[0].Event
+	assertions.Equal([]string{period}, e.Recurrence)
+	_, err = calrecur.ParseSet(*e.Start, false, "", time.UTC, e.Recurrence)
+	assertions.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+}

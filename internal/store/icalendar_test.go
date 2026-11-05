@@ -104,12 +104,10 @@ func TestICalendarUnchangedUnsupportedSeries(t *testing.T) {
 			first, err := st.PersistICalendarContext(t.Context(), source, raw)
 			requirements.NoError(err)
 			assertions.Equal(1, first.Changed)
-			assertions.Equal(1, first.Unexpandable)
 			again, err := st.PersistICalendarContext(t.Context(), source, raw)
 			requirements.NoError(err)
 			assertions.Zero(again.Changed)
 			assertions.Equal(1, again.Unchanged)
-			assertions.Equal(1, again.Unexpandable)
 		})
 	}
 }

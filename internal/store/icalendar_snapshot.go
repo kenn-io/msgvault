@@ -23,7 +23,7 @@ func acceptedICSSnapshot(q querier, sourceID int64, items []preparedICS, summary
 		organizer, seen := organizers[key]
 		if !seen {
 			var metadata sql.NullString
-			err := q.QueryRow(`SELECT m.metadata FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE c.source_id=? AND c.source_conversation_id=? AND m.message_type='calendar_event' ORDER BY m.id LIMIT 1`, sourceID, key).Scan(&metadata)
+			err := q.QueryRow(`SELECT m.metadata FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE c.source_id=? AND c.source_conversation_id=? AND m.message_type='calendar_event' AND COALESCE(m.metadata ->> 'invite_organizer', '') <> '' ORDER BY m.id LIMIT 1`, sourceID, key).Scan(&metadata)
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
 				organizer = c.OrganizerEmail
