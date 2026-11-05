@@ -21,7 +21,7 @@ func (s *Store) PersonMatchPairSummariesContext(ctx context.Context, leftID, rig
 	return personMatchPairSummariesContext(ctx, s.db, leftID, rightID)
 }
 
-func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQuerier, leftID, rightID int64) (PersonMatchPairSummaries, error) {
+func personMatchPairSummariesContext(ctx context.Context, q loggedReader, leftID, rightID int64) (PersonMatchPairSummaries, error) {
 	if leftID <= 0 || rightID <= 0 || leftID == rightID {
 		return PersonMatchPairSummaries{}, errors.New("invalid person match participant pair")
 	}

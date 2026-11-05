@@ -44,7 +44,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	defer release()
-	rows, err := calendarEventRowsInWindow(ctx, s.meetingReader(ctx), from, to)
+	rows, err := calendarEventRowsInWindow(ctx, s.meetingReader(), from, to)
 	if err != nil {
 		return page, err
 	}
@@ -89,7 +89,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
 	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) error {
-		effective, o, err := materializeCalendarOccurrence(ctx, s.meetingReader(ctx), row, byID, o)
+		effective, o, err := materializeCalendarOccurrence(ctx, s.meetingReader(), row, byID, o)
 		if err != nil {
 			return err
 		}
@@ -329,7 +329,7 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	return set, e.End.Sub(*e.Start), days, nil
 }
 
-func materializeCalendarOccurrence(ctx context.Context, r SQLReader, master CalendarEventRow, byID map[int64]CalendarEventRow, o calrecur.Occurrence) (CalendarEventRow, calrecur.Occurrence, error) {
+func materializeCalendarOccurrence(ctx context.Context, r loggedReader, master CalendarEventRow, byID map[int64]CalendarEventRow, o calrecur.Occurrence) (CalendarEventRow, calrecur.Occurrence, error) {
 	effective := master
 	if o.HasException {
 		effective = byID[o.ExceptionRef]

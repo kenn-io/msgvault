@@ -308,7 +308,7 @@ func (s *Store) loadMeetingTranscript(
 }
 
 func loadMeetingContextParticipants(ctx context.Context, tx *loggedTx, id int64) ([]meetingcontent.Participant, error) {
-	page, err := loadMeetingContextParticipantsPage(ctx, reboundReader{reader: tx.Tx, rebind: tx.rebind}, []int64{id})
+	page, err := loadMeetingContextParticipantsPage(ctx, tx, []int64{id})
 	participants := page[id]
 	if participants == nil {
 		participants = []meetingcontent.Participant{}
@@ -316,7 +316,7 @@ func loadMeetingContextParticipants(ctx context.Context, tx *loggedTx, id int64)
 	return participants, err
 }
 
-func loadMeetingContextParticipantsPage(ctx context.Context, r SQLReader, ids []int64) (map[int64][]meetingcontent.Participant, error) {
+func loadMeetingContextParticipantsPage(ctx context.Context, r loggedReader, ids []int64) (map[int64][]meetingcontent.Participant, error) {
 	out := make(map[int64][]meetingcontent.Participant, len(ids))
 	if len(ids) == 0 {
 		return out, nil

@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func readMeetingLinkDecisions(ctx context.Context, r SQLReader, memberID int64) (out []meetingLinkDecision, err error) {
+func readMeetingLinkDecisions(ctx context.Context, r loggedReader, memberID int64) (out []meetingLinkDecision, err error) {
 	rows, err := r.QueryContext(ctx, `SELECT target_message_id,occurrence_key,decision FROM meeting_link_decisions WHERE member_message_id = ? ORDER BY target_message_id,occurrence_key`, memberID)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, memberID).Scan(&found); err != nil {
 			return err
 		}
-		r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
+		r := reboundReader{loggedReader: tx, dialect: s.dialect}
 		budget := calrecur.RequestReadBudget
 		target, err := resolveMeetingOccurrence(ctx, r, occurrence, &budget)
 		if err != nil {
