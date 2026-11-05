@@ -91,6 +91,17 @@ func TestCalendarPreservesDialSequence(t *testing.T) {
 	}
 }
 
+func TestCalendarDecodesDescriptionAccessPoints(t *testing.T) {
+	o, err := (ImportRequest{Format: "google_calendar", Account: "example",
+		Record: []byte(`{"id":"event","start":{"date":"2026-10-01"},"description":"<a href=\"https://zoom.us/j/123?omn=42&amp;pwd=example\">Join</a><a href=\"tel:&#43;12025550101,,,123&#59;456\">Dial</a>"}`),
+	}).Observation()
+	require.NoError(t, err)
+	assert.Equal(t, []AccessPoint{
+		{Kind: "url", Value: "https://zoom.us/j/123?omn=42&pwd=example"},
+		{Kind: "phone", Value: "tel:+12025550101,,,123;456"},
+	}, o.AccessPoints)
+}
+
 func TestCalendarBindingEmailCase(t *testing.T) {
 	o, err := (ImportRequest{Format: "google_calendar", Account: "example",
 		Record:   []byte(`{"id":"event","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`),

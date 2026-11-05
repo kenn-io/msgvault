@@ -11,10 +11,51 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/callhistory"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestImportedCallReadableAndSearchable(t *testing.T) {
+	st := storetest.New(t).Store
+	duration := 600.0
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
+		DurationSeconds: &duration, Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	for _, tc := range []struct{ direction, text, stale string }{
+		{"incoming", "Call incoming, 600 seconds", "outgoing"},
+		{"outgoing", "Call outgoing, 600 seconds", "incoming"},
+	} {
+		o.Direction = tc.direction
+		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		require.NoError(t, err)
+		var subject, title string
+		var snippet sql.NullString
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
+		assert.Equal(t, tc.text, subject)
+		assert.Equal(t, tc.text, snippet.String)
+		assert.Equal(t, tc.text, title)
+		body, err := st.GetMessageBodyTextContext(t.Context(), id)
+		require.NoError(t, err)
+		assert.Equal(t, tc.text, body)
+		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(tc.direction+" seconds"), 0, 10)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, total)
+		if assert.Len(t, matches, 1) {
+			assert.Equal(t, id, matches[0].ID)
+		}
+		for _, term := range []string{tc.stale, "evidence"} {
+			_, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse(term), 0, 10)
+			require.NoError(t, err)
+			assert.Zero(t, total, term)
+		}
+	}
+}
 
 func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	assertions := assert.New(t)

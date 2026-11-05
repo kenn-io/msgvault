@@ -3,6 +3,7 @@ package callhistory
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"html"
 	"regexp"
 	"slices"
 	"strings"
@@ -88,7 +89,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	if join := meetingurl.KnownJoinURL(event.HangoutLink, "cal.com"); join != "" {
 		add("url", join)
 	}
-	for _, link := range calendarLink.FindAllString(event.Description+" "+event.Location, -1) {
+	for _, link := range calendarLink.FindAllString(html.UnescapeString(event.Description)+" "+event.Location, -1) {
 		if strings.HasPrefix(link, "tel:") {
 			add("phone", link)
 		} else if join := meetingurl.KnownJoinURL(strings.TrimRight(link, ".,);]"), "cal.com"); join != "" {

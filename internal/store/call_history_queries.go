@@ -61,8 +61,9 @@ type PersonCallSummary struct {
 	ExampleMessageID   int64 `json:"example_message_id"`
 }
 
-// callRowsSQL follows personTierRows: imported phone calls credit connected
-// seconds as answered contact, while calls without connected time stay unknown.
+// callRowsSQL counts any connected seconds as answered in the summary.
+// MinCallSeconds is the tier's contact threshold. Calls without connected time
+// stay unknown, and undated legacy calls are excluded from both call readers.
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
 	return `SELECT message_id, canonical_key, kind, direction,
@@ -73,7 +74,8 @@ func (s *Store) callRowsSQL() string {
 			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
 			m.sent_at, NULLIF(` + seconds + `, 0), FALSE
-		FROM messages m WHERE m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')`
+		FROM messages m WHERE m.sent_at IS NOT NULL
+		AND m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')`
 }
 
 // callRolesSQL credits only the counterparty, whoever dialed, as personTierRows does.

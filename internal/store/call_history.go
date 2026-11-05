@@ -98,17 +98,27 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 			}
 		}
 	}
+	text := "Call " + o.Direction
+	if o.Kind == "scheduled_meeting" {
+		text = "Scheduled meeting"
+	}
+	if o.DurationSeconds != nil {
+		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
+	}
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
 		before, nil, func([]int64) *MessagePersistData {
 			return &MessagePersistData{
 				Message: &Message{
 					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType, IsFromMe: o.Direction == "outgoing",
 					SentAt:  sql.NullTime{Time: o.OccurredAt, Valid: true},
-					Subject: sql.NullString{String: "Call evidence", Valid: true},
+					Subject: sql.NullString{String: text, Valid: true},
+					Snippet: sql.NullString{String: text, Valid: true},
 				},
 				Conversation: &ConversationPersistData{
-					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: "Call evidence",
+					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: text,
 				},
+				BodyText: sql.NullString{String: text, Valid: true},
+				FTS:      &FTSDoc{Subject: text, Body: text},
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 			}
