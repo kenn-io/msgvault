@@ -247,18 +247,21 @@ func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 
 func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 	for _, submitted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "admitted", true: "unknown"}[submitted], func(t *testing.T) {
+		t.Run(map[bool]string{false: "delayed first push", true: "immediate first push"}[submitted], func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, draft, _ := replyStoreFixture(t)
 			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 			original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
-			if submitted {
-				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-				require.NoError(err)
+			firstPush := now
+			if !submitted {
+				firstPush = now.Add(2 * time.Hour)
 			}
-			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
+			started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, firstPush.Add(time.Minute))
+			require.NoError(err)
+			assert.Equal(firstPush, started.AdmittedAt)
+			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush.Add(23*time.Hour), firstPush.Add(23*time.Hour+30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
 			assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
 			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))

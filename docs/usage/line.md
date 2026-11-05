@@ -218,13 +218,13 @@ sending to be enabled and credentials to be available.
 
 An admitted attempt keeps one persisted UUID and immutable text, recipient, and
 quote token. Explicit retries reuse that UUID. LINE remembers retry keys for
-24 hours; msgvault stops provider retries 23 hours after admission and waits
+24 hours; msgvault stops provider retries 23 hours after the first push request and waits
 at least 30 seconds between attempts, honoring longer rate-limit or service
 retry delays. There are no background sends. See
 [LINE's retry semantics](https://developers.line.biz/en/docs/messaging-api/retrying-api-request/).
 Never create a replacement draft just to bypass an uncertain or expired send.
 A receipt without a remote ID may remain unarchived after the recovery window.
-The archived timestamp estimates send time from admission.
+The archived timestamp estimates send time from the first push request.
 
 The daemon HTTP API accepts the same command through
 [`POST /api/v1/cli/run`](../api-server.md#line-reply).

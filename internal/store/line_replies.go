@@ -11,8 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const lineSourceType = "line"
-
 const (
 	LineReplyAdmitted                  = "admitted"
 	LineReplyRemoteUnknown             = "remote_unknown"

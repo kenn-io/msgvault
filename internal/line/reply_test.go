@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/line"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
@@ -87,6 +88,13 @@ func TestReplySendAndReceiptReplay(t *testing.T) {
 			assert.True(receipt.Accepted)
 			require.Positive(receipt.MessageID)
 			assert.Equal("900000000000000001", receipt.RemoteMessageID)
+			message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
+			require.NoError(err)
+			if kind == "user" {
+				assert.Len(message.To, 1)
+			} else {
+				assert.Empty(message.To)
+			}
 			target, err := f.st.GetOrCreateSource("line", "2000000002")
 			require.NoError(err)
 			_, err = f.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.draft.SourceID, IntoSourceID: target.ID})
@@ -680,7 +688,11 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 			attempt, readErr := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 			require.NoError(readErr)
 			assert.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
-			assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+			if tc.endpoint == "/oauth2/v3/token" {
+				assert.Equal(store.LineReplyAdmitted, pending.Status)
+			} else {
+				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+			}
 			f.now = f.now.Add(31 * time.Second)
 			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			require.NoError(err)
@@ -698,4 +710,49 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReplyDirectRecipientFromIngestedChat(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	event := line.Event{Type: "message", Timestamp: f.now.UnixMilli(), WebhookEventID: "incoming-direct", Source: line.Source{Type: "user", UserID: replyUser}, Message: &line.Message{ID: "101", Type: "text", Text: "Incoming reply target", QuoteToken: "synthetic-direct-quote"}}
+	raw, err := json.Marshal(event)
+	must.NoError(err)
+	bot, err := f.st.LineBotUserIDContext(t.Context(), f.draft.SourceID)
+	must.NoError(err)
+	must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", bot, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now, RawJSON: string(raw)}}))
+	processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(func() time.Time { return f.now }))
+	must.NoError(processor.Process(t.Context()))
+	parent, err := f.st.LineMessageContext(t.Context(), f.draft.SourceID, "101")
+	must.NoError(err)
+	draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, parent.ID, "Direct response", func(string, string) error { return nil })
+	must.NoError(err)
+	receipt, err := f.sender().Send(t.Context(), draft.DraftID, 1)
+	must.NoError(err)
+	message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
+	must.NoError(err)
+	must.Len(message.To, 1)
+	checks.Equal("Example User", message.To[0].Name)
+}
+
+func TestReplyTokenFailureDatesArchiveAtFirstPush(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	f.resetClient()
+	f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
+	_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.ErrorIs(err, line.ErrCredentialsUnavailable)
+	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	f.now = f.now.Add(2 * time.Hour)
+	receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	checks.Equal(store.LineReplySent, receipt.Status)
+	message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
+	must.NoError(err)
+	checks.Equal(f.now, message.SentAt.UTC())
+	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Equal(f.now.Add(23*time.Hour), attempt.RetryUntil)
 }

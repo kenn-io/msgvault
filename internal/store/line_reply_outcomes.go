@@ -58,8 +58,8 @@ func (s *Store) changeLineReply(ctx context.Context, id string, change func(*log
 		if err := change(tx, &current); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state=?,next_retry_at=?,status_code=?,request_id=?,remote_message_id=?,remote_quote_token=? WHERE draft_id=?`,
-			current.State, current.NextRetryAt, current.StatusCode, current.RequestID, current.RemoteMessageID, current.RemoteQuoteToken, id)
+		_, err = tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state=?,admitted_at=?,retry_until=?,next_retry_at=?,status_code=?,request_id=?,remote_message_id=?,remote_quote_token=? WHERE draft_id=?`,
+			current.State, current.AdmittedAt, current.RetryUntil, current.NextRetryAt, current.StatusCode, current.RequestID, current.RemoteMessageID, current.RemoteQuoteToken, id)
 		if err != nil {
 			return fmt.Errorf("record LINE reply state: %w", err)
 		}
@@ -80,6 +80,11 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 	a, err := s.changeLineReply(ctx, id, func(tx *loggedTx, a *LineReplyAttempt) error {
 		if lineReplyTerminal(a.State) || a.RemoteMessageID != "" {
 			return ErrLineReplyInvalidState
+		}
+		if a.State == LineReplyAdmitted {
+			a.AdmittedAt = now
+			a.RetryUntil = now.Add(23 * time.Hour)
+			a.NextRetryAt = now
 		}
 		if lineReplyExpired(a.State) || !now.Before(a.RetryUntil) {
 			accepted := lineReplyHasAcceptance(a.State)

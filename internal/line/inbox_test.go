@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/lineidentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -859,8 +860,8 @@ func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
 		source                                            Source
 		messageOnly                                       bool
 	}{
-		{"explicit_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, "U00000000000000000000000000000009"), Source{Type: "group", GroupID: testGroup}, false},
-		{"message_only_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "group", GroupID: testGroup, UserID: testUser}, true},
+		{"explicit_group", "group:" + testGroup, "line_user_id", lineidentity.UserIdentifier(testChannel, "U00000000000000000000000000000009"), Source{Type: "group", GroupID: testGroup}, false},
+		{"message_only_group", "group:" + testGroup, "line_user_id", lineidentity.UserIdentifier(testChannel, testUser), Source{Type: "group", GroupID: testGroup, UserID: testUser}, true},
 		{"anonymous_group", "group:" + testGroup, "line_anonymous", "channel:2000000001:group:" + testGroup, Source{Type: "group", GroupID: testGroup}, true},
 	} {
 		for _, direction := range []string{"departed_into_active", "active_into_departed"} {
@@ -903,7 +904,7 @@ func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
 				}
 				active, err := f.st.EnsureParticipantByIdentifierContext(ctx, chat.identifierType, chat.identifier, "")
 				must.NoError(err)
-				departed, err := f.st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(testChannel, departedUser), "")
+				departed, err := f.st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", lineidentity.UserIdentifier(testChannel, departedUser), "")
 				must.NoError(err)
 				absorbed, survivor := departed, active
 				if direction == "active_into_departed" {
@@ -979,7 +980,7 @@ func TestProcessorExistingChatRecordsOwner(t *testing.T) {
 					owners = append(owners, counterpart.OwnerAddress)
 				}
 			}
-			checks.Equal([]string{UserIdentifier(testChannel, bot)}, owners)
+			checks.Equal([]string{lineidentity.UserIdentifier(testChannel, bot)}, owners)
 			if source.Type == "user" {
 				messageID := f.archived(t, message.Message.ID).id
 				var senderID int64
@@ -1097,7 +1098,7 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		checks.Zero(status.Pending)
 		checks.Zero(status.Failed)
 		var name sql.NullString
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), lineidentity.UserIdentifier(testChannel, other)).Scan(&name))
 		checks.Equal("Example User", name.String)
 		checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
 	})

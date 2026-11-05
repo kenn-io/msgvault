@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/lineidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -544,7 +545,7 @@ func (p *Processor) membership(ctx context.Context, e Event) (func(context.Conte
 		if err != nil {
 			return nil, err
 		}
-		changed, err := p.store.SetLineMembershipContext(ctx, conversationID, pid, UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC())
+		changed, err := p.store.SetLineMembershipContext(ctx, conversationID, pid, lineidentity.UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC())
 		if err != nil {
 			return nil, err
 		}

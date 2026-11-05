@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/lineidentity"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -119,7 +120,7 @@ func (p *Processor) message(ctx context.Context, e Event, previous store.Message
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: kind, Title: p.groupNames[key], Participants: []store.ConversationParticipantRef{{ParticipantID: pid, Role: "member"}}, PreserveExistingParticipants: true},
 			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: e.Raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text},
 		}
-		recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(p.channelID, p.botID), "")
+		recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", lineidentity.UserIdentifier(p.channelID, p.botID), "")
 		if err != nil {
 			return 0, err
 		}

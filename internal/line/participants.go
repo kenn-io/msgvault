@@ -10,13 +10,9 @@ import (
 	"net/http"
 	"time"
 
+	"go.kenn.io/msgvault/internal/lineidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
-
-// UserIdentifier qualifies an opaque ID with a validated decimal channel ID.
-func UserIdentifier(channelID, userID string) string {
-	return "channel:" + channelID + ":user:" + userID
-}
 
 // Register proves channel credentials before publishing its source and account
 // identity. It does not set a webhook until the daemon receiver is activated.
@@ -55,7 +51,7 @@ func Register(ctx context.Context, st *store.Store, client *Client, channelID st
 	if err = st.UpdateSourceDisplayNameContext(ctx, source.ID, bot.DisplayName); err != nil && !errors.Is(err, store.ErrSourceSettingsInvalid) {
 		return nil, err
 	}
-	if _, err = st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(channelID, bot.UserID), bot.DisplayName); err != nil {
+	if _, err = st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", lineidentity.UserIdentifier(channelID, bot.UserID), bot.DisplayName); err != nil {
 		return nil, err
 	}
 	var config map[string]jsontext.Value
@@ -69,7 +65,7 @@ func Register(ctx context.Context, st *store.Store, client *Client, channelID st
 		return nil, err
 	}
 	if !optedOut {
-		if err = st.AddAccountIdentityContext(ctx, source.ID, UserIdentifier(channelID, bot.UserID), "line-bot"); err != nil {
+		if err = st.AddAccountIdentityContext(ctx, source.ID, lineidentity.UserIdentifier(channelID, bot.UserID), "line-bot"); err != nil {
 			return nil, err
 		}
 	}
@@ -81,7 +77,7 @@ func participantIdentifier(channelID, conversationKey, userID string) string {
 	if userID == "" {
 		return "channel:" + channelID + ":" + conversationKey
 	}
-	return UserIdentifier(channelID, userID)
+	return lineidentity.UserIdentifier(channelID, userID)
 }
 
 func (p *Processor) participant(ctx context.Context, conversationKey, userID, name string) (int64, error) {

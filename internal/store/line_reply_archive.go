@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 
+	"go.kenn.io/msgvault/internal/lineidentity"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -26,8 +28,13 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 	if err := s.requireSyncSource(a.SourceID); err != nil {
 		return a, err
 	}
-	var sender, parentID int64
-	var senderName string
+	if userID, direct := strings.CutPrefix(a.SourceConversationID, "user:"); direct {
+		if _, err := s.EnsureParticipantByIdentifierContext(ctx, "line_user_id", lineidentity.UserIdentifier(a.ChannelID, userID), ""); err != nil {
+			return a, fmt.Errorf("resolve LINE reply recipient: %w", err)
+		}
+	}
+	var sender, recipient, parentID int64
+	var senderName, recipientName string
 	var metadata sql.NullString
 	var raw []byte
 	before := func(ctx context.Context, tx *loggedTx) error {
@@ -54,12 +61,18 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		}
 		// Persistence already holds the shared identity lock. Resolve the registered
 		// identifier here so a participant merge cannot leave a stale numeric ID.
-		identifier := "channel:" + a.ChannelID + ":user:" + a.BotUserID
+		identifier := lineidentity.UserIdentifier(a.ChannelID, a.BotUserID)
 		if err := tx.QueryRowContext(ctx, `SELECT participant_id FROM participant_identifiers WHERE identifier_type='line_user_id' AND identifier_value=?`, identifier).Scan(&sender); err != nil {
 			return fmt.Errorf("resolve LINE reply bot: %w", err)
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(display_name,'') FROM participants WHERE id=?`, sender).Scan(&senderName); err != nil {
 			return err
+		}
+		if userID, direct := strings.CutPrefix(a.SourceConversationID, "user:"); direct {
+			identifier := lineidentity.UserIdentifier(a.ChannelID, userID)
+			if err := tx.QueryRowContext(ctx, `SELECT p.id,COALESCE(p.display_name,'') FROM participant_identifiers i JOIN participants p ON p.id=i.participant_id WHERE i.identifier_type='line_user_id' AND i.identifier_value=?`, identifier).Scan(&recipient, &recipientName); err != nil {
+				return fmt.Errorf("resolve LINE reply recipient: %w", err)
+			}
 		}
 		if err := validateExistingLineReply(ctx, tx, a, sender, parentID); err != nil {
 			return err
@@ -89,13 +102,17 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		return nil
 	}
 	build := func([]int64) *MessagePersistData {
+		recipients := []RecipientSet{{Type: messageSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}}
+		if recipient != 0 {
+			recipients = append(recipients, RecipientSet{Type: "to", ParticipantIDs: []int64{recipient}, DisplayNames: []string{recipientName}})
+		}
 		return &MessagePersistData{
 			Message: &Message{SourceID: a.SourceID, ConversationID: a.ConversationID, SourceMessageID: a.RemoteMessageID,
 				MessageType: lineSourceType, SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: true,
 				ReplyToMessageID: sql.NullInt64{Int64: parentID, Valid: parentID != 0}, SentAt: sql.NullTime{Time: a.AdmittedAt, Valid: true},
 				Snippet: sql.NullString{String: textutil.PrefixRunes(a.Body, 200), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
 			BodyText: sql.NullString{String: a.Body, Valid: true}, Metadata: &metadata, RawMIME: raw, RawFormat: "line_push_receipt_json",
-			Recipients:     []RecipientSet{{Type: messageSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}},
+			Recipients:     recipients,
 			PreserveLabels: true, FTS: &FTSDoc{Body: a.Body, FromAddr: senderName},
 		}
 	}

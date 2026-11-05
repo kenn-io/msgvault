@@ -187,6 +187,17 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	if a.RemoteMessageID != "" {
 		return s.complete(ctx, a)
 	}
+	if a.State == store.LineReplyAdmitted {
+		if client == nil {
+			if err = authorize(a); err != nil {
+				return replyReceipt(a), err
+			}
+		}
+		// Token acquisition cannot submit a push or start its retry-key window.
+		if _, err = client.accessToken(ctx, ""); err != nil {
+			return replyReceipt(a), errors.Join(ErrCredentialsUnavailable, err)
+		}
+	}
 	first := a.State == store.LineReplyAdmitted
 	now := s.now()
 	a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now.Add(30*time.Second))
