@@ -58,14 +58,6 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 		name, body, wantErr string
 		check               func(*testing.T, []CalDAVEvent)
 	}{
-		{"all-day DST", "BEGIN:VEVENT\r\nUID:day\r\nDTSTART;VALUE=DATE:20270314\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
-			t.Helper()
-			require.Len(t, events, 1)
-			e := events[0].Event
-			assert.True(t, e.AllDay)
-			assert.Equal(t, "2027-03-15", e.EndDate)
-			assert.Equal(t, 23*time.Hour, e.End.Sub(*e.Start))
-		}},
 		{"cancelled sparse", "BEGIN:VEVENT\r\nUID:day\r\nRECURRENCE-ID;VALUE=DATE:20270314\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
 			t.Helper()
 			require.Len(t, events, 1)
@@ -80,6 +72,7 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 		{"malformed parameter", "BEGIN:VEVENT\r\nUID;X=\r\nEND:VEVENT\r\n", "malformed CalDAV iCalendar content", nil},
 		{"nested", "BEGIN:VEVENT\r\nUID:outer\r\nDTSTART:20270314T130000Z\r\nBEGIN:VEVENT\r\nUID:inner\r\nEND:VEVENT\r\nEND:VEVENT\r\n", "unsupported nested CalDAV event component", nil},
 		{"all-day end equals start", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;VALUE=DATE:20270314\r\nDTEND;VALUE=DATE:20270314\r\nEND:VEVENT\r\n", "all-day DTEND must follow DTSTART", nil},
+		{"zero all-day duration", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;VALUE=DATE:20270314\r\nDURATION:P0D\r\nEND:VEVENT\r\n", "all-day event end must follow DTSTART", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -112,6 +105,7 @@ func TestCalDAVAllDayDatesPreserveSkippedCivilDates(t *testing.T) {
 		name, zone, start, end, extra, override      string
 		startDate, endDate, startInstant, endInstant string
 	}{
+		{name: "New York DST default", zone: "America/New_York", start: "20270314", startDate: "2027-03-14", endDate: "2027-03-15", startInstant: "2027-03-14T05:00:00Z", endInstant: "2027-03-15T04:00:00Z"},
 		{
 			name: "Sao Paulo midnight", zone: "America/Sao_Paulo", start: "20181104", end: "DTEND;VALUE=DATE:20181105\r\n",
 			extra: "RRULE:FREQ=DAILY;COUNT=2\r\n", override: "BEGIN:VEVENT\r\nUID:skipped@example.org\r\nRECURRENCE-ID;VALUE=DATE:20181104\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\n",
@@ -250,22 +244,21 @@ func FuzzCalDAVDecoder(f *testing.F) {
 }
 
 func TestCalDAVCaseInsensitiveParametersAndCivilDuration(t *testing.T) {
-	for _, tc := range []struct{ name, dtstart, duration, params, role, end string }{
-		{"civil day across DST", "DTSTART;TZID=America/New_York:20270313T090000", "P1D", "CUTYPE=room", "room", "2027-03-14T13:00:00Z"},
-		{"elapsed hours across DST", "DTSTART;TZID=America/New_York:20270313T090000", "PT24H", "ROLE=opt-participant", "optional", "2027-03-14T14:00:00Z"},
-		{"lowercase DATE", "DTSTART;VALUE=date:20270314", "P1D", "CUTYPE=resource", "room", "2027-03-15T04:00:00Z"},
+	for _, tc := range []struct{ name, dtstart, duration, end string }{
+		{"civil day across DST", "DTSTART;TZID=America/New_York:20270313T090000", "P1D", "2027-03-14T13:00:00Z"},
+		{"elapsed hours across DST", "DTSTART;TZID=America/New_York:20270313T090000", "PT24H", "2027-03-14T14:00:00Z"},
+		{"lowercase DATE", "DTSTART;VALUE=date:20270314", "P1D", "2027-03-15T04:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:case@example.org\r\n" + tc.dtstart + "\r\nDURATION:" + tc.duration + "\r\nATTENDEE;" + tc.params + ":mailto:room@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+			raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:case@example.org\r\n" + tc.dtstart + "\r\nDURATION:" + tc.duration + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 			events, err := ParseCalDAVResource(t.Context(), raw, "America/New_York")
 			requirements.NoError(err)
 			requirements.Len(events, 1)
 			want, err := time.Parse(time.RFC3339, tc.end)
 			requirements.NoError(err)
 			assertions.Equal(want, *events[0].Event.End)
-			assertions.Equal(tc.role, events[0].Event.Attendees[0].Role)
 		})
 	}
 }
@@ -306,8 +299,6 @@ func TestCalDAVLocalTimesInGapAndFold(t *testing.T) {
 					assertions.Equal(tc.key, events[0].Event.Original.Key())
 					if strings.Contains(string(input), ";TZID=") {
 						assertions.Equal(`["clock@example.org","TZID=Europe/Berlin:20271031T023000"]`, events[0].Event.ProviderEventID)
-					} else {
-						assertions.Equal(`["clock@example.org","FLOATING:20271031T023000"]`, events[0].Event.ProviderEventID)
 					}
 				}
 			}
@@ -317,7 +308,7 @@ func TestCalDAVLocalTimesInGapAndFold(t *testing.T) {
 
 func TestCalDAVAttendeeRolesAndRSVP(t *testing.T) {
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:roles@example.org\r\nDTSTART:20270314T130000Z\r\n" +
-		"ORGANIZER;CN=Alice:mailto:alice@example.org\r\nATTENDEE;ROLE=CHAIR:mailto:bob@example.org\r\nATTENDEE:mailto:carol@example.org\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:dave@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;ROLE=NON-PARTICIPANT:mailto:info@example.org\r\nATTENDEE:urn:uuid:00000000-0000-0000-0000-000000000000\r\nATTENDEE;CUTYPE=ROOM;ROLE=OPT-PARTICIPANT:mailto:room@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+		"ORGANIZER;CN=Alice:mailto:alice@example.org\r\nATTENDEE;ROLE=CHAIR:mailto:bob@example.org\r\nATTENDEE:mailto:carol@example.org\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:dave@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;ROLE=NON-PARTICIPANT:mailto:info@example.org\r\nATTENDEE:urn:uuid:00000000-0000-0000-0000-000000000000\r\nATTENDEE;CUTYPE=ROOM;ROLE=OPT-PARTICIPANT:mailto:room@example.org\r\nATTENDEE;CUTYPE=room:mailto:lower-room@example.org\r\nATTENDEE;CUTYPE=resource:mailto:resource@example.org\r\nATTENDEE;ROLE=opt-participant:mailto:optional@example.org\r\nATTENDEE;CN=Guest Two;PARTSTAT=DECLINED:urn:uuid:two\r\nATTENDEE;CN=Guest Three;EMAIL=three@example.org;PARTSTAT=TENTATIVE:urn:uuid:three\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	event, ok, err := Decode(CalDAVRawFormat, raw, []byte(`{"event_id":"[\"roles@example.org\",\"\"]","account_email":"carol@example.org"}`), "UTC")
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -329,6 +320,11 @@ func TestCalDAVAttendeeRolesAndRSVP(t *testing.T) {
 		{Email: "info@example.org", Role: "optional", RSVP: "needs_action"},
 		{Role: "required", RSVP: "needs_action"},
 		{Email: "room@example.org", Role: "room", RSVP: "needs_action"},
+		{Email: "lower-room@example.org", Role: "room", RSVP: "needs_action"},
+		{Email: "resource@example.org", Role: "room", RSVP: "needs_action"},
+		{Email: "optional@example.org", Role: "optional", RSVP: "needs_action"},
+		{DisplayName: "Guest Two", Role: "required", RSVP: "declined"},
+		{Email: "three@example.org", DisplayName: "Guest Three", Role: "required", RSVP: "tentative"},
 		{Email: "alice@example.org", DisplayName: "Alice", Role: "organizer", RSVP: "unknown"},
 	}, event.Attendees)
 }

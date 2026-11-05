@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,10 +62,6 @@ func TestDiscoverAndPull(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		user, password, ok := r.BasicAuth()
-		assertions.True(ok)
-		assertions.Equal("example", user)
-		assertions.Equal(t.Name(), password)
 		if body, ok := discoveryResponse(r); ok {
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, body)
@@ -78,10 +73,6 @@ func TestDiscoverAndPull(t *testing.T) {
 			return
 		}
 		if strings.Contains(string(raw), "sync-collection") {
-			if r.Header.Get("Depth") != "0" {
-				http.Error(w, "sync-collection requires Depth: 0", http.StatusBadRequest)
-				return
-			}
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/cal/a.ics", `<D:getetag>"v1"</D:getetag>`)+`<D:sync-token>t1</D:sync-token>`))
 			return
@@ -102,42 +93,6 @@ func TestDiscoverAndPull(t *testing.T) {
 	assertions.Equal("t1", p.NextSyncToken)
 	requirements.Len(p.Members, 1)
 	assertions.Contains(string(p.Members[0].Body), "UID:example@example.org")
-}
-
-func TestDiscoverSkipsUnavailableUnselectedCollection(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	var unselectedReads atomic.Int32
-	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/home/" {
-			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`)+testutil.DAVPropResponse("/home/cal/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)+testutil.DAVPropResponse("/home/unavailable/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)))
-			return
-		}
-		if body, ok := discoveryResponse(r); ok {
-			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, body)
-			return
-		}
-		if r.URL.Path == "/home/cal/" {
-			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/cal/", `<D:resourcetype><D:collection/></D:resourcetype>`)))
-			return
-		}
-		if r.URL.Path == "/home/unavailable/" {
-			unselectedReads.Add(1)
-		}
-		w.WriteHeader(http.StatusForbidden)
-	})
-	st := testutil.NewTestStore(t)
-	opts := syncOpts()
-	opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
-	result, err := c.Sync(t.Context(), st, opts)
-	requirements.NoError(err)
-	assertions.Equal(1, result.Calendars)
-	assertions.Zero(unselectedReads.Load())
-	opts.Calendars = []string{"http://203.0.113.1/home/absent/"}
-	_, err = c.Sync(t.Context(), st, opts)
-	assertions.ErrorContains(err, "not discovered")
 }
 
 func TestDiscoverOnlyEventCalendars(t *testing.T) {

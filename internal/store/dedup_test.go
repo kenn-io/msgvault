@@ -1030,27 +1030,6 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	assert.True(got.HasAttachments, "HasAttachments")
 }
 
-func TestStore_GetAllRawMIMECandidatesIncludesNonMIMEFormats(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	var wantIDs []int64
-	for _, format := range []string{"granola_json", "gcal_json"} {
-		id := newRFC822Message(t, f, format, "")
-		require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"title":"Example"}`), format))
-		wantIDs = append(wantIDs, id)
-	}
-	for _, scope := range [][]int64{nil, {f.Source.ID}} {
-		candidates, err := f.Store.GetAllRawMIMECandidates(scope...)
-		require.NoError(err)
-		var gotIDs []int64
-		for _, candidate := range candidates {
-			gotIDs = append(gotIDs, candidate.ID)
-		}
-		assert.Equal(wantIDs, gotIDs)
-	}
-}
-
 func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1086,16 +1065,27 @@ func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 	require.NoError(f.Store.UpsertMessageRaw(emailID, []byte(
 		"From: sender@example.test\r\nSubject: Email\r\n\r\nBody",
 	)), "UpsertMessageRaw email")
-	candidates, err := f.Store.GetAllRawMIMECandidates()
-	require.NoError(err, "GetAllRawMIMECandidates")
-	candidateIDs := make([]int64, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidateIDs = append(candidateIDs, candidate.ID)
+	wantIDs := []int64{emailID}
+	for _, format := range []string{"granola_json", "gcal_json"} {
+		id := newRFC822Message(t, f, format, "")
+		require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"title":"Example"}`), format))
+		wantIDs = append(wantIDs, id)
 	}
-	assert.Contains(candidateIDs, emailID, "MIME email remains a content-hash candidate")
-	for _, id := range calendarIDs {
-		assert.NotContains(candidateIDs, id,
-			"distinct VEVENTs sharing one CalDAV resource must not become MIME hash candidates")
+	for _, scope := range [][]int64{nil, {f.Source.ID}, {calDAV.ID}} {
+		candidates, err := f.Store.GetAllRawMIMECandidates(scope...)
+		require.NoError(err)
+		var gotIDs []int64
+		for _, candidate := range candidates {
+			gotIDs = append(gotIDs, candidate.ID)
+		}
+		if len(scope) == 1 && scope[0] == calDAV.ID {
+			assert.Empty(gotIDs)
+		} else {
+			assert.Equal(wantIDs, gotIDs)
+		}
+		for _, id := range calendarIDs {
+			assert.NotContains(gotIDs, id, "distinct VEVENTs sharing one resource must not become MIME hash candidates")
+		}
 	}
 }
 

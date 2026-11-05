@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -263,16 +265,26 @@ func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(source.ID, "shared-resource", "calendar", "Shared resource")
-	requirements.NoError(err)
 	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
-		"BEGIN:VEVENT\r\nUID:event-a@example.org\r\nDTSTART:20270314T130000Z\r\nEND:VEVENT\r\n" +
-		"BEGIN:VEVENT\r\nUID:event-b@example.org\r\nDTSTART:20270321T130000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	for _, eventID := range []string{"event-a@example.org", "event-b@example.org"} {
-		id, err := st.UpsertMessage(&Message{ConversationID: conversationID, SourceID: source.ID, SourceMessageID: eventID, MessageType: "calendar_event"})
+		"BEGIN:VEVENT\r\nUID:event@example.org\r\nDTSTART:20270314T130000Z\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:event@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(resource), "UTC")
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	for _, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
 		requirements.NoError(err)
-		requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(resource), "caldav_ics"))
-		requirements.Len(calendarRows(t, st, id), 1)
+		id, err := st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ProviderEventID, ConversationType: "calendar"},
+			RawMIME:      []byte(resource), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+		rows := calendarRows(t, st, id)
+		requirements.Len(rows, 1)
+		assertions.Equal(item.Event.ProviderEventID, rows[0].Event.ProviderEventID)
+		assertions.Equal("confirmed", rows[0].Event.Status)
 	}
 	_, googleID := calendarFixture(t, st, "google", calendarRaw)
 	requirements.NoError(st.Close())
@@ -299,13 +311,9 @@ func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
 	assertions.Equal([]int64{googleID}, ids)
 	assertions.Equal([]string{"gcal_json"}, formats)
 	requirements.NoError(rows.Close())
-	var calDAVMessages, calDAVProjections, calDAVSources int
+	var calDAVMessages int
 	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&calDAVMessages))
-	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM calendar_events WHERE message_id <> ?`, googleID).Scan(&calDAVProjections))
-	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'caldav'`).Scan(&calDAVSources))
 	assertions.Zero(calDAVMessages)
-	assertions.Zero(calDAVProjections)
-	assertions.Zero(calDAVSources)
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
