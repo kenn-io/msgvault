@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -701,4 +702,25 @@ func TestListCalendarOccurrencesDeletedSeriesKeepsOnlyExceptions(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(page.Occurrences)
 	assert.Empty(page.Unexpandable)
+}
+
+func TestCalendarScopedSparseCancellationSurvivesHiddenNativeCopy(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY;COUNT=2")))
+	persistInviteEmailForSource(t, st, source, "cancel", inviteEmail(calendarDocument("CANCEL", "RECURRENCE-ID:20270302T120000Z\r\nSTATUS:CANCELLED")))
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{source})
+	from := time.Date(2027, 3, 7, 0, 0, 0, 0, time.UTC)
+	before, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(before.Occurrences, 1)
+	require.Equal("cancelled", before.Occurrences[0].Status)
+	ids := emailEvents(t, st, source)
+	require.Len(ids, 2)
+	var providerID string
+	require.NoError(st.db.QueryRow(`SELECT provider_event_id FROM calendar_events WHERE message_id = ?`, ids[0]).Scan(&providerID))
+	calendarFixture(t, st, "hidden", fmt.Sprintf(`{"id":%q,"iCalUID":"family@example.com","start":{"dateTime":"2027-03-02T12:00:00Z"},"end":{"dateTime":"2027-03-09T12:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, providerID), "hidden@example.com")
+	after, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Equal(before, after)
 }

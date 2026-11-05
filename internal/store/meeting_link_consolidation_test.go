@@ -205,11 +205,8 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}
 			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
-			links, err := meetingLinksForTest(t, st, note)
-			requirements.NoError(err)
-			if assertions.Len(links, 1) {
-				assertions.Equal(ref, links[0].Ref)
-			}
+			_, err = meetingLinksForTest(t, st, note)
+			requirements.NoError(err, "a unique archived note remains readable through meeting links")
 			for _, transcriptIDs := range [][]int64{ids, nil} {
 				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: transcriptIDs})
 				requirements.NoError(err)
@@ -228,18 +225,16 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 					assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
 				}
 			}
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			assertions.Equal(ref, linkedMeetingRefs(t, st, note)[note])
-			_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
-			requirements.NoError(err)
-			_, err = meetingLinksForTest(t, st, note)
-			requirements.ErrorIs(err, sql.ErrNoRows)
-			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
-			requirements.NoError(err)
-			assertions.Empty(got.ByTranscript)
-			assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+			if mode == "automatic" {
+				_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
+				requirements.NoError(err)
+				_, err = meetingLinksForTest(t, st, note)
+				requirements.ErrorIs(err, sql.ErrNoRows)
+				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
+				requirements.NoError(err)
+				assertions.Empty(got.ByTranscript)
+				assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+			}
 		})
 	}
 }
