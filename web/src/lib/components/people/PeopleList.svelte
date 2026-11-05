@@ -158,7 +158,7 @@
 </script>
 
 <aside class="people-list" aria-label="People">
-  <div class="toolbar">
+  <div class="toolbar touch-controls">
     <div class="toolbar-row">
       <SegmentedControl
         ariaLabel="List"

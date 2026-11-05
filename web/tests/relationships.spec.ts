@@ -630,6 +630,35 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
   expect(queries).toEqual(['bob']);
 });
 
+test.describe('touch People toolbar', () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test('phone People toolbar fits touch while the Sort menu stays compact', async ({ page }) => {
+    await prepare(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
+    await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+    const toolbar = page.locator('.people-list .toolbar');
+    await expect(toolbar.locator('.chips button')).toBeVisible();
+    for (const button of await toolbar.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole('combobox', { name: 'Sort: Closest' }).click();
+    expect((await page.getByRole('option', { name: 'Most recent' }).boundingBox())!.height).toBeLessThan(44);
+    await page.keyboard.press('Escape');
+  });
+});
+
+test('narrow mouse People toolbar retains compact control sizes', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
+  await page.goto('/?workspace=relationships');
+  await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+  expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBeLessThan(44);
+  expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBeLessThan(44);
+});
+
 for (const close of ['Escape', 'Back to People']) {
   test(`narrow People moves focus into the person page and restores the grid with ${close}`, async ({ page }) => {
     await prepare(page);

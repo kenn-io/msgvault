@@ -140,6 +140,8 @@ type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type SnoozeLoopBody = SnoozeLoopRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
