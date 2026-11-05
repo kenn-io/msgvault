@@ -411,7 +411,7 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 func TestImportClearsHistoricallyRetainedBody(t *testing.T) {
 	require := require.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'')`)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'orchard')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
@@ -423,12 +423,15 @@ func TestImportClearsHistoricallyRetainedBody(t *testing.T) {
 	require.NoError(err)
 	var id int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
-	// Older imports could commit empty raw JSON while retaining the previous body.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = 'orchard' WHERE message_id = ?`), id)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	require.Equal("orchard", body)
+	// Remove the source text after the first import archives it.
+	_, err = db.Exec(`UPDATE message SET text = ''`)
 	require.NoError(err)
 	summary, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
-	body, err := st.GetMessageBodyText(id)
+	body, err = st.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Empty(t, body)
 	assert.Equal(t, 1, summary.MessagesUpdated)

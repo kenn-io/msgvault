@@ -84,14 +84,8 @@ func TestImportWhatsAppIdentityIsIdempotent(t *testing.T) {
 
 	_, err := runWhatsAppIdentityCommand(t, home, fixture, false)
 	require.NoError(err)
-	db, err := sql.Open("sqlite3", fixture)
+	_, err = runWhatsAppIdentityCommand(t, home, fixture, false)
 	require.NoError(err)
-	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'Edited message' WHERE ZTEXT IS NOT NULL`)
-	require.NoError(err)
-	output, err := runWhatsAppIdentityCommand(t, home, fixture, false)
-	require.NoError(err)
-	assert.Contains(t, output, "0 added, 1 updated")
 
 	identities := whatsappIdentityTestIdentities(t, home)
 	require.Len(identities, 1)

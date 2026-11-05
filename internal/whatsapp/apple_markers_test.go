@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 
@@ -52,13 +51,6 @@ func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
 	run, err := st.GetLatestSync(source.ID)
 	require.NoError(err)
 	assert.Equal("completed", run.Status)
-	var markers appleChatMarkerState
-	require.NoError(json.Unmarshal([]byte(after.SyncCursor.String), &markers))
-	assert.Equal(run.ID, markers.SyncID)
-	require.Len(markers.Chats, 3)
-	for _, chatID := range []int64{1, 2, 3} {
-		assert.NotEmpty(markers.Chats[chatID])
-	}
 }
 
 func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {

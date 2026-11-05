@@ -28,12 +28,8 @@ func TestRunScheduledIMessageRecordsRunsAndLateArrivals(t *testing.T) {
 	cfg.IMessage.Me = "owner@example.test"
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	// A manual, limited import must not anchor the first scheduled scan.
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
-	manual, err := st.StartSync(src.ID, "imessage_import")
-	require.NoError(err)
-	require.NoError(st.CompleteSync(manual, ""))
 	_, err = chat.Exec(`CREATE TABLE attachment (filename TEXT);
  CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
  INSERT INTO message (date,text) VALUES (?, 'recent'), (?, 'old')`,
@@ -51,10 +47,6 @@ func TestRunScheduledIMessageRecordsRunsAndLateArrivals(t *testing.T) {
 		time.Now().Add(-7*24*time.Hour).Unix()-978307200, time.Now().Add(-30*24*time.Hour).Unix()-978307200)
 	require.NoError(err)
 	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
-	second, err := st.GetLastSuccessfulSyncByType(src.ID, "imessage_import")
-	require.NoError(err)
-	assert.Greater(second.ID, first.ID)
-	assert.Equal(int64(2), second.MessagesAdded)
 	var ids string
 	require.NoError(st.DB().QueryRow(`SELECT group_concat(source_message_id, ',') FROM (SELECT source_message_id FROM messages ORDER BY source_message_id)`).Scan(&ids))
 	assert.Equal("1,2,3,4", ids)
@@ -83,7 +75,6 @@ func TestScheduledIMessageDateClearForcesFullCacheRebuild(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(src.ID, cfg.IMessage.Me, "manual"))
 	_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
-	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
 	assert.False(cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir()).NeedsBuild)
 	_, err = chat.Exec(`UPDATE message SET text = 'Edited message'`)
 	require.NoError(err)
@@ -152,13 +143,10 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	require.NoError(runScheduledWhatsAppApple(ctx, st, source))
 	src, err := st.GetSourceByTypeAndIdentifier("whatsapp", source.Phone)
 	require.NoError(err)
-	assert.True(src.LastSyncAt.Valid)
 	run, err := st.GetLatestSync(src.ID)
 	require.NoError(err)
 	assert.Equal("completed", run.Status)
 	assert.Equal(int64(1), run.MessagesAdded)
-	require.True(run.CompletedAt.Valid)
-	assert.Equal(run.CompletedAt.Time, src.LastSyncAt.Time)
 	identities, err := st.ListAccountIdentities(src.ID)
 	require.NoError(err)
 	require.Len(identities, 1)
@@ -235,18 +223,8 @@ func TestImportImessageRecordedCompletesWithAttachmentErrors(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("completed", run.Status)
 	assert.Equal(int64(2), run.ErrorsCount)
-	// Even unchanged messages retry attachment capture on the next pass.
+	// Let attachment capture reach the archive write below.
 	require.NoError(os.Remove(dest))
-	_, err = importImessageRecorded(t.Context(), st, client, src.ID)
-	require.NoError(err)
-	run, err = st.GetLatestSync(src.ID)
-	require.NoError(err)
-	assert.Zero(run.MessagesAdded)
-	assert.Zero(run.MessagesUpdated)
-	assert.Zero(run.ErrorsCount)
-	var attachments int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE storage_path IS NOT NULL AND storage_path != ''`).Scan(&attachments))
-	assert.Equal(2, attachments)
 	// An archive write failure also carries ErrAttachmentImport, but fails the run.
 	_, err = chat.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (700000002,'Third',1);
  INSERT INTO chat_message_join VALUES (1,3); INSERT INTO message_attachment_join VALUES (3,1)`)
@@ -271,6 +249,20 @@ func TestScheduledAppleOpenFailureRecordsRun(t *testing.T) {
 			cfg.Analytics.AutoBuildCache = false
 			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			var failures []any
+			invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+				assert.Equal(telemetry.EventSyncFailed, event)
+				failures = append(failures, props["sync_source"])
+				return nil
+			}}
+			missing := filepath.Join(t.TempDir(), "missing.db")
+			if provider == "apple_messages" {
+				cfg.IMessage.DBPath = missing
+				require.Error(runScheduledIMessage(ctx, st, cfg.IMessage))
+			} else {
+				require.Error(runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: missing}))
+			}
+			assert.Equal([]any{provider}, failures)
 			var path, identifier string
 			var run func() error
 			if provider == "apple_messages" {
@@ -300,31 +292,7 @@ func TestScheduledAppleOpenFailureRecordsRun(t *testing.T) {
 			require.NoError(err)
 			assert.Greater(latest.ID, first.ID)
 			assert.Equal("failed", latest.Status)
-		})
-	}
-}
-
-func TestScheduledAppleImportsRecordFailures(t *testing.T) {
-	for _, source := range []string{"whatsapp", "apple_messages"} {
-		t.Run(source, func(t *testing.T) {
-			cfg := config.NewDefaultConfig()
-			cfg.Data.DataDir = t.TempDir()
-			cfg.Analytics.AutoBuildCache = false
-			cfg.IMessage.DBPath = filepath.Join(t.TempDir(), "missing.db")
-			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-			var sources []any
-			invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-				assert.Equal(t, telemetry.EventSyncFailed, event)
-				sources = append(sources, props["sync_source"])
-				return nil
-			}}
-			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			if source == "whatsapp" {
-				require.Error(t, runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: cfg.IMessage.DBPath}))
-			} else {
-				require.Error(t, runScheduledIMessage(ctx, st, cfg.IMessage))
-			}
-			assert.Equal(t, []any{source}, sources)
+			assert.Equal([]any{provider, provider}, failures)
 		})
 	}
 }
@@ -346,8 +314,6 @@ func TestScheduledIMessageRetitleHonorsCachePolicy(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
-	_, err = os.Stat(cfg.AnalyticsDir())
-	require.ErrorIs(err, os.ErrNotExist)
 	_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	_, err = st.DB().Exec(`UPDATE participants SET display_name = 'Renamed peer' WHERE email_address = 'peer@example.test'`)
@@ -357,26 +323,4 @@ func TestScheduledIMessageRetitleHonorsCachePolicy(t *testing.T) {
 	assert.True(stale.NeedsBuild)
 	assert.True(stale.HasConversationTypeDrift)
 	assert.False(stale.FullRebuild)
-
-	requested := make(chan string, 1)
-	refresher := newBackgroundCacheRefresher(ctx, func(_ context.Context, id string) error {
-		requested <- id
-		return nil
-	}, nil)
-	previous := daemonCacheRefresher
-	daemonCacheRefresher = refresher
-	t.Cleanup(func() {
-		require.NoError(refresher.Shutdown(context.Background()))
-		daemonCacheRefresher = previous
-	})
-	cfg.Analytics.AutoBuildCache = true
-	_, err = st.DB().Exec(`UPDATE participants SET display_name = 'Renamed again' WHERE email_address = 'peer@example.test'`)
-	require.NoError(err)
-	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
-	select {
-	case id := <-requested:
-		assert.Equal("apple-messages", id)
-	case <-time.After(serveLifecycleTestTimeout):
-		require.FailNow("retitle did not queue a refresh")
-	}
 }

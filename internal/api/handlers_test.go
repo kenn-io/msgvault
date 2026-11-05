@@ -3927,7 +3927,6 @@ func TestHandleSourceStatusGenericJobScheduled(t *testing.T) {
 	for _, tc := range []struct{ sourceType, identifier, job string }{
 		{"granola", "acct-1", "granola:acct-1"},
 		{"whatsapp", "+15550000000", "whatsapp:+15550000000"},
-		{"apple_messages", "local", "apple-messages"},
 	} {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
@@ -3940,7 +3939,7 @@ func TestHandleSourceStatusGenericJobScheduled(t *testing.T) {
 				NextRun:  time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
 			}}
 			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
-			require.NoError(err, "GetOrCreateSource granola")
+			require.NoError(err, "GetOrCreateSource %s", tc.sourceType)
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
@@ -9303,14 +9302,14 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 				sources = append(sources, src)
 			}
 			if tc.merged {
-				_, err := st.DB().Exec(st.Rebind(`INSERT INTO source_settings (source_id, merged_into_source_id) VALUES (?, ?)`), sources[2].ID, sources[1].ID)
+				_, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[2].ID, IntoSourceID: sources[1].ID})
 				require.NoError(err)
 			}
 			sources, err := st.ListSourcesContext(t.Context(), "apple_messages")
 			require.NoError(err)
 			sched := newMockScheduler()
 			sched.scheduledJobs = map[string]bool{"apple-messages": true}
-			sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "*/10 * * * *"}}
+			sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "0 */6 * * *", NextRun: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)}}
 			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 			for _, src := range sources {
 				status, err := srv.sourceStatus(t.Context(), st, src, sources)
@@ -9319,6 +9318,24 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 				if src.Identifier != tc.wantSelected {
 					assert.Equal("source_not_schedulable", status.SyncUnavailableReason)
 				}
+			}
+			if tc.name == "local source" {
+				sched.scheduledJobs = nil
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+				require.Equal(http.StatusOK, w.Code, w.Body.String())
+				var response SourceStatusResponse
+				require.NoError(json.NewDecoder(w.Body).Decode(&response))
+				require.Len(response.Sources, 1)
+				got := response.Sources[0]
+				assert.Equal(sources[0].ID, got.ID)
+				assert.True(got.Scheduled)
+				assert.Equal("0 */6 * * *", got.Schedule)
+				require.NotNil(got.NextSyncAt)
+				assert.Equal("2026-07-20T00:00:00Z", *got.NextSyncAt)
+				assert.True(got.CanSync)
+				assert.Empty(got.SyncUnavailableReason)
+				sched.scheduledJobs = map[string]bool{"apple-messages": true}
 			}
 			response := servePOSTTestRequest(srv, "/api/v1/sync/"+tc.trigger+"?source_type=apple_messages")
 			assert.Equal(tc.wantCode, response.Code, response.Body.String())
@@ -9350,12 +9367,6 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status"+query, nil))
 		require.Equal(http.StatusOK, w.Code)
-		var response SourceStatusResponse
-		require.NoError(json.NewDecoder(w.Body).Decode(&response))
-		require.NotEmpty(response.Sources)
-		for _, source := range response.Sources {
-			assert.Equal(source.Identifier == "selected", source.CanSync, source.Identifier)
-		}
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}
 }

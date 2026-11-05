@@ -2228,31 +2228,11 @@ func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
 }
 
 func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
-	for kind, before := range map[string]string{
-		"plaud":  "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n",
-		"twilio": "[[twilio]]\naccount_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\nschedule='15 */6 * * *'\n",
-	} {
-		t.Run(kind, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path := filepath.Join(t.TempDir(), "config.toml")
-			require.NoError(os.WriteFile(path, []byte(before), 0600))
-			snapshot, err := ReadConfigFile(path)
-			require.NoError(err)
-			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: kind + ".schedule", Value: "not a cron"}})
-			require.ErrorIs(err, ErrInvalidConfigCandidate)
-			assert.Contains(err.Error(), "invalid "+kind+"[0].schedule")
-			got, err := os.ReadFile(path)
-			require.NoError(err)
-			assert.Equal(before, string(got))
-		})
-	}
-}
-
-func TestEditConfigRejectsInvalidAppleSchedule(t *testing.T) {
-	for _, tc := range []struct{ name, before, key, errorKey string }{
-		{"imessage", "[imessage]\nschedule = '0 * * * *'\n", "imessage.schedule", "imessage.schedule"},
-		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nphone = '+15550100'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule"},
+	for _, tc := range []struct{ name, before, key, errorKey, invalid string }{
+		{"plaud", "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n", "plaud.schedule", "plaud[0].schedule", "not a cron"},
+		{"twilio", "[[twilio]]\naccount_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\nschedule='15 */6 * * *'\n", "twilio.schedule", "twilio[0].schedule", "not a cron"},
+		{"imessage", "[imessage]\nschedule = '0 * * * *'\n", "imessage.schedule", "imessage.schedule", "invalid cron"},
+		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nphone = '+15550100'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule", "invalid cron"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -2261,7 +2241,7 @@ func TestEditConfigRejectsInvalidAppleSchedule(t *testing.T) {
 			require.NoError(os.WriteFile(path, []byte(tc.before), 0o600))
 			snapshot, err := ReadConfigFile(path)
 			require.NoError(err)
-			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: tc.key, Value: "invalid cron"}})
+			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: tc.key, Value: tc.invalid}})
 			require.ErrorIs(err, ErrInvalidConfigCandidate)
 			assert.Contains(err.Error(), "invalid "+tc.errorKey)
 			got, err := os.ReadFile(path)

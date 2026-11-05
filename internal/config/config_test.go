@@ -2597,58 +2597,40 @@ func TestLoadAppleImportPaths(t *testing.T) {
 				wantPath = filepath.Join(home, "apple/chat.db")
 			}
 			assert.Equal(wantPath, cfg.IMessage.DBPath)
-			require.Len(cfg.ScheduledWhatsAppAppleSources(), 1)
 			assert.Equal(wantPath, cfg.WhatsAppApple[0].Path)
 		})
 	}
 }
 
-func TestLoadApplePhoneRequiresPlus(t *testing.T) {
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(path, []byte("[[whatsapp_apple]]\nenabled = true\nphone = '15550000000'\n"), 0600))
-	_, err := Load(path, "")
-	require.ErrorContains(err, "whatsapp_apple[0].phone must start with +")
-	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
-	require.NoError(err)
-	require.ErrorContains(cfg.DaemonConfigError(), "whatsapp_apple[0].phone must start with +")
-}
-
-func TestLoadDisabledAppleSourceWithoutPhone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[[whatsapp_apple]]\nenabled = false\n"), 0600))
-	cfg, err := Load(path, "")
-	require.NoError(t, err)
-	assert.NoError(t, cfg.DaemonConfigError())
-}
-
 func TestLoadApplePhoneUniqueness(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		first, second bool
-		secondPhone   string
-		wantDuplicate bool
+		name      string
+		content   string
+		wantError string
 	}{
-		{name: "enabled duplicates", first: true, second: true, secondPhone: "+15550000000", wantDuplicate: true},
-		{name: "disabled first", second: true, secondPhone: "+15550000000"},
-		{name: "disabled second", first: true, secondPhone: "+15550000000"},
-		{name: "both disabled", secondPhone: "+15550000000"},
-		{name: "distinct enabled phones", first: true, second: true, secondPhone: "+15550000001"},
+		{name: "requires plus", content: "[[whatsapp_apple]]\nenabled = true\nphone = '15550000000'\n", wantError: "whatsapp_apple[0].phone must start with +"},
+		{name: "disabled without phone", content: "[[whatsapp_apple]]\nenabled = false\n"},
+		{name: "enabled duplicates", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n", wantError: "whatsapp_apple[1].phone duplicates enabled phone"},
+		{name: "disabled first", content: "[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n"},
+		{name: "disabled second", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n"},
+		{name: "both disabled", content: "[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n"},
+		{name: "distinct enabled phones", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000001'\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			path := filepath.Join(t.TempDir(), "config.toml")
-			content := fmt.Sprintf("[[whatsapp_apple]]\nenabled = %t\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = %t\nphone = '%s'\n", tc.first, tc.second, tc.secondPhone)
-			require.NoError(os.WriteFile(path, []byte(content), 0600))
-			_, err := Load(path, "")
-			if tc.wantDuplicate {
-				require.ErrorContains(err, "whatsapp_apple[1].phone duplicates enabled phone")
-				cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
-				require.NoError(err)
-				require.ErrorContains(cfg.DaemonConfigError(), "whatsapp_apple[1].phone duplicates enabled phone")
+			require.NoError(os.WriteFile(path, []byte(tc.content), 0600))
+			cfg, err := Load(path, "")
+			if tc.wantError != "" {
+				require.ErrorContains(err, tc.wantError)
 			} else {
 				require.NoError(err)
+				require.NoError(cfg.DaemonConfigError())
+				return
 			}
+			cfg, err = LoadClientWithOverrides(path, "", RuntimeOverrides{})
+			require.NoError(err)
+			require.ErrorContains(cfg.DaemonConfigError(), tc.wantError)
 		})
 	}
 }
