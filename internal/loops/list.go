@@ -63,6 +63,7 @@ type Store interface {
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
 	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
+	CachedLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, bool, error)
 	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
@@ -121,7 +122,7 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 	var unparsed int
 	for conv, err := range st.LoopConversationsContext(ctx, q) {
 		if err != nil {
-			return 0, err
+			return unparsed, err
 		}
 		detection, err := Detect(conv, reader.in(conv))
 		if err != nil {
@@ -172,7 +173,12 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 			return nil
 		})
 	if err != nil && ctx.Err() != nil {
-		return Result{}, ctx.Err()
+		// A request deadline returns the conversations checked in full, as
+		// when the evidence budget runs out. A caller that left gets the error.
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return Result{}, ctx.Err()
+		}
+		err = ErrEvidenceIncomplete
 	}
 	incomplete := errors.Is(err, ErrEvidenceIncomplete)
 	if err != nil && !incomplete {
