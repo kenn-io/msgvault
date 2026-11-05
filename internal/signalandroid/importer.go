@@ -521,12 +521,14 @@ func (r *run) writeMessage(
 			found++
 			if name, ok := r.files[a.ID]; ok {
 				full, err := os.ReadFile(filepath.Join(r.opts.AttachmentFilesDir, name))
-				if err == nil {
+				if err == nil && len(full) > 0 {
 					body = applyMentions(string(full), mentions, r.displayName)
 					continue
 				}
-				r.summary.Errors++
-				r.imp.progress.OnError(fmt.Errorf("read long text: %w", err))
+				if err != nil {
+					r.summary.Errors++
+					r.imp.progress.OnError(fmt.Errorf("read long text: %w", err))
+				}
 			}
 			missing++
 			if archivedID != 0 {
