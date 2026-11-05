@@ -592,60 +592,14 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 func (e *SQLiteEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
-	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
-
-	// Sort clause.
-	var orderBy string
-	switch filter.SortField {
-	case TextSortByCount:
-		orderBy = "message_count"
-	case TextSortByName:
-		orderBy = "title"
-	default: // TextSortByLastMessage
-		orderBy = "last_message_at"
-	}
-	if filter.SortDirection == SortAsc {
-		orderBy += " ASC"
-	} else {
-		orderBy += " DESC"
-	}
-	// Append the unique conversation PK as a tiebreaker so conversations
-	// sharing the primary sort key (e.g. identical last_message_at) get a
-	// total, stable order across LIMIT/OFFSET pages. c.id is the GROUP BY key
-	// and is selectable here. [C3]
-	orderBy += ", c.id DESC"
+	query, args := e.sqliteTextSnapshotQuery(TextSnapshotScope{Filter: filter})
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {
 		limit = 100
 	}
 
-	query := fmt.Sprintf(`
-		SELECT
-			c.id,
-			COALESCE(c.title, '') AS title,
-			COALESCE(s.source_type, '') AS source_type,
-			COUNT(*) AS message_count,
-			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
-			MAX(m.sent_at) AS last_message_at,
-			COALESCE(
-				(SELECT m.snippet FROM messages m
-				 WHERE m.conversation_id = c.id
-				   AND %s
-				 ORDER BY m.sent_at DESC, m.id DESC LIMIT 1),
-				''
-			) AS last_preview,
-			COALESCE(SUM(m.size_estimate), 0) AS total_size
-		FROM conversations c
-		JOIN messages m ON m.conversation_id = c.id
-		LEFT JOIN sources s ON s.id = m.source_id
-		WHERE %s
-		GROUP BY c.id, c.title, s.source_type
-		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, where, where, orderBy)
-
-	args = append(slices.Clone(args), args...)
+	query += " LIMIT ? OFFSET ?"
 	args = append(args, limit, filter.Pagination.Offset)
 
 	rows, err := e.db.QueryContext(ctx, query, args...)
