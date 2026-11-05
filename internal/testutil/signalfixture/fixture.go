@@ -16,6 +16,8 @@ const (
 	OwnPhone   = "+15555550100"
 	AlicePhone = "+15555550101"
 	CarolPhone = "+15555550103"
+	DanaPhone  = "+15555550104"
+	DanaPNI    = "0f0f0f0f-0000-4000-8000-000000000005"
 	CarolACI   = "0f0f0f0f-0000-4000-8000-000000000004"
 	OwnACI     = "0f0f0f0f-0000-4000-8000-000000000001"
 	AliceACI   = "0f0f0f0f-0000-4000-8000-000000000002"
@@ -71,7 +73,7 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 	require.NoError(tb, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), fmt.Appendf(nil, "VERSION:uint32:%d\n", version), 0o600))
 	stmts := []string{
 		fmt.Sprintf(`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER DEFAULT 0,
-			%s TEXT, %s TEXT, group_id TEXT, distribution_list_id INTEGER,
+			%s TEXT, %s TEXT, pni TEXT, group_id TEXT, distribution_list_id INTEGER,
 			system_joined_name TEXT, profile_joined_name TEXT)`, layout.e164, layout.aci),
 		`CREATE TABLE thread (_id INTEGER PRIMARY KEY, recipient_id INTEGER)`,
 		`CREATE TABLE message (_id INTEGER PRIMARY KEY, date_sent INTEGER NOT NULL,
@@ -173,5 +175,31 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 		[]byte("photo bytes"), 0o600))
 	require.NoError(tb, os.WriteFile(filepath.Join(dir, fmt.Sprintf("Attachment_%d_-1.sbf", id(500))),
 		[]byte("frame"), 0o600))
+	return path
+}
+
+// WritePNIOnly writes a backup with one outgoing message to a contact whose
+// account ID Signal has yet to learn.
+func WritePNIOnly(tb testing.TB, dir string, layout Layout) string {
+	tb.Helper()
+	path := Write(tb, dir, layout, 0)
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(tb, err)
+	defer func() { require.NoError(tb, db.Close()) }()
+	pni := DanaPNI
+	if layout.version >= 200 {
+		pni = "PNI:" + pni
+	}
+	for _, stmt := range []string{`DELETE FROM message`, `DELETE FROM thread`} {
+		_, err := db.Exec(stmt)
+		require.NoError(tb, err)
+	}
+	_, err = db.Exec(fmt.Sprintf(`INSERT INTO recipient (_id, %s, pni, system_joined_name) VALUES (7, ?, ?, 'Dana Example')`, layout.e164), DanaPhone, pni)
+	require.NoError(tb, err)
+	_, err = db.Exec(`INSERT INTO thread (_id, recipient_id) VALUES (14, 7)`)
+	require.NoError(tb, err)
+	_, err = db.Exec(`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		VALUES (600, 1700000400000, 1700000400001, 14, 1, 7, ?, 'hello Dana')`, TypeOutgoing)
+	require.NoError(tb, err)
 	return path
 }

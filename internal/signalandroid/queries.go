@@ -12,9 +12,13 @@ import (
 
 // fetchRecipients loads every recipient keyed by its local row ID.
 func fetchRecipients(ctx context.Context, db *sql.DB, s *schema) (map[int64]sigRecipient, error) {
+	pni := "''"
+	if s.recipientPNI != "" {
+		pni = "COALESCE(r." + s.recipientPNI + ", '')"
+	}
 	query := fmt.Sprintf(`
-		SELECT r._id, COALESCE(r.%s, ''), COALESCE(r.%s, ''), COALESCE(r.group_id, ''), %s
-		FROM recipient r`, s.recipientACI, s.recipientE164, s.recipientName)
+		SELECT r._id, COALESCE(r.%s, ''), %s, COALESCE(r.%s, ''), COALESCE(r.group_id, ''), %s
+		FROM recipient r`, s.recipientACI, pni, s.recipientE164, s.recipientName)
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query recipients: %w", err)
@@ -23,10 +27,11 @@ func fetchRecipients(ctx context.Context, db *sql.DB, s *schema) (map[int64]sigR
 	recipients := make(map[int64]sigRecipient)
 	for rows.Next() {
 		var r sigRecipient
-		if err := rows.Scan(&r.ID, &r.ACI, &r.E164, &r.GroupID, &r.Name); err != nil {
+		if err := rows.Scan(&r.ID, &r.ACI, &r.PNI, &r.E164, &r.GroupID, &r.Name); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
 		r.ACI = normalizeACI(r.ACI)
+		r.PNI = normalizePNI(r.PNI)
 		r.E164 = NormalizePhone(r.E164)
 		r.Name = strings.TrimSpace(r.Name)
 		recipients[r.ID] = r

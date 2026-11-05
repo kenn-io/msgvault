@@ -183,6 +183,8 @@ Contacts whose number Signal knows are matched by number, so they join the same
 person as their WhatsApp or SMS messages. Contacts Signal knows only by their
 account ID are recorded with a `signal_aci` identifier. If a later backup adds
 a phone number, their archived messages and group membership follow that contact.
+Chats with contacts Signal knows only by a phone-number ID are also archived.
+They keep their archived chat ID when Signal later learns the contact's account ID.
 
 ### Run it again
 

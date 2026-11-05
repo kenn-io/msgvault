@@ -29,6 +29,7 @@ const (
 	rawFormat = "signal_android_json"
 
 	directACIPrefix = "signal:aci:"
+	directPNIPrefix = "signal:pni:"
 	groupPrefix     = "signal:group:"
 )
 
@@ -97,6 +98,7 @@ type NullProgress = textimport.NullProgress[ImportSummary]
 type sigRecipient struct {
 	ID      int64
 	ACI     string
+	PNI     string
 	E164    string
 	GroupID string
 	Name    string

@@ -31,6 +31,8 @@ var ErrUnsupportedDatabase = errors.New("unsupported Signal database")
 type schema struct {
 	// recipientACI is "aci" from version 200 on and "uuid" before it.
 	recipientACI string
+	// recipientPNI is optional in older backups.
+	recipientPNI string
 	// recipientE164 is "e164" from version 201 on and "phone" before it.
 	recipientE164 string
 	// recipientName is a SQL expression for the best available display name.
@@ -130,6 +132,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		return nil, fmt.Errorf("%w: recipient._id or recipient.group_id is missing", ErrUnsupportedDatabase)
 	}
 	s.recipientName = recipientNameExpr(recipient)
+	s.recipientPNI = firstColumn(recipient, "pni")
 
 	if s.threadRecipient = firstColumn(thread, "recipient_id", "thread_recipient_id"); s.threadRecipient == "" {
 		return nil, fmt.Errorf("%w: thread.recipient_id is missing", ErrUnsupportedDatabase)

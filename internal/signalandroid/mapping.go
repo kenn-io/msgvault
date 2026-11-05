@@ -94,6 +94,16 @@ func normalizeACI(raw string) string {
 	return value
 }
 
+// normalizePNI accepts both the bare UUID and the PNI-prefixed format.
+func normalizePNI(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.TrimPrefix(value, "pni:")
+	if len(value) != 36 || uuid.Validate(value) != nil || value == "00000000-0000-0000-0000-000000000000" {
+		return ""
+	}
+	return value
+}
+
 // NormalizePhone returns the E.164 form of a phone number given with its
 // country code, or "" for anything else. Import uses it for --phone.
 func NormalizePhone(raw string) string {
@@ -116,7 +126,7 @@ func messageID(chatID, authorToken string, dateSent int64) string {
 // conversationIdentity maps a chat recipient to its source conversation ID
 // and type. ok is false for chats the importer does not read: legacy (v1)
 // and MMS groups, story distribution lists and call links.
-func conversationIdentity(r sigRecipient) (sourceConvID, convType string, ok bool) {
+func conversationIdentity(r sigRecipient, archived map[string]bool) (sourceConvID, convType string, ok bool) {
 	if r.GroupID != "" {
 		id, isV2 := groupV2Identifier(r.GroupID)
 		if !isV2 {
@@ -124,8 +134,17 @@ func conversationIdentity(r sigRecipient) (sourceConvID, convType string, ok boo
 		}
 		return groupPrefix + id, "group_chat", true
 	}
+	if r.ACI != "" && archived[directACIPrefix+r.ACI] {
+		return directACIPrefix + r.ACI, "direct_chat", true
+	}
+	if r.PNI != "" && archived[directPNIPrefix+r.PNI] {
+		return directPNIPrefix + r.PNI, "direct_chat", true
+	}
 	if r.ACI != "" {
 		return directACIPrefix + r.ACI, "direct_chat", true
+	}
+	if r.PNI != "" {
+		return directPNIPrefix + r.PNI, "direct_chat", true
 	}
 	return "", "", false
 }

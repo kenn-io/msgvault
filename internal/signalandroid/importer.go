@@ -111,6 +111,14 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	if err != nil {
 		return nil, fmt.Errorf("get or create source: %w", err)
 	}
+	conversationIDs, err := imp.store.ListSourceConversationIDsContext(ctx, source.ID)
+	if err != nil {
+		return nil, err
+	}
+	archived := make(map[string]bool, len(conversationIDs))
+	for _, id := range conversationIDs {
+		archived[id] = true
+	}
 	if opts.DisplayName != "" {
 		_ = imp.store.UpdateSourceDisplayName(source.ID, opts.DisplayName)
 	}
@@ -162,7 +170,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		if err := ctx.Err(); err != nil {
 			return r.summary, err
 		}
-		if err := r.importThread(ctx, thread); err != nil {
+		if err := r.importThread(ctx, thread, archived); err != nil {
 			return r.summary, err
 		}
 	}
@@ -320,9 +328,9 @@ func (r *run) limitReached() bool {
 	return r.opts.Limit > 0 && r.written >= int64(r.opts.Limit)
 }
 
-func (r *run) importThread(ctx context.Context, thread sigThread) error {
+func (r *run) importThread(ctx context.Context, thread sigThread, archived map[string]bool) error {
 	chat := r.recipients[thread.RecipientID]
-	sourceConvID, convType, ok := conversationIdentity(chat)
+	sourceConvID, convType, ok := conversationIdentity(chat, archived)
 	if !ok {
 		var count int64
 		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message WHERE thread_id = ? AND latest_revision_id IS NULL`, thread.ID).Scan(&count); err != nil {

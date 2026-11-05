@@ -319,7 +319,7 @@ func TestIdentifiers(t *testing.T) {
 	assert.Empty(normalizeACI("PNI:" + signalfixture.AliceACI))
 	assert.Empty(normalizeACI("00000000-0000-0000-0000-000000000000"))
 
-	_, _, ok = conversationIdentity(sigRecipient{})
+	_, _, ok = conversationIdentity(sigRecipient{}, nil)
 	assert.False(ok, "a distribution list or call link has no identity")
 }
 
