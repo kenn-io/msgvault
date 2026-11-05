@@ -78,6 +78,7 @@ func TestMeetingLinkRoutes(t *testing.T) {
 		{"invalid ref", "GET", "/meetings/suggestions?ref=msg:42@20270314", "", "", 400, nil},
 		{"invalid decision", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"split"}`, "", 400, nil},
 		{"invalid key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270230","decision":"link"}`, "", 400, nil},
+		{"prefixed key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@extra_20270314","decision":"link"}`, "", 400, nil},
 		{"missing", "GET", "/meetings/suggestions?ref=msg:42", "", "", 404, sql.ErrNoRows},
 		{"broad", "GET", "/meetings/suggestions?ref=msg:42", "", "", 400, store.ErrQueryTooBroad},
 		{"delegated read", "GET", "/meetings/suggestions?ref=msg:42", "", secret, 401, nil},
