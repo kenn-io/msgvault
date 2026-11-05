@@ -126,6 +126,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
+			old.InviteOrganizer = item.meta.InviteOrganizer
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
@@ -265,5 +266,10 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 		return fmt.Errorf("persist ICS event: %w", err)
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
+	if item.fromEmail {
+		if _, err := q.Exec(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?) ON CONFLICT DO NOTHING`, id); err != nil {
+			return fmt.Errorf("mark email-derived calendar event: %w", err)
+		}
+	}
 	return s.recomputeConversationStatsWith(q, "id = (SELECT conversation_id FROM messages WHERE id = ?)", id)
 }
