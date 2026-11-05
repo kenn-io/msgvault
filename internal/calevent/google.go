@@ -26,7 +26,7 @@ func googleInstant(value gcalmodel.EventDateTime, calendarZone string) (*time.Ti
 	}
 	loc := time.UTC
 	if zone != "" {
-		loc, err = time.LoadLocation(zone)
+		loc, err = calrecur.LoadZone(zone)
 		if err != nil {
 			return nil, fmt.Errorf("calendar time zone: %w", err)
 		}

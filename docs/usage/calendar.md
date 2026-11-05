@@ -43,7 +43,7 @@ Sync preserves each calendar resource and archives its events for search and `ms
 
 Attendees without a `mailto:` address keep their names, roles, and RSVPs. An `EMAIL` parameter supplies their email address when present.
 
-See [CalDAV configuration](../configuration.md#caldav-sources-unreleased) for supported time zones, resource skip rules, and duplicate UID handling.
+IANA and Windows zones work; see [CalDAV configuration](../configuration.md#caldav-sources-unreleased) for skip rules and duplicate UIDs.
 
 A skipped resource is retried only after it changes on the server or you run `msgvault sync-caldav <name> --full`.
 

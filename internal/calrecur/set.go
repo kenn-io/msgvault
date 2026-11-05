@@ -538,7 +538,7 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 			}
 		case "TZID":
 			var err error
-			loc, err = time.LoadLocation(val)
+			loc, err = LoadZone(val)
 			if err != nil {
 				return nil, "", fmt.Errorf("load recurrence time zone: %w", err)
 			}

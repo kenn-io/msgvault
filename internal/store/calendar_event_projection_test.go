@@ -94,6 +94,48 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	assertions.Empty(calendarRows(t, st, id))
 }
 
+func TestCalDAVProjectionWindowsTimeZone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
+	require.NoError(err)
+	const raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+		"UID:outlook@example.org\r\nSUMMARY:Planning\r\n" +
+		"DTSTART;TZID=\"Eastern Standard Time\":20270307T090000\r\nDURATION:PT1H\r\n" +
+		"RRULE:FREQ=WEEKLY;COUNT=2\r\n" +
+		"ATTENDEE;CN=Example Guest:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	id, err := st.PersistMessage(&MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "outlook", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "outlook", ConversationType: "calendar"},
+		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+		Metadata: &sql.NullString{String: `{"event_id":"[\"outlook@example.org\",\"\"]","account_email":"guest@example.org"}`, Valid: true},
+	})
+	require.NoError(err)
+	for _, tc := range []struct{ raw, start, body string }{
+		{raw, "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
+		{strings.ReplaceAll(raw, "20270307", "20270314"), "2027-03-14T13:00:00Z", "2027-03-14 09:00 - 2027-03-14 10:00"},
+	} {
+		require.NoError(st.UpsertMessageRawWithFormat(id, []byte(tc.raw), calevent.CalDAVRawFormat))
+		rows := calendarRows(t, st, id)
+		require.Len(rows, 1)
+		assert.Equal(tc.start, rows[0].Event.Start.UTC().Format(time.RFC3339))
+		require.Len(rows[0].Event.Attendees, 1)
+		assert.True(rows[0].Event.Attendees[0].IsCopySelf)
+		var body string
+		require.NoError(st.db.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, id).Scan(&body))
+		assert.Contains(body, tc.body)
+		assert.Contains(body, "Planning")
+		assert.Contains(body, "Example Guest")
+		from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+		require.NoError(err)
+		assert.Empty(page.Unexpandable)
+		require.Len(page.Occurrences, 2)
+		assert.Equal(tc.start, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	}
+}
+
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

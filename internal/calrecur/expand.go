@@ -51,10 +51,6 @@ func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occu
 		return Occurrence{}, unsupported("original identity", err)
 	}
 	o := Occurrence{Original: id, Start: start, AllDay: s.AllDay}
-	o.End, err = s.timedEnd(start, duration, durationDays)
-	if err != nil {
-		return Occurrence{}, unsupported("occurrence end", err)
-	}
 	if s.AllDay {
 		o.Start, _, err = s.instanceStart(start)
 		if err != nil {
@@ -68,6 +64,11 @@ func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occu
 		o.End, _, err = CivilDateBoundary(o.EndDate, s.location())
 		if err != nil {
 			return Occurrence{}, unsupported("occurrence end date", err)
+		}
+	} else {
+		o.End, err = s.timedEnd(start, duration, durationDays)
+		if err != nil {
+			return Occurrence{}, unsupported("occurrence end", err)
 		}
 	}
 	return o, nil
@@ -250,10 +251,7 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if ctx.Err() != nil {
 			return false
 		}
-		candidate, err := s.timedEnd(start, duration, durationDays)
-		if err != nil {
-			return false
-		}
+		var candidate time.Time
 		if s.AllDay {
 			endDate, err := AddCivilDateDays(start.UTC().Format(dateLayout), durationDays)
 			if err != nil {
@@ -264,6 +262,12 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 				return false
 			}
 			candidate = candidate.Add(14 * time.Hour)
+		} else {
+			var err error
+			candidate, err = s.timedEnd(start, duration, durationDays)
+			if err != nil {
+				return false
+			}
 		}
 		if candidate.After(end) {
 			end = candidate

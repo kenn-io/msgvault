@@ -59,7 +59,8 @@ type CalDAVEvent struct {
 	Description, Location, OrganizerEmail string
 }
 
-func decodeCalDAVItem(raw, metadata []byte, calendarZone string) (CalDAVEvent, bool, error) {
+// DecodeCalDAV selects a component from its archived resource and metadata.
+func DecodeCalDAV(raw, metadata []byte, calendarZone string) (CalDAVEvent, bool, error) {
 	var meta CalDAVMetadata
 	if len(metadata) > 0 {
 		if err := json.Unmarshal(metadata, &meta); err != nil {
@@ -118,7 +119,7 @@ func ParseCalDAVResource(ctx context.Context, raw []byte, calendarZone string) (
 	}
 	zone := time.UTC
 	if calendarZone != "" {
-		zone, err = time.LoadLocation(calendarZone)
+		zone, err = calrecur.LoadZone(calendarZone)
 		if err != nil {
 			return nil, fmt.Errorf("CalDAV calendar zone: %w", err)
 		}
@@ -310,7 +311,7 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			v.Value = strings.ToUpper(v.Value)
 			if (name == "RDATE" || name == "EXDATE") && v.Params.Get("TZID") != "" {
 				if strings.EqualFold(v.Params.Get("VALUE"), "PERIOD") {
-					if _, err := time.LoadLocation(v.Params.Get("TZID")); err != nil {
+					if _, err := calrecur.LoadZone(v.Params.Get("TZID")); err != nil {
 						return item, fmt.Errorf("CalDAV time zone: %w", err)
 					}
 				} else {
@@ -469,7 +470,7 @@ func calDAVDurationEnd(start time.Time, value string, allDay bool) (time.Time, i
 func calDAVDateTime(p *ical.Prop, zone *time.Location) (time.Time, error) {
 	if name := p.Params.Get("TZID"); name != "" {
 		var err error
-		zone, err = time.LoadLocation(name)
+		zone, err = calrecur.LoadZone(name)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("CalDAV time zone: %w", err)
 		}
@@ -486,18 +487,4 @@ func calDAVDateTime(p *ical.Prop, zone *time.Location) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return local, nil
-}
-
-func decodeCalDAV(raw, metadata []byte, calendarZone string) (Event, bool, error) {
-	item, ok, err := decodeCalDAVItem(raw, metadata, calendarZone)
-	return item.Event, ok, err
-}
-
-// CalDAVMessageEvent renders the selected component from its archived snapshot.
-func CalDAVMessageEvent(raw, metadata []byte, calendarZone string) (gcalmodel.Event, error) {
-	item, _, err := decodeCalDAVItem(raw, metadata, calendarZone)
-	if err != nil {
-		return gcalmodel.Event{}, err
-	}
-	return item.MessageEvent()
 }

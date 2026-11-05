@@ -1504,7 +1504,7 @@ cannot redirect credentials to another origin.
 
 Changing `time_zone` refreshes archived event times on the next sync while preserving message IDs and history. Floating recurrence identities use their literal local values, independently of the configured zone.
 
-`TZID` values resolve by IANA name without interpreting embedded `VTIMEZONE` definitions; non-IANA names, including Windows names, cause a reported resource skip.
+`TZID` accepts IANA and Windows names; unknown names cause a reported resource skip, and embedded `VTIMEZONE` definitions aren't interpreted.
 UTC times are supported. `Local` is rejected because it depends on the daemon host's
 timezone and can change event times when that host changes zones. A resource
 that isn't iCalendar 2.0, uses an unsupported time zone or `RANGE=THISANDFUTURE`,

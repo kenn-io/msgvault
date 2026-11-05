@@ -13,14 +13,30 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func init() { rootCmd.AddCommand(newSyncCalDAVCmd()) }
+func init() {
+	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncCalDAVCmd()))
+}
+
 func newSyncCalDAVCmd() *cobra.Command {
-	var full bool
-	cmd := &cobra.Command{Use: "sync-caldav <name>", Short: "Archive CalDAV events", Args: cobra.ExactArgs(1)}
+	cmd := newSyncCalDAVLocalCmd()
+	runLocal := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
+		return runLocal(cmd, args)
+	}
+	return cmd
+}
+
+func newSyncCalDAVLocalCmd() *cobra.Command {
+	var full bool
+	cmd := &cobra.Command{
+		Use:   "sync-caldav <name>",
+		Short: "Archive CalDAV events",
+		Args:  cobra.ExactArgs(1),
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration is unavailable")
@@ -58,5 +74,5 @@ func newSyncCalDAVCmd() *cobra.Command {
 		return recordSyncAttempt(cmd.Context(), calevent.CalDAVSourceType, source.Name, syncErr)
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "resync all events")
-	return addManualSyncCacheFlags(cmd)
+	return cmd
 }
