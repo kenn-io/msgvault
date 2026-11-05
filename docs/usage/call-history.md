@@ -61,7 +61,7 @@ messages. Original provider JSON remains in the archive's original-message
 storage, outside the list response.
 
 Undated Google Voice calls are left out of `calls list` and `calls summary`.
-Imported calls are searchable by their call text.
+Imported calls are searchable by their call text. Withdrawn calls aren't searchable.
 
 `calls summary` ranks current durable people by answered count, then person ID.
 Unbound participants remain visible in evidence but have no guessed person.

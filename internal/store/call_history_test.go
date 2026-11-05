@@ -96,10 +96,50 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	require.NoError(err)
 	require.Equal(id, again)
+	var subject, snippet, title string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
+	assert.Empty(subject)
+	assert.Empty(snippet)
+	assert.Empty(title)
+	body, err := st.GetMessageBodyTextContext(t.Context(), id)
+	require.NoError(err)
+	assert.Empty(body)
 	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
 	require.NoError(err)
 	assert.Zero(total, "withdrawn calls leave archive search")
 	assert.Empty(matches)
+	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("subject:incoming"), 0, 10)
+	require.NoError(err)
+	assert.Zero(total, "withdrawn calls leave subject search")
+	assert.Empty(matches)
+	_, err = st.RebuildFTSContext(t.Context(), nil)
+	require.NoError(err)
+	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	require.NoError(err)
+	assert.Zero(total, "rebuilding search keeps withdrawn calls absent")
+	assert.Empty(matches)
+}
+
+func TestListCallObservationsRejectsUnsupportedEvidenceVersion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := storetest.New(t).Store
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(err)
+	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(err)
+	// Simulate evidence saved by a newer writer, bypassing current write validation.
+	o.Version = 2
+	metadata, err := json.Marshal(o.Evidence)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
+	require.NoError(err)
+	_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	assert.ErrorIs(err, callhistory.ErrInvalid)
 }
 
 func TestCallReimportPreservesLabels(t *testing.T) {

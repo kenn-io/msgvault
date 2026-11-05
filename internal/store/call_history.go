@@ -15,9 +15,6 @@ var ErrCallObservationWithdrawn = errors.New("call observation was withdrawn")
 // PutCallObservationContext replaces one source observation atomically. It
 // never resolves a person by name or infers participants from a chat roster.
 func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o callhistory.Observation) (int64, error) {
-	if err := o.Validate(); err != nil {
-		return 0, err
-	}
 	// Source locking serializes absent-row creation as well as later updates.
 	// The identity lock held by persistence also orders participant merges.
 	before := func(ctx context.Context, tx *loggedTx) error {
@@ -53,6 +50,12 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		}
 		if withdrawn && !o.Withdrawn {
 			return ErrCallObservationWithdrawn
+		}
+		if o.Withdrawn {
+			// Conversation upserts preserve existing titles when given empty text.
+			if _, err := tx.ExecContext(ctx, `UPDATE conversations SET title = '' WHERE source_id = ? AND source_conversation_id = ?`, sourceID, o.RecordID); err != nil {
+				return fmt.Errorf("clear withdrawn call title: %w", err)
+			}
 		}
 		return nil
 	}
@@ -104,6 +107,9 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	}
 	if o.DurationSeconds != nil {
 		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
+	}
+	if o.Withdrawn {
+		text = ""
 	}
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
 		before, nil, func([]int64) *MessagePersistData {
