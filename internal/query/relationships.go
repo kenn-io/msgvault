@@ -331,10 +331,10 @@ relationship_interactions AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind = 'meeting' AND p.with_owner
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	           WHEN p.entry_kind = 'meeting' AND p.with_owner
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityMeeting), 10) + `::UTINYINT
 	           WHEN p.entry_kind = 'conversation'
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityChat), 10) + `::UTINYINT
@@ -344,7 +344,7 @@ relationship_interactions AS (
 	       END AS modality_mask,
 	       exp(-? * greatest(
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
-	FROM (` + identityindex.DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", e.parquetPath("meeting_keys"), "entry_num") + `) p
+	FROM (` + identityindex.DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind <> 'meeting')", e.parquetPath("meeting_keys"), "entry_num") + `) p
 	WHERE NOT p.is_owner
 ), aggregated AS (
 	SELECT canonical_id,

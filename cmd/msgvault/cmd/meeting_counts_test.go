@@ -209,27 +209,72 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 	requirements.NoError(err)
 	person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
 	requirements.NoError(err)
+	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "explicit"))
+	declined, err := st.EnsureParticipant("declined@example.test", "Declined", "example.test")
+	requirements.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "declined", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "declined", ConversationType: "calendar"},
+		RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"declined","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"declined@example.test","responseStatus":"declined"}]}`),
+		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, declined}}},
+	})
+	requirements.NoError(err)
 	const eventRaw = `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00","timeZone":%q},"end":{"dateTime":"2027-03-14T11:00:00","timeZone":%q},"recurrence":%s}`
 	original := fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
 	event, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
 		RawFormat:    "gcal_json", RawMIME: []byte(original),
-		Metadata: &sql.NullString{String: `{"ical_uid":"series@example.test"}`, Valid: true},
+		Metadata:   &sql.NullString{String: `{"ical_uid":"series@example.test"}`, Valid: true},
+		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, person}}},
 	})
 	requirements.NoError(err)
 	for _, id := range []string{"first", "second"} {
 		_, err = st.PersistMessage(&store.MessagePersistData{
 			Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
 			Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: "meeting"},
-			RawFormat:    "twenty_json", RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-14T10:00:00Z"}}`),
-			Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{person}}},
+			RawFormat:    "twenty_json", RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-21T10:00:00Z"}}`),
+			Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, person}}},
 		})
 		requirements.NoError(err)
 	}
 	cache := filepath.Join(t.TempDir(), "analytics")
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
+	engine, err := query.NewDuckDBEngine(cache, "", nil)
+	requirements.NoError(err)
+	temperatureDB, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	defer func() { requirements.NoError(temperatureDB.Close()) }()
+	for _, attendance := range []struct {
+		person int64
+		want   int64
+	}{{person, 1}, {declined, 0}} {
+		for _, scope := range []query.Context{{}, {ParticipantIDs: []int64{attendance.person}}} {
+			result, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: scope, ShowAll: true, Now: time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)})
+			requirements.NoError(err)
+			var meetings int64
+			for _, row := range result.Rows {
+				if row.CanonicalID == attendance.person {
+					meetings += row.Signals.MeetingCount
+				}
+			}
+			assert.Equal(t, attendance.want, meetings, "attendance for person %d", attendance.person)
+		}
+		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: attendance.person, Year: 2026, Timezone: "UTC"})
+		requirements.NoError(err)
+		var calendarMeetings int64
+		for _, day := range calendar.Days {
+			calendarMeetings += day.Meetings
+		}
+		assert.Equal(t, attendance.want, calendarMeetings)
+		var temperatureMeetings int64
+		requirements.NoError(temperatureDB.QueryRow(`SELECT coalesce(sum(meeting_count), 0) FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(cache, identityindex.DatasetTemperatureContributions, "*.parquet"), attendance.person).Scan(&temperatureMeetings))
+		assert.Equal(t, attendance.want, temperatureMeetings)
+	}
+	requirements.NoError(engine.Close())
 	for _, step := range []struct {
 		name, raw, uid string
 		want           int64
@@ -237,7 +282,7 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 		{"baseline", original, "series@example.test", 1},
 		{"projection removed", `{}`, "series@example.test", 2},
 		{"restored after projection removal", original, "series@example.test", 1},
-		{"EXDATE", fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270314T100000Z"]`), "series@example.test", 2},
+		{"EXDATE", fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`), "series@example.test", 2},
 		{"restored after EXDATE", original, "series@example.test", 1},
 		{"zone", fmt.Sprintf(eventRaw, "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`), "series@example.test", 2},
 		{"restored after zone", original, "series@example.test", 1},
@@ -253,7 +298,7 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 			engine, err := query.NewDuckDBEngine(cache, "", nil)
 			requirements.NoError(err)
 			defer func() { requirements.NoError(engine.Close()) }()
-			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{})
+			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "person@example.test"})
 			requirements.NoError(err)
 			requirements.Len(people.Rows, 1)
 			assert.Equal(t, step.want, people.Rows[0].MeetingCount)

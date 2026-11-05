@@ -106,17 +106,12 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 				id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
-				key := "uid:shared@example.org/"
-				if i == 4 {
-					key = "uid:unlinked@example.org/"
+				if kind == "meeting_transcript" {
+					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 				}
-				b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 			}
 			engine := b.BuildEngine()
 			want := int64(1)
-			if unlinkedCalendar {
-				want++
-			}
 			for _, scope := range []Context{{}, {SourceIDs: []int64{first, second}, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: at.Add(time.Hour)})
 				require.NoError(err)
@@ -149,17 +144,15 @@ func TestRelationshipCalendarEventAndTranscriptAcrossYears(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
-		key := "uid:calendar@example.org/"
 		if kind == "meeting_transcript" {
-			key = "uid:shared@example.org/"
+			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 		}
-		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {
 		year int
 		want int64
-	}{{2024, 1}, {2025, 1}} {
+	}{{2024, 0}, {2025, 1}} {
 		calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
 		requirements.NoError(err)
 		var meetings int64
@@ -170,5 +163,5 @@ func TestRelationshipCalendarEventAndTranscriptAcrossYears(t *testing.T) {
 	}
 	var temperatureMeetings int64
 	requirements.NoError(engine.db.QueryRow(`SELECT sum(meeting_count) FROM read_parquet(?) WHERE canonical_id = ?`, engine.parquetPath(identityindex.DatasetTemperatureContributions), person).Scan(&temperatureMeetings))
-	assertions.Equal(int64(2), temperatureMeetings)
+	assertions.Equal(int64(1), temperatureMeetings)
 }

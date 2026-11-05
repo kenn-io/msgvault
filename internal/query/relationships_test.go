@@ -41,7 +41,7 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 	}
 
 	// One meeting together (owner + A).
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -2)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -2)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, aID, "Alice")
 
@@ -354,7 +354,7 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 	otherID := b.AddParticipant("x@example.com", "example.com", "X")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -1)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -1)})
 	b.AddFrom(meetingID, ownerAliasID, "Owner Alias")
 	b.AddTo(meetingID, otherID, "X")
 
@@ -629,7 +629,7 @@ func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
 	b.AddFrom(emailID, ownerID, "Owner")
 	b.AddTo(emailID, xID, "X")
 
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event", SentAt: now.AddDate(0, 0, -1)})
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: now.AddDate(0, 0, -1)})
 	b.AddFrom(meetingID, xID, "X")
 	b.AddTo(meetingID, yID, "Y")
 
@@ -658,10 +658,10 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	b.AddOwnerParticipant(srcID, ownerID)
 	xID := b.AddParticipant("x@example.com", "example.com", "X")
 
-	// An upcoming meeting a year out has a negative age; its decay weight
+	// A transcript dated a year out has a negative age; its decay weight
 	// must clamp at exp(0) = 1, not grow to exp(+rate*365).
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event",
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript",
 		SentAt: now.AddDate(1, 0, 0)})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, xID, "X")
@@ -708,7 +708,7 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 	meetingAt := time.Date(2026, 1, 4, 16, 45, 12, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID:    sourceID,
-		MessageType: "calendar_event",
+		MessageType: "meeting_transcript",
 		SentAt:      meetingAt,
 	})
 	b.AddFrom(meeting, ownerID, "Owner")

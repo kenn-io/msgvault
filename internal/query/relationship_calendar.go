@@ -249,7 +249,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	cutoff := effectiveAt.UTC()
 	activity := fmt.Sprintf(`(
 		SELECT * FROM relationship_activity_expanded
-		WHERE entry_kind NOT IN ('event','meeting')
+		WHERE entry_kind <> 'meeting'
 		  AND occurred_year IN (%s)
 		  AND occurred_at >= TIMESTAMP '%s'
 		  AND occurred_at < TIMESTAMP '%s'
@@ -260,7 +260,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		  )
 		UNION ALL
 		SELECT * FROM relationship_activity_expanded
-		WHERE entry_kind IN ('event','meeting')
+		WHERE entry_kind = 'meeting'
 		  AND canonical_id IN (%s)
 		  AND message_id IN (
 		    SELECT message_id FROM relationship_activity_expanded
