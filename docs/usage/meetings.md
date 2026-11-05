@@ -976,47 +976,57 @@ setting. A sleeping recorder cannot sync; allow for that when choosing retention
 Archived copies survive Hex's expiry and source deletion. Shutdown or offline
 time beyond retention can lose calls that have never synced.
 
-Every scan revisits stopped meetings so edits update the archive. If a transcript
-vanishes or becomes unreadable after archival, the previous complete snapshot is
-retained with a warning, including during `--full`. The same protection applies
-when complete transcript lines are malformed; first imports retain the readable
-salvage and mark it partial. A final transcript never regresses to rolling
-evidence. Notes edits wait for a readable replacement in
-those cases. Metadata-only first imports and updates remain supported. Held or
-unreadable `active.lock` files defer a folder. Stale recording states are
-classified in memory using Hex's recovery rules; msgvault never repairs or
-changes source files. Final NDJSON alone counts as publication, including while
-Markdown is pending; rolling NDJSON is retained
-when final text is absent. Unterminated last lines are ignored, and malformed
-complete lines or bad folders count as source warnings. Unsupported source
-schema versions are skipped. Interrupted, failed and metadata-only records
-remain searchable, with absent notes and transcript explicitly represented.
+Scans revisit stopped meetings so edits update the archive:
 
-Hex's display title becomes the searchable subject: user, call and calendar titles
-win; default titles yield to the notes title, then provisional title. All title
-evidence, the notes summary and chapters are preserved. Changing the recorder
-time zone does not retitle an unchanged archived meeting. Calendar attendee strings remain context evidence. Only explicit valid email strings
-become recipients; names never identify people. `account_email` is the organizer.
-Transcript offsets keep the source's **You** and **Them** labels; **Them** can
-represent several people. Duration uses provider timing when present; otherwise
-the time between the first transcript start and the last end is labeled an
-observed transcript-span estimate, which may cover less than the whole meeting.
-Hex has no structured action items, so action coverage is unsupported in the
-existing meeting CLI, HTTP and MCP queries.
+- If transcript input disappears, cannot be read, or contains malformed lines
+  or a non-whitespace unfinished tail, the earlier readable snapshot stays
+  searchable. This also applies to `--full`; notes edits wait for a readable
+  replacement in these cases.
+- First imports keep complete readable entries from incomplete input and mark
+  them partial. Clean shorter or empty final transcripts can replace old text.
+- Final NDJSON alone counts as publication, including while Markdown is pending.
+  Rolling NDJSON is retained when the final file is absent. A final archived
+  transcript never regresses to rolling evidence.
+- Held or unreadable `active.lock` files defer the folder. Stale recording states
+  are classified in memory; msgvault never repairs or changes Hex files.
+- Invalid folders and unsupported source versions produce warnings. Interrupted,
+  failed and metadata-only meetings remain searchable, with absent evidence
+  represented explicitly. Whitespace-only transcript tails are harmless.
 
-For same-host capture, keep the daemon running and set `enabled = true` and a
-five-field `schedule` in `[[hex]]`. For a remote recorder, keep `msgvault sync-hex --watch` running on
-that computer. The watcher performs an initial scan and serial scheduled rescans.
-It retries file and network failures on the next scan; rejected credentials or
-an incompatible daemon stop it. Hex has no executable completion hook.
+The searchable subject uses Hex's **base title**: user, call and calendar titles
+win; default titles yield to the notes title, then provisional title. Chapter
+titles remain separately searchable in the body; msgvault does not append Hex's
+chapter decoration to the subject. All title evidence, notes and chapters are
+preserved. Changing the recorder time zone does not retitle an unchanged archive.
+
+Calendar attendee strings remain context evidence. Only explicit valid email
+strings become recipients; names never identify people. `account_email` is the
+organizer. Transcript offsets keep the source's **You** and **Them** labels;
+**Them** can represent several people.
+
+Duration uses provider timing when present. Otherwise, the time between the
+first transcript start and last end is an observed transcript-span estimate,
+which may cover less than the whole meeting. Hex has no structured action items,
+so action coverage is unsupported in the existing meeting CLI, HTTP and MCP queries.
+
+Keep capture running before Hex expires meetings:
+
+- For same-host capture, keep the daemon running and set `enabled = true` and
+  a five-field `schedule` in `[[hex]]`.
+- For a remote recorder, keep `msgvault sync-hex --watch` running on that computer.
+  It scans initially and then follows enabled schedules serially. File and network
+  failures retry on the next scan; rejected credentials or an incompatible daemon
+  stop it. Hex has no executable completion hook.
 
 Audio is off by default. Set `recordings = true` to retain `system.wav` and
-`microphone.wav` as separate attachments, without mixing or transcoding.
-Missing, empty, recent or changing audio waits for a later scan while text is archived.
-Each track retries independently. The recorder and daemon default to 4 GiB per
-track; raise `recording_max_bytes` and `[server].hex_recording_max_bytes` together
-if necessary. Source paths and filenames are never sent. `--full` reoffers text
-and audio after an archive rollback; re-running `add-hex` resets upload receipts.
+`microphone.wav` as separate attachments, without mixing or transcoding:
+
+- Missing, empty, recent or changing audio waits while text is archived.
+  Each track retries independently.
+- The recorder and daemon default to 4 GiB per track. Raise
+  `recording_max_bytes` and `[server].hex_recording_max_bytes` together if needed.
+- Source paths and filenames stay on the recorder. `--full` reoffers text and
+  audio after an archive rollback; re-running `add-hex` resets upload receipts.
 
 ## Muesli
 

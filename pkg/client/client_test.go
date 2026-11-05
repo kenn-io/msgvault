@@ -1588,14 +1588,15 @@ func TestImportHexSuccessStatuses(t *testing.T) {
 
 // Adding Hex enums must preserve the generated Muesli client's typed exports.
 func TestHexEnumsPreserveMuesliClientExports(t *testing.T) {
+	require := require.New(t)
 	actions := []generated.MuesliRemoteRequestAction{generated.Register, generated.Upsert, generated.Refresh}
 	for _, action := range actions {
-		require.NoError(t, action.Validate())
+		require.NoError(action.Validate())
 	}
 	statuses := []generated.MuesliRemoteResultStatus{generated.Registered, generated.Created, generated.Updated, generated.Unchanged, generated.Refreshed}
 	for _, status := range statuses {
-		require.NoError(t, status.Validate())
+		require.NoError(status.Validate())
 	}
-	require.NoError(t, generated.HexRemoteRequestActionRegister.Validate())
-	require.NoError(t, generated.HexRemoteResultStatusCreated.Validate())
+	require.NoError(generated.HexRemoteRequestActionRegister.Validate())
+	require.NoError(generated.HexRemoteResultStatusCreated.Validate())
 }

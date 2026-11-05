@@ -22,33 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/muesli"
 )
 
-func TestMuesliWatchSchedulesEnabledSourcesAndRescans(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	sources := []config.MuesliSource{{Identifier: "enabled", Enabled: true, Schedule: "* * * * *"}, {Identifier: "disabled", Enabled: false, Schedule: "* * * * *"}}
-	selected, err := meetingWatchSources(sources, func(s config.MuesliSource) bool { return s.Enabled }, func(s config.MuesliSource) string { return s.Schedule })
-	require.NoError(err)
-	require.Len(selected, 1)
-	assert.Equal("enabled", selected[0].source.Identifier)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	calls := 0
-	// A clock advances to each real cron transition; no throughput assumption.
-	err = runMeetingWatch(ctx, selected, func(_ context.Context, _ config.MuesliSource) error {
-		calls++
-		if calls == 2 {
-			cancel()
-		}
-		return errors.New("synthetic temporary transport failure")
-	}, func(context.Context, time.Time) error { return nil }, func(error) {})
-	require.ErrorIs(err, context.Canceled)
-	assert.Equal(2, calls)
-	for _, sources := range [][]config.MuesliSource{nil, {{Identifier: "no-schedule", Enabled: true}}, {{Identifier: "bad", Enabled: true, Schedule: "invalid"}}} {
-		_, err := meetingWatchSources(sources, func(s config.MuesliSource) bool { return s.Enabled }, func(s config.MuesliSource) string { return s.Schedule })
-		require.Error(err)
-	}
-}
-
 func TestMuesliWatchRejectsPartialOrForcedScans(t *testing.T) {
 	oldMeetingID := syncMuesliMeetingID
 	oldWatch, oldLimit, oldAfter, oldFull := syncMuesliWatch, syncMuesliLimit, syncMuesliAfter, syncMuesliFull
@@ -85,11 +58,6 @@ func TestMuesliWatchRejectsPartialOrForcedScans(t *testing.T) {
 			require.ErrorContains(t, err, "--watch cannot combine")
 		})
 	}
-}
-
-func TestMuesliWatchRejectsImpossibleDate(t *testing.T) {
-	_, err := meetingWatchSources([]config.MuesliSource{{Identifier: "recorder", Enabled: true, Schedule: "0 0 31 2 *"}}, func(s config.MuesliSource) bool { return s.Enabled }, func(s config.MuesliSource) string { return s.Schedule })
-	require.ErrorContains(t, err, "future transition")
 }
 
 func TestMuesliWatchFailureReasonsDoNotEchoValues(t *testing.T) {

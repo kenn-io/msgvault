@@ -19,39 +19,45 @@ import (
 )
 
 func TestRecordingConfinementAndImmutableSnapshot(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	_, _, opts := importFixture(t)
 	dir := fixtureMeeting(t, opts.MeetingsDir, "audio", "complete")
 	m := Meeting{Manifest: Manifest{ID: "audio"}}
 	writeTrack(t, dir, "system")
 	r, err := prepareTrack(t.Context(), opts, m, "system")
-	require.NoError(t, err)
-	require.NotNil(t, r)
+	must.NoError(err)
+	must.NotNil(r)
 	defer func() { _ = r.Close() }()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "system.wav"), []byte("changed source"), 0600))
+	must.NoError(os.WriteFile(filepath.Join(dir, "system.wav"), []byte("changed source"), 0600))
 	data, err := io.ReadAll(r.File)
-	require.NoError(t, err)
-	assert.Equal(t, testutil.RecordingWAV(), data)
+	must.NoError(err)
+	check.Equal(testutil.RecordingWAV(), data)
 	// A symlink cannot redirect retained audio out of the meeting root.
 	outside := filepath.Join(t.TempDir(), "outside.wav")
-	require.NoError(t, os.WriteFile(outside, testutil.RecordingWAV(), 0600))
+	must.NoError(os.WriteFile(outside, testutil.RecordingWAV(), 0600))
 	old := time.Now().Add(-time.Minute)
-	require.NoError(t, os.Chtimes(outside, old, old))
-	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "microphone.wav")))
+	must.NoError(os.Chtimes(outside, old, old))
+	must.NoError(os.Symlink(outside, filepath.Join(dir, "microphone.wav")))
 	deferred, err := prepareTrack(t.Context(), opts, m, "microphone")
-	require.NoError(t, err)
-	assert.Nil(t, deferred)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "system.wav"), testutil.RecordingWAV(), 0600))
+	must.NoError(err)
+	check.Nil(deferred)
+	must.NoError(os.WriteFile(filepath.Join(dir, "system.wav"), testutil.RecordingWAV(), 0600))
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, os.Chtimes(filepath.Join(dir, "system.wav"), future, future))
+	must.NoError(os.Chtimes(filepath.Join(dir, "system.wav"), future, future))
 	deferred, err = prepareTrack(t.Context(), opts, m, "system")
-	require.NoError(t, err)
-	assert.Nil(t, deferred, "recent audio waits")
+	must.NoError(err)
+	check.Nil(deferred, "recent audio waits")
 }
 func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	st, imp, opts := importFixture(t)
 	fixtureMeeting(t, opts.MeetingsDir, "upload", "failed")
 	sum, err := imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	must.NoError(err)
 	id := messageID(t, st, sum.SourceID, "upload")
 	data := testutil.RecordingWAV()
 	digest := sha256.Sum256(data)
@@ -70,15 +76,17 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 		{"cap", func(*RecordingUpload) {}, data, 8},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			must := require.New(t)
+
 			u := upload
 			tt.mutate(&u)
 			r, err := StageRecordingUpload(t.Context(), u, bytes.NewReader(tt.data), tt.cap)
 			if tt.name == "valid" {
-				require.NoError(t, err)
-				require.NotNil(t, r)
-				require.NoError(t, r.Close())
+				must.NoError(err)
+				must.NotNil(r)
+				must.NoError(r.Close())
 			} else {
-				require.Error(t, err)
+				must.Error(err)
 				assert.Nil(t, r)
 			}
 		})
@@ -86,22 +94,25 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 	wrong := upload
 	wrong.Source.AccountEmail = "other@example.com"
 	_, err = imp.ImportRecording(t.Context(), wrong, opts.AttachmentsDir, bytes.NewReader(data), 0)
-	assert.ErrorIs(t, err, ErrRemoteValidation)
+	must.ErrorIs(err, ErrRemoteValidation)
 	other, err := st.GetOrCreateSource(SourceType, "other")
-	require.NoError(t, err)
-	require.NoError(t, st.AddAccountIdentityContext(t.Context(), other.ID, opts.AccountEmail, "account-email"))
+	must.NoError(err)
+	must.NoError(st.AddAccountIdentityContext(t.Context(), other.ID, opts.AccountEmail, "account-email"))
 	wrong = upload
 	wrong.Source.Identifier = "other"
 	_, err = imp.ImportRecording(t.Context(), wrong, opts.AttachmentsDir, bytes.NewReader(data), 0)
-	assert.ErrorIs(t, err, ErrRemoteRecordValidation)
+	must.ErrorIs(err, ErrRemoteRecordValidation)
 	_, err = imp.ImportRecording(t.Context(), upload, opts.AttachmentsDir, bytes.NewReader(data[:len(data)-1]), 0)
-	require.Error(t, err)
+	must.Error(err)
 	refs, err := st.MessageAttachmentsByPartKeyContext(t.Context(), id, "hex:system")
-	require.NoError(t, err)
-	assert.Empty(t, refs, "truncated audio publishes no attachment")
+	must.NoError(err)
+	check.Empty(refs, "truncated audio publishes no attachment")
 }
 
 func TestHeaderOnlyTracksWaitForSamples(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	st, imp, opts := importFixture(t)
 	dir := fixtureMeeting(t, opts.MeetingsDir, "empty-tracks", "complete")
 	fixtureTranscript(t, dir)
@@ -110,28 +121,28 @@ func TestHeaderOnlyTracksWaitForSamples(t *testing.T) {
 	binary.LittleEndian.PutUint32(empty[40:], 0)
 	for _, track := range []string{"system", "microphone"} {
 		path := filepath.Join(dir, track+".wav")
-		require.NoError(t, os.WriteFile(path, empty, 0600))
+		must.NoError(os.WriteFile(path, empty, 0600))
 		old := time.Now().Add(-time.Minute)
-		require.NoError(t, os.Chtimes(path, old, old))
+		must.NoError(os.Chtimes(path, old, old))
 	}
 	opts.Recordings = true
 	sum, err := imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	must.NoError(err)
 	id := messageID(t, st, sum.SourceID, "empty-tracks")
 	message, err := st.GetMessage(id)
-	require.NoError(t, err)
-	assert.Empty(t, message.Attachments)
-	assert.Equal(t, int64(2), sum.RecordingsSkipped)
+	must.NoError(err)
+	check.Empty(message.Attachments)
+	check.Equal(int64(2), sum.RecordingsSkipped)
 	_, err = imp.ImportRemote(t.Context(), RemoteRequest{Action: "register", Source: meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}})
-	require.NoError(t, err)
+	must.NoError(err)
 	sum, err = ScanRemote(t.Context(), opts, imp.ImportRemote)
-	require.NoError(t, err, "empty tracks need no recording transport")
-	assert.Equal(t, int64(2), sum.RecordingsSkipped)
+	must.NoError(err, "empty tracks need no recording transport")
+	check.Equal(int64(2), sum.RecordingsSkipped)
 	writeTrack(t, dir, "system")
 	writeTrack(t, dir, "microphone")
 	_, err = imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	must.NoError(err)
 	message, err = st.GetMessage(id)
-	require.NoError(t, err)
-	assert.Len(t, message.Attachments, 2, "identical populated tracks remain separate")
+	must.NoError(err)
+	check.Len(message.Attachments, 2, "identical populated tracks remain separate")
 }

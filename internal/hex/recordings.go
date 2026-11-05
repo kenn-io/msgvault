@@ -72,6 +72,8 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	}
 	return changed, err
 }
+
+//nolint:nilnil // Optional empty tracks are deferred without failing transcript sync.
 func prepareTrack(ctx context.Context, opts ImportOptions, m Meeting, track string) (*meetingarchive.Recording, error) {
 	r, err := meetingarchive.PrepareRecording(ctx, opts.MeetingsDir, filepath.Join(m.Manifest.ID, track+".wav"), opts.RecordingMaxBytes)
 	if r != nil && !trackHasSamples(r) {

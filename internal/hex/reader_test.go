@@ -21,65 +21,100 @@ func fixtureMeeting(t *testing.T, root, id, status string) string {
 	return dir
 }
 func TestReaderRecoveryAndWarnings(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	root := t.TempDir()
 	final := fixtureMeeting(t, root, "a-final", "transcribing")
-	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.ndjson"), []byte(" \t\n{\"source\":\"microphone\",\"start_ms\":1500,\"end_ms\":2000,\"text\":\"Final words\"}\ninvalid\n{\"source\":\"system\"}"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.md"), []byte("published"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.rolling.ndjson"), []byte("ignored\n"), 0600))
+	must.NoError(os.WriteFile(filepath.Join(final, "transcript.ndjson"), []byte(" \t\n{\"source\":\"microphone\",\"start_ms\":1500,\"end_ms\":2000,\"text\":\"Final words\"}\ninvalid\n{\"source\":\"system\"}"), 0600))
+	must.NoError(os.WriteFile(filepath.Join(final, "transcript.md"), []byte("published"), 0600))
+	must.NoError(os.WriteFile(filepath.Join(final, "transcript.rolling.ndjson"), []byte("ignored\n"), 0600))
 	rolling := fixtureMeeting(t, root, "b-rolling", "recording")
-	require.NoError(t, os.WriteFile(filepath.Join(rolling, "transcript.rolling.ndjson"), []byte("{\"covered_ms\":{\"system\":1000}}\n{\"source\":\"system\",\"start_ms\":0,\"end_ms\":1000,\"text\":\"Rolling words\"}\n"), 0600))
+	must.NoError(os.WriteFile(filepath.Join(rolling, "transcript.rolling.ndjson"), []byte("{\"covered_ms\":{\"system\":1000}}\n{\"source\":\"system\",\"start_ms\":0,\"end_ms\":1000,\"text\":\"Rolling words\"}\n"), 0600))
 	fixtureMeeting(t, root, "c-empty", "failed")
 	bad := fixtureMeeting(t, root, "d-bad", "complete")
-	require.NoError(t, os.WriteFile(filepath.Join(bad, "manifest.json"), []byte(`{"schema_version":2,"id":"d-bad"}`), 0600))
+	must.NoError(os.WriteFile(filepath.Join(bad, "manifest.json"), []byte(`{"schema_version":2,"id":"d-bad"}`), 0600))
 	mismatch := fixtureMeeting(t, root, "e-mismatch", "failed")
-	require.NoError(t, os.WriteFile(filepath.Join(mismatch, "manifest.json"), []byte(`{"schema_version":1,"id":"elsewhere"}`), 0600))
+	must.NoError(os.WriteFile(filepath.Join(mismatch, "manifest.json"), []byte(`{"schema_version":1,"id":"elsewhere"}`), 0600))
 	reader, err := Open(t.Context(), root)
-	require.NoError(t, err)
+	must.NoError(err)
 	defer func() { _ = reader.Close() }()
 	scan, err := reader.ListMeetings(t.Context())
-	require.NoError(t, err)
-	require.Len(t, scan.Meetings, 3)
-	assert.Equal(t, int64(3), scan.Warnings)
-	assert.Equal(t, "complete", scan.Meetings[0].Manifest.Status)
-	assert.Equal(t, "final", scan.Meetings[0].TranscriptState)
-	require.Len(t, scan.Meetings[0].Entries, 1)
-	assert.Equal(t, "Final words", scan.Meetings[0].Entries[0].Text)
-	assert.Equal(t, Summary("First point Second point"), scan.Meetings[0].Manifest.Notes.Summary)
-	assert.Equal(t, "interrupted", scan.Meetings[1].Manifest.Status)
-	assert.Equal(t, "rolling", scan.Meetings[1].TranscriptState)
-	assert.Equal(t, "missing", scan.Meetings[2].TranscriptState)
+	must.NoError(err)
+	must.Len(scan.Meetings, 3)
+	check.Equal(int64(4), scan.Warnings)
+	check.Equal("complete", scan.Meetings[0].Manifest.Status)
+	check.Equal("final", scan.Meetings[0].TranscriptState)
+	must.Len(scan.Meetings[0].Entries, 1)
+	check.Equal("Final words", scan.Meetings[0].Entries[0].Text)
+	check.Equal(Summary("First point Second point"), scan.Meetings[0].Manifest.Notes.Summary)
+	check.Equal("interrupted", scan.Meetings[1].Manifest.Status)
+	check.Equal("rolling", scan.Meetings[1].TranscriptState)
+	check.Equal("missing", scan.Meetings[2].TranscriptState)
 	raw, err := json.Marshal(scan.Meetings)
-	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "/private/source")
-	assert.NotContains(t, string(raw), "future")
+	must.NoError(err)
+	check.NotContains(string(raw), "/private/source")
+	check.NotContains(string(raw), "future")
 	_, err = os.Stat(filepath.Join(rolling, "active.lock"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	must.ErrorIs(err, os.ErrNotExist)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = reader.ListMeetings(ctx)
-	assert.ErrorIs(t, err, context.Canceled)
+	must.ErrorIs(err, context.Canceled)
 }
 func TestReaderHeldStaleAndUnreadableLocks(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	root := t.TempDir()
 	dir := fixtureMeeting(t, root, "locked", "recording")
 	lock := flock.New(filepath.Join(dir, "active.lock"))
-	require.NoError(t, lock.Lock())
+	must.NoError(lock.Lock())
 	defer func() { _ = lock.Close() }()
 	reader, err := Open(t.Context(), root)
-	require.NoError(t, err)
+	must.NoError(err)
 	defer func() { _ = reader.Close() }()
 	scan, err := reader.ListMeetings(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, scan.Meetings)
-	assert.Equal(t, int64(1), scan.Deferred)
-	require.NoError(t, lock.Unlock())
+	must.NoError(err)
+	check.Empty(scan.Meetings)
+	check.Equal(int64(1), scan.Deferred)
+	must.NoError(lock.Unlock())
 	scan, err = reader.ListMeetings(t.Context())
-	require.NoError(t, err)
-	require.Len(t, scan.Meetings, 1)
-	assert.Equal(t, "interrupted", scan.Meetings[0].Manifest.Status)
+	must.NoError(err)
+	must.Len(scan.Meetings, 1)
+	check.Equal("interrupted", scan.Meetings[0].Manifest.Status)
 	unreadable := fixtureMeeting(t, root, "unreadable", "complete")
-	require.NoError(t, os.Mkdir(filepath.Join(unreadable, "active.lock"), 0700))
+	must.NoError(os.Mkdir(filepath.Join(unreadable, "active.lock"), 0700))
 	scan, err = reader.ListMeetings(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), scan.Deferred)
+	must.NoError(err)
+	check.Equal(int64(1), scan.Deferred)
+}
+
+func TestDecodeTranscriptSerdeVariants(t *testing.T) {
+	// Synthetic JSON with Hex's serde field shapes: u64 offsets, snake-case
+	// source, and optional coverage counters. No upstream personal fixture.
+	entry := "{\"source\":\"system\",\"start_ms\":0,\"end_ms\":250,\"text\":\"Synthetic words\"}\n"
+	coverage := "{\"covered_ms\":{\"system\":250,\"microphone\":null}}\n"
+	for _, tc := range []struct {
+		name, data string
+		rolling    bool
+		warnings   int64
+		entries    int
+	}{
+		{"rolling coverage", coverage + entry, true, 0, 1},
+		{"final coverage is not an entry", coverage + entry, false, 1, 1},
+		{"invalid coverage type", "{\"covered_ms\":{\"system\":\"invalid\"}}\n" + entry, true, 1, 1},
+		{"valid prefix unfinished tail", entry + "unfinished", false, 1, 1},
+		{"whitespace tail", entry + " \t", false, 0, 1},
+		{"empty final", "", false, 0, 0},
+		{"discarded empty entry", "{\"source\":\"system\",\"start_ms\":0,\"end_ms\":250,\"text\":\" \"}\n", false, 1, 0},
+		{"final entry with coverage field", "{\"covered_ms\":{},\"source\":\"microphone\",\"start_ms\":0,\"end_ms\":250,\"text\":\"Synthetic words\"}\n", false, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, partial, warnings := decodeTranscript([]byte(tc.data), tc.rolling)
+			assert.Len(t, entries, tc.entries)
+			assert.Equal(t, tc.warnings, warnings)
+			assert.Equal(t, tc.warnings > 0, partial)
+		})
+	}
 }

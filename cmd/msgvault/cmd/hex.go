@@ -159,7 +159,6 @@ func writeHexSummary(out io.Writer, summary *hex.ImportSummary) {
 	if summary.Warnings > 0 {
 		_, _ = fmt.Fprintf(out, "  Source warnings: %d\n", summary.Warnings)
 	}
-
 }
 
 // hexImportOptions carries a configured source's paths and recording

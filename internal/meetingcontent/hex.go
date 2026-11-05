@@ -1,23 +1,22 @@
 package meetingcontent
 
 import (
-	"encoding/json/jsontext"
-	"encoding/json/v2"
+	"errors"
 	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/hex/evidence"
 )
 
-func decodeHex(fields map[string]jsontext.Value) Content {
-	var version int
-	if json.Unmarshal(fields["version"], &version) != nil || version != evidence.Version {
+func decodeHex(raw []byte) Content {
+	envelope, err := evidence.Decode(raw)
+	if errors.Is(err, evidence.ErrUnsupportedVersion) {
 		return unavailableContent("unsupported_version")
 	}
-	var m evidence.Meeting
-	if json.Unmarshal(fields["meeting"], &m) != nil || m.Validate() != nil {
+	if err != nil {
 		return unavailableContent(reasonInvalidSection)
 	}
+	m := envelope.Meeting
 	content := baseRecognizedContent()
 	content.Summary = Section{State: StateEmpty}
 	content.Notes = Section{State: StateEmpty}

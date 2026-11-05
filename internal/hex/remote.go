@@ -14,10 +14,10 @@ import (
 
 const MaxRemoteRequestBytes = meetingimport.MaxRequestBytes
 
-var ErrRemoteValidation = errors.New("Hex transfer failed validation")
+var ErrRemoteValidation = errors.New("hex transfer failed validation")
 var ErrRemoteRecordValidation = fmt.Errorf("%w: meeting failed validation", ErrRemoteValidation)
 var ErrRemoteMalformed = errors.New("invalid Hex transfer JSON")
-var ErrRemoteTooLarge = errors.New("Hex transfer exceeds 16 MiB")
+var ErrRemoteTooLarge = errors.New("hex transfer exceeds 16 MiB")
 
 type RemoteRequest struct {
 	Action       string               `json:"action" enum:"register,upsert,refresh"`

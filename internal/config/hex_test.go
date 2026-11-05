@@ -8,6 +8,9 @@ import (
 )
 
 func TestLoadHexSourceDefaultsAndPaths(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
 	path := writeMeetingConfig(t, `[[hex]]
 account_email = " You@Example.com "
 meetings_dir = "fixtures/meetings"
@@ -15,20 +18,20 @@ schedule = "*/30 * * * *"
 enabled = true
 `)
 	cfg, err := Load(path, "")
-	require.NoError(t, err)
-	require.Len(t, cfg.Hex, 1)
+	must.NoError(err)
+	must.Len(cfg.Hex, 1)
 	source := cfg.Hex[0]
-	assert.Equal(t, "default", source.Identifier)
-	assert.Equal(t, "you@example.com", source.AccountEmail)
-	assert.Equal(t, filepath.Join(filepath.Dir(path), "fixtures", "meetings"), source.EffectiveMeetingsDir())
-	assert.False(t, source.Recordings)
-	assert.Equal(t, int64(4)<<30, source.EffectiveRecordingMaxBytes())
-	assert.Len(t, cfg.ScheduledHexSources(), 1)
-	require.NotNil(t, cfg.GetHexSource("DEFAULT"))
-	assert.Nil(t, cfg.GetHexSource("absent"))
+	check.Equal("default", source.Identifier)
+	check.Equal("you@example.com", source.AccountEmail)
+	check.Equal(filepath.Join(filepath.Dir(path), "fixtures", "meetings"), source.EffectiveMeetingsDir())
+	check.False(source.Recordings)
+	check.Equal(int64(4)<<30, source.EffectiveRecordingMaxBytes())
+	check.Len(cfg.ScheduledHexSources(), 1)
+	must.NotNil(cfg.GetHexSource("DEFAULT"))
+	check.Nil(cfg.GetHexSource("absent"))
 	support := t.TempDir()
 	t.Setenv("HEX_APPLICATION_SUPPORT_DIR", support)
-	assert.Equal(t, filepath.Join(support, "meetings"), HexSource{}.EffectiveMeetingsDir())
+	check.Equal(filepath.Join(support, "meetings"), HexSource{}.EffectiveMeetingsDir())
 }
 func TestLoadHexRejectsInvalidEntries(t *testing.T) {
 	for _, body := range []string{

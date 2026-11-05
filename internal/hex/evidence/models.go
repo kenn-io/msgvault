@@ -13,6 +13,8 @@ import (
 
 const Version = 1
 
+var ErrUnsupportedVersion = errors.New("unsupported Hex evidence version")
+
 // Manifest is the allowlisted evidence retained from Hex schema 1. Track paths,
 // export paths and local diagnostics deliberately stay outside the archive.
 type Manifest struct {
@@ -100,7 +102,7 @@ func Decode(raw []byte) (Envelope, error) {
 		return out, err
 	}
 	if out.Version != Version {
-		return out, fmt.Errorf("unsupported Hex evidence version %d", out.Version)
+		return out, fmt.Errorf("%w %d", ErrUnsupportedVersion, out.Version)
 	}
 	return out, out.Meeting.Validate()
 }
@@ -127,7 +129,7 @@ func (m *Manifest) ResolveTitleSource(location *time.Location) {
 		m.TitleSource = "default"
 	}
 }
-func (m Manifest) DisplayTitle() string {
+func (m *Manifest) DisplayTitle() string {
 	if m.TitleSource == "default" {
 		if m.Notes != nil && strings.TrimSpace(m.Notes.Title) != "" {
 			return strings.TrimSpace(m.Notes.Title)

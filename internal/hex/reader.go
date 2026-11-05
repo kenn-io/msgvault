@@ -1,9 +1,8 @@
 package hex
 
 import (
-	"bufio"
+	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -88,15 +87,7 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			continue
 		}
 		var manifest Manifest
-		if json.Unmarshal(data, &manifest) != nil || manifest.SchemaVersion != 1 || manifest.ID != id || !evidence.ValidID(id) || manifest.CreatedAtMS <= 0 {
-			out.Warnings++
-			continue
-		}
-		switch manifest.Status {
-		case "starting", "recording", "transcribing":
-			// Recover this stale active status after checking final publication.
-		case "complete", "interrupted", "failed":
-		default:
+		if json.Unmarshal(data, &manifest) != nil || manifest.ID != id {
 			out.Warnings++
 			continue
 		}
@@ -116,32 +107,9 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			out.Warnings++
 			continue
 		} else {
-			reader := bufio.NewReader(strings.NewReader(string(data)))
-			for {
-				line, readErr := reader.ReadBytes('\n')
-				if readErr != nil {
-					break
-				}
-				if strings.TrimSpace(string(line)) == "" {
-					continue
-				}
-				var header struct {
-					Covered jsontext.Value `json:"covered_ms"`
-				}
-				headerErr := json.Unmarshal(line, &header)
-				if headerErr == nil && len(header.Covered) > 0 {
-					continue
-				}
-				var entry Entry
-				if json.Unmarshal(line, &entry) != nil || !evidence.ValidEntry(entry) {
-					m.TranscriptPartial = true
-					out.Warnings++
-					continue
-				}
-				if strings.TrimSpace(entry.Text) != "" {
-					m.Entries = append(m.Entries, entry)
-				}
-			}
+			var warnings int64
+			m.Entries, m.TranscriptPartial, warnings = decodeTranscript(data, m.TranscriptState == "rolling")
+			out.Warnings += warnings
 		}
 
 		finalPublished := m.TranscriptState == "final"
@@ -178,7 +146,32 @@ func (r *Reader) read(path string) ([]byte, error) {
 	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(io.LimitReader(f, maxEvidenceBytes+1))
 	if len(b) > maxEvidenceBytes {
-		return nil, errors.New("Hex evidence exceeds 16 MiB")
+		return nil, errors.New("hex evidence exceeds 16 MiB")
 	}
 	return b, err
+}
+
+// decodeTranscript retains complete entries and marks discarded input partial.
+func decodeTranscript(data []byte, rolling bool) (entries []Entry, partial bool, warnings int64) {
+	for line := range bytes.SplitAfterSeq(data, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var header struct {
+			Covered *struct {
+				System     *uint64 `json:"system"`
+				Microphone *uint64 `json:"microphone"`
+			} `json:"covered_ms"`
+		}
+		if rolling && line[len(line)-1] == '\n' && json.Unmarshal(line, &header) == nil && header.Covered != nil {
+			continue
+		}
+		var entry Entry
+		if line[len(line)-1] != '\n' || json.Unmarshal(line, &entry) != nil || !evidence.ValidEntry(entry) || strings.TrimSpace(entry.Text) == "" {
+			warnings++
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries, warnings > 0, warnings
 }

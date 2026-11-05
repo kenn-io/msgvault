@@ -138,7 +138,7 @@ func pushMeeting(ctx context.Context, opts ImportOptions, m Meeting, send Remote
 			continue
 		}
 		if opts.SendRecording == nil {
-			return errors.New("Hex recording transport unavailable")
+			return errors.New("hex recording transport unavailable")
 		}
 		err := opts.SendRecording(ctx, RecordingUpload{Source: request.Source, MessageID: result.MessageID, Track: track, Hash: r.Hash, Size: r.Size, MIMEType: r.MIMEType}, r)
 		if err != nil {

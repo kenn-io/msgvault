@@ -56,6 +56,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	defer func() { sum.Duration = time.Since(started) }()
 	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, strings.TrimSpace(opts.Identifier))
 	if err != nil {
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return sum, fmt.Errorf("%w; run msgvault add-hex %s first", err, opts.Identifier)
+		}
 		return sum, err
 	}
 	sum.SourceID = source.ID
@@ -126,7 +129,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if err != nil {
 			sum.Errors++
-			failures = append(failures, fmt.Errorf("Hex meeting %s: %w", m.Manifest.ID, err))
+			failures = append(failures, fmt.Errorf("hex meeting %s: %w", m.Manifest.ID, err))
 		}
 		if sum.MeetingsProcessed%50 == 0 {
 			if err := scoped.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {

@@ -6,7 +6,7 @@ import "encoding/binary"
 func RecordingWAV() []byte {
 	data := make([]byte, 48)
 	copy(data, "RIFF")
-	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
+	binary.LittleEndian.PutUint32(data[4:], 40)
 	copy(data[8:], "WAVEfmt ")
 	binary.LittleEndian.PutUint32(data[16:], 16)
 	binary.LittleEndian.PutUint16(data[20:], 1)

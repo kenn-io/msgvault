@@ -38,7 +38,7 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	case "notion_meeting_json":
 		return decodeNotion(fields)
 	case "hex_json":
-		return decodeHex(fields)
+		return decodeHex(raw)
 	case "muesli_json":
 		return decodeMuesli(fields)
 	case "pocket_json":
