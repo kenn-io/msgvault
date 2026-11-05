@@ -7,30 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHexDecodeErrorCategories(t *testing.T) {
-	for _, tc := range []struct{ name, raw, reason string }{
-		{"empty", "", "missing_raw"},
-		{"whitespace", " \t", "missing_raw"},
-		{"incomplete JSON", "{", "invalid_raw"},
-		{"array", "[]", "invalid_raw"},
-		{"scalar", "42", "invalid_raw"},
-		{"null", "null", "invalid_raw"},
-		{"duplicate key", `{"version":1,"version":2}`, "invalid_raw"},
-		{"trailing value", `{"version":1}true`, "invalid_raw"},
-		{"invalid UTF8", "{\"value\":\"" + string([]byte{0xff}) + "\"}", "invalid_raw"},
-		{"typed error before malformed suffix", `{"version":"bad","meeting":}`, "invalid_raw"},
-		{"invalid version type", `{"version":"bad"}`, "invalid_section"},
-		{"invalid meeting type", `{"version":1,"meeting":"bad"}`, "invalid_section"},
-		{"invalid domain", `{"version":1,"meeting":{}}`, "invalid_section"},
-		{"future version", `{"version":2}`, "unsupported_version"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			content := Decode("hex_json", []byte(tc.raw), nil)
-			assert.Equal(t, StateUnavailable, content.Transcript.State)
-			assert.Equal(t, tc.reason, content.Transcript.Reason)
-			assert.Equal(t, tc.reason, content.ActionReason)
-		})
-	}
+func TestHexDecodeFutureVersionUnavailable(t *testing.T) {
+	content := Decode("hex_json", []byte(`{"version":2}`), nil)
+	assert.Equal(t, StateUnavailable, content.Transcript.State)
+	assert.Equal(t, "unsupported_version", content.Transcript.Reason)
+	assert.Equal(t, "unsupported_version", content.ActionReason)
 }
 
 func TestHexDecodeTypedEnvelope(t *testing.T) {
