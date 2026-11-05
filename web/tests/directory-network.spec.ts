@@ -59,15 +59,16 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(page.getByRole('heading', { name: 'Curated Peer' })).toBeVisible();
 });
 
-for (const scenario of ['shared organization', 'nested same-column relations', 'long employment title']) {
+for (const scenario of ['shared organization', 'nested same-column relations', 'non-adjacent same-column relation', 'long employment title']) {
   test(`Directory network draws connections and keeps names reachable: ${scenario}`, async ({ page }) => {
     await installMixedArchive(page);
     const nested = scenario === 'nested same-column relations';
-    const count = nested ? 4 : scenario === 'shared organization' ? 3 : 1;
+    const spanning = scenario === 'non-adjacent same-column relation';
+    const count = nested ? 4 : scenario === 'long employment title' ? 1 : 3;
     const nodes = [
       { id: 'person:42', kind: 'person', entity_id: 42, label: scenario === 'long employment title' ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
       ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: scenario === 'long employment title' ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
-      ...nested ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
+      ...nested || spanning ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
     ];
     const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
       id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, label: 'knows'
@@ -77,6 +78,8 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
         { id: 'outer', kind: 'relationship', source_node_id: 'person:46', target_node_id: 'person:43', label: 'mentors' },
         { id: 'inner', kind: 'relationship', source_node_id: 'person:44', target_node_id: 'person:45', label: 'knows' }
       );
+    } else if (spanning) {
+      edges.push({ id: 'spanning', kind: 'relationship', source_node_id: 'person:43', target_node_id: 'person:45', label: 'works with' });
     } else {
       for (let index = 0; index < count; index++) edges.push({
         id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
@@ -103,8 +106,13 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
         return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
       })).toBe(true);
     }
-    if (scenario === 'long employment title') {
-      for (const chip of await network.locator('.edge-label').all()) {
+    if (scenario === 'long employment title' || spanning) {
+      const chips = spanning ? network.locator('.edge-label').filter({ hasText: 'works with' }) : network.locator('.edge-label');
+      if (spanning) {
+        await expect(chips).toHaveCount(1);
+        expect(await chips.evaluate((chip) => chip.scrollWidth <= chip.clientWidth)).toBe(true);
+      }
+      for (const chip of await chips.all()) {
         await chip.scrollIntoViewIfNeeded();
         for (const fraction of [0.1, 0.5, 0.9]) expect(await chip.evaluate((element, fraction) => {
           const box = element.getBoundingClientRect();

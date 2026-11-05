@@ -1,4 +1,4 @@
-import { controllerWith, requestOf, relationshipType } from '../../directory/entity-fixtures.test-support';
+import { controllerWith, requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,14 +18,14 @@ function rootOnly(depth = 1): PersonNetworkProjection {
 }
 
 function connected(depth = 2, truncated = false): PersonNetworkProjection {
-  return {
+  const network: PersonNetworkProjection = {
     root_person_id: 7,
     depth,
     truncated,
     nodes: [
       { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
       { id: 'person:8', kind: 'person', entity_id: 8, label: 'Curated Peer', hop: 1 },
-      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 1 },
+      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
       { id: 'person:9', kind: 'person', entity_id: 9, label: 'Second Hop Person', hop: 2 }
     ],
     edges: [
@@ -34,6 +34,10 @@ function connected(depth = 2, truncated = false): PersonNetworkProjection {
       { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'mentor', label: 'mentors' }
     ]
   };
+  network.nodes = network.nodes.filter((node) => node.hop <= depth);
+  const ids = new Set(network.nodes.map((node) => node.id));
+  network.edges = network.edges.filter((edge) => ids.has(edge.source_node_id) && ids.has(edge.target_node_id));
+  return network;
 }
 
 function depthThree(): PersonNetworkProjection {
@@ -61,22 +65,13 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
-const relationshipTypes = [
-  relationshipType({ id: 1, slug: 'colleague', forward_label: 'works with', reverse_label: 'is worked with' }),
-  relationshipType({ id: 2, reverse_label: 'mentored by' })
-];
-
 function networkFetcher(network: PersonNetworkProjection) {
-  return vi.fn<typeof fetch>(async (input) => {
-    const path = new URL(requestOf(input).url).pathname;
-    return Response.json(path === '/api/v1/relationship-types' ? { relationship_types: relationshipTypes } : network);
-  });
+  return vi.fn<typeof fetch>(async () => Response.json(network));
 }
 
 describe('PersonNetwork', () => {
   it('draws every connection with a chip and opens records', async () => {
     const { controller } = controllerWith(networkFetcher(connected()));
-    await controller.refreshRelationshipTypes();
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
     const { container } = render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
@@ -94,7 +89,6 @@ describe('PersonNetwork', () => {
     const chip = [...container.querySelectorAll<HTMLElement>('.edge-label')].find((chip) => chip.textContent === 'works with')!;
     expect(parseFloat(chip.style.left)).toBe((Number(cross[1]) + Number(cross[4])) / 2);
     expect(parseFloat(chip.style.top)).toBe((Number(cross[2]) + Number(cross[5])) / 2);
-    expect(paths[1]!.getAttribute('d')).toBe('M 272 14 H 272 V 70 H 272');
     expect([...container.querySelectorAll('.edge-label')].find((chip) => chip.textContent === 'Engineer')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
@@ -104,31 +98,11 @@ describe('PersonNetwork', () => {
     expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
   });
 
-  it.each([
-    ['mentor', false, 'mentors'],
-    ['mentor', true, 'mentored by'],
-    ['colleague', true, 'is worked with']
-  ] as const)('orients %s with incoming=%s as %s', async (slug, incoming, expected) => {
-    const network = connected();
-    network.nodes = network.nodes.slice(0, 2);
-    network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: incoming ? 'person:8' : 'person:7', target_node_id: incoming ? 'person:7' : 'person:8', relationship_type_slug: slug, label: slug === 'mentor' ? 'mentors' : 'works with' }];
-    const { controller } = controllerWith(networkFetcher(network));
-    await controller.refreshRelationshipTypes();
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe(expected);
-  });
-
-  it('marks an incoming mentor label right to left when relationship types fail to load', async () => {
+  it('marks an incoming relationship label right to left', async () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);
     network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' }];
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      return new URL(requestOf(input).url).pathname === '/api/v1/relationship-types'
-        ? Response.json({ error: 'unavailable', message: 'Synthetic types unavailable.' }, { status: 503 })
-        : Response.json(network);
-    }));
-    await controller.refreshRelationshipTypes();
+    const { controller } = controllerWith(networkFetcher(network));
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
     expect(container.querySelector('.edge-label')?.textContent).toBe('← mentors');
@@ -140,10 +114,9 @@ describe('PersonNetwork', () => {
     network.edges = [network.edges[0]!, { id: 'relationship:35', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' }];
     network.edges.push({ id: 'relationship:34', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' });
     const { controller } = controllerWith(networkFetcher(network));
-    await controller.refreshRelationshipTypes();
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe('works with · knows · mentored by');
+    expect(container.querySelector('.edge-label')?.textContent).toBe('works with · knows · ← mentors');
     expect(container.querySelectorAll('.edge-label')).toHaveLength(1);
     expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(3);
   });

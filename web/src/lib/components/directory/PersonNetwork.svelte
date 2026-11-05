@@ -67,12 +67,10 @@
   }
 
   function readingLabel(edge: NetworkEdge): string {
-    const type = controller.relationshipTypes.find(({ slug }) => slug === edge.relationship_type_slug);
     const from = layout.place.get(edge.source_node_id)!;
     const to = layout.place.get(edge.target_node_id)!;
     const flipped = from.x > to.x || (from.x === to.x && from.y > to.y);
-    if (!type) return flipped && edge.relationship_type_slug ? `← ${edge.label}` : edge.label;
-    return flipped ? type.reverse_label : type.forward_label;
+    return flipped && edge.relationship_type_slug ? '← ' + edge.label : edge.label;
   }
 
   const labelGroups = $derived.by(() => {
@@ -113,7 +111,7 @@
       const [top, bottom] = a.y <= b.y ? [a, b] : [b, a];
       const x = lanes.get(pairKey(edge))!;
       const end = a.x - AVATAR / 2 - GAP;
-      return { d: `M ${end} ${top.y} H ${x} V ${bottom.y} H ${end}`, tx: x, ty: (top.y + bottom.y) / 2, maxWidth: 160 };
+      return { d: `M ${end} ${top.y} H ${x} V ${bottom.y} H ${end}`, tx: x, ty: (top.y + bottom.y) / 2, maxWidth: 2 * (a.x + AVATAR / 2 + GAP - x) };
     }
     const [left, right, leftID] = a.x < b.x ? [a, b, edge.source_node_id] : [b, a, edge.target_node_id];
     const x1 = left.x - AVATAR / 2 + Math.max(AVATAR, widths[leftID] ?? AVATAR) + GAP;
@@ -188,12 +186,12 @@
   svg { position: absolute; inset: 0; overflow: visible; }
   path { fill: none; stroke: color-mix(in srgb, var(--text-muted) 55%, transparent); stroke-width: 1; }
   .node { position: absolute; display: flex; align-items: center; gap: var(--space-2); }
-  .name { max-width: 170px; overflow: hidden; background: var(--bg-surface); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+  .name { position: relative; z-index: 2; max-width: 170px; overflow: hidden; background: var(--bg-surface); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
   .node--root .name { font-weight: var(--font-weight-semibold, 600); }
   /* kit-ui-check-ignore: a text link inside the graph, matching record links in Connections and Work. */
   .link { padding: 0; border: 0; color: var(--link-ink); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
   .link:hover { text-decoration: underline; }
-  .edge-label { position: absolute; transform: translate(-50%, -50%); box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; padding: 0 var(--chip-pad-x); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 18px; white-space: nowrap; }
+  .edge-label { position: absolute; z-index: 1; transform: translate(-50%, -50%); box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; padding: 0 var(--chip-pad-x); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 18px; white-space: nowrap; }
   .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); font-size: var(--font-size-sm); color: var(--text-muted); }
   .refresh-error { display: flex; align-items: center; gap: var(--space-2); color: var(--text-danger); font-size: var(--font-size-sm); }
   .truncated { color: var(--text-muted); font-size: var(--font-size-sm); }
