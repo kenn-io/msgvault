@@ -1021,10 +1021,15 @@ func TestRemoveAccountCmd_LiveSQLWhileRemovalPausedAfterCascade(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	releaseRead, err := query.AcquireCacheReadLock(ctx, cfg.AnalyticsDir())
+	require.NoError(err, "removal must release the reader lock before rebuilding")
+	_, markerErr := os.Stat(query.CacheStatePath(cfg.AnalyticsDir()))
+	releaseRead()
+	require.ErrorIs(markerErr, os.ErrNotExist, "removal must invalidate the cache before the cascade")
 	rows, err := engine.Aggregate(ctx, query.ViewSenders, query.DefaultAggregateOptions())
 	require.NoError(err, "analytics must answer while removal is paused")
-	// A successful read could still serve the pre-removal cache if this command
-	// stops invalidating it. The fallback test invalidates its own cache marker.
+	// Keep the paused result check: the rebuilt cache cannot prove the cascade
+	// had already removed the source while maintenance was still in progress.
 	require.Len(rows, 1)
 	assert.Equal("kept@example.com", rows[0].Key)
 	close(resumeRemoval)

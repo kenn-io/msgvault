@@ -10,51 +10,19 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
-func TestSQLiteTextConversationPreviewRespectsDateFilter(t *testing.T) {
-	t.Parallel()
-	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := tdb.DB.Exec(`
-		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'imessage', 'archive@example.com');
-		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
-		VALUES (1, 1, 'chat-1', 'direct_chat');
-		INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, sent_at, snippet)
-		VALUES (1, 1, 1, 'january', 'imessage', '2026-01-15 00:00:00', 'January preview'),
-		       (2, 1, 1, 'february', 'imessage', '2026-02-15 00:00:00', 'February preview');
-	`)
-	require.NoError(t, err)
-	engine := NewSQLiteEngine(tdb.DB)
-	before := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
-	filter := TextFilter{Before: &before, Pagination: Pagination{Limit: 1}}
-	for _, name := range []string{"list", "snapshot"} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var rows []ConversationRow
-			var err error
-			if name == "snapshot" {
-				rows, _, err = engine.ListConversationsSnapshot(t.Context(), filter)
-			} else {
-				rows, err = engine.ListConversations(t.Context(), filter)
-			}
-			require.NoError(err)
-			require.Len(rows, 1)
-			assert.Equal(int64(1), rows[0].MessageCount)
-			assert.Equal(time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC), rows[0].LastMessageAt)
-			assert.Equal("January preview", rows[0].LastPreview)
-		})
-	}
-}
-
 func TestSQLiteTextReadsExcludeHiddenDuplicates(t *testing.T) {
 	t.Parallel()
 	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	before := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name          string
 		sourceDeleted any
+		hiddenDeleted any
+		filter        TextFilter
 	}{
-		{name: "active"},
-		{name: "source deleted", sourceDeleted: "2026-01-03 00:00:00"},
+		{name: "active", hiddenDeleted: "2026-02-16 00:00:00"},
+		{name: "source deleted", sourceDeleted: "2026-02-16 00:00:00", hiddenDeleted: "2026-02-16 00:00:00"},
+		{name: "before", filter: TextFilter{Before: &before, Pagination: Pagination{Limit: 1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -65,31 +33,37 @@ func TestSQLiteTextReadsExcludeHiddenDuplicates(t *testing.T) {
 				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 				VALUES (1, 1, 'chat-1', 'direct_chat');
 				INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, sent_at, snippet, deleted_at)
-				VALUES (1, 1, 1, 'visible', 'imessage', '2026-01-01 00:00:00', 'visible preview', NULL),
-				       (2, 1, 1, 'hidden', 'imessage', '2026-01-02 00:00:00', 'hidden preview', '2026-01-03 00:00:00');
-			`)
+				VALUES (1, 1, 1, 'visible', 'imessage', '2026-01-15 00:00:00', 'visible preview', NULL),
+				       (2, 1, 1, 'hidden', 'imessage', '2026-02-15 00:00:00', 'hidden preview', ?);
+			`, tc.hiddenDeleted)
 			require.NoError(err)
 			_, err = tdb.DB.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = 1`, tc.sourceDeleted)
 			require.NoError(err)
 			engine := NewSQLiteEngine(tdb.DB)
-			groups, err := engine.TextAggregate(t.Context(), TextViewSources, TextAggregateOptions{})
-			require.NoError(err)
-			require.Len(groups, 1)
-			assert.Equal(int64(1), groups[0].Count)
-			conversations, err := engine.ListConversations(t.Context(), TextFilter{})
+			if tc.filter.Before == nil {
+				groups, err := engine.TextAggregate(t.Context(), TextViewSources, TextAggregateOptions{})
+				require.NoError(err)
+				require.Len(groups, 1)
+				assert.Equal(int64(1), groups[0].Count)
+			}
+			conversations, err := engine.ListConversations(t.Context(), tc.filter)
 			require.NoError(err)
 			require.Len(conversations, 1)
 			assert.Equal(int64(1), conversations[0].MessageCount)
 			assert.Equal("visible preview", conversations[0].LastPreview)
-			snapshot, _, err := engine.ListConversationsSnapshot(t.Context(), TextFilter{})
+			assert.Equal(time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC), conversations[0].LastMessageAt)
+			snapshot, _, err := engine.ListConversationsSnapshot(t.Context(), tc.filter)
 			require.NoError(err)
 			require.Len(snapshot, 1)
 			assert.Equal(int64(1), snapshot[0].MessageCount)
 			assert.Equal("visible preview", snapshot[0].LastPreview)
-			messages, err := engine.ListConversationMessages(t.Context(), 1, TextFilter{})
-			require.NoError(err)
-			require.Len(messages, 1)
-			assert.Equal(int64(1), messages[0].ID)
+			assert.Equal(time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC), snapshot[0].LastMessageAt)
+			if tc.filter.Before == nil {
+				messages, err := engine.ListConversationMessages(t.Context(), 1, TextFilter{})
+				require.NoError(err)
+				require.Len(messages, 1)
+				assert.Equal(int64(1), messages[0].ID)
+			}
 		})
 	}
 }

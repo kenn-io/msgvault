@@ -104,43 +104,50 @@ func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
 
 func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddParticipant("old@example.com", "example.com", "Old")
+	message := b.AddMessage(MessageOpt{Subject: "old message"})
+	b.AddFrom(message, sender, "Old")
+	analyticsDir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	db := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := db.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'gmail', 'live@example.com');
+		INSERT INTO participants (id, email_address, domain, display_name) VALUES (11, 'live@example.com', 'example.com', 'Live');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES (701, 7, 'live-thread', 'email', 'Live');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
+		VALUES (801, 701, 7, 'live-message', 'email', '2024-01-15 10:00:00', 'live subject', 'live snippet', 11);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from');
+		INSERT INTO sources (id, source_type, identifier) VALUES (8, 'whatsapp', 'chat-a'), (9, 'whatsapp', 'chat-b');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+		VALUES (702, 8, 'live-chat', 'direct_chat', 'Live chat'), (703, 9, 'other-chat', 'direct_chat', 'Other chat');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+		VALUES (802, 702, 8, 'live-text', 'whatsapp', '2024-01-15 10:00:00', 'live text', 11),
+		       (803, 703, 9, 'other-text', 'whatsapp', '2024-01-15 10:00:00', 'other text', 11);
+	`)
+	requirements.NoError(err)
+	engines := make(map[bool]*DuckDBEngine)
+	for _, enabled := range []bool{false, true} {
+		engine, err := NewDuckDBEngine(analyticsDir, "", db.DB, DuckDBOptions{
+			DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: enabled,
+		})
+		requirements.NoError(err)
+		t.Cleanup(func() { requirements.NoError(engine.Close()) })
+		engines[enabled] = engine
+		// Opting into fallback must still prefer a ready cache over live SQL.
+		rows, err := engine.Aggregate(t.Context(), ViewSenders, DefaultAggregateOptions())
+		requirements.NoError(err)
+		requirements.Len(rows, 1)
+		assertions.Equal("old@example.com", rows[0].Key)
+	}
+	requirements.NoError(os.Remove(CacheStatePath(analyticsDir)))
+	// Each disabled call catches its own method bypassing the fallback option.
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fallback=%t", enabled), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			b := NewTestDataBuilder(t)
-			b.AddSource("archive@example.com")
-			sender := b.AddParticipant("old@example.com", "example.com", "Old")
-			message := b.AddMessage(MessageOpt{Subject: "old message"})
-			b.AddFrom(message, sender, "Old")
-			analyticsDir, cleanup := b.Build()
-			t.Cleanup(cleanup)
-			db := dbtest.NewTestDB(t, "../store/schema.sql")
-			_, err := db.DB.Exec(`
-				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'gmail', 'live@example.com');
-				INSERT INTO participants (id, email_address, domain, display_name) VALUES (11, 'live@example.com', 'example.com', 'Live');
-				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES (701, 7, 'live-thread', 'email', 'Live');
-				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
-				VALUES (801, 701, 7, 'live-message', 'email', '2024-01-15 10:00:00', 'live subject', 'live snippet', 11);
-				INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from');
-				INSERT INTO sources (id, source_type, identifier) VALUES (8, 'whatsapp', 'chat-a'), (9, 'whatsapp', 'chat-b');
-				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
-				VALUES (702, 8, 'live-chat', 'direct_chat', 'Live chat'), (703, 9, 'other-chat', 'direct_chat', 'Other chat');
-				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
-				VALUES (802, 702, 8, 'live-text', 'whatsapp', '2024-01-15 10:00:00', 'live text', 11),
-				       (803, 703, 9, 'other-text', 'whatsapp', '2024-01-15 10:00:00', 'other text', 11);
-			`)
-			requirements.NoError(err)
-			engine, err := NewDuckDBEngine(analyticsDir, "", db.DB, DuckDBOptions{
-				DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: enabled,
-			})
-			requirements.NoError(err)
-			t.Cleanup(func() { requirements.NoError(engine.Close()) })
-			rows, err := engine.Aggregate(t.Context(), ViewSenders, DefaultAggregateOptions())
-			requirements.NoError(err)
-			requirements.Len(rows, 1)
-			assertions.Equal("old@example.com", rows[0].Key)
-			requirements.NoError(os.Remove(CacheStatePath(analyticsDir)))
+			engine := engines[enabled]
 			sourceID := int64(7)
 			filter := MessageFilter{SourceID: &sourceID}
 			textSourceID := int64(8)
