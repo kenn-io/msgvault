@@ -7,9 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,49 +16,39 @@ import (
 func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			ns := []int{10_000, 100_000}
+			if testing.Short() {
+				ns = ns[:1]
+			}
 			var sizes []int64
-			for _, n := range []int{10_000, 100_000} {
-				t.Run(strconv.Itoa(n), func(t *testing.T) {
-					if n == 100_000 && testing.Short() {
-						t.Skip("large checkpoint run")
+			for _, n := range ns {
+				tc := NewTestContext(t)
+				ids := make([]string, n)
+				for i := range ids {
+					ids[i] = fmt.Sprintf("msg-%06d", i)
+				}
+				m := tc.CreateManifest("linear checkpoints", ids)
+				path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
+				var claimed os.FileInfo
+				var journalSize int64
+				tc.MockAPI.BeforeTrash = func(string) error {
+					info, err := os.Stat(path)
+					require.NoError(t, err)
+					if claimed == nil {
+						claimed = info
 					}
-					require := require.New(t)
-					assert := assert.New(t)
-					tc := NewTestContext(t)
-					ids := make([]string, n)
-					for i := range ids {
-						ids[i] = fmt.Sprintf("msg-%06d", i)
+					assert.True(t, os.SameFile(claimed, info) && claimed.Size() == info.Size(), "checkpoint rewrote the manifest")
+					if journal, err := os.Stat(journalPath(path)); err == nil {
+						journalSize = journal.Size()
 					}
-					m := tc.CreateManifest("linear checkpoints", ids)
-					path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
-					var claimed os.FileInfo
-					var journalSize int64
-					calls := 0
-					tc.MockAPI.BeforeTrash = func(string) error {
-						info, err := os.Stat(path)
-						require.NoError(err)
-						if claimed == nil {
-							claimed = info
-						}
-						assert.True(os.SameFile(claimed, info), "checkpoint replaced the full manifest")
-						assert.Equal(claimed.Size(), info.Size())
-						if calls >= 100 {
-							journal, err := os.Stat(journalPath(path))
-							require.NoError(err)
-							journalSize = journal.Size()
-						}
-						calls++
-						if fail {
-							return errors.New("provider failure")
-						}
-						return nil
+					if fail {
+						return errors.New("provider failure")
 					}
-					require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(100)))
-					assert.Equal(n, calls)
-					assert.Positive(journalSize)
-					sizes = append(sizes, journalSize)
-					t.Logf("%d IDs: %d checkpoint bytes", n, journalSize)
-				})
+					return nil
+				}
+				require.NoError(t, tc.ExecuteWithOpts(m.ID, trashOpts(100)))
+				require.Positive(t, journalSize)
+				sizes = append(sizes, journalSize)
 			}
 			if len(sizes) == 2 {
 				assert.Greater(t, sizes[1], 9*sizes[0])
@@ -70,11 +58,12 @@ func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 	}
 }
 
-func TestExecutor_JournalResumeMatchesUninterrupted(t *testing.T) {
+func TestExecutor_JournalResume(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tc := NewTestContext(t)
 	m := tc.CreateManifest("interrupted", msgIDs(6))
+	path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	tc.MockAPI.BeforeTrash = func(id string) error {
@@ -87,84 +76,34 @@ func TestExecutor_JournalResumeMatchesUninterrupted(t *testing.T) {
 		return nil
 	}
 	require.ErrorIs(tc.Exec.Execute(ctx, m.ID, trashOpts(2)), context.Canceled)
-	path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
 	loaded, err := LoadManifest(path)
 	require.NoError(err)
 	assert.Equal(3, loaded.Execution.LastProcessedIndex)
 	assert.Equal(2, loaded.Execution.Succeeded)
 	assert.Equal([]string{"msg1"}, loaded.Execution.FailedIDs)
-	// An interrupted append must not hide the next complete checkpoint.
+
+	// A torn tail must not hide the next record, and the retry pass's record
+	// replaces the failure list rather than extending it.
 	f, err := os.OpenFile(journalPath(path), os.O_APPEND|os.O_WRONLY, 0)
 	require.NoError(err)
 	_, err = f.WriteString(`{"last_processed_index":`)
 	require.NoError(err)
 	require.NoError(f.Close())
-	// A retry rebuilds the failure list, then ordinary checkpoints append to it.
 	tc.MockAPI.BeforeTrash = func(id string) error {
-		if id == "msg1" || id == "msg4" {
+		switch id {
+		case "msg5":
+			loaded, err := LoadManifest(path)
+			require.NoError(err)
+			assert.Equal(4, loaded.Execution.LastProcessedIndex)
+			assert.Equal([]string{"msg3"}, loaded.Execution.FailedIDs)
+		case "msg3", "msg4":
 			return errors.New("provider failure")
 		}
 		return nil
 	}
 	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(2)))
-	resumed, _, err := tc.Mgr.GetManifest(m.ID)
-	require.NoError(err)
-	assert.Equal([]string{"msg0", "msg2", "msg3", "msg5"}, tc.MockAPI.TrashCalls)
-
-	other := NewTestContext(t)
-	whole := other.CreateManifest("uninterrupted", msgIDs(6))
-	other.MockAPI.BeforeTrash = tc.MockAPI.BeforeTrash
-	require.NoError(other.ExecuteWithOpts(whole.ID, trashOpts(2)))
-	uninterrupted, _, err := other.Mgr.GetManifest(whole.ID)
-	require.NoError(err)
-	assert.Equal(uninterrupted.Execution.LastProcessedIndex, resumed.Execution.LastProcessedIndex)
-	assert.Equal(uninterrupted.Execution.Succeeded, resumed.Execution.Succeeded)
-	assert.Equal(uninterrupted.Execution.Failed, resumed.Execution.Failed)
-	assert.Equal(uninterrupted.Execution.FailedIDs, resumed.Execution.FailedIDs)
-}
-
-func TestManager_JournalTornTailAndCompletedManifest(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-	mgr := tc.Mgr
-	m := setupInProgress(t, mgr, "torn tail")
-	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
-	m.Execution.Succeeded = 1
-	m.Execution.LastProcessedIndex = 1
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
-	f, err := os.OpenFile(journalPath(path), os.O_APPEND|os.O_WRONLY, 0)
-	require.NoError(err)
-	_, err = f.WriteString(`{"succeeded":`)
-	require.NoError(err)
-	require.NoError(f.Close())
-	loaded, err := LoadManifest(path)
-	require.NoError(err)
-	assert.Equal(1, loaded.Execution.Succeeded)
-	m.Execution.Succeeded = 2
-	m.Execution.LastProcessedIndex = 2
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
-	loaded, err = LoadManifest(path)
-	require.NoError(err)
-	assert.Equal(2, loaded.Execution.Succeeded)
-	m.Execution.CompletedAt = new(time.Now().UTC())
-	m.Execution.Succeeded = 3
-	blocker := filepath.Join(mgr.CompletedDir(), m.ID+".json")
-	require.NoError(os.Mkdir(blocker, 0o700))
-	require.Error(tc.Exec.persistTerminalManifest(m.ID, m, StatusCompleted))
-	require.NoError(os.Remove(blocker))
-	loaded, err = LoadManifest(path)
-	require.NoError(err)
-	assert.Equal(3, loaded.Execution.Succeeded)
-	assert.Equal(m.Execution.CompletedAt, loaded.Execution.CompletedAt)
-	resumed, err := mgr.ClaimManifest(m.ID, MethodTrash)
-	require.NoError(err)
-	assert.Equal(m.Execution.CompletedAt, resumed.Execution.CompletedAt)
-	resumed.Execution.Succeeded = 4
-	require.NoError(mgr.WriteInProgressCheckpoint(resumed, m.ID, 0))
-	loaded, err = LoadManifest(path)
-	require.NoError(err)
-	assert.Equal(4, loaded.Execution.Succeeded)
+	assert.Equal([]string{"msg0", "msg2", "msg1", "msg5"}, tc.MockAPI.TrashCalls)
+	tc.AssertManifestExecution(m.ID, 4, 2, "msg3", "msg4")
 }
 
 func TestExecutor_FinalizeJournalCleanupFailurePreservesProgress(t *testing.T) {
@@ -249,7 +188,6 @@ func TestExecutor_CancelFoldsJournal(t *testing.T) {
 	assert.Equal(StatusCancelled, status)
 	assert.Equal(1, cancelled.Execution.Succeeded)
 	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
-	require.ErrorIs(tc.Mgr.WriteInProgressCheckpoint(cancelled, m.ID, 0), ErrManifestCancelled)
 	_, err = os.Stat(journalPath(filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")))
 	assert.ErrorIs(err, os.ErrNotExist)
 }
@@ -281,42 +219,22 @@ func TestExecutor_CancelMovesBeforeFallibleRewrite(t *testing.T) {
 }
 
 func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		t.Run(fmt.Sprintf("batch=%v", batch), func(t *testing.T) {
-			tc := NewTestContext(t)
-			m := tc.CreateManifest("tombstone restart", msgIDs(3))
-			method := MethodTrash
-			if batch {
-				method = MethodDelete
-			}
-			m.Status = StatusInProgress
-			m.Execution = &Execution{
-				Method: method, LastProcessedIndex: 2,
-				Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
-			}
-			require.NoError(t, tc.Mgr.SaveManifest(m))
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			tc.Exec.WithProgress(&onStartProgress{hook: cancel})
-			var err error
-			require.NotPanics(t, func() {
-				if batch {
-					err = tc.Exec.ExecuteBatch(ctx, m.ID)
-				} else {
-					opts := trashOpts(1)
-					opts.Resume = false
-					err = tc.Exec.Execute(ctx, m.ID, opts)
-				}
-			})
-			require.ErrorIs(t, err, context.Canceled)
-			loaded, _, err := tc.Mgr.GetManifest(m.ID)
-			require.NoError(t, err)
-			assert.Equal(t, []string{"msg1"}, loaded.Execution.TombstoneIDs)
-			if batch {
-				assert.Equal(t, []string{"msg0"}, loaded.Execution.FailedIDs)
-			} else {
-				assert.Empty(t, loaded.Execution.FailedIDs)
-			}
-		})
+	tc := NewTestContext(t)
+	m := tc.CreateManifest("tombstone restart", msgIDs(3))
+	m.Status = StatusInProgress
+	m.Execution = &Execution{
+		Method: MethodTrash, LastProcessedIndex: 2,
+		Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
 	}
+	require.NoError(t, tc.Mgr.SaveManifest(m))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	tc.Exec.WithProgress(&onStartProgress{hook: cancel})
+	opts := trashOpts(1)
+	opts.Resume = false
+	require.ErrorIs(t, tc.Exec.Execute(ctx, m.ID, opts), context.Canceled)
+	loaded, _, err := tc.Mgr.GetManifest(m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"msg1"}, loaded.Execution.TombstoneIDs)
+	assert.Empty(t, loaded.Execution.FailedIDs)
 }

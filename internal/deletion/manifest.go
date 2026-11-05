@@ -605,8 +605,8 @@ func requireManifestDigest(manifest *Manifest, expected string) error {
 }
 
 // resumeClaimedManifest handles the ClaimManifest resume branch: the manifest
-// is already in in_progress/. Progress is preserved, and Execution is only
-// initialized when nil, e.g. a
+// is already in in_progress/. An existing Execution is left untouched so
+// checkpoint progress is never lost; it is only initialized when nil, e.g. a
 // manifest whose file was moved into in_progress/ without ever going through
 // ClaimManifest (the exact crash-before-checkpoint scenario this fix closes).
 // The inline Status field is corrected to InProgress and, if either it or a

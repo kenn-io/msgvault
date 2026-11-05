@@ -257,12 +257,13 @@ func (e *Executor) saveCheckpoint(manifest *Manifest, manifestID string, index, 
 	return true
 }
 
-func (e *Executor) saveTombstoneCheckpoint(manifest *Manifest, manifestID string, index, succeeded, failed int, failedIDs, tombstoneIDs []string, failedFrom int) {
+func (e *Executor) saveTombstoneCheckpoint(manifest *Manifest, manifestID string, index, succeeded, failed int, failedIDs, tombstoneIDs []string) {
 	if manifest.Execution == nil {
 		return
 	}
 	manifest.Execution.TombstoneIDs = tombstoneIDs
-	e.saveCheckpoint(manifest, manifestID, index, succeeded, failed, failedIDs, failedFrom)
+	// A tombstone stop may persist a rebuilt retry list, so write it whole.
+	e.saveCheckpoint(manifest, manifestID, index, succeeded, failed, failedIDs, 0)
 }
 
 // prepareExecution claims a manifest into in_progress/ (or resumes one
@@ -484,12 +485,12 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	for ti, gmailID := range tombstoneIDs {
 		select {
 		case <-ctx.Done():
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ctx.Err()
 		default:
 		}
 		if e.manifestCancelled(manifestID) {
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ErrManifestCancelled
 		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, opts.Method == MethodDelete, gmailID); err != nil {
@@ -502,7 +503,6 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 				len(retryIDs),
 				retryIDs,
 				remaining,
-				0,
 			)
 			return fmt.Errorf("retry local tombstone: %w", err)
 		}
@@ -545,7 +545,6 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 					len(remainingRetries),
 					remainingRetries,
 					append(slices.Clone(tombstoneIDs), gmailID),
-					0,
 				)
 				return fmt.Errorf("delete message: %w", delErr)
 			}
@@ -580,7 +579,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 		case resultFailed:
 			if errors.Is(delErr, errLocalTombstone) {
 				remaining := append(slices.Clone(tombstoneIDs), manifest.GmailIDs[i])
-				e.saveTombstoneCheckpoint(manifest, manifestID, i+1, succeeded, failed, failedIDs, remaining, persistedFailed)
+				e.saveTombstoneCheckpoint(manifest, manifestID, i+1, succeeded, failed, failedIDs, remaining)
 				return fmt.Errorf("delete message: %w", delErr)
 			}
 			failed++
@@ -690,12 +689,12 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 	for ti, gmailID := range tombstoneIDs {
 		select {
 		case <-ctx.Done():
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ctx.Err()
 		default:
 		}
 		if e.manifestCancelled(manifestID) {
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ErrManifestCancelled
 		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, true, gmailID); err != nil {
@@ -708,7 +707,6 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 				len(retryIDs),
 				retryIDs,
 				remaining,
-				0,
 			)
 			return fmt.Errorf("retry local tombstone: %w", err)
 		}
@@ -753,7 +751,6 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 						len(remainingRetries),
 						remainingRetries,
 						append(slices.Clone(tombstoneIDs), gmailID),
-						0,
 					)
 					return fmt.Errorf("delete message: %w", delErr)
 				}
@@ -820,7 +817,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 						// The remote delete succeeded for this ID, so only it needs
 						// a tombstone retry. IDs after it have not been attempted.
 						remaining := append(slices.Clone(tombstoneIDs), gmailID)
-						e.saveTombstoneCheckpoint(manifest, manifestID, i+j+1, succeeded, len(failedIDs), failedIDs, remaining, 0)
+						e.saveTombstoneCheckpoint(manifest, manifestID, i+j+1, succeeded, len(failedIDs), failedIDs, remaining)
 						return fmt.Errorf("delete message: %w", delErr)
 					}
 					failed++
@@ -835,7 +832,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 				// The remote batch is complete, so retry only its tombstones;
 				// later IDs must remain on the normal batch path.
 				remaining := append(slices.Clone(tombstoneIDs), batch...)
-				e.saveTombstoneCheckpoint(manifest, manifestID, end, succeeded, len(failedIDs), failedIDs, remaining, 0)
+				e.saveTombstoneCheckpoint(manifest, manifestID, end, succeeded, len(failedIDs), failedIDs, remaining)
 				return fmt.Errorf("mark batch deleted in DB: %w", markErr)
 			}
 			succeeded += len(batch)

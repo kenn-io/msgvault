@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +45,7 @@ func appendCheckpoint(manifest *Manifest, path string, failedFrom int) error {
 	defer func() { _ = f.Close() }()
 	// Isolate a torn tail before appending the next complete record.
 	if _, err := f.Write(append(append([]byte{'\n'}, data...), '\n')); err != nil {
-		return fmt.Errorf("append checkpoint: %w", err)
+		return err
 	}
 	if err := f.Sync(); err != nil {
 		return err
