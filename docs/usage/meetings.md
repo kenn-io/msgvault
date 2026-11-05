@@ -50,7 +50,7 @@ aggregates remain email-only unless you choose another message type.
 
 ## Connect notes to calendar events
 
-Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times, followed by the IDs of every note in the record. Pass `evt:<id>[@occurrence key]` instead to list the notes linked to a calendar occurrence. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times, followed by the IDs of every note in the record. Pass `evt:<id>[@occurrence key]` instead to list the notes linked to a calendar occurrence. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. Granola automatic links also require the note owner's email to match a Google Calendar source mailbox. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
 
 ```bash
 msgvault meetings links 42
@@ -70,7 +70,7 @@ reason; check it before treating an empty or partial result as complete.
 
 Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
 
-Each calendar occurrence is one archived row. A cancellation keeps the fields of its own row, and the series fills in what a cancellation that was never seen omits.
+Recurring series and exceptions have archived rows; ordinary recurring occurrences are expanded when read. A cancellation keeps the fields of its own row, and the series fills in what a cancellation that was never seen omits.
 
 A saved choice follows the archived event message and its original occurrence key. Changing its iCalendar UID keeps the choice on that event. A changed recurrence can make the chosen occurrence unavailable.
 
