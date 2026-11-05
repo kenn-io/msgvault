@@ -43,8 +43,8 @@ func TestPeopleCompletionDeduplicatesCaseOnlyObservedNames(t *testing.T) {
 		aliasName   string
 		wantValue   string
 	}{
-		{primaryName: "Alice", aliasName: "ALICE", wantValue: "Alice"},
-		{primaryName: "ALICE", aliasName: "Alice", wantValue: "ALICE"},
+		{primaryName: "Alice", aliasName: "ALICE", wantValue: "ALICE"},
+		{primaryName: "ALICE", aliasName: "Alice", wantValue: "Alice"},
 	} {
 		t.Run(tt.primaryName, func(t *testing.T) {
 			t.Parallel()
