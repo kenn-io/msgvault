@@ -1390,9 +1390,11 @@ func (s *Syncer) full(
 	if source.SourceType == sourceTypeGmail && s.opts.Query == "" && s.opts.Limit == 0 {
 		if state.handoffCursor == "" {
 			state.handoffCursor = strconv.FormatUint(profile.HistoryID, 10)
-			if err := s.saveFullCheckpoint(ctx, state); err != nil {
-				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("pin Gmail full-sync history cursor: %w", err)
+			if reconcilePresence {
+				if err := s.saveFullCheckpoint(ctx, state); err != nil {
+					s.failStoppedSync(state.syncID, err)
+					return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
+				}
 			}
 		} else {
 			handoffHistoryID, err = strconv.ParseUint(state.handoffCursor, 10, 64)

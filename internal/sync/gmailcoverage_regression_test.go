@@ -156,6 +156,10 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 	default:
 		return nil, fmt.Errorf("unexpected synthetic endpoint: %s", r.URL)
 	}
+	return gmailJSONResponse(r, status, body)
+}
+
+func gmailJSONResponse(r *http.Request, status int, body any) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

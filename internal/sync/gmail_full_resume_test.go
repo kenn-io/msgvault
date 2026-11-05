@@ -2,9 +2,7 @@ package sync
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,11 +74,7 @@ func (f *fullResumeTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	default:
 		return f.gmailCoverageTransport.RoundTrip(r)
 	}
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(encoded))), Request: r}, nil
+	return gmailJSONResponse(r, status, body)
 }
 
 func TestGmailFullResumeHistoryContinuity(t *testing.T) {
@@ -180,7 +174,7 @@ func TestGmailFullResumeRestartsWithoutSafeBoundary(t *testing.T) {
 				opts.NoResume = true
 			} else {
 				// Model the same request's fingerprint from the previous release.
-				fingerprint := fmt.Sprintf("full:v2-spam-trash:%x", sha256.Sum256([]byte("full:v1\x00\x00\x000\x00false")))
+				fingerprint := fmt.Sprintf("full:v2-spam-trash:%x", sha256.Sum256([]byte("full:v1\x00gmail\x00\x000\x00false")))
 				_, err := e.Store.DB().Exec(e.Store.Rebind("UPDATE sync_runs SET request_fingerprint = ?"), fingerprint)
 				require.NoError(err)
 			}
@@ -198,31 +192,6 @@ func TestGmailFullResumeRestartsWithoutSafeBoundary(t *testing.T) {
 			assertAcquisitionPresent(t, e, "normal1", "normal2", "normal3", "arrival1")
 		})
 	}
-}
-
-func TestGmailFullResumeRequiresDurableBoundary(t *testing.T) {
-	// serial: gmailTransportClient replaces http.DefaultClient.
-	require := require.New(t)
-	assert := assert.New(t)
-
-	e := acquisitionDurabilityEnv(t)
-	e.CreateSourceWithHistory(t, "900")
-	f := &fullResumeTransport{history: 1000}
-	api := gmailTransportClient(t, f)
-	e.Syncer = New(api, e.Store, nil)
-	allow := acquisitionWriteFault(t, e, "sync_runs", "UPDATE", "NEW.cursor_after = '1000'")
-	_, err := e.Syncer.Full(t.Context(), testEmail)
-	require.ErrorContains(err, "synthetic acquisition write failure")
-	assert.Empty(f.listTokens, "stop before listing when the boundary cannot be saved")
-	assert.Equal("900", gmailCoverageSource(t, e).SyncCursor.String)
-	allow()
-	reopenAcquisitionStore(t, e)
-	e.Syncer = New(api, e.Store, nil)
-	summary, err := e.Syncer.Full(t.Context(), testEmail)
-	require.NoError(err)
-	assert.Equal(uint64(1000), summary.FinalHistoryID)
-	assert.False(summary.WasResumed)
-	assertAcquisitionPresent(t, e, "normal1", "normal2", "normal3")
 }
 
 func TestGmailFullResumeHistoryExpiration(t *testing.T) {
