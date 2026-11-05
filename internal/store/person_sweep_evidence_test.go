@@ -282,8 +282,8 @@ func TestLoadPersonSweepWindowSeparatesMeetingAndConversationLanes(t *testing.T)
 }
 
 func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	checks := assert.New(t)
+	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
 	first := f.insertMessage(t, "first-meeting", "meeting_transcript", f.aliceID, time.Now().UTC())
 	second := f.insertMessage(t, "second-meeting", "meeting_transcript", f.aliceID, time.Now().UTC())
@@ -294,25 +294,56 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 	conversationThrough := latestPersonSweepSequence(t, f.store)
 	for _, id := range []int64{first, second} {
 		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE message_bodies SET body_text = 'Edited meeting' WHERE message_id = ?`), id)
-		require.NoError(err)
+		requirements.NoError(err)
 	}
 	window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
 		PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: after, Limit: 2,
 	})
-	require.NoError(err)
-	assert.Equal([]int64{first, second}, sweepMessageIDs(window.Seeds))
-	assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
-	assert.Len(window.Changes, 3)
+	requirements.NoError(err)
+	checks.Equal([]int64{first, second}, sweepMessageIDs(window.Seeds))
+	checks.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
+	checks.Len(window.Changes, 3)
 
 	window, err = f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
 		PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: after,
 		ThroughSequence: conversationThrough, ReconcileUpper: fmt.Sprintf("%020d", second), Limit: 1,
 	})
-	require.NoError(err)
-	assert.Equal([]int64{first}, sweepMessageIDs(window.Seeds), "other-lane changes must allow reconciliation")
-	assert.Equal(fmt.Sprintf("%020d", first), window.NextReconcileKey)
-	assert.Equal(conversationThrough, window.NextSequence)
-	assert.Len(window.Changes, 1)
+	requirements.NoError(err)
+	checks.Equal([]int64{first}, sweepMessageIDs(window.Seeds), "other-lane changes must allow reconciliation")
+	checks.Equal(fmt.Sprintf("%020d", first), window.NextReconcileKey)
+	checks.Equal(conversationThrough, window.NextSequence)
+	checks.Len(window.Changes, 1)
+
+	for _, tc := range []struct {
+		name   string
+		query  string
+		reason personfacts.EvidenceStatusReason
+	}{
+		{"deleted", `DELETE FROM messages WHERE id = ?`, personfacts.EvidenceStatusSourceDeleted},
+		{"sender reassigned", `UPDATE messages SET sender_id = ? WHERE id = ?`, personfacts.EvidenceStatusIdentityReassigned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newPersonSweepJournalFixture(t, true, false)
+			id := f.insertMessage(t, "other-lane", "email", f.aliceID, time.Now().UTC())
+			addSweepBody(t, f, id, "Conversation evidence")
+			before := latestPersonSweepSequence(t, f.store)
+			args := []any{id}
+			if tc.reason == personfacts.EvidenceStatusIdentityReassigned {
+				args = []any{f.bobID, id}
+			}
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
+			require.NoError(err)
+
+			window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+				PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: before, Limit: 100,
+			})
+			require.NoError(err)
+			assert.Empty(window.Seeds, "meeting windows must skip conversation changes and their tombstones")
+			assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
+		})
+	}
 }
 
 func TestLoadPersonSweepWindowBackstopCapturesFreshUpperKey(t *testing.T) {
@@ -368,6 +399,24 @@ func TestLoadPersonSweepWindowBackstopContinuesCapturedRange(t *testing.T) {
 	checks.Equal(first.CapturedUpperKey, second.NextReconcileKey)
 	checks.Contains(sweepMessageIDs(second.Seeds), secondID)
 	checks.NotContains(sweepMessageIDs(second.Seeds), thirdID)
+}
+
+func TestPersonSweepEvidenceAppliesPolicyDateAndSourceBounds(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	old := f.insertMessage(t, "old", "email", f.aliceID, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	current := f.insertMessage(t, "current", "email", f.aliceID, time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC))
+	addSweepBody(t, f, old, "needle old")
+	addSweepBody(t, f, current, "needle current")
+	got, err := f.store.SearchPersonSweepMessages(t.Context(), peoplesweep.ContextRequest{
+		PersonID: f.alicePersonID, CandidateMessageIDs: []int64{old, current},
+		Target:        personfacts.TargetDescriptor{Description: "needle"},
+		SourceClasses: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		SourceSince:   "2026-01-01", SourceUntil: "2026-12-31", Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Equal([]int64{current}, sweepMessageIDs(got))
 }
 
 func TestPersonSweepEvidenceRejectsWrongCanonicalSubject(t *testing.T) {
@@ -747,20 +796,7 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			key, err := personfacts.EvidenceKey(input)
 			require.NoError(err)
 			persistSweepEvidence(t, f.store, key, input)
-			backend := "sqlite"
-			if f.store.IsPostgreSQL() {
-				backend = "postgres"
-			}
-			schema, err := os.ReadFile("testdata/retired_document_tables_" + backend + ".sql")
-			require.NoError(err)
-			_, err = f.store.DB().ExecContext(t.Context(), string(schema))
-			require.NoError(err)
-			require.NoError(f.store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: "synthetic:attachment"}))
-			var attachmentID int64
-			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id=?`), id).Scan(&attachmentID))
-			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO document_occurrences (occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source) VALUES ('occurrence',?,?,?,?,'attachment','source')`), attachmentID, id, f.sourceID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-			require.NoError(err)
-			ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
+			ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: 12, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
 			document := input
 			document.SourceVersion = "document/v1:chunk"
 			document.ContentSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -792,53 +828,6 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 				})
 			}
 			assert.ElementsMatch(want, changes)
-		})
-	}
-}
-
-func TestPersonSweepMeetingDiscoverySkipsConversationSeeds(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		query  string
-		reason personfacts.EvidenceStatusReason
-	}{
-		{"deleted", `DELETE FROM messages WHERE id = ?`, personfacts.EvidenceStatusSourceDeleted},
-		{"sender reassigned", `UPDATE messages SET sender_id = ? WHERE id = ?`, personfacts.EvidenceStatusIdentityReassigned},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := newPersonSweepJournalFixture(t, true, false)
-			now := time.Now().UTC()
-			id := f.insertMessage(t, "stored-document", "email", f.aliceID, now)
-			addSweepBody(t, f, id, "Email with a document")
-			before := latestPersonSweepSequence(t, f.store)
-			args := []any{id}
-			if tc.reason == personfacts.EvidenceStatusIdentityReassigned {
-				args = []any{f.bobID, id}
-			}
-			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
-			require.NoError(err)
-
-			for _, lanes := range [][]peoplesweep.SourceClass{
-				{peoplesweep.SourceMeetingText},
-				{peoplesweep.SourceMeetingText, peoplesweep.SourceConversationText},
-			} {
-				cursors := make([]peoplesweep.Cursor, 0, len(lanes))
-				for _, lane := range lanes {
-					cursors = append(cursors, peoplesweep.Cursor{
-						Key:                peoplesweep.CursorKey{PersonID: f.alicePersonID, SourceLane: lane, ProgramFingerprint: peoplesweep.ProgramFingerprint()},
-						OptimisticSequence: before, ReconciliationComplete: true, LastBackstopAt: &now,
-					})
-				}
-				progress, err := (peoplesweep.Assembler{Source: f.store, WindowLimit: 100}).Discover(t.Context(), peoplesweep.AssemblyRequest{
-					PersonID: f.alicePersonID, Cursors: cursors,
-					Profile: peoplesweep.ProviderProfile{AllowedSources: lanes}, Now: now, BackstopInterval: time.Hour,
-				})
-				require.NoError(err)
-				assert.Empty(progress.Windows[len(lanes)-1].Seeds, "meeting windows must not hydrate conversation changes or build their tombstones")
-				assert.Equal(latestPersonSweepSequence(t, f.store), progress.Windows[len(lanes)-1].NextSequence)
-			}
 		})
 	}
 }

@@ -75,10 +75,10 @@ describe('KataEvidenceDialog', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
-  it.each([
-    { kind: 'message', text: 'Café 🙂 send the budget by Friday', quote: 'send the budget', initial: selector, earlier: false },
-  ])('narrows a $kind citation to the selected text, counting runes', async ({ text, quote, initial, earlier }) => {
+  it('narrows a message citation to the selected text, counting runes', async () => {
+    const text = 'Café 🙂 send the budget by Friday';
+    const quote = 'send the budget';
+    const initial = selector;
     type Wanted = { kind: string; start_rune: number; end_rune?: number; max_chars?: number };
     const requests: Wanted[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -94,11 +94,6 @@ describe('KataEvidenceDialog', () => {
       return Response.json({ evidence: [{ id: `${wanted.start_rune}`.padStart(64, '0'), passage: `${wanted.start_rune}:${end}`.padStart(64, 'p'), reference, excerpt, display: { filename: 'transcript.txt' }, content_trust: 'untrusted', ...(end < runes.length ? { next_rune: end } : {}) }] });
     });
     render(KataEvidenceDialog, { client: createAPIClient(fetchFn), selector: initial, defaultTitle: 'Follow up' });
-    if (earlier) {
-      await screen.findByText([...text].slice(initial.start_rune).join(''));
-      expect(screen.getByRole('button', { name: 'Later passage' })).toHaveProperty('disabled', true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Earlier passage' }));
-    }
     const node = (await screen.findByText(text)).firstChild as Text;
     const from = text.indexOf(quote);
     const selection = document.createRange();
