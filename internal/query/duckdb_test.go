@@ -4884,6 +4884,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testi
 	chatSource := b.AddSourceWithType("chat@example.test", "google_chat")
 	b.AddMessage(MessageOpt{SourceID: chatSource, Subject: "Chat", MessageType: "google_chat"})
 	b.AddMessage(MessageOpt{Subject: "Meeting", MessageType: "calendar_event"})
+	b.messages[len(b.messages)-1].ArchiveOnly = true
 	engine := b.BuildEngine()
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{})
 	requirements.NoError(err)

@@ -47,7 +47,8 @@ type MessageFixture struct {
 	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
 	OwnerParticipantID  *int64     // nil = NULL (message-relative owner identity)
 	MessageType         string     // e.g. "email", "whatsapp"; "" defaults to "email"
-	ListID              *string    // nil = NULL (RFC 2919 List-Id for email messages)
+	ArchiveOnly         bool
+	ListID              *string // nil = NULL (RFC 2919 List-Id for email messages)
 	// LegacyEmptyMessageType writes '' instead of the "email" default,
 	// modeling rows imported before message_type existed.
 	LegacyEmptyMessageType bool
@@ -743,16 +744,16 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 		byYear[m.Year] = append(byYear[m.Year], m)
 	}
 	for year, msgs := range byYear {
-		cols := messagesCols
-		columns := messagesColumns
+		cols := messagesCols + ", archive_only"
+		columns := append(slices.Clone(messagesColumns), "archive_only")
 		rowFormatter := func(message MessageFixture) string {
-			return formatMessageFixture(b.t, columns, message.sqlValues())
+			return formatMessageFixture(b.t, columns, append(message.sqlValues(), strconv.FormatBool(message.ArchiveOnly)))
 		}
 		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.InternalDeletedAt != nil }) {
-			cols = messagesColsWithDeletedAt
-			columns = messagesColumnsWithDeletedAt
+			cols = messagesColsWithDeletedAt + ", archive_only"
+			columns = append(slices.Clone(messagesColumnsWithDeletedAt), "archive_only")
 			rowFormatter = func(message MessageFixture) string {
-				return formatMessageFixture(b.t, columns, message.sqlValuesWithInternalDeletion())
+				return formatMessageFixture(b.t, columns, append(message.sqlValuesWithInternalDeletion(), strconv.FormatBool(message.ArchiveOnly)))
 			}
 		}
 		rows := joinRows(msgs, rowFormatter)

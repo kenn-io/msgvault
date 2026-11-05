@@ -47,7 +47,4 @@ func init() { rootCmd.AddCommand(newImportICSCommand()) }
 
 func printICSImportSummary(cmd *cobra.Command, summary *store.ICalendarImportSummary) {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Events: %d updated, %d unchanged\n", summary.Changed, summary.Unchanged)
-	for _, diagnostic := range summary.Diagnostics {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), diagnostic)
-	}
 }
