@@ -1604,11 +1604,26 @@ type CallImportRequest struct {
 	Account  string           `json:"account" validate:"required"`
 	Bindings map[string]int64 `json:"bindings,omitempty"`
 	Format   string           `json:"format" validate:"required"`
-	Record   map[string]any   `json:"record"`
+	Record   jsontext.Value   `json:"record"`
 }
 
 func (c CallImportRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(c.Format, "required"); err != nil {
+		errors = errors.Append("Format", err)
+	}
+	if v, ok := any(c.Record).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Record", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CallImportResponse struct {
