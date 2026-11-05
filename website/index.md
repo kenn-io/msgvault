@@ -11,7 +11,7 @@ look up a person's history, and work from a browser, terminal, or AI assistant.
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
 your data.
-[See what changed in 0.21.0 and read the upgrade notes](/docs/changelog/#0210).
+[See what changed in 0.23.0 and read the upgrade notes](/docs/changelog/#0230).
 
 ## Install
 
@@ -48,11 +48,11 @@ attachments alongside the records you browse.
 
 - **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
-- **Chat** — Matrix, Slack, Teams, Discord, Chatwoot (builds from `main`), and
-  chats available through Beeper Desktop; WhatsApp, iMessage, Google Voice,
+- **Chat** — Matrix, Slack, Teams, Discord, Inline, Chatwoot, and chats
+  available through Beeper Desktop; WhatsApp, iMessage, Telegram, Google Voice,
   Messenger, and SMS imports.
-- **Meetings** — Granola, Plaud, Circleback, Omi, Notion AI Meeting Notes, and Muesli
-  in the same searchable record.
+- **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
+  AI Meeting Notes, and Muesli in the same searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — import contacts from a CardDAV address book and choose which
   saved profiles to sync back.
@@ -92,7 +92,7 @@ search from any page. Save the current view from Messages or Files, or share
 its URL with someone who has access to your archive. Use Back and Forward to
 return to earlier views.
 
-Maintain profiles, review identities and merges, publish contacts through
+Maintain profiles, review possible duplicates, publish contacts through
 CardDAV, and catch up with a saved conversation brief in **People → Details**.
 Open the status dot for running and failed jobs, or Past runs for history. Update provider credentials
 in **Settings**, which shows changes that take effect after a restart.

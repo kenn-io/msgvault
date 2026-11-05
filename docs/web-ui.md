@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-04"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -11,6 +11,10 @@ maintain your contact directory, and see whether sync and indexing work has
 finished. It is embedded in the release binary and served by `msgvault serve`;
 you do not need a separate web application process.
 
+AI assistants reach the same archive through the [MCP server](usage/chat.md),
+and scripts use the [HTTP API](api-server.md). Saved views, staged deletions,
+and people edits made in one place show up in the others.
+
 | Your question | Workspace |
 |---|---|
 | Where is that message, conversation, or meeting? | Messages |
@@ -18,7 +22,7 @@ you do not need a separate web application process.
 | Where is an attachment, image, or video? | Files |
 | What do I know about this person? | People → Details |
 | Which identity matches or profile facts need my decision? | People: Possible duplicates or Facts |
-| Can I return to this search later? | Saved views under Messages and Files |
+| Can I return to this search later? | Saved views in the sidebar |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
 | What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
@@ -86,7 +90,7 @@ on an encrypted private network is supported as an explicit tradeoff, but the UI
 warns that its session cookie travels without TLS. `HttpOnly` and
 `SameSite=Strict` do not encrypt that traffic.
 
-## Explore and search
+## Messages and search
 
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
@@ -174,7 +178,25 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. The block names the limit and suggests a Person filter to narrow the search. If a Person filter already exceeds the limit, choose one with fewer attachments. Other attachment failures show the API error message, with Retry for transient failures. "More may match" marks other result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+### Attachment matches
+
+With [attachment mirroring](configuration.md#mirror-stored-attachments-to-docbank)
+enabled, the same search adds **Attachments**: text Docbank extracted from
+mirrored PDFs and documents.
+
+- **What it shows:** the message title and date, filename, and extracted
+  excerpt. Select a row to open the message that holds the file.
+- **Queries:** plain words, like recording search. Use `msgvault media search`
+  for queries with punctuation.
+- **Empty results:** an empty block without an error means no match in the
+  extracted text. Files still awaiting extraction may contain the words.
+- **Scope limit:** more than 4,096 mirrored files, not counting images, audio,
+  and video, returns `media_search_scope_limit`. Add a Person filter, or choose
+  a person with fewer attachments.
+- **Failures:** other errors show the API message, with **Retry** for
+  transient failures. "More may match" marks other result limits. Recording
+  failures appear beside attachment results, and both lists follow the same
+  Person filter.
 
 ## Read messages
 
@@ -261,7 +283,7 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
@@ -363,7 +385,7 @@ They remain active until the daemon restarts or another sync for that source
 acquires its lock and recovers them. Until then, **Sync now** stays unavailable
 and status polling continues while the tab is visible.
 
-## Operations
+## Background jobs and past runs
 
 While the tab is visible, job status refreshes every 30 seconds on every page and when the window regains focus.
 
