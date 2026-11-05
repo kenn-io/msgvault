@@ -135,9 +135,9 @@ func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
 	}
 }
 
-func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, candidates []query.AttachmentInfo) (refuse, withheld, ok bool) {
+func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, candidates []query.AttachmentInfo) (withheld, ok bool) {
 	if !s.withholdsVerification(r) {
-		return false, false, true
+		return false, true
 	}
 	ids := make([]int64, len(candidates))
 	for i, att := range candidates {
@@ -147,7 +147,7 @@ func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, cand
 	for _, masked := range parents {
 		withheld = withheld || masked
 	}
-	return true, withheld, ok
+	return withheld, ok
 }
 
 var nestedEncoding = regexp.MustCompile(`(?im)^content-transfer-encoding[ \t]*:`)
@@ -180,7 +180,7 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 	if !text && !strings.HasPrefix(sniffed, "text/") {
 		return reader, nil
 	}
-	_, withheld, ok := s.attachmentWithheld(w, r, candidates)
+	withheld, ok := s.attachmentWithheld(w, r, candidates)
 	if !ok {
 		return nil, nil
 	}
