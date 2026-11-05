@@ -1812,6 +1812,8 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		projection := "*"
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
+		} else if table.dir == "participants" {
+			projection += ", false AS is_room"
 		}
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(t, err, "write %s", table.dir)
