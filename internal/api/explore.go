@@ -131,7 +131,7 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
-	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day grouping; defaults to UTC"`
+	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day, month, and year grouping; defaults to UTC"`
 	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
@@ -148,14 +148,15 @@ type ExploreGroupsHTTPRequest struct {
 }
 
 type ExploreGroupsHTTPResponse struct {
-	Warnings            []string                `json:"warnings,omitempty"`
-	Rows                []query.ExploreGroupRow `json:"rows"`
-	TotalCount          int64                   `json:"total_count"`
-	CacheRevision       string                  `json:"cache_revision"`
-	SearchProvenance    query.SearchProvenance  `json:"search_provenance"`
-	NextCursor          string                  `json:"next_cursor,omitempty"`
-	CandidateSnapshotID string                  `json:"candidate_snapshot_id,omitempty"`
-	SearchDeletionScope string                  `json:"search_deletion_scope,omitempty"`
+	Overview            *query.ExploreGroupOverview `json:"overview,omitempty"`
+	Warnings            []string                    `json:"warnings,omitempty"`
+	Rows                []query.ExploreGroupRow     `json:"rows"`
+	TotalCount          int64                       `json:"total_count"`
+	CacheRevision       string                      `json:"cache_revision"`
+	SearchProvenance    query.SearchProvenance      `json:"search_provenance"`
+	NextCursor          string                      `json:"next_cursor,omitempty"`
+	CandidateSnapshotID string                      `json:"candidate_snapshot_id,omitempty"`
+	SearchDeletionScope string                      `json:"search_deletion_scope,omitempty"`
 }
 
 type ExploreSelection struct {
@@ -533,7 +534,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	response := ExploreGroupsHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID, SearchDeletionScope: searchDeletionScope}
+	response := ExploreGroupsHTTPResponse{Overview: result.Overview, Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID, SearchDeletionScope: searchDeletionScope}
 	if request.SearchMode == exploreSearchModeFullText {
 		response.Warnings = search.LiteralORWarnings(request.Query)
 	}

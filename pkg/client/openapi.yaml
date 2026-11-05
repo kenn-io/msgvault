@@ -5501,6 +5501,31 @@ components:
         - dimension
         - values
       type: object
+    ExploreGroupActivity:
+      properties:
+        bucket:
+          type: string
+        count:
+          format: int64
+          type: integer
+      required:
+        - bucket
+        - count
+      type: object
+    ExploreGroupCoParticipant:
+      properties:
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+      required:
+        - key
+        - label
+        - count
+      type: object
     ExploreGroupDimension:
       enum:
         - source
@@ -5523,6 +5548,24 @@ components:
         - ExploreGroupDimensionYear
         - ExploreGroupDimensionMonth
         - ExploreGroupDimensionDay
+    ExploreGroupOverview:
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ExploreGroupActivity"
+          type: array
+        co_participants:
+          items:
+            $ref: "#/components/schemas/ExploreGroupCoParticipant"
+          type: array
+        first_at:
+          format: date-time
+          type: string
+      required:
+        - first_at
+        - activity
+        - co_participants
+      type: object
     ExploreGroupRow:
       properties:
         count:
@@ -5552,6 +5595,9 @@ components:
             - ExploreGroupRowLevelSecondQuartile
             - ExploreGroupRowLevelThirdQuartile
             - ExploreGroupRowLevelFourthQuartile
+        total_items:
+          format: int64
+          type: integer
       required:
         - key
         - label
@@ -5640,7 +5686,7 @@ components:
           maxItems: 1
           type: array
         timezone:
-          description: IANA timezone for day grouping; defaults to UTC
+          description: IANA timezone for day, month, and year grouping; defaults to UTC
           type: string
       required:
         - grouping
@@ -5653,6 +5699,8 @@ components:
           type: string
         next_cursor:
           type: string
+        overview:
+          $ref: "#/components/schemas/ExploreGroupOverview"
         rows:
           items:
             $ref: "#/components/schemas/ExploreGroupRow"
@@ -16870,7 +16918,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.43.0
+  version: 3.44.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

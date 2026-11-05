@@ -2038,7 +2038,7 @@ describe('AppShell', () => {
     await expect(groupRequest.clone().json()).resolves.toMatchObject({
       filename_query: 'invoice', mime_families: ['pdf'], grouping: ['source']
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Example source' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Example source' }));
     await screen.findByRole('grid', { name: 'Files results' });
 
     expect(state.current.workspace).toBe('files');

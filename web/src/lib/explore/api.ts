@@ -73,6 +73,7 @@ function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extr
   const warnings = 'warnings' in data ? data.warnings : undefined;
   return {
     rows: data.rows,
+    overview: (data as ExploreGroupsResponse).overview,
     warnings: Array.isArray(warnings) ? warnings : undefined,
     totalCount: data.total_count,
     cacheRevision: data.cache_revision,
@@ -180,8 +181,9 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),
-        ...(predicate.timezone ? { timezone: predicate.timezone } : {}),
+        timezone: predicate.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
         grouping: [dimension],
+        ...(['year', 'month'].includes(dimension) ? { sort: [{ field: 'key' as const, direction: 'desc' as const }] } : {}),
         limit: predicate.limit,
         presentation: 'table' as const,
       };
@@ -203,6 +205,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
           ...(filenameQuery ? { filename_query: filenameQuery } : {}),
           ...(mimeFamilies.length ? { mime_families: mimeFamilies } : {}),
           grouping: [dimension],
+          ...(['year', 'month'].includes(dimension) ? { sort: [{ field: 'key' as const, direction: 'desc' as const }] } : {}),
           limit: predicate.limit,
           ...(cursor ? { cursor } : {}),
         },

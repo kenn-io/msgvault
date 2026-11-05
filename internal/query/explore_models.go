@@ -247,7 +247,25 @@ type ExploreGroupRequest struct {
 	Page     PageSpec `json:"page"`
 }
 
+type ExploreGroupActivity struct {
+	Bucket string `json:"bucket"`
+	Count  int64  `json:"count"`
+}
+
+type ExploreGroupCoParticipant struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+type ExploreGroupOverview struct {
+	FirstAt        time.Time                   `json:"first_at"`
+	Activity       []ExploreGroupActivity      `json:"activity"`
+	CoParticipants []ExploreGroupCoParticipant `json:"co_participants"`
+}
+
 type ExploreGroupRow struct {
+	TotalItems     int64     `json:"total_items,omitempty,omitzero"`
 	Key            string    `json:"key"`
 	Label          string    `json:"label"`
 	Count          int64     `json:"count"`
@@ -258,10 +276,11 @@ type ExploreGroupRow struct {
 }
 
 type ExploreGroupResponse struct {
-	Rows             []ExploreGroupRow `json:"rows"`
-	TotalCount       int64             `json:"total_count"`
-	CacheRevision    string            `json:"cache_revision"`
-	SearchProvenance SearchProvenance  `json:"search_provenance"`
+	Overview         *ExploreGroupOverview `json:"overview,omitempty"`
+	Rows             []ExploreGroupRow     `json:"rows"`
+	TotalCount       int64                 `json:"total_count"`
+	CacheRevision    string                `json:"cache_revision"`
+	SearchProvenance SearchProvenance      `json:"search_provenance"`
 }
 
 type ExploreSelectionRequest struct {

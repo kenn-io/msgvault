@@ -1,10 +1,4 @@
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
   function people(row: FileSearchRow): string {
     const labels = row.participant_labels ?? [];
     const domains = row.participant_domains ?? [];
@@ -31,6 +25,7 @@
 </script>
 
 <script lang="ts">
+  import { formatDate } from '../../util/format';
   import {
     searchDomainFiles as generatedSearchDomainFiles,
     searchFiles as generatedSearchFiles,
@@ -50,7 +45,7 @@
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-  import { sourceMailbox, sourceTypeLabel } from '../../sources/labels';
+  import { sourceDisplayName } from '../../sources/labels';
   import { analyticalAuthority } from '../../explore/authority';
   import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
@@ -1006,7 +1001,7 @@
                     <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
                     <span role="gridcell">{people(row)}</span>
-                    <span role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span role="gridcell">{sourceDisplayName(row.source_type, row.source_identifier)}</span>
                     <span role="gridcell">
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}

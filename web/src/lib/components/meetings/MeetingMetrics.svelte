@@ -2,6 +2,7 @@
   import { Table } from '@kenn-io/kit-ui';
 
   import { formatMeetingDuration } from '../../meetings/format';
+  import { groupRowName } from '../../explore/labels';
   import type { Metrics } from '../../api/generated/models';
 
   let { metrics }: { metrics: Metrics } = $props();
@@ -50,7 +51,7 @@
         <Table unsorted bare ariaLabel="Monthly meeting activity">
           <thead><tr><th scope="col">Month</th><th scope="col">Meetings</th><th scope="col">Known</th><th scope="col">Unknown</th><th scope="col">Known time</th><th scope="col">Average</th></tr></thead>
           <tbody>{#each metrics.months as month (month.month)}
-            <tr><th scope="row">{month.month}</th><td>{month.totals.meeting_count}</td><td>{month.totals.known_duration_count}</td><td>{month.totals.unknown_duration_count}</td><td>{formatMeetingDuration(month.totals.total_known_seconds)}</td><td>{formatMeetingDuration(month.totals.average_known_seconds)}</td></tr>
+            <tr><th scope="row">{groupRowName('month', month.month, month.month).name}</th><td>{month.totals.meeting_count}</td><td>{month.totals.known_duration_count}</td><td>{month.totals.unknown_duration_count}</td><td>{formatMeetingDuration(month.totals.total_known_seconds)}</td><td>{formatMeetingDuration(month.totals.average_known_seconds)}</td></tr>
           {/each}</tbody>
         </Table>
       </div>

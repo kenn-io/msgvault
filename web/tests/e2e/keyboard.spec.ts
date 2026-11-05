@@ -137,7 +137,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
   const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grouped).toBeFocused();
-  await tabTo(page, 'Drill into Synthetic chat');
+  await tabTo(page, 'Show items in Synthetic chat');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   await page.keyboard.press('Escape');

@@ -1069,8 +1069,8 @@
   }
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable) return;
-    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key);
+    if (!dimension || !groupingByDimension(dimension).drillable || (exploreState.current.workspace === 'files' && dimension === 'kind' && row.key === 'file')) return;
+    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
       return;
@@ -1393,7 +1393,7 @@
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable sourceTypes={shellData.jobs.sourceTypes}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               workspaceLabel="Files"
@@ -1405,7 +1405,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
+              drillable={exploreState.current.groupingChain[0] !== 'kind' && groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
@@ -1472,7 +1472,7 @@
           {/if}
         </main>
       {:else}
-        <EverythingWorkspace
+        <EverythingWorkspace sourceTypes={shellData.jobs.sourceTypes}
           bind:resultsWidth
           {client}
           {exploreState}

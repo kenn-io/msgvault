@@ -115,7 +115,7 @@ and Forward restore them.
 One toolbar sits above the results:
 
 - **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
-- **Group by** adds a grouping level. Add more levels to group within groups.
+- **Group by** adds a grouping level, including Entry kind. Month and Year list newest first in your time zone, with bars showing each group's share of all items. Add more levels to group within groups.
 - **Show as** switches between Table, Timeline, and Files.
 - **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
@@ -325,8 +325,9 @@ Facts lives in the person's Details. Choose **Show** to inspect evidence, claims
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
-a grouped person or domain in Messages opens its inspector in the current
-context, including chronologically ordered related files.
+any group in Messages opens its inspector with its item count, date range,
+activity, and the people who appear with it most. Person and domain inspectors
+also show related files and meeting activity when meetings exist.
 
 ## Saved views
 

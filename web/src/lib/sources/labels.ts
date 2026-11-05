@@ -1,3 +1,8 @@
+import Mail from '@lucide/svelte/icons/mail';
+import MessageCircle from '@lucide/svelte/icons/message-circle';
+import Mic from '@lucide/svelte/icons/mic';
+import Calendar from '@lucide/svelte/icons/calendar';
+import Archive from '@lucide/svelte/icons/archive';
 import type { SourceStatus } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 
@@ -6,7 +11,7 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
+  discord: 'Discord', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
@@ -86,4 +91,17 @@ export function sourceMailbox(identifier: string): string {
   } catch {
     return rest.slice(0, at).toLowerCase();
   }
+}
+
+export function sourceDisplayName(type: string | undefined, identifier: string): string {
+  if (type === 'gmail' || type === 'msmail') return identifier;
+  if (type === 'imap') return sourceMailbox(identifier);
+  return type && Object.hasOwn(SOURCE_TYPES, type) ? sourceTypeLabel(type) : identifier;
+}
+
+export function sourceIcon(type: string) {
+  if (['gmail', 'imap', 'msmail', 'pst', 'apple-mail', 'mbox', 'eml', 'maildir', 'google-groups'].includes(type)) return Mail;
+  if (['teams', 'discord', 'synctech_sms', 'imazing_csv', 'twilio', 'beeper', 'slack', 'inline', 'matrix', 'whatsapp', 'apple_messages', 'facebook_messenger', 'chatwoot'].includes(type)) return MessageCircle;
+  if (['meeting_import', 'circleback', 'plaud', 'pocket', 'muesli', 'granola', 'notion_meetings'].includes(type)) return Mic;
+  return type === 'gcal' ? Calendar : Archive;
 }

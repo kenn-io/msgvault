@@ -1,3 +1,4 @@
+import { formatDate } from './format';
 import { describe, expect, it } from 'vitest';
 import { formatBytes, formatDateTime, formatRelativeTime } from './format';
 
@@ -18,4 +19,8 @@ describe('format', () => {
     expect(formatRelativeTime('2026-07-19T10:00:00Z', now)).toBe('now');
     expect(formatRelativeTime('soon', now)).toBe('soon');
   });
+});
+
+it('preserves invalid date input', () => {
+ expect(formatDate('invalid')).toBe('invalid');
 });
