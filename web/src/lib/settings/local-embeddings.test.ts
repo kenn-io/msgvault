@@ -27,7 +27,7 @@ describe('local search row', () => {
     if (status === off) expect(screen.getByText('Downloads 290 MB once to archive.example.test')).toBeDefined();
     if (_name === 'available Ollama') expect(screen.getByText('Uses Ollama on this computer')).toBeDefined();
     if (status.phase === 'indexing') expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('10');
-    if (_name === 'other Ollama') expect(screen.getByText('Switching rebuilds the index for 10 messages')).toBeDefined();
+    if (_name === 'other Ollama') expect(screen.getByText('Switching rebuilds the index for 10 messages.')).toBeDefined();
   });
 });
 

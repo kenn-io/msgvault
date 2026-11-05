@@ -20,7 +20,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): Partial<SearchByMeaningLabels> {
   return {
     ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
-    rebuild: ('Switching rebuilds the index for {count} {items}' + (embedding?.eta_seconds ? ', {time}' : '')) + (status.document_rebuild ? '. Document search also rebuilds on this computer' : ''),
+    rebuild: ('Switching rebuilds the index for {count} {items}' + (embedding?.eta_seconds ? ', {time}' : '')) + (status.document_rebuild ? '. Document search also rebuilds on this computer.' : '.'),
     ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index and rebuilds document search on this computer' } : {}),
   };
 }

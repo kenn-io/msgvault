@@ -903,7 +903,7 @@
 </svelte:element>
 
 <style>
-  .local-search-hint { margin: var(--control-gap) var(--pane-pad-x) calc(-1 * var(--control-gap)); }
+  .local-search-hint { margin: var(--control-gap) var(--pane-pad-x) 0; }
   .local-search-hint :global(button) { text-decoration: underline; }
   .everything-workspace {
     display: flex;

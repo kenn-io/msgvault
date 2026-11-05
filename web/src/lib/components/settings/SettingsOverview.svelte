@@ -73,8 +73,8 @@
           <SearchByMeaningRow state={local} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
         </div>
         {#if ['on', 'ollama', 'ollama-other'].includes(local.kind) && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
-          <div class="row__recovery">
-            <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+          <div class="row__recovery" class:row__recovery--builtin={local.kind === 'on'}>
+            <span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
             {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name)}
           </div>
         {/if}
@@ -95,7 +95,7 @@
 <style>
   .overview {
     display: grid;
-    grid-template-columns: minmax(max-content, 1fr) max-content minmax(0, max-content);
+    grid-template-columns: minmax(0, 1fr) 8rem 13rem;
     margin: 0;
     padding: 0;
     border: 1px solid var(--border-default);
@@ -114,16 +114,21 @@
   .row + .row {
     border-top: 1px solid var(--border-default);
   }
-  .row__local { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; min-width: 0; }
+  .row__local { display: grid; grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; min-width: 0; }
   .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-template-columns: subgrid; min-height: 24px; gap: var(--control-gap) var(--section-gap); }
   .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
   .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; }
   .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
   .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
+  .row__local :global(.kit-search-by-meaning__warning) { max-width: 65ch; }
   .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; gap: var(--control-gap) var(--section-gap); }
-  .row__recovery .row__chip { grid-column: 2; }
+  .row__coverage { display: flex; align-items: center; gap: var(--control-gap); grid-column: 1 / 3; color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; }
+  .row__recovery--builtin { display: contents; }
+  .row__recovery--builtin .row__coverage { grid-row: 2; }
+  .row__recovery--builtin .row__action { grid-row: 1; }
+  .row__recovery :global(.build-index-action > .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border-color: var(--border-default); }
   .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); }
   .row__name {
     display: flex;
@@ -165,8 +170,12 @@
       grid-column: 1 / -1;
       justify-content: flex-start;
     }
-    .row__recovery .row__chip { grid-column: 1; }
+    .row__chip { justify-content: flex-end; }
+    .row__local :global(.kit-chip) { justify-self: end; }
+    .row__recovery .row__coverage { grid-column: 1 / -1; }
     .row__recovery .row__action { grid-column: 1 / -1; }
+    .row__recovery--builtin .row__action { grid-row: 2; }
+    .row__recovery--builtin .row__coverage { grid-row: 3; }
     .row__local :global(.kit-search-by-meaning__action) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
     .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { grid-row: 3; }
   }
