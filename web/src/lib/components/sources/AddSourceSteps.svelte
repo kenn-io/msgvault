@@ -21,7 +21,6 @@
     {:else}
       <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
       <div class="terminal">
-        <p>Command Prompt</p>
         <p>Start Command Prompt with <code>cmd /d /v:off</code>, then paste:</p>
         <CommandLine command={cmd} />
       </div>

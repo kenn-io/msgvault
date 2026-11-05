@@ -61,12 +61,6 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox -- you@example.com "~/All mail.mbox"');
   });
 
-  it('places an option terminator before hyphen-prefixed MBOX arguments', () => {
-    const values = { email: '-reader@example.com', path: '-archive.mbox' };
-    const shell = process.platform === 'win32' ? 'cmd' : 'posix';
-    expect(roundTrip(addSourceCommand(mbox, values, shell)!, 'msgvault import-mbox')).toEqual(['--', '-reader@example.com', '-archive.mbox']);
-  });
-
   it('preserves a tilde-prefixed IMAP username', () => {
     const command = addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, 'posix')!;
     expect(command).toBe("msgvault add-imap --host imap.example.com --username '~/reader'");

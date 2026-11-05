@@ -540,7 +540,7 @@ describe('SourcesWorkspace', () => {
     expect(dialog.queryByText(/Start Command Prompt with/)).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Full path to the file'), { target: { value: '/tmp/All mail.mbox' } });
     expect(dialog.getByText('POSIX shell')).toBeDefined();
-    expect(dialog.getByText('Command Prompt')).toBeDefined();
+    expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
     expect(dialog.getAllByRole('button', { name: /^Copy / })).toHaveLength(2);
   });
 
@@ -583,7 +583,6 @@ describe('SourcesWorkspace', () => {
     expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     expect(dialog.getByText('POSIX shell')).toBeDefined();
-    expect(dialog.getByText('Command Prompt')).toBeDefined();
     expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
     const copies = dialog.getAllByRole('button', { name: /^Copy / });
     expect(copies).toHaveLength(2);
