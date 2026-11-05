@@ -151,6 +151,7 @@ var windowsZones = map[string]string{
 	"US Eastern Standard Time":        "America/Indianapolis",
 	"US Mountain Standard Time":       "America/Phoenix",
 	"UTC":                             "Etc/UTC",
+	"Utc":                             "Etc/UTC",
 	"UTC+12":                          "Etc/GMT-12",
 	"UTC+13":                          "Etc/GMT-13",
 	"UTC-02":                          "Etc/GMT+2",

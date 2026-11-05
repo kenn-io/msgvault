@@ -42,6 +42,9 @@ func sourceIdentifier(username, collection string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse CalDAV collection URL: %w", err)
 	}
+	if email := accountEmail(username); email != "" {
+		username = email
+	}
 	raw, err := json.Marshal([2]string{username, carddav.CollectionURLIdentity(u)})
 	return string(raw), err
 }

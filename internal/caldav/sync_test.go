@@ -1572,6 +1572,59 @@ func TestSyncBodyUsesEventClock(t *testing.T) {
 	assertions.Equal(body, snippet)
 }
 
+func TestSyncUsernameCaseKeepsSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		wantSources         int
+	}{
+		{"email", "Owner@Example.org", "owner@example.org", 1},
+		{"username", "Owner", "owner", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, _ := archiveFixture(t)
+			st := testutil.NewTestStore(t)
+			opts := syncOpts()
+			opts.Username = tc.first
+			_, err := c.Sync(t.Context(), st, opts)
+			require.NoError(err)
+			opts.Username = tc.second
+			_, err = c.Sync(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Equal(tc.wantSources, count(t, st, `SELECT COUNT(*) FROM sources WHERE source_type='caldav'`))
+			assert.Equal(tc.wantSources, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
+		})
+	}
+}
+
+func TestSyncOverrideOnlyResourceKeepsLiveOccurrences(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			master := strings.Replace(calendarBody, "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT", 1)
+			f.raw["a.ics"] = master
+			if existing {
+				f.raw["a.ics"] = compound()
+			}
+			st := testutil.NewTestStore(t)
+			_, err := c.Sync(t.Context(), st, syncOpts())
+			require.NoError(err)
+			f.Lock()
+			f.raw["a.ics"] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:example@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			f.token = "t2"
+			f.Unlock()
+			_, err = c.Sync(t.Context(), st, syncOpts())
+			require.NoError(err)
+			assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='series' AND m.deleted_from_source_at IS NOT NULL`))
+			got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-04-01T00:00:00Z")
+			require.Len(got, 1)
+			assert.False(got[0].DeletedFromSource)
+			assert.Equal("2027-03-21T15:00:00Z", got[0].Start.UTC().Format(time.RFC3339))
+		})
+	}
+}
+
 func TestSyncAccountsArchiveSharedCollectionSeparately(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)

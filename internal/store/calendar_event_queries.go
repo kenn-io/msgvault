@@ -348,8 +348,8 @@ func inheritSparseCalendarAttendees(own, master []calevent.Attendee, fields map[
 	})
 }
 
-// CalDAV overrides apply only while they belong to the master's latest snapshot,
-// including when the provider has since deleted the entire resource.
+// CalDAV overrides belong to the master's latest snapshot. Live overrides of a
+// deleted master belong to a newer, override-only resource.
 func currentCalendarExceptions(ctx context.Context, r *loggedDB, master CalendarEventRow, exceptions []CalendarEventRow) ([]CalendarEventRow, error) {
 	if len(exceptions) == 0 {
 		return exceptions, nil
@@ -375,6 +375,9 @@ func currentCalendarExceptions(ctx context.Context, r *loggedDB, master Calendar
 		members[event.Event.ProviderEventID] = true
 	}
 	return slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
+		if master.DeletedFromSource && !row.DeletedFromSource {
+			return false
+		}
 		return !members[row.Event.ProviderEventID]
 	}), nil
 }
