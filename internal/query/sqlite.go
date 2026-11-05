@@ -219,14 +219,42 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	}
 }
 
+var aggregateBaselineConditions = map[string]struct{}{
+	store.LiveMessagesWhere("m", false): {},
+	store.LiveMessagesWhere("m", true):  {},
+	emailOnlyFilterM:                    {},
+	textMsgTypeFilter():                 {},
+}
+
 // buildAggregateSQL builds a complete aggregate query from a dimension and filter parts.
-func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string, sort string) string {
+func buildAggregateSQL(dim aggDimension, filterJoins string, filterConditions []string, sort string) string {
 	allJoins := dim.joins
 	if filterJoins != "" {
 		allJoins += "\n" + filterJoins
 	}
 
-	allWhere := filterWhere
+	narrowed := false
+	for _, condition := range filterConditions {
+		if _, baseline := aggregateBaselineConditions[condition]; !baseline {
+			narrowed = true
+			break
+		}
+	}
+	attachmentSize := "COALESCE(SUM(att.att_size), 0)"
+	attachmentCount := "COALESCE(SUM(att.att_count), 0)"
+	if narrowed {
+		attachmentSize = "COALESCE(SUM((SELECT SUM(a.size) FROM attachments a WHERE a.message_id = m.id)), 0)"
+		attachmentCount = "COALESCE(SUM((SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id)), 0)"
+	} else {
+		allJoins += `
+			LEFT JOIN (
+				SELECT message_id, SUM(size) as att_size, COUNT(*) as att_count
+				FROM attachments
+				GROUP BY message_id
+			) att ON att.message_id = m.id`
+	}
+
+	allWhere := strings.Join(filterConditions, " AND ")
 	if dim.whereExpr != "" {
 		allWhere += " AND " + dim.whereExpr
 	}
@@ -245,22 +273,17 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 				%s as key,
 				COUNT(*) as count,
 				COALESCE(SUM(m.size_estimate), 0) as total_size,
-				COALESCE(SUM(att.att_size), 0) as attachment_size,
-				COALESCE(SUM(att.att_count), 0) as attachment_count,
+				%s as attachment_size,
+				%s as attachment_count,
 				COUNT(*) OVER() as total_unique
 			FROM messages m
 			%s
-			LEFT JOIN (
-				SELECT message_id, SUM(size) as att_size, COUNT(*) as att_count
-				FROM attachments
-				GROUP BY message_id
-			) att ON att.message_id = m.id
 			WHERE %s
 		GROUP BY %s
 	) AS agg
 		%s
 		LIMIT ?
-	`, dim.keyExpr, allJoins, allWhere, groupExpr, sort)
+	`, dim.keyExpr, attachmentSize, attachmentCount, allJoins, allWhere, groupExpr, sort)
 }
 
 // optsToFilterConditions converts AggregateOptions into WHERE conditions and args.
@@ -880,12 +903,7 @@ func (e *SQLiteEngine) executeAggregate(ctx context.Context, groupBy ViewType, o
 		limit = 100
 	}
 
-	filterWhere := "1=1"
-	if len(filterConditions) > 0 {
-		filterWhere = strings.Join(filterConditions, " AND ")
-	}
-
-	query := buildAggregateSQL(dim, filterJoins, filterWhere, sort)
+	query := buildAggregateSQL(dim, filterJoins, filterConditions, sort)
 	args = append(args, limit)
 	return e.executeAggregateQuery(ctx, query, args)
 }
