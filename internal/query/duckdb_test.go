@@ -4693,6 +4693,31 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 	assert.Equal(int64(2), stats.MessageCount, "GetTotalStats with hide-deleted")
 }
 
+func TestDuckDBEngineRejectsPreRoomCache(t *testing.T) {
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	message := b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	b.AddTo(message, alice, "Alice")
+	analytics, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	rewriteParquetForTest(t, filepath.Join(analytics, "participants", "participants.parquet"), "id, email_address, domain, display_name, phone_number", `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', '')`)
+	state, err := ReadCacheSyncState(analytics)
+	requirements.NoError(err)
+	state.SchemaVersion = 34
+	data, err := json.Marshal(state)
+	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(CacheStatePath(analytics), data, 0o600))
+	engine, err := NewDuckDBEngine(analytics, "", nil)
+	if engine != nil {
+		t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	}
+	var unavailable *CacheUnavailableError
+	requirements.ErrorAs(err, &unavailable)
+	requirements.Equal(CacheStaleSchema, unavailable.Readiness)
+}
+
 // TestDuckDBEngine_StaleParquetSchema verifies that a DuckDB engine can query
 // Parquet files written BEFORE PR #160 added phone_number, attachment_count,
 // sender_id, and message_type columns, and before later cache versions added

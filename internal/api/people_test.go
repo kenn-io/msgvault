@@ -364,6 +364,27 @@ func TestDomainEndpointsNormalizeExactDomainAndRejectAmbiguousOrSQLLikeValues(t 
 	}
 }
 
+func TestPersonClusterUsesSummaryCanonicalID(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
+	requirements.NoError(err)
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(room, alice)
+	requirements.NoError(err)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, person: &query.PersonSummary{ID: alice, DisplayLabel: "Alice"}}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st, Engine: engine, Logger: testLogger()})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", alice), nil))
+	requirements.Equal(http.StatusOK, response.Code)
+	var person query.PersonSummary
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&person))
+	requirements.NotNil(person.Cluster)
+	assertions.Equal(alice, person.Cluster.CanonicalID)
+}
+
 // TestGetPersonComposesClusterBlockFromStoreForLinkedParticipant covers the
 // handler-level composition documented in ClusterLookupStore and
 // handleGetParticipant: for a linked participant, the handler must resolve
