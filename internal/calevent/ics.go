@@ -430,9 +430,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		}
 		if c.OrganizerEmail != "" && email == c.OrganizerEmail {
 			organizerSeen = true
-			if role != "room" {
-				role = "organizer"
-			}
+			role = "organizer"
 		}
 		rsvp := "unknown"
 		switch strings.ToUpper(a.Params.Get("PARTSTAT")) {
