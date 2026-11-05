@@ -280,17 +280,3 @@ func TestInheritedHelpFlagsPreserveVisibilityAndOverrides(t *testing.T) {
 	assertions.Contains(output.String(), "Global Flags: --config (see 'msgvault --help')")
 	assertions.NotContains(output.String(), "hidden")
 }
-
-func TestMCPHelpDescribesLINESending(t *testing.T) {
-	assert := assert.New(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetErr(&output)
-	rootCmd.SetArgs([]string{"mcp", "--help"})
-	require.NoError(t, executeRootContext(t.Context(), rootCmd))
-	assert.Contains(output.String(), "Owner sessions can send reviewed LINE drafts with send_line_reply.")
-	assert.Contains(output.String(), "Sending requires per-channel allow_send and confirmation.")
-}

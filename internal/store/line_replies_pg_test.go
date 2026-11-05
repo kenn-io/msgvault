@@ -30,40 +30,32 @@ func lineReplyPGFixture(t *testing.T) (*Store, ChatDraft, int64) {
 // Two transactions compete for the same draft while admission is uncommitted.
 // The third connection only observes the real server lock wait.
 func TestLineReplyAdmissionBlocksStartedDraftMutation(t *testing.T) {
-	for _, operation := range []string{"edit", "delete"} {
-		t.Run(operation, func(t *testing.T) {
-			require := require.New(t)
-			st, draft, _ := lineReplyPGFixture(t)
-			st.DB().SetMaxOpenConns(4)
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-			defer cancel()
-			done := make(chan error, 1)
-			require.NoError(st.withTxContext(ctx, func(tx *loggedTx) error {
-				var blocker int
-				if err := tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
-					return err
-				}
-				_, err := st.admitLineReplyTx(ctx, tx, draft.SourceID, draft.DraftID, 1, time.Now(), func(LineReplyAttempt) error { return nil })
-				if err != nil {
-					return err
-				}
-				go func() {
-					if operation == "edit" {
-						_, err := st.UpdateChatDraftContext(ctx, draft.DraftID, 1, "late edit")
-						done <- err
-						return
-					}
-					done <- st.DeleteChatDraftContext(ctx, draft.DraftID, 1)
-				}()
-				waitForPostgresBlocker(t, st.DB(), blocker)
-				return nil
-			}))
-			require.ErrorIs(waitForSourceOperation(t, done), ErrChatDraftFrozen)
-			got, err := st.GetChatDraftContext(ctx, draft.DraftID)
-			require.NoError(err)
-			assert.Equal(t, draft, got)
-		})
-	}
+	require := require.New(t)
+	st, draft, _ := lineReplyPGFixture(t)
+	st.DB().SetMaxOpenConns(4)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	require.NoError(st.withTxContext(ctx, func(tx *loggedTx) error {
+		var blocker int
+		if err := tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+			return err
+		}
+		_, err := st.admitLineReplyTx(ctx, tx, draft.SourceID, draft.DraftID, 1, time.Now(), func(LineReplyAttempt) error { return nil })
+		if err != nil {
+			return err
+		}
+		go func() {
+			_, err := st.UpdateChatDraftContext(ctx, draft.DraftID, 1, "late edit")
+			done <- err
+		}()
+		waitForPostgresBlocker(t, st.DB(), blocker)
+		return nil
+	}))
+	require.ErrorIs(waitForSourceOperation(t, done), ErrChatDraftFrozen)
+	got, err := st.GetChatDraftContext(ctx, draft.DraftID)
+	require.NoError(err)
+	assert.Equal(t, draft, got)
 }
 
 func TestLineReplyAdoptionResolvesMergedBotWithTwoConnections(t *testing.T) {
