@@ -55,7 +55,6 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 	second := persist("meeting_transcript", "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"planning@example.org"}}`)
 	cache := filepath.Join(t.TempDir(), "analytics")
 	var preservedShards map[string]string
-	var calendarCount int64
 	readCount := func(want int64) {
 		engine, err := query.NewDuckDBEngine(cache, "", nil)
 		requirements.NoError(err)
@@ -73,7 +72,18 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 		defer func() { requirements.NoError(db.Close()) }()
 		var scored int64
 		requirements.NoError(db.QueryRow(`SELECT sum(meeting_count) FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(cache, identityindex.DatasetTemperatureContributions, "*.parquet"), human).Scan(&scored))
-		assertions.Equal(want+calendarCount, scored, "temperature days count transcripts and calendar events")
+		assertions.Equal(want, scored, "temperature counts each linked occurrence once")
+		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: query.Context{ParticipantIDs: []int64{human}}, Now: time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC)})
+		requirements.NoError(err)
+		requirements.Len(relationships.Rows, 1)
+		assertions.Equal(want, relationships.Rows[0].Signals.MeetingCount)
+		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: human, Year: 2026, Timezone: "UTC"})
+		requirements.NoError(err)
+		var dailyMeetings int64
+		for _, day := range calendar.Days {
+			dailyMeetings += day.Meetings
+		}
+		assertions.Equal(want, dailyMeetings)
 		var linked int
 		requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), second).Scan(&linked))
 		if want == 1 {
@@ -88,7 +98,6 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
 	readCount(2)
-	calendarCount = 1
 	event := persist("calendar_event", "calendar", "gcal_json", `{"id":"event","iCalUID":"planning@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`)
 	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: `{"ical_uid":"planning@example.org"}`, Valid: true}))
 	assertions.False(cacheNeedsBuild(path, cache).FullRebuild)

@@ -18,7 +18,7 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	keys, err := st.MeetingCountKeysContext(t.Context())
 	requirements.NoError(err)
 	assertions.ElementsMatch([]string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}, keys[note])
-	assertions.NotContains(keys, master)
+	assertions.Equal([]string{"uid:weekly@example.org/20270307T100000Z"}, keys[master])
 }
 
 func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {
@@ -36,6 +36,6 @@ func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {
 	after, err := st.MeetingCountKeysContext(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(before[note], after[note])
-	assertions.NotContains(after, master)
-	assertions.NotContains(after, exception)
+	assertions.Equal([]string{"uid:weekly@example.org/20270307T100000Z"}, after[master])
+	assertions.Equal([]string{"uid:weekly@example.org/20270314T100000Z"}, after[exception])
 }

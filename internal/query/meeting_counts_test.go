@@ -106,12 +106,14 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 				id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
-				if kind == "meeting_transcript" {
-					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+				key := "uid:shared@example.org/"
+				if i == 4 {
+					key = "uid:unlinked@example.org/"
 				}
+				b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 			}
 			engine := b.BuildEngine()
-			want := int64(3)
+			want := int64(1)
 			if unlinkedCalendar {
 				want++
 			}
@@ -147,9 +149,11 @@ func TestRelationshipCalendarEventAndTranscriptAcrossYears(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
+		key := "uid:calendar@example.org/"
 		if kind == "meeting_transcript" {
-			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+			key = "uid:shared@example.org/"
 		}
+		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {
