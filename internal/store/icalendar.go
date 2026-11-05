@@ -96,10 +96,11 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			return err
 		}
 		e := item.component.Event
+		sourceMessageID := e.ProviderEventID
 		var id int64
 		var metadata sql.NullString
 		var format string
-		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format)
+		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format,m.source_message_id FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format, &sourceMessageID)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read prior ICS identity: %w", err)
@@ -132,7 +133,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return err
 			}
 		} else if apply {
-			if err := s.persistICSDetailsWith(ctx, tx, sourceID, item); err != nil {
+			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, item); err != nil {
 				return err
 			}
 			if exists {
@@ -197,7 +198,7 @@ func icsEventSentAt(e calevent.Event) (sql.NullTime, error) {
 	return sql.NullTime{Time: sent, Valid: true}, nil
 }
 
-func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, item preparedICS) error {
+func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string, item preparedICS) error {
 	c := item.component
 	e := c.Event
 	item.meta.ICalUID = c.UID
@@ -257,7 +258,7 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 			target.EmailAddresses = append(target.EmailAddresses, p.EmailAddress)
 		}
 		return &MessagePersistData{
-			Message:      &Message{SourceID: sourceID, SourceMessageID: e.ProviderEventID, MessageType: "calendar_event", Subject: sql.NullString{String: c.Summary, Valid: c.Summary != ""}, SentAt: sent, SenderID: sender, Snippet: sql.NullString{String: body, Valid: body != ""}, SizeEstimate: int64(len(c.Raw))},
+			Message:      &Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: "calendar_event", Subject: sql.NullString{String: c.Summary, Valid: c.Summary != ""}, SentAt: sent, SenderID: sender, Snippet: sql.NullString{String: body, Valid: body != ""}, SizeEstimate: int64(len(c.Raw))},
 			Conversation: &ConversationPersistData{SourceConversationID: familyKey, ConversationType: "calendar", Title: title},
 			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: c.Raw, RawFormat: rawFormatICS, Metadata: &sql.NullString{String: string(encoded), Valid: true}, PreserveLabels: true,
 			Recipients: []RecipientSet{from, to}, FTS: &FTSDoc{Subject: c.Summary, Body: body, FromAddr: c.OrganizerEmail, ToAddrs: strings.Join(emails, " ")},
