@@ -65,3 +65,36 @@ func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
 		})
 	}
 }
+
+func TestIndependentReviewHiddenCalendarDecisionInverse(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"), "history@example.com")
+	liveData, live := calendarFixture(t, st, "live", singleLinkRaw("event", "merge@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{}}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
+	_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: liveData.Message.SourceID})
+	requirements.NoError(err)
+	for _, event := range []int64{archived, live} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+		requirements.NoError(err)
+		assertions.Equal([]int64{note}, record.MessageIDs)
+	}
+}
+
+func TestIndependentReviewAutomaticLinkAfterHiddenCalendarMerge(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"))
+	liveData, live := calendarFixture(t, st, "live", singleLinkRaw("event", "merge@example.org"), "live@example.com")
+	note := granolaLinkFixture(t, st, "event")
+	requirements.Equal(fmt.Sprintf("evt:%d", archived), linkedMeetingRefs(t, st, note)[note])
+	_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: liveData.Message.SourceID})
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("evt:%d", live), linkedMeetingRefs(t, st, note)[note])
+	for _, event := range []int64{archived, live} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+		requirements.NoError(err)
+		assertions.Equal([]int64{note}, record.MessageIDs)
+	}
+}

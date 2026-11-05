@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 func testMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
@@ -295,4 +296,16 @@ func TestMeetingSuggestionsExcludeSavedDecisions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMeetingSuggestionsSkipUnresolvableOccurrence(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "valid@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{}}`)
+	budget := calrecur.RequestReadBudget
+	suggestions, err := st.undecidedMeetingSuggestions(t.Context(), st.meetingReader(t.Context()), []MeetingSuggestion{{Ref: "evt:9999999", MemberMessageID: note}, {Ref: fmt.Sprintf("evt:%d", event), MemberMessageID: note}}, 10, &budget)
+	requirements.NoError(err)
+	requirements.Len(suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), suggestions[0].Ref)
 }

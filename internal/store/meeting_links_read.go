@@ -99,7 +99,9 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	args := slices.Concat(values, targets)
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
  SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`)
- UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.target_message_id IN (`+placeholders(len(targets))+`)
+ UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE EXISTS (
+ SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id
+ WHERE e.message_id IN (`+placeholders(len(targets))+`) AND (`+meetingEventAliasPredicate("d.target_message_id")+`))
  ) candidates JOIN messages m ON m.id = candidates.message_id
  WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL ORDER BY m.id LIMIT ?`, append(args, *budget+1)...)
 	if err != nil {

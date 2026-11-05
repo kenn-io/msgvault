@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -91,7 +90,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 				}
 			}
 		}
-		_, err = tx.ExecContext(ctx, meetingDecisionUpsert, memberID, target.Ref.MessageID, target.Ref.Key, decision, time.Now().UTC())
+		_, err = tx.ExecContext(ctx, meetingDecisionUpsert, memberID, target.Ref.MessageID, target.Ref.Key, decision)
 		return err
 	})
 }
@@ -101,7 +100,7 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 	if from == to {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT member_message_id,target_message_id,occurrence_key,decision,created_at FROM meeting_link_decisions WHERE member_message_id = ? OR target_message_id = ?`, from, from)
+	rows, err := tx.QueryContext(ctx, `SELECT member_message_id,target_message_id,occurrence_key,decision FROM meeting_link_decisions WHERE member_message_id = ? OR target_message_id = ?`, from, from)
 	if err != nil {
 		return err
 	}
@@ -109,12 +108,11 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 		member        int64
 		target        int64
 		key, decision string
-		created       time.Time
 	}
 	var decisions []copyDecision
 	for rows.Next() {
 		var d copyDecision
-		if err := rows.Scan(&d.member, &d.target, &d.key, &d.decision, &d.created); err != nil {
+		if err := rows.Scan(&d.member, &d.target, &d.key, &d.decision); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -130,7 +128,7 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 		if d.target == from {
 			d.target = to
 		}
-		_, err := tx.ExecContext(ctx, meetingDecisionCopy, d.member, d.target, d.key, d.decision, d.created)
+		_, err := tx.ExecContext(ctx, meetingDecisionCopy, d.member, d.target, d.key, d.decision)
 		if err != nil {
 			return fmt.Errorf("copy meeting decision: %w", err)
 		}
@@ -138,5 +136,5 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 	return nil
 }
 
-const meetingDecisionUpsert = `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision,created_at) VALUES (?,?,?,?,?) ON CONFLICT(member_message_id,target_message_id,occurrence_key) DO UPDATE SET decision = excluded.decision,created_at = excluded.created_at`
-const meetingDecisionCopy = `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision,created_at) VALUES (?,?,?,?,?) ON CONFLICT(member_message_id,target_message_id,occurrence_key) DO NOTHING`
+const meetingDecisionUpsert = `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision) VALUES (?,?,?,?) ON CONFLICT(member_message_id,target_message_id,occurrence_key) DO UPDATE SET decision = excluded.decision`
+const meetingDecisionCopy = `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision) VALUES (?,?,?,?) ON CONFLICT(member_message_id,target_message_id,occurrence_key) DO NOTHING`

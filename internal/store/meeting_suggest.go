@@ -299,9 +299,12 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		id, key, _ := strings.Cut(strings.TrimPrefix(suggestion.Ref, "evt:"), "@")
 		messageID, err := strconv.ParseInt(id, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("parse suggested event reference %q: %w", suggestion.Ref, err)
+			continue
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
