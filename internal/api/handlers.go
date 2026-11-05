@@ -3590,17 +3590,12 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	refuse, withheld, ok := s.attachmentWithheld(w, r, attachments)
-	if !ok {
-		return
-	}
-	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
 	var contentLength int64
 	var err error
 	if s.blobStore != nil {
-		content, contentLength, err = s.blobStore.OpenStream(r.Context(), hash)
+		content, contentLength, err = s.blobStore.OpenStream(store.WithoutReadSnapshotContext(r.Context()), hash)
 	}
 	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
 		content, contentLength, att, err = openLooseAttachmentCandidates(
@@ -3616,12 +3611,15 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := textAttachmentReader(content, attachments, refuse, withheld)
-	if apiErr != nil {
+	reader, apiErr := s.textAttachmentReader(w, r, content, attachments)
+	if reader == nil {
 		_ = content.Close()
-		writeAPIHTTPError(w, apiErr)
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+		}
 		return
 	}
+	releaseReadSnapshot(r)
 	contentType := att.MimeType
 	if contentType == "" {
 		contentType = "application/octet-stream"

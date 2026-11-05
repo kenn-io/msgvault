@@ -954,11 +954,16 @@ func testAgentPackingSnapshot(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), readPackingValueKey{}, "request value"), 10*time.Second)
 				defer cancel()
 				migrate := func(readCtx context.Context) {
-					requirements.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone)
+					if route == "cid" {
+						requirements.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone)
+						assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
+					} else {
+						// Downloads retain the snapshot until the byte sniff and parent classification.
+						requirements.NoError(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)))
+					}
 					assertions.Equal("request value", readCtx.Value(readPackingValueKey{}))
 					_, deadline := readCtx.Deadline()
 					assertions.True(deadline)
-					assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
 					if transition == "cancel" {
 						cancel()
 						return
@@ -1018,7 +1023,8 @@ func testAgentPackingSnapshot(t *testing.T) {
 					}
 					assertions.Equal(expectedCalls, resolver.calls)
 				}
-				assertions.Zero(st.DB().Stats().InUse)
+				// Cancellation can return the snapshot connection asynchronously.
+				assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 			})
 		}
 	}

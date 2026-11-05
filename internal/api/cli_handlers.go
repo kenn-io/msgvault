@@ -3645,14 +3645,9 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	refuse, withheld, ok := s.attachmentWithheld(w, r, attachments)
-	if !ok {
-		return
-	}
-	releaseReadSnapshot(r)
 
 	if s.blobStore != nil {
-		rc, size, err := s.blobStore.OpenStream(r.Context(), contentHash)
+		rc, size, err := s.blobStore.OpenStream(store.WithoutReadSnapshotContext(r.Context()), contentHash)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
@@ -3667,12 +3662,15 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "remote_attachment_too_large", "Attachment exceeds the remote client byte limit")
 			return
 		}
-		reader, apiErr := textAttachmentReader(rc, attachments, refuse, withheld)
-		if apiErr != nil {
+		reader, apiErr := s.textAttachmentReader(w, r, rc, attachments)
+		if reader == nil {
 			_ = rc.Close()
-			writeAPIHTTPError(w, apiErr)
+			if apiErr != nil {
+				writeAPIHTTPError(w, apiErr)
+			}
 			return
 		}
+		releaseReadSnapshot(r)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.Header().Set("X-Msgvault-Content-Hash", contentHash)
@@ -3718,11 +3716,14 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reader, apiErr := textAttachmentReader(f, attachments, refuse, withheld)
-	if apiErr != nil {
-		writeAPIHTTPError(w, apiErr)
+	reader, apiErr := s.textAttachmentReader(w, r, f, attachments)
+	if reader == nil {
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+		}
 		return
 	}
+	releaseReadSnapshot(r)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Msgvault-Content-Hash", contentHash)
