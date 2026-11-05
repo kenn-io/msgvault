@@ -413,6 +413,15 @@ test('resizing an open reader preserves expanded messages and focus', async ({ p
   await expect(expanded).toBeVisible();
   await expect(collapse).toBeFocused();
   expect(requests).toBe(1);
+  await grid.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: 'Back to results' })).toBeFocused();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(page.getByRole('button', { name: 'Close reading pane' })).toBeFocused();
+  await page.evaluate(() => { Object.defineProperty(Element.prototype, 'checkVisibility', { value: undefined, configurable: true }); });
+  await grid.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: 'Back to results' })).toBeFocused();
 });
 
 test('phone recording Back keeps loaded hits and restores the opened link during an outage', async ({ page }) => {

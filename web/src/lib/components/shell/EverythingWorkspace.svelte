@@ -140,8 +140,9 @@
     if (!changed || !untrack(() => readingTargetKey)) return;
     void tick().then(() => {
       const focused = document.activeElement;
-      if (focused instanceof HTMLElement && focused !== document.body && focused.getClientRects().length > 0 && getComputedStyle(focused).visibility === 'visible') return;
-      resultsSplit?.querySelector<HTMLButtonElement>('[aria-label="Back to results"], [aria-label="Close reading pane"]')?.focus();
+      if (focused instanceof HTMLElement && focused !== document.body &&
+        (focused.checkVisibility?.({ visibilityProperty: true }) ?? !resultsSplit?.querySelector('[data-pane="primary"]')?.contains(focused))) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[data-reader-dismiss]')?.focus();
     });
   });
 

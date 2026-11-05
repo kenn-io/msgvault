@@ -191,12 +191,16 @@
       : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed);
   }
 
+  function markDismissButton(button: HTMLButtonElement) {
+    button.dataset.readerDismiss = '';
+  }
+
 </script>
 
 <aside class="reading-pane" class:reading-pane--back={back} aria-label={`Reading pane: ${title}`}>
   <header class="pane-header">
     {#if back}
-      <IconButton ariaLabel="Back to results" onclick={() => onClose?.()}>
+      <IconButton {@attach markDismissButton} ariaLabel="Back to results" onclick={() => onClose?.()}>
         <ArrowLeft size={16} />
       </IconButton>
     {/if}
@@ -215,7 +219,7 @@
         <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
       {/if}
       {#if !back}
-        <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
+        <IconButton {@attach markDismissButton} size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
           <X size={14} />
         </IconButton>
       {/if}
