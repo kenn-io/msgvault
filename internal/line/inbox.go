@@ -276,7 +276,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 			} else if retryableEvent(eventErr) {
 				state = "retry"
 			} else {
-				if err = pass.store.FinishLineEventContext(ctx, row.ID, "pending", eventErr.Error(), time.Time{}); err != nil {
+				if err = pass.store.FinishLineEventContext(ctx, row.ID, "pending", eventErr.Error(), pass.retryAt(row, eventErr)); err != nil {
 					return err
 				}
 				if resultErr == nil {
@@ -337,7 +337,10 @@ func (p *Processor) retryAt(row store.LineWebhookEvent, eventErr error) time.Tim
 	if deadline := providerRetryDeadline(eventErr); deadline.After(next) {
 		next = deadline
 	}
-	return minTime(next, row.ReceivedAt.Add(retryHorizon))
+	if retryableEvent(eventErr) {
+		return minTime(next, row.ReceivedAt.Add(retryHorizon))
+	}
+	return next
 }
 func providerRetryDeadline(err error) time.Time {
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {

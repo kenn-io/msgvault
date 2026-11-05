@@ -2,6 +2,7 @@ package line
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -394,4 +395,36 @@ func TestMediaChannelPolicy(t *testing.T) {
 	checks.Equal(attachmentpolicy.SkipAccountPolicy, media.SkipReason)
 	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	checks.NotZero(f.archived(t, "1").id)
+}
+
+func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	blocked := filepath.Join(t.TempDir(), "attachments")
+	must.NoError(os.WriteFile(blocked, []byte("blocked"), 0o600))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
+	for i := range 501 {
+		e := f.fileEvent()
+		e.Message.ID = fmt.Sprint(i + 1)
+		e.WebhookEventID = "media-" + e.Message.ID
+		e.Timestamp = f.now.UnixMilli() + int64(i)
+		f.api.Enqueue(http.MethodGet, "/v2/bot/message/"+e.Message.ID+"/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+		f.enqueue(t, e, time.Time{})
+	}
+	f.enqueue(t, f.message("later-text", "later text", f.now.UnixMilli()+501), time.Time{})
+	for range 2 {
+		must.Error(f.processor.Process(t.Context()))
+	}
+	checks.Equal("later text", f.archived(t, "later-text").body)
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+	checks.Equal("pending", state)
+	f.now = f.now.Add(retryHorizon + time.Hour)
+	must.Error(f.processor.Process(t.Context()))
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+	checks.Equal("pending", state)
+	var next time.Time
+	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
+	checks.True(next.After(f.now))
 }

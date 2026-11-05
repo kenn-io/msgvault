@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 )
 
+const lineSourceType = "line"
+
 // LineWebhookEvent is sanitized provider evidence and its durable processing state.
 // TargetMessageID indexes lifecycle events whose original message may arrive later.
 type LineWebhookEvent struct {
@@ -157,7 +159,7 @@ func (s *Store) DueLineEventsThroughContext(ctx context.Context, sourceID int64,
 		limit = 1000
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+lineEventColumns+` FROM line_webhook_events
-  WHERE source_id=? AND (?=0 OR id<=?) AND (state='pending' OR (state='retry' AND next_attempt_at<=?))
+  WHERE source_id=? AND (?=0 OR id<=?) AND state IN ('pending','retry') AND (next_attempt_at IS NULL OR next_attempt_at<=?)
   ORDER BY event_timestamp,webhook_event_id LIMIT ?`), sourceID, throughID, throughID, now.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("load due LINE events: %w", err)
@@ -641,16 +643,12 @@ func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, s
 		if err != nil || changed == 0 || !s.fts5Available {
 			return err
 		}
-		var subject sql.NullString
-		if err := q.QueryRow(`SELECT subject FROM messages WHERE id=?`, messageID).Scan(&subject); err != nil {
-			return fmt.Errorf("read LINE message %d subject: %w", messageID, err)
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("read LINE search document: %w", err)
 		}
-		var body sql.NullString
-		err = q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id=?`, messageID).Scan(&body)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read LINE message %d body: %w", messageID, err)
-		}
-		_, err = s.upsertFTSOrUnsearchable(q, FTSDoc{MessageID: messageID, Subject: subject.String, Body: body.String, FromAddr: name})
+		row.fts.Body = row.body
+		_, err = s.upsertFTSOrUnsearchable(q, row.fts)
 		if err != nil {
 			return fmt.Errorf("update LINE sender search: %w", err)
 		}

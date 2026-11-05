@@ -413,6 +413,12 @@ func TestProcessorEditPreservesCachedSenderSearch(t *testing.T) {
 	must.NoError(err)
 	checks.Equal(int64(1), total)
 
+	_, err = f.st.RebuildFTSContext(t.Context(), nil)
+	must.NoError(err)
+	_, total, err = f.st.SearchMessagesContext(t.Context(), "Cached Sender", 0, 10)
+	must.NoError(err)
+	checks.Equal(int64(1), total)
+
 	edit := base
 	edit.Type = "messageEdited"
 	edit.Timestamp++
@@ -422,6 +428,11 @@ func TestProcessorEditPreservesCachedSenderSearch(t *testing.T) {
 	f.run(t)
 
 	_, total, err = f.st.SearchMessagesContext(context.Background(), "Cached Sender", 0, 10)
+	must.NoError(err)
+	checks.Equal(int64(1), total)
+	_, err = f.st.RebuildFTSContext(t.Context(), nil)
+	must.NoError(err)
+	_, total, err = f.st.SearchMessagesContext(t.Context(), "Cached Sender", 0, 10)
 	must.NoError(err)
 	checks.Equal(int64(1), total)
 }

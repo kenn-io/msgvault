@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/twilio"
 )
@@ -249,7 +250,7 @@ func mediaPolicyForAttachment(cfg *config.Config, candidate store.AttachmentPoli
 		return attachmentpolicy.Policy{}, false
 	case sourceTypeAppleMessages:
 		return imessageMediaPolicy(0, cfg), true
-	case "line":
+	case line.SourceType:
 		source := cfg.GetLineSource(identifier)
 		if source == nil {
 			return attachmentpolicy.Policy{}, false

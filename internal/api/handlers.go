@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -1658,7 +1659,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		Identifier: source.Identifier,
 		UpdatedAt:  source.UpdatedAt.UTC().Format(time.RFC3339),
 	}
-	if source.SourceType == "line" {
+	if source.SourceType == line.SourceType {
 		webhook := &LineWebhookStatus{}
 		if reader, ok := s.store.(LineStatusStore); ok {
 			inbox, err := reader.LineInboxStatusContext(ctx, source.ID)

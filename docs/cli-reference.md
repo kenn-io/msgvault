@@ -1618,7 +1618,7 @@ msgvault sync-line --channel-id 2000000001
 |---|---|---|
 | `--channel-id` | omitted | Restrict the pass to one configured channel |
 
-**Sync now** for a LINE source performs the same inbox-processing pass. See
+**Process inbox** for a LINE source performs the same inbox-processing pass. See
 [delivery and retries](usage/line.md#delivery-and-retries).
 
 ---

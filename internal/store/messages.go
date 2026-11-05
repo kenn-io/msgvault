@@ -2540,6 +2540,14 @@ func (s *Store) persistMessageWith(
 	if data.FTS != nil && s.fts5Available {
 		fts := *data.FTS
 		fts.MessageID = messageID
+		if data.Message.MessageType == lineSourceType {
+			row, err := s.loadDerivedEmailText(q, messageID)
+			if err != nil {
+				return 0, fmt.Errorf("load LINE search document: %w", err)
+			}
+			fts = row.fts
+			fts.Body = row.body
+		}
 		if err := s.dialect.FTSUpsert(q, fts); err != nil {
 			return 0, fmt.Errorf("upsert fts: %w", err)
 		}
