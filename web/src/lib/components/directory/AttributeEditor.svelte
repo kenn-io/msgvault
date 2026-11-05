@@ -7,6 +7,7 @@
     AttributeValue as GeneratedAttributeValue,
     PersonAttributeValue as GeneratedPersonAttributeValue,
   } from '../../api/generated/models';
+  import { editorKind } from './attribute-value';
   import { attributeTextLength, trimAttributeText } from '../../directory/attribute-text';
   import type { SetPersonAttributeRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -14,7 +15,6 @@
   type AttributeDefinition = GeneratedAttributeDefinition;
   type AttributeValue = GeneratedAttributeValue;
   type PersonAttributeValue = GeneratedPersonAttributeValue;
-  type EditorKind = 'boolean' | 'number' | 'date' | 'timestamp' | 'json' | 'choice' | 'person' | 'text' | 'unsupported';
 
   interface Props {
     controller: DirectoryProfileController;
@@ -93,18 +93,6 @@
   );
   const normalizedTextDraft = $derived(trimAttributeText(draft));
   const trimmedCharacterCount = $derived(attributeTextLength(normalizedTextDraft));
-
-  function editorKind(value: AttributeDefinition): EditorKind {
-    if (value.options?.choices?.length) return 'choice';
-    if (value.value_type === 'boolean') return 'boolean';
-    if (value.value_type === 'integer' || value.value_type === 'real') return 'number';
-    if (value.value_type === 'date') return 'date';
-    if (value.value_type === 'timestamp') return 'timestamp';
-    if (value.value_type === 'json') return 'json';
-    if (value.value_type === 'record_reference' && value.record_target === 'person') return 'person';
-    if (value.value_type === 'text') return 'text';
-    return 'unsupported';
-  }
 
   function numericDraft(text: string): number | null {
     if (text.trim() === '') return null;

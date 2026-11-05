@@ -1,0 +1,24 @@
+import type { OperationLaneStatus, OperationRunSummary, SourceStatus, SyncRunStatus } from '../api/generated/models';
+import { lane } from '../../test/operations';
+import canonical from '../../../tests/e2e/fixtures/operations-public.json';
+
+const failedRuns = canonical.job_runs as OperationRunSummary[];
+
+export function jobRun(kind: OperationRunSummary['kind']): OperationRunSummary {
+  return structuredClone(failedRuns.find(run => run.kind === kind)!);
+}
+
+export function jobLane(kind: OperationLaneStatus['kind'], extra: Partial<OperationLaneStatus> = {}): OperationLaneStatus {
+  const latest = jobRun(kind);
+  return lane(kind, { latest, ...extra });
+}
+
+export function sourceStatus(extra: Partial<SourceStatus> = {}): SourceStatus {
+  const busy = !!(extra.active_sync || extra.scheduler_queued || extra.scheduler_pending || extra.scheduler_started_at);
+  const reason = busy ? 'sync_already_running' : extra.sync_unavailable_reason ?? (extra.scheduled === false ? 'sync_not_configured' : undefined);
+  return { id: 1, identifier: 'archive@example.com', display_name: 'Example archive', source_type: 'gmail', updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null, last_successful_sync: null, scheduled: true, next_sync_at: null, ...extra, can_sync: extra.can_sync !== false && !reason, sync_unavailable_reason: reason };
+}
+
+export function syncRunStatus(extra: Partial<SyncRunStatus> = {}): SyncRunStatus {
+  return { id: 1, source_id: 1, status: 'completed', started_at: '2026-08-30T11:00:00Z', completed_at: '2026-08-30T11:00:04Z', error_message: null, errors_count: 0, messages_added: 0, messages_processed: 0, messages_updated: 0, ...extra };
+}

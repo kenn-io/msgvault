@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"regexp"
 	"slices"
 	"sort"
@@ -94,6 +93,8 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	// Edited records a source edit atomically with the message.
+	Edited                    bool
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -108,6 +109,7 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
+	SyncRunItem               *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -881,31 +883,36 @@ func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string)
 func (s *Store) ListUnresolvedMessageRepliesAfter(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // ListUnresolvedMessageRepliesAfterContext honors cancellation during ListUnresolvedMessageRepliesAfter.
 func (s *Store) ListUnresolvedMessageRepliesAfterContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	if limit <= 0 {
 		return nil, errors.New("list unresolved message replies: limit must be positive")
 	}
-	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit, conversationID)
 }
 
 func (s *Store) listUnresolvedMessageReplies(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // listUnresolvedMessageRepliesContext honors cancellation during listUnresolvedMessageReplies.
 func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	limitClause := ""
 	args := []any{sourceID, messageType, afterID}
+	conversationClause := ""
+	if conversationID != 0 {
+		conversationClause = " AND conversation_id = ?"
+		args = append(args, conversationID)
+	}
 	if limit > 0 {
 		limitClause = " LIMIT ?"
 		args = append(args, limit)
@@ -919,7 +926,7 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
 		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
-		ORDER BY id`+limitClause,
+		`+conversationClause+` ORDER BY id`+limitClause,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)
@@ -965,7 +972,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1208,6 +1218,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+					return fmt.Errorf("transfer legacy loop decision: %w", err)
+				}
 			}
 
 			_, err = tx.Exec(
@@ -1442,6 +1455,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -1847,8 +1863,13 @@ func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	return s.GetMessageBodyTextContext(context.Background(), messageID)
+}
+
+// GetMessageBodyTextContext is GetMessageBodyText with a context.
+func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT body_text FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -2103,8 +2124,30 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		nil, nil, func([]int64) *MessagePersistData { return data }, nil, nil,
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if data.MIMEAttachmentReplacement != nil {
+				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+					return err
+				}
+			}
+			if data.Edited {
+				return setMessageEditedStateWith(q, id, true)
+			}
+			return nil
+		},
 	)
+}
+
+func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
+	if err := s.replaceMIMEAttachmentsWith(q, messageID, replacement); err != nil {
+		return fmt.Errorf("persist attachments: %w", err)
+	}
+	if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
 }
 
 // PersistMessageWithParticipantsContext resolves participants and persists the
@@ -2195,13 +2238,7 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			data.Message.RFC822MessageID, messageID); err != nil {
 			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
 		}
-		if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
-			return fmt.Errorf("replace repair message attachments: %w", err)
-		}
-		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
-			return fmt.Errorf("recompute repair message attachment stats: %w", err)
-		}
-		return nil
+		return s.persistAttachmentSnapshotWith(q, messageID, data.MIMEAttachmentReplacement)
 	}
 	messageID, err := s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLock{Sources: []int64{expected.SourceID}},
@@ -2355,6 +2392,11 @@ func (s *Store) persistMessageWithParticipantsTx(
 	if err != nil {
 		return 0, err
 	}
+	if data.SyncRunItem != nil {
+		if err := s.recordSyncRunItemWith(ctx, tx, *data.SyncRunItem); err != nil {
+			return 0, err
+		}
+	}
 	if afterPersist != nil {
 		if err := afterPersist(ctx, tx, data, id); err != nil {
 			return 0, err
@@ -2450,6 +2492,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -3423,6 +3468,32 @@ func (s *Store) SetMessageSizeEstimate(messageID, sizeEstimate int64) error {
 	})
 }
 
+// ReplaceMessageTextContext replaces a message's displayed text after a
+// provider edit or the redaction of one. The text, size, edited flag and
+// metadata commit together, so the metadata always names the edit shown.
+func (s *Store) ReplaceMessageTextContext(ctx context.Context, messageID int64, body, snippet string, edited bool, metadata sql.NullString) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if err := s.updateMessageDerivedText(q, messageID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{},
+			sql.NullString{String: snippet, Valid: snippet != ""}, FTSDoc{MessageID: messageID, Body: body}, s.dialect.FTSUpsert); err != nil {
+			return err
+		}
+		if _, err := q.Exec(`UPDATE messages SET size_estimate = ?, is_edited = ? WHERE id = ?`, int64(len(body)), edited, messageID); err != nil {
+			return err
+		}
+		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
+			return err
+		}
+		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+	})
+}
+
 // SetMessageEditedState records whether the source's currently selected
 // message version is an edit.
 func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
@@ -3432,9 +3503,13 @@ func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
 // SetMessageEditedStateContext honors cancellation during SetMessageEditedState.
 func (s *Store) SetMessageEditedStateContext(ctx context.Context, messageID int64, edited bool) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
-		return err
+		return setMessageEditedStateWith(q, messageID, edited)
 	})
+}
+
+func setMessageEditedStateWith(q querier, messageID int64, edited bool) error {
+	_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
+	return err
 }
 
 // SetMessageReplyContext links a message to the message it replies to while
@@ -3793,84 +3868,28 @@ func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error
 }
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.
-// Uses reservoir sampling with random offsets for O(limit) performance on large tables,
-// falling back to ORDER BY RANDOM() for small tables where the overhead isn't significant.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
 	live := LiveMessagesWhere("", true)
-	// Get total count first
-	var total int64
-	err := s.db.QueryRow(fmt.Sprintf(`
-		SELECT COUNT(*) FROM messages
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT id FROM messages
 		WHERE source_id = ? AND %s
-	`, live), sourceID).Scan(&total)
+		ORDER BY RANDOM()
+		LIMIT ?
+	`, live), sourceID, limit)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 
-	if total == 0 {
-		return nil, nil
-	}
-
-	// For small tables or when limit >= total, use simple ORDER BY RANDOM()
-	// The threshold of 10000 balances query overhead vs. scan cost
-	if total < 10000 || int64(limit) >= total {
-		rows, err := s.db.Query(fmt.Sprintf(`
-			SELECT id FROM messages
-			WHERE source_id = ? AND %s
-			ORDER BY RANDOM()
-			LIMIT ?
-		`, live), sourceID, limit)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = rows.Close() }()
-
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		return ids, rows.Err()
-	}
-
-	// For large tables, use random offset sampling
-	// This is O(limit) instead of O(n) for ORDER BY RANDOM()
-	// Generate random offsets in Go for dialect portability (SQLite vs Postgres)
-	// Use explicitly seeded RNG for true randomness across process runs.
-	// math/rand is fine — this picks rows for sampling, not authentication.
-	rng := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // sampling RNG, not security
-
-	ids := make([]int64, 0, limit)
-	seen := make(map[int64]bool)
-
-	for len(ids) < limit {
-		// Generate random offset in Go (portable across SQLite/Postgres)
-		offset := rng.Int63n(total)
-
+	var ids []int64
+	for rows.Next() {
 		var id int64
-		err := s.db.QueryRow(fmt.Sprintf(`
-			SELECT id FROM messages
-			WHERE source_id = ? AND %s
-			ORDER BY id
-			LIMIT 1 OFFSET ?
-		`, live), sourceID, offset).Scan(&id)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				continue // Race condition with deletions, retry
-			}
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
+		ids = append(ids, id)
 	}
-
-	return ids, nil
+	return ids, rows.Err()
 }
 
 // UpsertFTS inserts or updates the FTS index for a message.
@@ -3895,6 +3914,29 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 			return nil
 		}
 		return s.dialect.FTSUpsert(q, doc)
+	})
+}
+
+// IndexStoredMessageContext fills or refreshes a message's search entry from stored
+// rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if !s.fts5Available {
+			return nil
+		}
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("load stored message for search: %w", err)
+		}
+		row.fts.Body = row.body
+		matches, err := s.dialect.FTSMatches(q, row.fts)
+		if err != nil {
+			return fmt.Errorf("compare stored search entry: %w", err)
+		}
+		if matches {
+			return nil
+		}
+		return s.dialect.FTSUpsert(q, row.fts)
 	})
 }
 
@@ -4789,7 +4831,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+		edges, err := s.loadComponentEdgesTxContext(ctx, tx, oldID, newID)
 		if err != nil {
 			return err
 		}
@@ -4910,8 +4952,8 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		// Candidate and link endpoints must both reference the survivor before
 		// unsupported generated matches are withdrawn. Otherwise an owned link
 		// can evade cleanup because it still names the absorbed participant.
-		if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
-			ctx, tx,
+		if err := s.reconcileObservationIdentityMatchesForParticipantTxContext(
+			ctx, tx, newID,
 		); err != nil {
 			return err
 		}
@@ -6164,6 +6206,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
 		switch {
 		case format == "mime":
 			return s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, deliveryFromMIME(rawData))
@@ -7300,4 +7345,35 @@ func (s *Store) soleAddressParticipantContext(ctx context.Context, query, addres
 		return 0, nil
 	}
 	return ids[0], nil
+}
+
+// ResolveDeferredMessageRepliesContext links archived replies whose metadata
+// contains referenced_message_id once their parent is available.
+func (s *Store) ResolveDeferredMessageRepliesContext(ctx context.Context, sourceID int64, messageType string, pageSize int) error {
+	afterID := int64(0)
+	for {
+		unresolved, err := s.ListUnresolvedMessageRepliesAfterContext(ctx,
+			sourceID, messageType, afterID, pageSize, 0,
+		)
+		if err != nil {
+			return err
+		}
+		for _, reply := range unresolved {
+			var metadata struct {
+				ReferencedMessageID string `json:"referenced_message_id"`
+			}
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return fmt.Errorf("decode reply metadata for %s: %w", reply.SourceMessageID, err)
+			}
+			if metadata.ReferencedMessageID != "" {
+				if err := s.SetReplyToContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+					return fmt.Errorf("resolve deferred reply %s: %w", reply.SourceMessageID, err)
+				}
+			}
+			afterID = reply.MessageID
+		}
+		if len(unresolved) < pageSize {
+			return nil
+		}
+	}
 }

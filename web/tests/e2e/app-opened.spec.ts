@@ -55,7 +55,8 @@ test("a disabled daemon stays quiet across a two-minute visit and reload", async
   await once(proxy, "listening");
   try {
     const origin = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-    await page.clock.install();
+    // The two-minute advance must not cross the telemetry reporter's UTC daily reset.
+    await page.clock.install({ time: new Date("2026-01-15T12:00:00Z") });
     await loginToMeetingArchive(page, { ...daemon, origin });
     await expect.poll(() => deliveries).toEqual([{
       status: 202,

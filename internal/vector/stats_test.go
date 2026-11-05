@@ -325,3 +325,5 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 	assert.Nil(sv.ActiveGeneration, "Stats failed")
 	assert.Equal(int64(0), sv.MissingEmbeddingsTotal, "no successful stats")
 }
+
+func (*statsFakeBackend) EmbeddingCheckpoints() EmbeddingCheckpoints { return EmbeddingCheckpoints{} }

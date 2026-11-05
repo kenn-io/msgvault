@@ -11,6 +11,7 @@ const (
 	FilterDomain      = "domain"
 	FilterMailingList = "mailing_list"
 	FilterMessageType = "message_type"
+	FilterKind        = "kind"
 	FilterAfter       = "after"
 	FilterBefore      = "before"
 	FilterDeletion    = "deletion"
@@ -24,6 +25,7 @@ var filterDimensions = [...]string{
 	FilterMailingList,
 	FilterAccount,
 	FilterMessageType,
+	FilterKind,
 	FilterAfter,
 	FilterBefore,
 	FilterDeletion,

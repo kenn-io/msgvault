@@ -23,6 +23,9 @@ func (h *handlers) getEmbeddingStatus(ctx context.Context, req toolRequest) (*to
 	}
 	status, err := h.embeddingStatus.EmbeddingStatus(ctx, sourceID)
 	if err != nil {
+		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+			return nil, local
+		}
 		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && (apiErr.Code == "invalid_source_id" || apiErr.Code == "embeddings_status_unavailable") {
 			return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
 		}

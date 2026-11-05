@@ -17,9 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Calendar and Muesli domain types share short names such as Person, Result,
-// and RemoteRequest with the archive. Prefix only those packages' types to
-// preserve existing wire names.
+// Calendar, Muesli, and person tier types have short names such as Person,
+// Result, and Signals. Prefix only those packages' types to preserve existing
+// wire names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
@@ -27,12 +27,14 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 	}
 	name := huma.DefaultSchemaNamer(original, hint)
 	switch t.PkgPath() {
-	case "go.kenn.io/msgvault/internal/gcal":
+	case "go.kenn.io/msgvault/internal/gcal", "go.kenn.io/msgvault/internal/gcal/gcalmodel":
 		return "GCal" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
 	case "go.kenn.io/msgvault/internal/muesli":
 		return "Muesli" + name
+	case "go.kenn.io/msgvault/internal/persontiers":
+		return "PersonTier" + name
 	default:
 		return name
 	}

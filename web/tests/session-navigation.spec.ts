@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type BrowserContext } from '@playwright/test';
 import { expectKitTheme, selectKitOption, setKitTheme } from './kit-ui';
 
@@ -41,6 +42,8 @@ test('Strict session cookie returns on same-origin bootstrap after a cross-site 
       body: `<a href="${landingURL}">Open archive</a>`
     });
   });
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     resolveBootstrapHeaders(await route.request().allHeaders());
     await route.fulfill({
@@ -67,7 +70,7 @@ test('Strict session cookie returns on same-origin bootstrap after a cross-site 
   const documentCookie = documentHeaders.cookie ?? '';
   const bootstrapCookie = bootstrapHeaders.cookie ?? '';
 
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
   await expect(page.getByRole('form', { name: 'Log in' })).toHaveCount(0);
   expect(documentCookie).toContain(`${navigationCookieName}=${navigationCookieValue}`);
   expect(documentCookie).not.toContain(`${cookieName}=${cookieValue}`);
@@ -79,6 +82,8 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   const patchCaptured = new Promise<{ headers: Record<string, string>; body: unknown }>((resolve) => {
     resolvePatch = resolve;
   });
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     await route.fulfill({
       json: {
@@ -97,18 +102,19 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
       });
       await route.fulfill({
         headers: { ETag: '"etag-b"' },
-        json: settingsDocument('dark', true)
+        json: settingsDocument('dark')
       });
       return;
     }
     await route.fulfill({
       headers: { ETag: '"etag-a"' },
-      json: settingsDocument('system', false)
+      json: settingsDocument('system')
     });
   });
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
 
@@ -118,7 +124,6 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   expect(patch.body).toEqual({
     updates: [{ key: 'web.theme', value: { string: 'dark' } }]
   });
-  await expect(page.getByText('Restart the daemon to apply these changes.')).toBeVisible();
 });
 
 async function installSettingsDaemon(context: BrowserContext): Promise<void> {
@@ -149,6 +154,8 @@ async function installSettingsDaemon(context: BrowserContext): Promise<void> {
     ],
     pending_restart: false
   });
+  await stubOperationStatus(context);
+  await context.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await context.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'session', csrf_token: 'csrf-token', https: true, plain_http_warning: false
   } }));
@@ -168,28 +175,24 @@ test('Settings keeps its category across reload and Back', async ({ context, pag
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
   const settings = page.getByRole('main', { name: 'Settings' });
-  await settings.getByRole('button', { name: 'Search', exact: true }).click();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
+  await settings.getByRole('button', { name: 'Search & AI', exact: true }).click();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').settingsCategory).toBe('search');
   await page.reload();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
-  await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Appearance' })).toBeVisible();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
+  await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Advanced' })).toBeVisible();
   await page.goBack();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
-test('saved appearance reaches this tab, and the default mode only new tabs', async ({ context, page }) => {
+test('a saved default search mode applies to new tabs', async ({ context, page }) => {
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
-  await selectKitOption(page, 'Theme', 'Dark');
-  await selectKitOption(page, 'Default search mode', 'Hybrid');
-  const before = page.url();
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await selectKitOption(page, 'Search opens in', 'Best match');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expectKitTheme(page, 'dark');
-  expect(page.url()).toBe(before);
-  await expect(page.getByRole('radio', { name: 'Full text' })).toBeChecked();
-  expect(await page.evaluate(() => localStorage.getItem('msgvault-search-mode'))).toBe('hybrid');
+  await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
 
   const next = await context.newPage();
   await next.goto('/?workspace=everything');
@@ -200,13 +203,14 @@ test('a Display menu theme override wins over a saved theme', async ({ context, 
   await installSettingsDaemon(context);
   await page.goto('/?workspace=settings');
   await setKitTheme(page, 'light');
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await selectKitOption(page, 'Theme', 'Dark');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   await expectKitTheme(page, 'light');
 });
 
-function settingsDocument(theme: string, pendingRestart: boolean) {
+function settingsDocument(theme: string) {
   return {
     groups: [{ id: 'browser', label: 'Appearance', description: 'How the web app looks.' }],
     settings: [
@@ -216,9 +220,9 @@ function settingsDocument(theme: string, pendingRestart: boolean) {
         kind: 'string',
         value: { string: theme },
         options: ['system', 'light', 'dark'],
-        restart_required: true
+        restart_required: false
       }
     ],
-    pending_restart: pendingRestart
+    pending_restart: false
   };
 }

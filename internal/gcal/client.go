@@ -16,6 +16,8 @@ import (
 	"golang.org/x/oauth2"
 
 	"go.kenn.io/msgvault/internal/gmail"
+
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
 var ErrRateLimited = errors.New("calendar rate limited")
@@ -350,7 +352,7 @@ func decodeEventsPage(body []byte) (*EventsPage, error) {
 		TimeZone:      wire.TimeZone,
 	}
 	for _, raw := range wire.Items {
-		ev, err := decodeEvent(raw)
+		ev, err := gcalmodel.DecodeEvent(raw)
 		if err != nil {
 			return nil, fmt.Errorf("decode event: %w", err)
 		}
@@ -366,7 +368,7 @@ func (c *Client) GetEvent(ctx context.Context, calendarID, eventID string) (*Eve
 	if err != nil {
 		return nil, fmt.Errorf("events.get: %w", err)
 	}
-	ev, err := decodeEvent(body)
+	ev, err := gcalmodel.DecodeEvent(body)
 	if err != nil {
 		return nil, fmt.Errorf("decode event: %w", err)
 	}

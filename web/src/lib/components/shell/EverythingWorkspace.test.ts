@@ -1,10 +1,11 @@
+import { lanes } from '../../../test/operations';
 import { recordingMessage, recordingTranscript, recordingSearchReport } from '../../archive/recording-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingAction, meetingActions, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
@@ -16,7 +17,15 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+  const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+  if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+  if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
+  if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
+  if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+  if (path === '/api/v1/identity/match-candidates') return Response.json({ candidates: [] });
+  return fetchFn(input, init);
+}, telemetryEvents);
 
 function renderRecordingShell(client: ReturnType<typeof createAPIClient>, state: ExploreState, probe: (signal: AbortSignal) => Promise<boolean | undefined> = async () => true) {
   const readiness = new IntegrationReadiness(probe);
@@ -35,6 +44,47 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('opens scoped Action items after choosing the canonical Meeting kind', async () => {
+    window.history.replaceState(null, '', '/');
+    const meetingRequests: Array<{ path: string; body: unknown }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/groups')) return Response.json({ rows: [{ key: 'meeting', count: 4 }] });
+      if (path.endsWith('/accounts')) return Response.json({ accounts: [] });
+      if (path.endsWith('/identities')) return Response.json({ identities: [] });
+      if (path.startsWith('/api/v1/meetings/')) {
+        meetingRequests.push({ path, body: await request.clone().json() });
+        if (path.endsWith('/actions')) return Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }));
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await screen.findByText('0 items');
+      expect(screen.queryByRole('region', { name: 'Meeting summary' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Meeting' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      const summary = await screen.findByRole('region', { name: 'Meeting summary' });
+      expect(await within(summary).findByText(/4 meetings/)).toBeTruthy();
+      await fireEvent.click(await within(summary).findByRole('button', { name: 'Action items · 1' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Action items' });
+      expect(await within(dialog).findByText('Prepare review')).toBeTruthy();
+      for (const path of ['/api/v1/meetings/metrics', '/api/v1/meetings/actions']) {
+        expect(meetingRequests).toContainEqual({ path, body: expect.objectContaining({ explore: expect.objectContaining({
+          predicate: expect.objectContaining({ filters: [{ dimension: 'kind', values: ['meeting'] }] }),
+          cache_revision: 'cache-1',
+        }) }) });
+      }
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('hides unconfigured recording search and preserves the layout across navigation', async () => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
@@ -168,7 +218,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     state.replaceTransient({ workspace, groupingChain: ['kind'] });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const row = (await screen.findByText('Messages')).closest('[role="row"]')!;
+    const row = await within(await screen.findByRole('grid')).findByRole('row', { name: /^Messages 12/ });
     await fireEvent.pointerDown(row);
     expect(state.current.selectedRow).toBeNull();
     expect(screen.queryByText('The selected group is not available in this context.')).toBeNull();
@@ -203,7 +253,7 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     render(AppShell, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false });
-    const main = screen.getByRole('main', { name: 'Everything' });
+    const main = screen.getByRole('main', { name: 'Messages' });
     expect(within(main).queryByRole('search')).toBeNull();
     expect(screen.getAllByRole('search')).toHaveLength(1);
     expect(screen.queryByRole('contentinfo', { name: 'Keyboard shortcuts' })).toBeNull();
@@ -235,7 +285,7 @@ describe('EverythingWorkspace', () => {
     expect(screen.getByText(/after:2025-01-01/)).toBeDefined();
     expect(screen.getByText(/label:important/)).toBeDefined();
 
-    const searchInput = screen.getByRole('searchbox', { name: 'Search everything' });
+    const searchInput = screen.getByRole('searchbox', { name: 'Search messages' });
     const refineButton = screen.getByRole('button', { name: 'Refine search' });
     await fireEvent.click(refineButton);
     expect(document.activeElement).toBe(searchInput);
@@ -550,7 +600,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -592,7 +642,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -633,7 +683,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -699,7 +749,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 7');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -733,6 +783,43 @@ describe('EverythingWorkspace', () => {
     expect(body).toMatchObject({ format: 'json', include_transcript: false });
     rendered.unmount();
     state.destroy();
+  });
+
+  it('withholds context export when all canonical meetings include a transcript and a note', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json({
+        count: 2, deletable_count: 2, estimated_bytes: 40, cache_revision: 'cache-1',
+        search_provenance: {}, unavailable_actions: [], action_targets: [],
+        operation_token: 'operation-1', expires_at: '2026-09-12T17:00:00Z',
+      });
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
+      return Response.json(exploreResponse({
+        rows: [
+          { ...entry(7), message_type: 'meeting_transcript', anchor_message_id: 107 },
+          { ...entry(8), message_type: 'meeting_note', anchor_message_id: 108 },
+        ],
+        total_count: 2,
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ filters: [{ dimension: 'kind', values: ['meeting'] }] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 8');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: ' ' });
+      expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
+      expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
   });
 
   it('passes all-matching exclusions and full search authority to meeting context unchanged', async () => {
@@ -779,7 +866,7 @@ describe('EverythingWorkspace', () => {
       filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }]
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 8');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
@@ -838,7 +925,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     render(AppShell, { client: createAPIClient(fetchFn), state, enabled: true });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await waitFor(() => expect(requests).toHaveLength(1));
     await screen.findByText('Synthetic subject');
 
@@ -861,7 +948,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     render(AppShell, { client: createAPIClient(fetchFn), state, enabled: true });
-    await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByRole('grid', { name: 'Messages results' });
     await waitFor(() => expect(requests).toHaveLength(1));
 
     state.replaceTransient({ filters: [{ dimension: 'domain', values: ['example.com'] }] });
@@ -908,7 +995,7 @@ describe('EverythingWorkspace', () => {
     state.replaceTransient({ query: 'alpha', searchMode: 'full_text' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
-      const grid = await screen.findByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+      const grid = await screen.findByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
       await screen.findByText('Synthetic subject 1');
       for (const scrollTop of [36, 72, 108, 144]) {
         Object.defineProperty(grid, 'scrollTop', { configurable: true, value: scrollTop, writable: true });
@@ -955,9 +1042,9 @@ describe('EverythingWorkspace', () => {
 
       // Leave Everything (destroying EverythingWorkspace) and come back.
       const nav = screen.getByRole('navigation', { name: 'Primary' });
-      await fireEvent.click(within(nav).getByRole('button', { name: 'Settings' }));
-      expect(screen.queryByRole('main', { name: 'Everything' })).toBeNull();
-      await fireEvent.click(within(nav).getByRole('button', { name: 'Everything' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+      expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
+      await fireEvent.click(within(nav).getByRole('button', { name: 'Messages' }));
 
       await screen.findByText('Synthetic subject 1');
       await vi.advanceTimersByTimeAsync(100);
@@ -1004,8 +1091,8 @@ describe('EverythingWorkspace', () => {
     // component) and simulate an analytical cache rebuild — same key and
     // predicate, but the underlying data changed — while away.
     const nav = screen.getByRole('navigation', { name: 'Primary' });
-    await fireEvent.click(within(nav).getByRole('button', { name: 'Settings' }));
-    expect(screen.queryByRole('main', { name: 'Everything' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.queryByRole('main', { name: 'Messages' })).toBeNull();
     cacheRevision = 'cache-2';
     count = 99;
     label = 'Group Seven v2';
@@ -1051,7 +1138,7 @@ describe('EverythingWorkspace', () => {
     state.replaceTransient({ query: 'alpha', searchMode: 'full_text' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
-      const grid = await screen.findByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+      const grid = await screen.findByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
       await vi.advanceTimersByTimeAsync(60);
       await waitFor(() => expect(countSignals).toHaveLength(1));
 
@@ -1299,7 +1386,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = await screen.findByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await screen.findByText('Synthetic subject 2');
 
     Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 36, writable: true });
@@ -1371,7 +1458,7 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeDefined();
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1'));
     await waitFor(() => expect(grid.scrollTop).toBe(7));
     expect(requests).toHaveLength(3);
@@ -1444,7 +1531,7 @@ describe('EverythingWorkspace', () => {
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeDefined();
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await waitFor(() => expect(requests).toHaveLength(6));
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1'));
     await waitFor(() => expect(grid.scrollTop).toBe(4));
@@ -1755,7 +1842,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = await screen.findByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -1779,7 +1866,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -1851,7 +1938,7 @@ describe('EverythingWorkspace', () => {
     expect(state.current.scrollAnchor).toEqual({ key: 'message:1190', offset: 3 });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry restoration' }));
 
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1200'));
     await waitFor(() => expect(grid.scrollTop).toBe(1189 * 36 + 3));
     expect(state.current.activeRow).toBe('message:1200');
@@ -1886,7 +1973,7 @@ describe('EverythingWorkspace', () => {
     expect(state.peekRestorationEpoch()).toBeUndefined();
     resolveSecond?.(Response.json(exploreResponse({ rows: [entry(2)], total_count: 1200 })));
 
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1'));
     expect(fetchFn).toHaveBeenCalledTimes(2);
     rendered.unmount();
@@ -1907,7 +1994,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -1933,7 +2020,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -1959,7 +2046,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -1987,7 +2074,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -2019,7 +2106,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
 
     grid.focus();
@@ -2031,7 +2118,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(explorePostCount).toBe(totalPages));
     await waitFor(() => expect(
       screen.getByRole('status', { name: 'Sort status' }).textContent
-    ).toBe('Newest first is the canonical Everything order.'));
+    ).toBe(''));
     rendered.unmount();
     state.destroy();
   });
@@ -2069,7 +2156,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(alphaRequests).toHaveLength(3));
     expect(state.current.activeRow).toBe('message:1200');
 
-    const search = screen.getByRole('searchbox', { name: 'Search everything' });
+    const search = screen.getByRole('searchbox', { name: 'Search messages' });
     await fireEvent.input(search, { target: { value: 'beta' } });
     await waitFor(() => expect(betaRequests.length).toBeGreaterThan(0));
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -2103,7 +2190,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = await screen.findByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await screen.findByText('Synthetic subject 1');
     await fireEvent.scroll(grid);
     await waitFor(() => expect(requests).toHaveLength(2));
@@ -2133,7 +2220,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     state.replaceTransient({ query: 'alpha', searchMode: 'hybrid' });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
     await fireEvent.scroll(grid);
 
@@ -2211,7 +2298,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = await screen.findByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     await screen.findByText('Source 2');
     Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 36, writable: true });
     await fireEvent.scroll(grid);
@@ -2222,7 +2309,7 @@ describe('EverythingWorkspace', () => {
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    const restored = await screen.findByRole('grid', { name: 'Everything grouped by source' });
+    const restored = await screen.findByRole('grid', { name: 'Messages grouped by source' });
     await waitFor(() => expect(restored.getAttribute('aria-activedescendant')).toBe('everything-group-3Asource-3A2'));
     expect(state.current.activeRow).toBe('group:source:2');
     expect(state.current.scrollAnchor).toEqual({ key: 'group:source:2', offset: 0 });
@@ -2260,12 +2347,12 @@ describe('EverythingWorkspace', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Drill into Example source group' }));
     expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
-    expect(screen.queryByRole('grid', { name: 'Everything grouped by source' })).toBeNull();
+    expect(screen.queryByRole('grid', { name: 'Messages grouped by source' })).toBeNull();
     expect(state.current.selectedRow).toBe('group:source:7');
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('grid', { name: 'Everything grouped by source' })).toBeDefined();
+    expect(await screen.findByRole('grid', { name: 'Messages grouped by source' })).toBeDefined();
     expect(state.current.selectedRow).toBeNull();
 
     window.history.forward();
@@ -2299,7 +2386,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = await screen.findByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     await screen.findByText('Generation 1 Source 20');
     await waitFor(() => expect(grid.scrollTop).toBe(14 * 36 + 4));
     expect(grid.getAttribute('aria-activedescendant')).toBe('everything-group-3Asource-3A20');
@@ -2354,7 +2441,7 @@ describe('EverythingWorkspace', () => {
     expect(state.current.scrollAnchor).toEqual({ key: 'group:source:1190', offset: 3 });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry restoration' }));
 
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-group-3Asource-3A1200'));
     await waitFor(() => expect(grid.scrollTop).toBe(1189 * 36 + 3));
     expect(state.current.activeRow).toBe('group:source:1200');
@@ -2421,7 +2508,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
@@ -2449,7 +2536,7 @@ describe('EverythingWorkspace', () => {
     })));
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 1');
     grid.focus();
 
@@ -2503,7 +2590,7 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText(row.title);
     grid.focus();
     const priorSearch = window.location.search;
@@ -2550,7 +2637,7 @@ describe('EverythingWorkspace', () => {
     })));
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });

@@ -20,7 +20,7 @@ test('Google Contacts opens sign-in and returns authorization to settings', asyn
     await route.fulfill({ json: { status: 'ok', message: 'Google Contacts authorized' } });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: /^CardDAV account/ }).click();
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
   await page.getByRole('combobox', { name: /^CardDAV provider/ }).click();
   await page.getByRole('option', { name: 'Google Contacts' }).click();
   await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);

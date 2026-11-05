@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,10 +57,6 @@ function conflictDetail(id: number, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
 function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((settle) => { resolve = settle; });
@@ -116,7 +113,7 @@ describe('CardDAVConflicts', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
     await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
-    const accountControl = screen.getByRole('button', { name: 'Save CardDAV account' });
+    const accountControl = screen.getByRole('button', { name: 'Test CardDAV connection' });
     accountControl.focus();
     expect(document.activeElement).toBe(accountControl);
     available = false;

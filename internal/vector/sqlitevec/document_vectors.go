@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/vector/document"
 )
@@ -90,6 +91,46 @@ func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID docum
 		return fmt.Errorf("commit document vector put: %w", err)
 	}
 	return nil
+}
+
+func (b *DocumentBackend) UnpublishedTokens(ctx context.Context, generationID document.GenerationID, dimension int, tokens []string) (map[string]bool, error) {
+	if err := document.ValidateTokens(generationID, tokens); err != nil {
+		return nil, err
+	}
+	saved := make(map[string]bool, len(tokens))
+	var exists int
+	if err := b.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, DocumentVectorTableName(dimension)).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("check document vector table: %w", err)
+	}
+	if exists == 0 || len(tokens) == 0 {
+		return saved, nil
+	}
+	args := []any{int64(generationID), dimension}
+	for _, token := range tokens {
+		args = append(args, token)
+	}
+	rows, err := b.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT m.token
+		FROM document_vector_embeddings m
+		JOIN %s v ON v.generation_id = m.generation_id AND v.document_vector_id = m.document_vector_id
+		WHERE m.generation_id = ? AND m.dimension = ? AND m.token IN (?%s)`,
+		DocumentVectorTableName(dimension), strings.Repeat(", ?", len(tokens)-1)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("read saved document vectors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, fmt.Errorf("scan saved document vector: %w", err)
+		}
+		saved[token] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate saved document vectors: %w", err)
+	}
+	return saved, nil
 }
 
 func (b *DocumentBackend) DeleteTokens(ctx context.Context, generationID document.GenerationID, tokens []string) error {

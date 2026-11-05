@@ -138,6 +138,9 @@ func SafeMCPErrorForPerson(err error, personID int64) error {
 // failure details can include private contact data. The stable code and HTTP
 // status still identify conflicts and blockers.
 func SafeMCPError(err error) error {
+	if local, ok := errors.AsType[*LocalDaemonUnavailableError](err); ok {
+		return local
+	}
 	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		switch apiErr.Code {
 		case "microsoft_contact_too_large":

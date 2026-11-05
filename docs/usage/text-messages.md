@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-11-04"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -9,7 +9,7 @@ or connect [Beeper](/docs/usage/beeper/), [Slack](/docs/usage/slack/),
 [Microsoft Teams](/docs/usage/teams/), or [Discord](/docs/usage/discord/) for
 ongoing sync.
 
-The [Web UI](/docs/web-ui/) groups chats into conversations in Everything;
+The [Web UI](/docs/web-ui/) groups chats into conversations in Messages;
 open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 `m` to switch to Texts mode.
 
@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -137,6 +138,28 @@ By default, the command reads from `~/Library/Messages/chat.db`. No positional a
 
 This is a read-only operation. msgvault does not modify your iMessage database.
 
+Eligible attachments referenced by `chat.db` are copied into the archive from
+the `Attachments` and `StickerCache` folders under `~/Library/Messages`. Every
+run reads the files again, so changed files are archived again, and bytes
+already archived are kept when a file can no longer be read. For a copied
+`chat.db`, `--messages-root` names the copied Messages folder, and paths into a
+Mac home folder are rebased onto it. Attachment metadata is retained when a
+file is unavailable or exceeds the default 250 MiB file limit or 20-participant
+conversation limit. The import summary counts unavailable and skipped
+attachments (including paths outside those folders), so an import without Full
+Disk Access on the Attachments folder does not look clean. iMessage voice notes
+are `.caf` files. They stay in the archive but are not transcribed, because
+Docbank only takes the audio formats listed in
+[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank).
+Pass `--no-attachments` to record attachment metadata without copying files.
+Set the participant and size limits under `[imessage]` in `config.toml`, or
+override the size for one run with `--max-media-mb`; see
+[Configuration](/docs/configuration/#imessage). Skipped attachments keep their
+metadata and the reason they were skipped. Rerunning with a stricter limit keeps
+the bytes already archived for files that have not changed. With
+`--no-attachments` the limits aren't applied, and attachments are recorded as
+metadata only.
+
 Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
 missing dates. msgvault retains those messages and their raw timestamp
 evidence, including empty sync placeholders. Undated messages are excluded from
@@ -148,6 +171,13 @@ existing messages without creating duplicates. When it clears a previously
 stored date, msgvault rebuilds analytics so the old date is removed there too.
 Keep the original `--db-path` and `--me` options if you supplied them.
 
+Each run reads all of `chat.db` again and updates archived messages to match
+it. Edited text replaces the archived text. When a message no longer has text in
+`chat.db`, the next import clears its archived text and its snippet, and keyword
+search no longer matches that text. Unsending a message on iOS 16, macOS 13, or
+later removes its text this way. The message stays in the archive with its date
+and participants. Messages deleted from `chat.db` also stay in the archive.
+
 ### Flags
 
 | Flag | Default | Description |
@@ -158,6 +188,9 @@ Keep the original `--db-path` and `--me` options if you supplied them.
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to a `.vcf` file used to backfill participant display names |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
+| `--max-media-mb` | `0` | Skip files larger than this many MiB; `0` uses `max_media_mb` from `[imessage]` (default 250) |
 
 ### Examples
 
@@ -394,7 +427,7 @@ msgvault sync-synctech-sms phone-backups
 
 Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to search email, chats,
 calendar events, and meeting notes together. Chat results stay grouped as
-conversations so short message fragments do not overwhelm Everything. Open a
+conversations so short message fragments do not overwhelm Messages. Open a
 conversation to inspect its matching messages in context.
 
 For terminal browsing, launch the TUI and press `m` to cycle from Email to
@@ -435,3 +468,25 @@ msgvault tui
 # View updated archive stats
 msgvault stats
 ```
+
+## import-telegram
+
+In Telegram Desktop, export your data as **Machine-readable JSON**. Choose the media you want to keep, then import the directory containing `result.json`:
+
+```bash
+msgvault import-telegram /path/to/TelegramExport
+```
+
+Full exports identify your account. For a single-chat export, supply your numeric Telegram user ID:
+
+```bash
+msgvault import-telegram --me 482111 /path/to/chat-export
+```
+
+Messages include senders, replies, edit markers, and available media. Service messages, unsupported entries, and polls, locations, or contacts without text or media are skipped. Missing media is counted in the import summary.
+
+A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram export users link to Beeper users with the same numeric Telegram user ID; for Beeper users already archived, the link appears when a sync revisits their chat (`sync-beeper --full` covers quiet chats).
+
+Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
+
+An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.

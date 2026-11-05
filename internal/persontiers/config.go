@@ -12,13 +12,16 @@ import (
 // Config holds the windows, thresholds and exclusions of the tier rules. Start
 // with DefaultConfig before decoding so explicit zero alternatives stay off.
 type Config struct {
-	ShortWindowDays        int             `toml:"short_window_days"`
-	LongWindowDays         int             `toml:"long_window_days"`
-	ExcludeListMessages    bool            `toml:"exclude_list_messages"`
-	ExcludeAddressPatterns []string        `toml:"exclude_address_patterns"`
-	ExcludeDomainPatterns  []string        `toml:"exclude_domain_patterns"`
-	Tier1                  Tier1Thresholds `toml:"tier1"`
-	Tier2                  Tier2Thresholds `toml:"tier2"`
+	ShortWindowDays        int      `toml:"short_window_days"`
+	LongWindowDays         int      `toml:"long_window_days"`
+	ExcludeListMessages    bool     `toml:"exclude_list_messages"`
+	ExcludeAddressPatterns []string `toml:"exclude_address_patterns"`
+	ExcludeDomainPatterns  []string `toml:"exclude_domain_patterns"`
+	// MinCallSeconds is how long an answered call must stay connected to count
+	// as two-way contact. Zero stops calls from counting.
+	MinCallSeconds int             `toml:"min_call_seconds"`
+	Tier1          Tier1Thresholds `toml:"tier1"`
+	Tier2          Tier2Thresholds `toml:"tier2"`
 }
 
 // Tier1Thresholds are measured over the short window, except the two breadth
@@ -55,6 +58,7 @@ func DefaultConfig() Config {
 			"bounce", "bounces", "newsletter", "digest", "alerts", "calendar-notification",
 		},
 		ExcludeDomainPatterns: []string{"resource.calendar.google.com"},
+		MinCallSeconds:        120,
 		Tier1:                 Tier1Thresholds{2, 2, 6, 3, 2, 2},
 		Tier2:                 Tier2Thresholds{1, 1, 3, 2},
 	}
@@ -92,6 +96,9 @@ func (c Config) validate() error {
 	}
 	if c.Tier1.BreadthMinChannelsLong != 0 && c.Tier1.BreadthMinChannelsLong < 2 {
 		return errors.New("people.tiers.tier1.breadth_min_channels_long must be 0 or at least 2")
+	}
+	if c.MinCallSeconds < 0 {
+		return errors.New("people.tiers.min_call_seconds must be 0 (calls do not count) or more")
 	}
 	if c.Tier1.BreadthMinMeetingDaysLong < 0 || c.Tier2.MinMeetingDaysLong < 0 {
 		return errors.New("people.tiers meeting thresholds must be 0 (disabled) or at least 1")

@@ -152,6 +152,7 @@ type handlers struct {
 	meetings             MeetingBackend
 	calendar             CalendarBackend
 	personAgendaBackend  PersonAgendaBackend
+	personTierBackend    PersonTierBackend
 	kata                 KataBackend
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
@@ -521,6 +522,9 @@ type daemonAPIErrorCoder interface {
 }
 
 func translateDaemonRequestError(err error) *toolResult {
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return toolErrorResult(local.Error())
+	}
 	var coded daemonAPIErrorCoder
 	if !errors.As(err, &coded) {
 		return nil
@@ -1694,10 +1698,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	bodyFormat := bodyFormatText
 	switch requestedBodyFormat {
 	case bodyFormatAuto:
-		if fullBody == "" && msg.BodyHTML != "" {
-			fullBody = msg.BodyHTML
-			bodyFormat = bodyFormatHTML
-		}
+		fullBody, bodyFormat = automaticMessageBody(msg)
 	case bodyFormatText:
 	case bodyFormatHTML:
 		fullBody = msg.BodyHTML
@@ -1898,7 +1899,8 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("message not found"), nil
 	}
 
-	allMatches := findTermMatches(msg.BodyText, queryStr)
+	body, _ := automaticMessageBody(msg)
+	allMatches := findTermMatches(body, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
 		return jsonResult(searchInMessageResponse{
@@ -1911,6 +1913,14 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		paginatedResponse: newPaginatedResponse(allMatches[offset:end], total, offset),
 		HiddenTextPresent: msg.HiddenTextPresent,
 	})
+}
+
+// automaticMessageBody keeps HTML raw so search offsets match get_message windows.
+func automaticMessageBody(msg *query.MessageDetail) (string, string) {
+	if msg.BodyText == "" && msg.BodyHTML != "" {
+		return msg.BodyHTML, bodyFormatHTML
+	}
+	return msg.BodyText, bodyFormatText
 }
 
 func findTermMatches(body, term string) []messageMatch {

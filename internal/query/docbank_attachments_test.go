@@ -12,6 +12,7 @@ import (
 )
 
 func TestDocbankAttachmentQueryReceipts(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	_, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), store.DocbankAttachmentConsumerKey("dest"))
 	require.NoError(t, err)
@@ -43,6 +44,7 @@ func TestDocbankAttachmentQueryReceipts(t *testing.T) {
 }
 
 func TestDocbankAttachmentQueryAliasReceipts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

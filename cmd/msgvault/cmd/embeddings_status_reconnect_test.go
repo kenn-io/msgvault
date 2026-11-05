@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -45,7 +46,7 @@ func TestReconnectLocalDaemonFollowsKeyRotationAndPortChange(t *testing.T) {
 	ctx := withInvocation(t.Context(), &invocation{cfg: cfg})
 	rt := findDaemonRuntime(dataDir)
 	require.NotNil(rt)
-	current := localDaemonEndpoint{url: urlFromDaemonRuntime(rt), key: "key-one"}
+	current := daemonclient.LocalDaemonEndpoint{URL: urlFromDaemonRuntime(rt), APIKey: "key-one"}
 
 	client, endpoint, err := reconnectLocalDaemon(ctx, current)
 	require.NoError(err)
@@ -57,11 +58,11 @@ func TestReconnectLocalDaemonFollowsKeyRotationAndPortChange(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(client, "a rotated key rebuilds the client on the same port")
 	t.Cleanup(func() { _ = client.Close() })
-	assert.Equal(localDaemonEndpoint{url: current.url, key: "key-two"}, endpoint)
+	assert.Equal(daemonclient.LocalDaemonEndpoint{URL: current.URL, APIKey: "key-two"}, endpoint)
 
-	moved, movedEndpoint, err := reconnectLocalDaemon(ctx, localDaemonEndpoint{url: "http://127.0.0.1:1", key: "key-two"})
+	moved, movedEndpoint, err := reconnectLocalDaemon(ctx, daemonclient.LocalDaemonEndpoint{URL: "http://127.0.0.1:1", APIKey: "key-two"})
 	require.NoError(err)
 	require.NotNil(moved, "a daemon on a new port gets a new client")
 	t.Cleanup(func() { _ = moved.Close() })
-	assert.Equal(current.url, movedEndpoint.url)
+	assert.Equal(current.URL, movedEndpoint.URL)
 }

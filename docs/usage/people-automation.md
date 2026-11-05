@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-10-30"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -19,10 +19,13 @@ Two other features have separate controls:
 ## Choose people to maintain
 
 Create a [saved profile](/docs/usage/people/#promote-a-durable-person), then turn
-tracking on for that person:
+tracking on for that person. In the Web UI, choose **More actions → Keep this profile updated** from their People page.
+
+With the CLI, both commands accept several person IDs:
 
 ```bash
 msgvault person track 7
+msgvault person track 7 12 31
 msgvault person untrack 7
 ```
 
@@ -36,9 +39,11 @@ msgvault person tiers explain 7
 
 By default, preview lists tier 1 (at least two messages each way and six days
 of contact in the last 90 days, or at least two messages each way and three
-days plus either both email and chat or repeated meetings) and tier 2
+days plus either two of email, chat, and calls or repeated meetings) and tier 2
 (messages both ways and three days of contact in the last year, or repeated
-meetings). Each row shows the rule that put the person there, whether they are
+meetings). An answered Synctech or Google Voice call of at least two minutes
+counts as one message each way, so someone you mostly phone is listed too;
+`explain` shows those calls on their own line. Each row shows the rule that put the person there, whether they are
 already tracked, and the latest day that counted toward the tier. A header line
 names the timezone and direct limit the counts were built under. `explain`
 shows every count against its threshold, so you can see why someone is missing.
@@ -48,13 +53,23 @@ may be out of date. While it rebuilds after a change to `[activity] timezone` or
 `max_direct_counterparts`, both ask you to retry once it finishes. Change the
 windows and thresholds in [`[people.tiers]`](/docs/configuration/#people-tiers).
 
-Preview changes nothing. `preview --json` lists the person IDs, and you track
-the ones you choose with `person track`:
+Preview changes nothing. Track the people you choose by passing their IDs to
+`person track`. To track everyone in tier 1 who is not tracked yet:
 
 ```bash
-msgvault person tiers preview --json | jq -r '.people[] | select(.tier == 1 and (.tracked | not)) | .person_id'
-msgvault person track 7
+msgvault person tiers preview --json \
+  | jq -r '.people[] | select(.tier == 1 and (.tracked | not)) | .person_id' \
+  | xargs msgvault person track
 ```
+
+`person track` checks every ID before it changes anything, then tracks each
+person in order. It stops at the first person the daemon rejects, such as a
+deleted profile; the people before it stay tracked.
+
+Agents get the same preview and explanations through the read-only
+`preview_person_tiers` and `explain_person_tier` [MCP tools](/docs/usage/chat/#available-tools)
+and the [HTTP API](/docs/api-server/#get-apiv1peopletiers). Neither tracks
+anyone.
 
 msgvault keeps no record of `person untrack`, so someone you untracked earlier
 shows as untracked here. Read the list and pick the IDs yourself.

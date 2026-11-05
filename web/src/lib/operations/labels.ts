@@ -2,14 +2,10 @@ import type { ChipTone } from '@kenn-io/kit-ui';
 import type { OperationPublicCounter } from '../api/generated/models';
 import type { SettingsNavigationAuthority } from '../carddav/navigation';
 import { sentenceCase } from '../explore/labels';
-import type { OperationAction, OperationKind, OperationLane, OperationLaneStatus, OperationRunSummary } from './models';
+import type { OperationAction, OperationKind, OperationLaneStatus, OperationRunSummary } from './models';
 
 export type RelatedStatus = NonNullable<OperationLaneStatus['related_status']>;
 
-export const OPERATION_LANE_LABELS: Readonly<Record<OperationLane, string>> = {
-  messages: 'Messages', person_facts: 'Facts', contacts: 'Contacts',
-  documents: 'Documents', visual_attachments: 'Attachments'
-};
 export const OPERATION_KIND_LABELS: Readonly<Record<OperationKind, string>> = {
   source_sync: 'Source sync', message_embedding: 'Message embedding', person_sweep: 'Person fact sweep',
   person_embedding: 'Person embedding', person_enrichment: 'Person enrichment', carddav_sync: 'CardDAV sync',
@@ -63,7 +59,7 @@ export const OPERATION_SETUP: Readonly<Partial<Record<OperationKind, OperationSe
     kind: 'settings', target: { settingsCategory: 'search', settingsAuthority: 'visual_attachments' }
   },
   person_enrichment: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
-  person_sweep: { kind: 'settings', target: { settingsCategory: 'people', settingsAuthority: '' } },
+  person_sweep: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
   document_extraction: DOCUMENT_INDEX_SETUP,
   document_embedding: DOCUMENT_SEARCH_SETUP
 };

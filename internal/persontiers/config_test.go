@@ -22,6 +22,7 @@ func TestConfigValidation(t *testing.T) {
 		{"no active days", func(c *Config) { c.Tier1.MinActiveDaysShort = 0 }, "tier1.min_active_days_short must be at least 1"},
 		{"negative alternative", func(c *Config) { c.Tier2.MinMeetingDaysLong = -1 }, "meeting thresholds must be 0"},
 		{"one channel", func(c *Config) { c.Tier1.BreadthMinChannelsLong = 1 }, "breadth_min_channels_long must be 0 or at least 2"},
+		{"negative call length", func(c *Config) { c.MinCallSeconds = -1 }, "min_call_seconds must be 0"},
 		{"empty pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{""} }, `exclusion pattern ""`},
 		{"upper pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"Alert"} }, `exclusion pattern "Alert"`},
 		{"address pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"alert@example.com"} }, `exclusion pattern "alert@example.com"`},

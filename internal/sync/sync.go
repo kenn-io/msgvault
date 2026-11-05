@@ -96,6 +96,9 @@ type Syncer struct {
 	successfulHookName string
 	successfulHook     SuccessfulSyncHook
 
+	acquisitionSyncID   int64
+	pendingAcquisitions map[string]struct{}
+
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
 	// Syncer copy a single full() run uses and never persists.
@@ -482,9 +485,9 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
 
-// failStoppedSync marks the stopped worker's run failed. Checkpoints on
-// failed runs remain resumable, while running status stays reserved for a live
-// worker.
+// failStoppedSync attempts to mark a stopped worker's run failed.
+// Checkpoints on failed runs remain resumable. If the terminal write fails,
+// the run can remain running; callers must still return without completing it.
 func (s *Syncer) failStoppedSync(syncID int64, err error) {
 	_ = s.store.FailSync(syncID, err.Error())
 }
@@ -916,7 +919,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				if !alreadyExists {
+					if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
+						return nil, err
+					}
+				} else {
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -1089,7 +1098,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				if recErr := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -1333,6 +1344,13 @@ func (s *Syncer) full(
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
 	s = &scoped
 	summary.SyncRunID = state.syncID
+
+	if s.opts.SourceType != sourceTypeIMAP {
+		if err := s.initAcquisitionReplay(ctx, source.ID, state.syncID); err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, fmt.Errorf("find pending acquisition replays: %w", err)
+		}
+	}
 	summary.WasResumed = state.wasResumed
 	summary.ResumedFromToken = state.pageToken
 
@@ -1636,6 +1654,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
+	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
 	message           *store.Message
 	threadID          string
@@ -1733,6 +1752,9 @@ func (s *Syncer) prepareMessage(
 			"error", errMsg)
 	}
 
+	originalMessageID := parsed.MessageID
+	parsed.OmitNULIdentities()
+
 	// For IMAP sources, the API provides no real thread info —
 	// ThreadID is just the composite message ID. Derive a thread
 	// key from MIME threading headers to group related messages
@@ -1747,7 +1769,7 @@ func (s *Syncer) prepareMessage(
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
-	snippet := textutil.EnsureUTF8(raw.Snippet)
+	snippet := textutil.ReplaceNUL(textutil.EnsureUTF8(raw.Snippet))
 
 	// Ensure participant names are valid UTF-8 before database insertion
 	ensureAddressUTF8(parsed.From)
@@ -1832,6 +1854,7 @@ func (s *Syncer) prepareMessage(
 	}
 
 	return &messageData{
+		originalMessageID: originalMessageID,
 		metadata:          metadata,
 		message:           msg,
 		threadID:          threadID,
@@ -1887,17 +1910,19 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 
 	// Persist atomically
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
-		Message:    data.message,
-		Metadata:   data.metadata,
-		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:    data.rawMIME,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		Message:     data.message,
+		Metadata:    data.metadata,
+		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:     data.rawMIME,
+		Recipients:  recipientSets,
+		LabelIDs:    labelIDs,
+		SyncRunItem: s.acquisitionResolution(data.message.SourceMessageID),
 	})
 	if err != nil {
 		return 0, err
 	}
+	delete(s.pendingAcquisitions, data.message.SourceMessageID)
 
 	// Store attachments (best-effort, file I/O outside transaction)
 	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {

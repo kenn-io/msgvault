@@ -4,7 +4,6 @@
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
   import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
-  import ZapIcon from '@lucide/svelte/icons/zap';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
@@ -240,14 +239,10 @@
   <code class="authorization-command">{authorizationCommand('cmd')}</code>
 {/snippet}
 
-<SettingsSection title="CardDAV account" description="Address-book server this archive syncs contacts with.">
+<SettingsSection title="CardDAV account">
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
 
-  <p class="posture">
-    <ZapIcon size={12} aria-hidden="true" />
-    Saving the account applies right away. No daemon restart is needed.
-  </p>
   <form
     onsubmit={(event) => {
       event.preventDefault();
@@ -350,18 +345,6 @@
     display: grid;
     gap: var(--space-5);
   }
-  .posture {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 0 var(--space-5);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-  .posture :global(svg) {
-    flex-shrink: 0;
-    color: var(--accent-green);
-  }
   .fields {
     display: grid;
     gap: var(--space-4);
@@ -380,6 +363,12 @@
     justify-content: space-between;
     gap: var(--space-3);
   }
+  form label:not(.field__label) {
+    display: grid;
+    gap: var(--space-2);
+    max-width: 26rem;
+  }
+  form label:not(.field__label),
   .field__label {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);

@@ -107,6 +107,8 @@ export class DirectoryEntityController {
   private relationshipGeneration = 0;
   private relationshipTypeGeneration = 0;
   private networkGeneration = 0;
+  private networkDepth = 1;
+  private networkIncludeEnded = false;
   private disposed = false;
   constructor(
     client: APIClient,
@@ -165,10 +167,7 @@ export class DirectoryEntityController {
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
     try {
-      const response = await generatedListPersonEmployments({ id: this.personID }, undefined, {
-        ...this.client,
-        signal: abort.signal,
-      });
+      const response = await this.readEmployments(abort.signal);
       if (!this.owns('employments', abort, generation)) return false;
       if (response.data) {
         this.employments = response.data.employments ?? [];
@@ -186,6 +185,12 @@ export class DirectoryEntityController {
     } finally {
       if (generation === this.employmentGeneration) this.loading.employments = false;
     }
+  }
+  private async readEmployments(signal: AbortSignal) {
+    const response = await generatedListPersonEmployments({ id: this.personID }, undefined, { ...this.client, signal });
+    const ids = new Set((response.data?.employments ?? []).map(item => item.organization_id).filter(id => !this.organizationRecords.has(id)));
+    void Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id, signal)));
+    return response;
   }
   async refreshRelationships(includeEnded = this.relationshipsIncludeEnded): Promise<void> {
     this.relationshipsIncludeEnded = includeEnded;
@@ -241,6 +246,8 @@ export class DirectoryEntityController {
     }
   }
   async loadNetwork(depth = 1, includeEnded = false): Promise<void> {
+    this.networkDepth = depth;
+    this.networkIncludeEnded = includeEnded;
     const { abort, generation } = this.beginCollection('network');
     try {
       const response = await generatedGetPersonNetwork(
@@ -264,18 +271,12 @@ export class DirectoryEntityController {
       if (generation === this.networkGeneration) this.loading.network = false;
     }
   }
-  async prepareOrganizationMutation(id: number): Promise<OrganizationProfile> {
-    const response = await this.getMutable((signal) =>
-      generatedGetOrganization(
-        { id: id },
-        {
-          ...this.client,
-          signal,
-        },
-      ),
+  async prepareOrganizationMutation(id: number, owner?: AbortSignal): Promise<OrganizationProfile> {
+    const response = await this.getMutable(
+      (signal) => generatedGetOrganization({ id: id }, { ...this.client, signal }),
+      owner,
     );
-    this.organizationRecords.set(id, response.data);
-    this.organizationETags.set(id, response.etag);
+    if (!owner || !this.organizationRecords.has(id)) { this.organizationRecords.set(id, response.data); this.organizationETags.set(id, response.etag); }
     return response.data;
   }
   async prepareEmploymentMutation(id: number): Promise<Employment> {
@@ -408,8 +409,7 @@ export class DirectoryEntityController {
         this.applyEmploymentEntity(entity, response);
       },
     );
-    if (result.ok) await this.loadEmployments(false);
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
   }
   async updateEmployment(
     id: number,
@@ -463,8 +463,7 @@ export class DirectoryEntityController {
         this.employmentETags.delete(id);
       },
     );
-    if (result.ok) await this.loadEmployments(false);
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
   }
   async createRelationship(
     body: CreatePersonRelationshipRequest,
@@ -481,7 +480,7 @@ export class DirectoryEntityController {
         this.captureETag(this.relationshipETags, entity.id, response);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async updateRelationship(
@@ -504,7 +503,7 @@ export class DirectoryEntityController {
         this.captureETag(this.relationshipETags, id, response);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async deleteRelationship(id: number): Promise<DirectoryEntityMutationResult<never, PersonRelationship>> {
@@ -525,7 +524,7 @@ export class DirectoryEntityController {
         this.relationshipETags.delete(id);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async createRelationshipType(
@@ -573,7 +572,6 @@ export class DirectoryEntityController {
       },
       prepared,
     );
-    if (result.ok) await this.loadRelationships(false);
     return result;
   }
   async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, RelationshipType>> {
@@ -639,13 +637,15 @@ export class DirectoryEntityController {
         this.applyEmploymentEntity(entity, response);
       },
     );
-    if (result.ok) await this.loadEmployments(false);
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
+  }
+  async refreshNetwork(): Promise<void> {
+    if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth, this.networkIncludeEnded);
   }
   private async afterDirectoryMutation<T, C>(
-    result: DirectoryEntityMutationResult<T, C>,
+    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok) await this.options.onDirectoryChange?.();
+    if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.options.onDirectoryChange?.(), this.refreshNetwork()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment, response: Response): void {
@@ -787,14 +787,14 @@ export class DirectoryEntityController {
       this.entityRequests.delete(abort);
     }
   }
-  private async getMutable<T>(send: (signal: AbortSignal) => Promise<RequestResult<T>>): Promise<{
+  private async getMutable<T>(send: (signal: AbortSignal) => Promise<RequestResult<T>>, owner?: AbortSignal): Promise<{
     data: T;
     etag: string;
   }> {
     const abort = this.beginEntityRequest();
     try {
       const response = await send(abort.signal);
-      if (!this.isActive(abort)) throw new Error('Request was cancelled.');
+      if (!this.isActive(abort) || owner?.aborted) throw new Error('Request was cancelled.');
       const etag = response.response.headers.get('ETag');
       if (response.data === undefined) throw new Error(failureMessage(response.error, response.response.status));
       if (!etag) throw new Error('The response did not include an ETag.');

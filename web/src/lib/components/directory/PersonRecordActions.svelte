@@ -4,14 +4,25 @@
   import { tick } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+  import PersonTrackingControl from './PersonTrackingControl.svelte';
+  import CardDAVPublicationControl from './CardDAVPublicationControl.svelte';
+  import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
+  import { Modal } from '@kenn-io/kit-ui';
   import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
 
   interface Props {
     client: APIClient;
     controller: DirectoryProfileController;
     personID: number;
+    onDeleted?: (personID: number) => void;
+    onOpenPerson?: (id: number) => void;
+    onAnnounce?: (text: string) => void;
+    onOpenCardDAVConflict?: (id: number) => void;
+    onOpenCardDAVSettings?: () => void;
+    onSplitCommitted?: (context: PersonSplitCommittedContext) => void | Promise<void>;
   }
-  let { client, controller, personID }: Props = $props();
+  let { client, controller, personID, onDeleted, onOpenPerson, onAnnounce, onOpenCardDAVConflict, onOpenCardDAVSettings, onSplitCommitted }: Props = $props();
+  let maintenance = $state<'tracking' | 'publication'>();
   let historyOpen = $state(false);
   let renaming = $state(false);
   let renameValue = $state('');
@@ -37,9 +48,9 @@
     if (result === undefined && controller.draft === null) renaming = false;
   }
   async function deletePerson(): Promise<void> {
-    const activeController = controller;
+    const activeController = controller, deletedID = personID;
     const result = await activeController.deletePerson();
-    if (result === undefined && activeController.draft === null) confirmingDelete = false;
+    if (result === undefined && activeController.draft === null) { confirmingDelete = false; onDeleted?.(deletedID); }
   }
 </script>
 
@@ -48,24 +59,27 @@
     <Ellipsis size={16} aria-hidden="true" />
   </MenuTrigger>
   <MenuContent ariaLabel="More actions">
-    <MenuItem disabled={!controller.canWritePerson} textValue="Rename person" onselect={beginRename}>
-      Rename person
+    <MenuItem disabled={!controller.canWritePerson} textValue="Rename" onselect={beginRename}>
+      Rename
     </MenuItem>
-    <MenuItem textValue="View profile history" onselect={() => void openHistory()}>View profile history</MenuItem>
-    <MenuItem disabled={!controller.canWritePerson} tone="danger" textValue="Delete person" onselect={beginDelete}>
-      Delete person
+    <MenuItem textValue="Keep this profile updated" onselect={async () => { await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
+    <MenuItem textValue="Publish to address book" onselect={async () => { await tick(); maintenance = 'publication'; }}>Publish to address book</MenuItem>
+    <MenuItem textValue="History" onselect={() => void openHistory()}>History</MenuItem>
+    <MenuItem disabled={!controller.canWritePerson} tone="danger" textValue="Delete" onselect={beginDelete}>
+      Delete
     </MenuItem>
   </MenuContent>
 </Menu>
 
 {#if renaming}
+  <Modal title="Rename person" onclose={() => { if (!controller.mutationPending) renaming = false; }}>
   <div class="person-action" role="group" aria-label="Rename person">
     <label
       >Display name<TextInput
         bind:value={renameValue}
         ariaLabel="Display name"
         block
-        disabled={controller.mutationPending}
+        disabled={controller.mutationPending || controller.reloadPending}
       /></label
     >
     <div class="action-buttons">
@@ -85,8 +99,11 @@
       />
     </div>
   </div>
+  {#if controller.conflict}<p role="alert">{controller.conflict.message}</p><Button label="Reload" onclick={() => void controller.reload()} />{/if}
+  </Modal>
 {/if}
 {#if confirmingDelete}
+  <Modal title="Delete person" onclose={() => { if (!controller.mutationPending) confirmingDelete = false; }}>
   <div class="person-action delete-confirm" role="group" aria-label="Confirm deleting person">
     <span>Permanently delete this durable person profile?</span>
     <div class="action-buttons">
@@ -108,16 +125,28 @@
       />
     </div>
   </div>
+  {#if controller.conflict}<p role="alert">{controller.conflict.message}</p><Button label="Reload" onclick={() => void controller.reload()} />{/if}
+  </Modal>
 {/if}
 
 {#if historyOpen}
   <ProfileHistoryDialog
     {client}
     {personID}
+    {controller}
+    {onOpenPerson}
+    {onSplitCommitted}
     onClose={() => {
       historyOpen = false;
     }}
   />
+{/if}
+
+{#if maintenance}
+  <Modal ariaLabel={maintenance === 'tracking' ? 'Keep this profile updated' : 'Publish to address book'} onclose={() => maintenance = undefined}>
+    {#if maintenance === 'tracking'}<PersonTrackingControl {client} {personID} {onAnnounce} />
+    {:else}<CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />{/if}
+  </Modal>
 {/if}
 
 <style>

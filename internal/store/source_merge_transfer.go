@@ -31,6 +31,13 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
+	for _, m := range plan.messages {
+		if m.survivor != 0 {
+			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
+				return err
+			}
+		}
+	}
 	// Batch the ordinary row transfer and provenance writes. The values table
 	// keeps provider IDs and hidden-survivor decisions in the same transaction.
 	for start := 0; start < len(plan.messages); start += 100 {
@@ -171,6 +178,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if _, err := tx.ExecContext(ctx, `UPDATE messages SET account_address = NULL, account_path = NULL
  WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email', 'calendar_event')`, into); err != nil {
 		return fmt.Errorf("mark merged account attribution pending: %w", err)
+	}
+	if err := s.refreshSourceCalendarEventsTx(ctx, tx, into); err != nil {
+		return err
 	}
 	// Source-local receipts, sync runs, cursors, re-anchor markers, import receipts
 	// and Beeper media endpoint records remain on the retired source for audit.

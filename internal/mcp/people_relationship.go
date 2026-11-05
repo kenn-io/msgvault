@@ -13,21 +13,23 @@ import (
 )
 
 type getPersonRelationshipResponse struct {
-	ParticipantID    int64                                    `json:"participant_id"`
-	CanonicalID      int64                                    `json:"canonical_id"`
-	DisplayLabel     string                                   `json:"display_label"`
-	Current          identityindex.TemperatureSummary         `json:"current"`
-	Annual           []identityindex.AnnualTemperatureSummary `json:"annual"`
-	PeakTemperature  int                                      `json:"peak_temperature"`
-	PeakYear         int                                      `json:"peak_year"`
-	ScoringTimezone  string                                   `json:"scoring_timezone"`
-	ScoreVersion     int                                      `json:"score_version"`
-	EffectiveDate    string                                   `json:"effective_date"`
-	CacheRevision    string                                   `json:"cache_revision"`
-	IdentityRevision int64                                    `json:"identity_revision"`
-	Year             *int                                     `json:"year,omitzero"`
-	Timezone         string                                   `json:"timezone,omitempty"`
-	Days             []query.RelationshipCalendarDay          `json:"days,omitempty"`
+	ParticipantID   int64                                    `json:"participant_id"`
+	CanonicalID     int64                                    `json:"canonical_id"`
+	DisplayLabel    string                                   `json:"display_label"`
+	Current         identityindex.TemperatureSummary         `json:"current"`
+	Annual          []identityindex.AnnualTemperatureSummary `json:"annual"`
+	PeakTemperature int                                      `json:"peak_temperature"`
+	PeakYear        int                                      `json:"peak_year"`
+	// The scoring fields and identity_revision are omitted for a contact with
+	// no sent or received messages, which has no relationship score.
+	ScoringTimezone  string                          `json:"scoring_timezone,omitempty"`
+	ScoreVersion     int                             `json:"score_version,omitzero"`
+	EffectiveDate    string                          `json:"effective_date,omitempty"`
+	CacheRevision    string                          `json:"cache_revision"`
+	IdentityRevision *int64                          `json:"identity_revision,omitzero"`
+	Year             *int                            `json:"year,omitzero"`
+	Timezone         string                          `json:"timezone,omitempty"`
+	Days             []query.RelationshipCalendarDay `json:"days,omitempty"`
 }
 
 func getPersonRelationshipDefinition(_ *handlers) toolDefinition {
@@ -87,6 +89,17 @@ func (h *handlers) getPersonRelationship(
 	if contact == nil {
 		return nil, newInternalError("get person relationship contact", errors.New("empty response"))
 	}
+	if contact.ActivityCount == 0 {
+		response := getPersonRelationshipResponse{
+			ParticipantID: participantID, CanonicalID: contact.CanonicalID(),
+			DisplayLabel: contact.DisplayLabel,
+			Annual:       []identityindex.AnnualTemperatureSummary{}, CacheRevision: contact.CacheRevision,
+		}
+		if hasYear {
+			response.Year, response.Timezone = new(int(year)), timezone
+		}
+		return jsonResult(response)
+	}
 	calendar, err := h.peopleBackend.RelationshipCalendar(ctx, peoplebrowser.CalendarRequest{
 		ParticipantID: participantID,
 		Year:          int(year),
@@ -108,7 +121,7 @@ func (h *handlers) getPersonRelationship(
 		PeakTemperature: calendar.PeakTemperature, PeakYear: calendar.PeakYear,
 		ScoringTimezone: calendar.ScoringTimezone, ScoreVersion: calendar.ScoreVersion,
 		EffectiveDate: calendar.EffectiveDate, CacheRevision: calendar.CacheRevision,
-		IdentityRevision: calendar.IdentityRevision,
+		IdentityRevision: new(calendar.IdentityRevision),
 	}
 	if hasYear {
 		selectedYear := int(year)

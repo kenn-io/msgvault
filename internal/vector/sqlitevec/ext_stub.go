@@ -137,3 +137,7 @@ func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID)
 func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
 	return nil, ErrNotBuilt
 }
+
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{}
+}

@@ -16,6 +16,7 @@ import (
 // type (sms, whatsapp, calendar_event, ...). The store/api.go path already
 // filtered correctly; this brings the query engine in line.
 func TestSearch_MessageTypeFilterCoversMultipleTypes(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// A unique term so we only count the rows we add, independent of the
@@ -103,6 +104,7 @@ func TestSearch_MessageTypeFilterCoversMultipleTypes(t *testing.T) {
 // query's MessageTypes, so type-scoped views (e.g. Texts mode) don't silently
 // widen back to all message types during an in-view search.
 func TestMergeFilterIntoQuery_MessageType(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -131,6 +133,7 @@ func TestMergeFilterIntoQuery_MessageType(t *testing.T) {
 }
 
 func TestMergeFilterIntoQuery_MessageTypeIntersectsExistingQueryTypes(t *testing.T) {
+	t.Parallel()
 	base := &search.Query{MessageTypes: []string{"email", messageTypeSMS}}
 	merged := MergeFilterIntoQuery(base, MessageFilter{MessageType: messageTypeSMS})
 
@@ -140,6 +143,7 @@ func TestMergeFilterIntoQuery_MessageTypeIntersectsExistingQueryTypes(t *testing
 }
 
 func TestSearchFast_MessageTypeConflictReturnsNoMatches(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	const term = "zzconflictingtype"
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-04"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -11,35 +11,30 @@ maintain your contact directory, and see whether sync and indexing work has
 finished. It is embedded in the release binary and served by `msgvault serve`;
 you do not need a separate web application process.
 
+AI assistants reach the same archive through the [MCP server](usage/chat.md),
+and scripts use the [HTTP API](api-server.md). Saved views, staged deletions,
+and people edits made in one place show up in the others.
+
 | Your question | Workspace |
 |---|---|
-| Where is that message, conversation, or meeting? | Everything |
-| Who have I been in contact with? | Relationships, People, and Domains |
+| Where is that message, conversation, or meeting? | Messages |
+| Who have I been in contact with? | People |
 | Where is an attachment, image, or video? | Files |
-| What do I know about this person? | Directory |
-| Which identity matches or profile facts need my decision? | Reviews |
-| Can I return to this search later? | Saved views |
-| Did sync, enrichment, or indexing finish? | Operations and Sources |
-| What is staged for deletion? | Deletions |
+| What do I know about this person? | People → Details |
+| Which identity matches or profile facts need my decision? | People: Possible duplicates or Facts |
+| Can I return to this search later? | Saved views in the sidebar |
+| Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
+| What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar groups the workspaces as **People** (Relationships, Directory,
-Reviews), **Archive** (Everything, Files, Saved views), and **Manage** (Sources,
-Operations, Deletions, Settings). Its footer shows archive status and opens
-**Keyboard shortcuts**. Choose **Collapse sidebar** to shrink it to an icon rail;
-the browser remembers the choice. Below 900 pixels wide the sidebar becomes a
-menu that **Open navigation** opens.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. **Staged deletions** appears while a listed batch is pending, running, or failed. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
-The top bar holds global search, the theme toggle, and the **Display** menu.
-The Display menu sets a temporary density (**Auto**, **Compact**, or
-**Comfortable**) and, after you change the theme, offers **Use daemon theme**.
-Both overrides last for this tab only. [Settings](#settings-and-restart-behavior)
-holds the saved defaults.
+The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
 Global search works from every workspace. Press `/` outside a text field to
-focus it. In Everything and Files, results follow your query as you type, and
+focus it. In Messages and Files, results follow your query as you type, and
 `Enter` moves focus to the results. In any
-other workspace, `Enter` opens Everything with your query and search mode.
+other workspace, `Enter` opens Messages with your query and search mode.
 
 ## Start and discover the URL
 
@@ -95,11 +90,11 @@ on an encrypted private network is supported as an explicit tradeoff, but the UI
 warns that its session cookie travels without TLS. `HttpOnly` and
 `SameSite=Strict` do not encrypt that traffic.
 
-## Explore and search
+## Messages and search
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Everything workspace with the grouped sidebar, global search, Save view button, and compact email rows in light theme" loading="lazy">
-  <figcaption>Browse archived email in Everything. Select the image to view it at full size.</figcaption>
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
+  <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
 </figure>
 
 The screenshots use a curated public Enron research-data fixture. Authentic
@@ -107,10 +102,10 @@ names and message text are intentional; the repository's `docs-fixtures`
 branch records provenance, attribution, and the content review. This fixture
 contains email only; it does not illustrate chat, calendar, or attachment content.
 
-Everything opens as a compact table of logical entries, newest first: one row
+Messages opens as a compact table of logical entries, newest first: one row
 per email, calendar event, meeting note, other durable item, or chat
 conversation. Raw chat fragments appear only after drilling into a
-conversation. Search, Filters, Show as, and Group by form a shareable view.
+conversation. Search, Filter, Group by, and Show as form a shareable view.
 Ordinary tabs use short URLs such as `?workspace=everything&mode=full_text`.
 Filters, layout changes, and the selected item appear in the link only when
 they differ from the defaults. Keyboard focus, scroll position, and choices
@@ -119,14 +114,10 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filters** opens the filter panel.
-- **Show as** switches between Table, Timeline, and Files. Choosing Files opens
-  the Files workspace.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
 - **Group by** adds a grouping level. Add more levels to group within groups.
-- **Sort** offers Newest first, the only order Everything has today.
-- **Columns** shows or hides table columns. It appears for the ungrouped table.
-- **Preview position** appears when the results are wide enough for a side
-  preview.
+- **Show as** switches between Table, Timeline, and Files.
+- **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
@@ -134,8 +125,8 @@ toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review for deletion…** opens the
-[Deletions](#deletions) workspace. The button is disabled when the daemon
+Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+[Deletions](#deletions). The button is disabled when the daemon
 reports that staging is unavailable for the selection, and the bar states the
 reason beside it, for example "None of the selected items can be deleted from
 their source." Export and **Open selection in source** explain their
@@ -163,7 +154,7 @@ substitute full-text search for either state.
 
 ### Recording matches
 
-With Docbank configured, Everything also searches recording transcripts and
+With Docbank configured, Messages also searches recording transcripts and
 shows matches in **Recordings** above the ordinary results. Recording search
 sends the query text to the configured Docbank service.
 
@@ -187,7 +178,25 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. The block names the limit and suggests a Person filter to narrow the search. If a Person filter already exceeds the limit, choose one with fewer attachments. Other attachment failures show the API error message, with Retry for transient failures. "More may match" marks other result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+### Attachment matches
+
+With [attachment mirroring](configuration.md#mirror-stored-attachments-to-docbank)
+enabled, the same search adds **Attachments**: text Docbank extracted from
+mirrored PDFs and documents.
+
+- **What it shows:** the message title and date, filename, and extracted
+  excerpt. Select a row to open the message that holds the file.
+- **Queries:** plain words, like recording search. Use `msgvault media search`
+  for queries with punctuation.
+- **Empty results:** an empty block without an error means no match in the
+  extracted text. Files still awaiting extraction may contain the words.
+- **Scope limit:** more than 4,096 mirrored files, not counting images, audio,
+  and video, returns `media_search_scope_limit`. Add a Person filter, or choose
+  a person with fewer attachments.
+- **Failures:** other errors show the API message, with **Retry** for
+  transient failures. "More may match" marks other result limits. Recording
+  failures appear beside attachment results, and both lists follow the same
+  Person filter.
 
 ## Read messages
 
@@ -198,8 +207,8 @@ the person opening it still needs access to the archive. Links to chat messages
 open a bounded part of the conversation around the selected message, with
 controls to load earlier or later messages.
 
-Click an entry in Everything to open its preview below the results. On wide
-windows, choose **Preview position → Right** to read beside the results.
+Click an entry in Messages to open its preview below the results. On wide
+windows, choose **Display → Reader position → Right** to read beside the results.
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
 choice and each layout's size. Narrow windows use the preview below the results
@@ -211,12 +220,13 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
+Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Disabled Tasks connections offer **Set up**; other service or index failures offer **Open Settings**.
+
 ## Meeting context and follow-ups
 
-Filter Everything to meetings to see **Meeting activity and follow-ups**.
+Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. Participant/domain reading panes, Directory, and
-Relationships show meeting metrics and recorded actions for their current scope.
+included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.
@@ -232,23 +242,23 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 ## Files and containing context
 
 Files is the single file view. It is a searchable table of attachment date,
-filename, type, size, person or domain, source, containing item, and content
+filename, type, size, person or domain, source, Message, and content
 availability. Archived images and PDFs open in application-controlled viewers.
 Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
 conversation.
 
-Files shares Everything's toolbar, with **Show as** set to Files. Choose Table
-or Timeline there to return to Everything. **Sort** offers Newest first, Oldest
+Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
+or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
 first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
-Filename field and the **Type** menu (Images, PDFs, Audio, Video, Text,
-Documents, Archives, Other) narrow the table. Grouping replaces the table with
-groups and hides Sort, Filename, Type, and Visual search; active Filename and
-Type filters stay visible as chips.
+**Filter** menu includes Filename and Type (Images, PDFs, Audio, Video, Text,
+Documents, Archives, Other). Grouping replaces the table with groups and hides
+Sort and Visual search; Filename and Type remain editable in Filter, and active
+filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
-In a person's Media & files section, choose a media gallery or file table and
+In a person's Files tab, choose a media gallery or file table and
 narrow the relationship to **From them**, **To them**, or **Group
 conversations**. These directions describe the containing messages; they do not
 identify people pictured in an image.
@@ -273,79 +283,49 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Relationships workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a person list, the selected person's activity calendar, and their messages in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
 People combines identifiers backed by explicit archive identity evidence; it
 does not merge records merely because their display names match. Select a
 person to inspect contextual activity across email, chat, calendar events, and
-meeting notes, plus the files associated with that person. The active search
-and filters continue to scope both the timeline and file table.
+meeting notes, plus the files associated with that person. Message filters continue to scope both Messages and Files.
 
-Relationships lists People or Domains; switch with the facet control, and use
-the filter field to narrow the list. For a selected person, **Messages** and
-**Files** switch the view. **Open in Directory** opens the person's durable
-profile, or starts promotion when none exists. **Same person…** links
-identities that belong together.
+People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show saved profiles, including people with no archived messages. Select **Merge** after checking multiple observed people to link their identities. Select saved profiles to delete them in bulk.
 
-Select a day in a person's relationship calendar to show that day's activity
-in the message timeline. Dates use your browser's local time zone. Select the
-same day again or **Clear date** to restore the previous date range. Other
-filters stay active; switching people, calendar years, or to **Files** clears
-the day selection.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
+For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
+
+The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
 
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and
 typed profile attributes are separate curated operations; see [People,
 Profiles, and Source Identities](/docs/usage/people/).
 
-### Directory and Reviews
+### Saved profiles and possible duplicates
 
-Directory holds durable people: the profiles you explicitly curate and keep
-across sources. Search by name, email, or organization. **Filters** opens a
-panel with Contact state, Category, Organization, Primary channel, and two date
+Choose **Filter → Saved** for the profiles you curate across sources. Search by name, email, or organization. **Filter → Profile filters** opens a panel with Contact state, Category, Organization, Primary channel, and two date
 fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Its person detail has seven sections: Overview, Profile, Organizations,
-Connections, Network, Media & files, and Maintenance. The header offers **Open
-relationship** (when the person has a linked source identity), **Review facts**
-(opens Reviews on that person's facts), and **More actions** (Rename person,
-View profile history, and Delete person). Maintenance holds
-profile-maintenance tracking, CardDAV publication, and merge history. Edit
-structured profile information, attributes, employment, and typed
-relationships here. Curated display names also appear in message views,
-analytics, and exports while source identifiers remain available.
+Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
-The Overview tab's **Last time we talked** card summarizes the person's recent
-chat and text messages. Enroll the person, generate a brief, and expand a
-sentence to check its sources. You can reject a brief or inspect the dates and status of earlier
-versions. Generation requires a consented provider and uses its budget; see
-[person briefs](/docs/usage/people-briefs/)
-for setup and supported sources.
+Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
 
-The Network tab can request one, two, or three hops and optionally include
-ended records. It visualizes at most 250 nodes and 500 connections, while an
-always-present list groups the same connections by hop for keyboard and screen
-reader use. Person and organization names in this view come from durable
-profiles. Edges come only from curated typed relationships and employments
-(including shared organizations), never messages, participant co-occurrence,
-or inferred communication activity.
+Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
 
-Reviews brings together identity matches, facts, and imported
-relationships; the **Review type** control switches between them. Inspect the
-evidence before accepting or rejecting a candidate. Conflicts between existing
-profiles require an explicit merge decision. Facts starts with a person: search
-by name in the **Person** field to see that person's evidence, claims,
-decisions, and pins. **Open person profile** returns to their Directory entry.
-Merge history and reversal follow the boundaries documented in
-[People](/docs/usage/people/).
+Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
+
+Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
+
+Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Addresses lists joined identities with **Unlink**. To separate saved profiles after a merge, open **More actions → History**, inspect the merge, and choose **Split merged profile**. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
-a grouped person or domain in Everything opens its inspector in the current
+a grouped person or domain in Messages opens its inspector in the current
 context, including chronologically ordered related files.
 
 ## Saved views
@@ -357,23 +337,11 @@ grouping, presentation, sort, and visible columns.
 Selection is intentionally not saved. The inspector stays pinned; the browser
 does not save or apply inspector pin preferences.
 
-Choose **Save view…** in the Everything or Files page header, name the view, add
+Choose **Save view…** in the Messages or Files page header, name the view, add
 an optional description, and select **Save**. A view saved from Files does not
-keep the Filename filter, Type filter, or file sort. The Saved views workspace
-lists each view with a summary of its query, filters, grouping, and
-presentation. Each row offers **Open**, **Edit**, and **Delete**; the button
-names include the view's name. **Open** applies the view in Everything, or in
-Files for a Files view. **Edit** changes the name and description. **Delete**
-asks you to confirm with **Confirm delete** and removes the view for every
-connected browser.
+keep the Filename filter, Type filter, or file sort. Open the view from its row under Messages or Files. Its tooltip shows a summary and description. The row's **⋯** menu offers **Rename**, **Edit description…**, and **Delete**. Rename edits the name inline; press Enter to save or Escape to cancel. Delete hides the view and offers **Undo** for eight seconds before removing it for every connected browser.
 
-Each record carries a schema version. An incompatible record remains visible,
-but cannot be opened or edited: automatic migration is not attempted. Select
-**Remove incompatible** for that view, confirm, and save the current context
-again. Updates and deletion use
-the record revision as an optimistic-concurrency guard. If another browser
-changes the view first, msgvault reports a conflict and requires you to reload
-and review the latest revision instead of overwriting it.
+An incompatible view stays dimmed with its reason in the tooltip. Its menu offers only Delete. Updates and deletion carry the record revision. If another browser changes the view first, msgvault reports a conflict or restores the row after a failed deletion.
 
 The daemon validates new definitions against the schema 2 vocabulary. It reads
 schema 1 views with pipes as literal text. A stored view can be opened here,
@@ -383,27 +351,16 @@ All three read the same records and see the same revisions.
 
 ## Sources and sync status
 
-Sources is a status workspace. Each row shows a source's name, readable type and
-identifier, schedule, status, last successful sync, and an action. The schedule
-reads as a sentence, with the cron expression in its tooltip.
+Sources lists Source, Status, Last good sync, and Sync now. Status shows Running, Succeeded, Partial, Failed, Paused, Queued, Cancelled, or Never synced. Contacts accounts appear in their own group. Sources stays available while contacts status loads, and contacts-only runs continue polling.
 
-The **Status** chip is **Syncing**, **Completed**, **Completed with errors**,
-**Failed**, or **Never synced**. A running sync also shows its processed, added,
-and error counts. Otherwise the time of the latest result appears under the
-chip, and the last successful sync has its own column. A latest result older
-than 24 hours adds "This result may be out of date." A failed status request
-remains an error rather than becoming an empty source list.
+Select a source to open its panel. Schedule, Next sync, and attachment rules show the current values. **Edit in Settings › Sources** opens the existing editor for settings shared by that source type. The panel also shows Runs, item errors, and **Sync now**. A latest run's error appears before a scheduler error. **Sync history** opens Past runs filtered to source sync.
 
-A source with a sync error message, item errors, or a scheduler error has
-**Show details for {name}**, which opens the run-level errors, item-level
-errors, and scheduler error. **Sync history** in the page header opens
-Operations filtered to source sync.
+A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel give `msgvault sync --source-id N`.
 
 **Sync now** is available only when that source reports the capability. When it
-is not, the Action column says why in words: "Imported file — nothing to sync",
+is not, the Sync now column says why in words: "Imported file — nothing to sync",
 "Sync in progress", "Scheduler unavailable", "Sync not set up", or "Sync
-unavailable". The daemon's reason code stays in the text's tooltip.
-Meeting-import sources show "On-demand API source" instead, because meetings
+unavailable". Meeting-import sources show "On demand" instead, because meetings
 arrive through the API rather than a sync. A `202
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded
@@ -428,103 +385,27 @@ They remain active until the daemon restarts or another sync for that source
 acquires its lock and recovers them. Until then, **Sync now** stays unavailable
 and status polling continues while the tab is visible.
 
-## Operations
+## Background jobs and past runs
 
-Operations answers two different questions: what is configured and ready now,
-and what happened during a particular run. Its overview groups work into five
-lanes:
+While the tab is visible, job status refreshes every 30 seconds on every page and when the window regains focus.
 
-| Lane | Work shown |
-|---|---|
-| Messages | Source sync and message embeddings |
-| Facts | People sweeps, person embeddings, and external enrichment |
-| Contacts | CardDAV sync |
-| Documents | Document extraction and document embeddings |
-| Attachments | Visual embeddings |
+The footer status dot opens queued and running jobs and unresolved failures. It shows **Idle** when the list is empty, **Queued** while work awaits execution, **Running** while work runs, and **Needs attention** while a latest run failed or the scheduler reports an error. Failed rows show the daemon's run or item error. If a status read fails, the menu keeps the last known jobs and reports that status is unavailable. Select a job to open its source, contact settings, index status, or owning setting. Scheduled source syncs show Queued while waiting to execute. A previous sync failure stays visible until execution starts.
 
-Each lane lists its kinds of work. A row shows the kind's name, a status chip,
-the latest run's start time, and any actions. When the latest success differs
-from the latest run, the row adds "Last succeeded" and its time. The status chip
-reads:
+Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
-- **Queued** or **Running** while a run is active.
-- **Off** when the work is not configured and no run is active.
-- **Succeeded**, **Partial**, **Failed**, or **Cancelled** for the latest run.
-- **No runs yet** when the work is configured, history is available, and
-  nothing has run.
+Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live document and visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
 
-A lane the daemon cannot report shows **Status unavailable**. A kind whose
-history cannot be read shows "History unavailable" instead of looking like no
-work has ever run.
+Settings Overview shows current feature status. **Details** opens live counts for configured Document extraction, Document search, and Visual search, including features with no past run. Document extraction and document search are configured on the daemon host; see [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy). Document extraction still requires the explicit CLI upload workflow in [Document Indexing](/docs/usage/document-indexing/).
 
-An Off row offers **Set up** when Settings can turn the work on. Message
-embeddings, person embeddings, and visual embeddings open Settings on Search
-and focus their setting. Person enrichment opens Person enrichment, and person
-sweeps open People sweep. Document extraction and document embeddings are
-configured in `config.toml` on the daemon host, so their rows say so and link to
-[Document indexing setup](/docs/usage/document-indexing/#configure-the-policy)
-and [Document search setup](/docs/usage/document-indexing/#semantic-and-hybrid-document-search).
-Document embeddings also need semantic search.
-
-Rows link to source status, CardDAV settings, or detailed document and visual
-index status. The latter show coverage and the current prerequisites for
-processing. The workspace offers **Start CardDAV sync**, **Build visual
-index**, or **Resume visual index** only when the daemon advertises that
-action. Source **Sync now** remains in Sources. Document extraction still
-requires the explicit CLI upload workflow in
-[Document Indexing](/docs/usage/document-indexing/).
-
-**Refresh operation status** in the page header reloads the status lists every
-five minutes and whenever you select it, and it shows how long ago they were
-updated. It never touches run history. Filter history by lane, kind of work,
-state, and start date. **Reload run history** at the end of the filter row
-restarts history from page one and replaces the loaded rows. History otherwise
-changes only when you change a filter or load more. If paging history becomes
-inconsistent after a change, use **Restart operation history** to load a fresh
-snapshot. The filters and selected run are kept in the URL, so browser Back and
-Forward restore the view.
-
-The run history table lists Kind, Trigger, State, Started, Duration, and
-Counters. Trigger is Manual, Scheduled, or a dash when none was recorded. Queued,
-running, succeeded, partial, failed, and cancelled are distinct states. Counters
-name each unit once, as in "20 messages processed · 20 added", and leave out
-zero counts. "No counters" means none were reported or every count was zero;
-open the run to see them all. A failed or partial run
-shows the daemon's error sentence under its state.
-
-Open a run to inspect its progress, outcome, timestamps, every counter, and
-available diagnostics. For a failed run, the detail shows the error sentence
-first and the machine-readable code beneath it as "Code: {code}".
+Old Operations links with a run, status, or history filter open Past runs over Settings Overview; links without them open Settings Overview. Old Saved views links open Messages.
 
 ## Deletions
 
-Everything supports explicit row selection and select-all-matching for the
-current query and filters. **Review for deletion…** in the selection bar, or `d`
-and `D`, opens the Deletions workspace. The daemon first preflights the
-selection and reports any unavailable action before the UI offers a separate
-staging confirmation. The workspace lists, inspects, and cancels manifests; it
-cannot execute deletion against a provider. Use the explicit
-`msgvault delete-staged` CLI workflow for that final operation.
+Messages supports individual row selection and select-all-matching for the current query and filters. **Review deletion…** in the selection bar, or `d` and `D`, opens a review dialog over Messages. The daemon preflights the selection before enabling staging.
 
-Without a selection, the workspace says "Nothing selected for deletion" and
-points back to Everything. With one, the **Review selection** panel shows the
-item count and estimated size, how many items can be staged and how many will be
-skipped, and when the review expires, as a relative time such as "in 8 minutes"
-with the exact time in a tooltip. When the daemon reports that staging is
-unavailable, the panel gives the reason as a sentence and disables **Stage
-deletion…**. **Dry run** reports matched, staged, and skipped counts without
-staging anything. **Stage deletion…** opens a confirmation, and only its red
-**Confirm stage deletion** button creates the manifest. Staging covers Gmail and
-Microsoft Graph mail only and does not execute deletion. Arriving from
-Everything runs the review at once and, when staging is available, opens the
-confirmation.
+The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The manifests table lists ID, Description, Items, Status, and Created. Status is
-Pending, In progress, Completed, Failed, or Cancelled. **Inspect** opens a
-manifest's detail beside the table, or below it at 900 pixels wide or narrower;
-**Close manifest detail** closes it. **Cancel** appears for Pending and In
-progress manifests and asks for **Confirm cancel manifest**. With no manifests,
-the workspace says "No staged deletions".
+The Staged deletions workspace lists batches by creation date, message count, and status. Select a row to see its account and inspect its description, summary, execution counts, and failed message IDs. If the account can't be read, the panel shows "Account unavailable". **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history. With no batches, the workspace says "Nothing staged". The sidebar entry appears while a listed batch is pending, running, or failed. **Go to Staged deletions** in the command palette always opens the history.
 
 ## Keyboard controls
 
@@ -551,27 +432,25 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `?` | Open the searchable Keyboard shortcuts dialog |
 | `Cmd/Ctrl+K` | Open the command palette |
 
-Select **Keyboard shortcuts** in the sidebar, or press `?`, to search this list
+Select **Help** in the sidebar, or press `?`, to search this list
 in the app. Destructive keys open a review; they never execute deletion
 immediately. Shortcuts are suspended while typing and inside message/file
 content.
 
 ## Settings and restart behavior
 
-Settings edits the daemon's `config.toml` from the browser. For every
-`config.toml` setting the daemon supplies the category, section, label,
-description, and allowed values, so the browser never decides on its own what
-a setting means. Those categories are Appearance, Daemon, Archive, Search,
-Sources, Attachments, Person enrichment, and Integrations. Larger categories
-split into titled sections, for example Search has separate sections for the
-text embedding provider, the embedding schedule, and visual attachment search.
-The CardDAV account and People sweep categories are separate browser-owned
-workflows with their own save actions; they are not part of the daemon's
-settings catalog. The selected category is part of the page link, so reload and
-Back keep it. A link to an unknown category opens Appearance.
+Settings opens on Overview, with status and setup or build actions for
+background features. Use **Refresh feature status** to update Overview after
+background work changes. **Build index** appears when offered by the daemon and
+asks for confirmation before a full rebuild. Its categories are Overview,
+Server, Search & AI, People lookups, People, Tasks, Contacts, Sources, and Advanced.
+Sources includes source and attachment settings. Advanced includes archive
+settings and Appearance. People lookups includes named enrichment providers and
+People sweep profiles.
 
-Each row shows the setting name and one sentence about what it does. Limits
-live on the control itself: a number input carries its minimum and maximum,
+The daemon supplies allowed values and validation. Settings supplies category and selected field labels, groups settings into the category rail and keeps tuning and host-managed values behind disclosures. The selected category is part of the page link, so reload and Back keep it. Old category links open their replacement category; unknown categories open Overview.
+
+Each row shows the setting name. Limits live on the control itself: a number input carries its minimum and maximum,
 and a syntax hint such as the accepted duration format sits under the control
 only when the syntax needs one. Settings where zero means "off", such as an
 attachment size cap that falls back to the provider default, show a switch.
@@ -579,7 +458,7 @@ Switch it off and the row states what happens instead; switch it on and a
 value input appears, starting from a suggested value. Rows you have changed
 carry an amber dot. A save bar appears at the bottom of the page only while you
 have unsaved changes. It counts them and offers **Discard** and **Save
-changes**. **Save changes** stays disabled while a number field is empty. When
+changes**. **Save changes** stays disabled while a number field is empty. During a save, fields and resource actions wait; category navigation stays available. When
 the bar disappears after a save or discard, focus moves to the category
 heading.
 
@@ -596,42 +475,24 @@ stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
 the same field, and the Sources and CardDAV status views describe stored
 schedules the same way.
 
-Each category states once, in a line under its heading, how its changes take
-effect:
-
-- "Saved changes apply right away — no restart needed." Appearance uses this
-  line.
-- "Saved changes apply after the daemon restarts." Every other `config.toml`
-  category uses this line.
-- "Most saved changes apply after the daemon restarts. Rows that differ are
-  marked." A category that mixes both uses this line.
-- "Set in config.toml on the daemon host." A category whose settings are all
-  host-managed uses this line.
-
-After a save that needs a restart, the page shows "Saved. Restart the daemon to
-apply these changes." until the daemon restarts.
-
-Some controls save through their own buttons instead of **Save changes**:
-provider credentials, person-enrichment providers, the CardDAV account, and
-People sweep. Above the first such control, the page says "These save
-immediately when you use their buttons — not with Save changes." Two of them
-also apply right away and say so beside their controls: person-enrichment
-provider API keys and the CardDAV account.
+The Save changes bar covers ordinary settings, and its edits survive category
+changes. Some controls save through their own buttons instead: provider
+credentials, person-enrichment providers, contact accounts, and People sweep.
+The bar stays visible on Contacts while ordinary settings have unsaved changes.
+After a save that needs a restart, Settings shows “Saved. Restart msgvault to
+apply these changes.”
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the
 configuration; reload before saving again.
 
-A saved Appearance theme or density applies to the open tab at once, unless a
-Display menu override is active in that tab. The override still wins. The
-Appearance page explains how to return: choose “Use daemon theme” and Temporary
-density “Auto” in the Display menu. A saved default search mode does not change
+A theme or density saved under Advanced applies to the open tab at once, unless a
+Display menu override is active in that tab. The override still wins. To return to the saved values, choose **Use Settings defaults** in Display. A saved default search mode does not change
 the search you have open. Tabs you open later in this browser without a mode in
 their link use it.
 
 Host-managed values, such as the listener address and the server API key
-(`server.api_key`), show their current value with a Host-managed tag and no
-input. Change them in `config.toml` on the daemon host. After the API key
+(`server.api_key`), show their current value under Set in config.toml. Change them in `config.toml` on the daemon host. After the API key
 changes and the daemon restarts, old browser sessions end and the login
 screen appears.
 
@@ -650,10 +511,10 @@ a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
 characters shows as dots instead. The pencil opens a dialog to paste the
-new key, and the dialog says when it takes effect: a person-enrichment key
-applies right away, the text and visual embedding keys are stored at once
-but used after the daemon restarts, and the task integration key is saved
-with the rest of the page. A key that comes from an environment variable
+new key. A person-enrichment key applies right away; text and visual embedding
+keys are stored at once, and their dialog says the daemon uses them after a
+restart; the task integration key is saved with Save changes.
+A key that comes from an environment variable
 says so under the line and cannot be cleared from the browser.
 
 Credentials have a separate revision from `config.toml`. When changing both
@@ -664,8 +525,9 @@ the credential. This binds the key to the destination it was entered for.
 
 CardDAV settings manage contact accounts and discovered address books. Choose
 which books participate in sync, lookup, and publishing; publishing also
-enables contact sync for that book. The workspace offers incremental and full
-sync, recent run history, and conflict review. A conflict shows local and
+enables contact sync for that book. Sync now lets the daemon choose whether
+to reconcile the full address book. To force a full sync, run `msgvault sync-carddav --full`. The workspace also offers recent run
+history and conflict review. A conflict shows local and
 remote versions before you choose which to keep. See
 [People and CardDAV](/docs/usage/people-carddav/) for setup and publishing rules.
 

@@ -808,6 +808,30 @@ func TestLayoutFitsTerminalHeight(t *testing.T) {
 	}
 }
 
+func TestBuildDetailLinesBodyAlternatives(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		html string
+		want string
+	}{
+		{"HTML without stored plain text", "", "<p>Delivery &amp; pickup</p>", "Delivery & pickup"},
+		{"empty", "", "", "(No text content)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			model := NewBuilder().WithSize(80, 24).Build()
+			model.messageDetail = &query.MessageDetail{BodyText: tt.text, BodyHTML: tt.html}
+
+			lines := model.buildDetailLines()
+			require.NotEmpty(lines)
+			assert.Equal(tt.want, lines[len(lines)-1])
+		})
+	}
+}
+
 func TestBuildDetailLinesSanitizesMultilineBody(t *testing.T) {
 	assert := assert.New(t)
 	model := NewBuilder().WithSize(80, 24).Build()

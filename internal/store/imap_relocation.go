@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -94,6 +95,7 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 				expectedRFC822MessageID, actualRFC822MessageID,
 			)
 		}
+		omitRFC822Identity := strings.ContainsRune(actualRFC822MessageID, 0)
 		if len(data.RawMIME) == 0 {
 			return nil, errors.New("IMAP relocation snapshot requires raw MIME")
 		}
@@ -109,9 +111,10 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 
 		result, err := tx.ExecContext(ctx, `
 			UPDATE messages
-			SET source_message_id = ?
+			SET source_message_id = ?,
+			    rfc822_message_id = CASE WHEN ? THEN NULL ELSE rfc822_message_id END
 			WHERE id = ? AND source_id = ? AND source_message_id = ?
-		`, data.Message.SourceMessageID, expected.ID, expected.SourceID, expected.SourceMessageID)
+		`, data.Message.SourceMessageID, omitRFC822Identity, expected.ID, expected.SourceID, expected.SourceMessageID)
 		if err != nil {
 			return nil, fmt.Errorf("rekey IMAP relocation target: %w", err)
 		}
@@ -129,6 +132,11 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 		prepared := *data
 		message := *data.Message
 		prepared.Message = &message
+		// The original ID was required above to match the locked historical
+		// row. It is evidence, not a usable identity for the new snapshot.
+		if omitRFC822Identity {
+			message.RFC822MessageID = sql.NullString{}
+		}
 		prepared.PreserveLabels = true
 		return &prepared, nil
 	}

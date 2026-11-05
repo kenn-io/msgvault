@@ -22,6 +22,7 @@ import (
 // last_modified backfill alone is a full messages-table scan — seconds of
 // startup on a large archive).
 const (
+	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
@@ -88,7 +89,8 @@ const (
 	// FTS bookkeeping sweeps no longer requeue the archive.
 	// v5: is_sent joined MessagesActivityColumns, and messages projected while
 	// unsent are requeued so the projector retracts them.
-	migrationActivityProjectionTriggers = "activity_projection_triggers_v5"
+	// v6: membership changes mark one conversation for expansion by the drain.
+	migrationActivityProjectionTriggers = "activity_projection_triggers_v6"
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 	migrationProviderConsentsV1         = "provider_consents_v1"

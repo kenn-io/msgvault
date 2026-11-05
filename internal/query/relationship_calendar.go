@@ -129,14 +129,9 @@ func validateRelationshipCalendarRequestAt(
 	if request.CanonicalID < 1 {
 		return nil, "", fmt.Errorf("%w: canonical participant ID must be positive", ErrInvalidExploreRequest)
 	}
-	timezone := request.Timezone
-	if timezone == "" {
-		timezone = relationshipScoringTimezone
-	}
-	location, err := time.LoadLocation(timezone)
+	location, timezone, err := validateRelationshipTimezone(request.Timezone)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q: %w",
-			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone, err)
+		return nil, "", err
 	}
 	if request.Year < 1970 || request.Year > now.In(location).Year() {
 		return nil, "", fmt.Errorf("%w: %w: relationship calendar year %d is outside the supported range",
@@ -206,6 +201,29 @@ func (e *DuckDBEngine) relationshipTemperatureSummary(
 	return &response, effectiveDate, nil
 }
 
+func (e *DuckDBEngine) relationshipOwnerCanonicalIDs(ctx context.Context) ([]int64, error) {
+	if err := e.relationshipQuerySetsError(); err != nil {
+		return nil, err
+	}
+	rows, err := e.db.QueryContext(ctx, "SELECT canonical_id FROM relationship_owner_canonicals")
+	if err != nil {
+		return nil, fmt.Errorf("query relationship owner canonicals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan relationship owner canonical: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate relationship owner canonicals: %w", err)
+	}
+	return ids, nil
+}
+
 func (e *DuckDBEngine) relationshipCalendarDays(
 	ctx context.Context,
 	request RelationshipCalendarRequest,
@@ -220,18 +238,31 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	for year := startUTC.Year(); year <= endUTC.Add(-time.Nanosecond).Year(); year++ {
 		years = append(years, strconv.Itoa(year))
 	}
+	owners, err := e.relationshipOwnerCanonicalIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	canonicalIDs := []string{strconv.FormatInt(request.CanonicalID, 10)}
+	for _, owner := range owners {
+		canonicalIDs = append(canonicalIDs, strconv.FormatInt(owner, 10))
+	}
 	cutoff := effectiveAt.UTC()
 	activity := fmt.Sprintf(`(
 		SELECT * FROM relationship_activity_expanded
 		WHERE occurred_year IN (%s)
 		  AND occurred_at >= TIMESTAMP '%s'
 		  AND occurred_at < TIMESTAMP '%s'
-		  AND (canonical_id = %d OR is_owner)
+		  AND canonical_id IN (%s)
+		  AND message_id IN (
+		    SELECT message_id FROM relationship_activity_expanded
+		    WHERE canonical_id = %d AND occurred_year IN (%s)
+		  )
 	)`,
 		strings.Join(years, ","),
 		startUTC.Format("2006-01-02 15:04:05.999999999"),
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
-		request.CanonicalID,
+		strings.Join(canonicalIDs, ","),
+		request.CanonicalID, strings.Join(years, ","),
 	)
 	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
 	rows, err := e.db.QueryContext(ctx, `
@@ -304,4 +335,16 @@ func (r RelationshipCalendarRequest) TimezoneOrUTC() string {
 		return relationshipScoringTimezone
 	}
 	return r.Timezone
+}
+
+func validateRelationshipTimezone(timezone string) (*time.Location, string, error) {
+	if timezone == "" {
+		timezone = relationshipScoringTimezone
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil || timezone == "Local" {
+		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q",
+			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone)
+	}
+	return location, timezone, nil
 }

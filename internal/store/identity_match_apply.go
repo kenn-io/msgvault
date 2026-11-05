@@ -223,7 +223,7 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 						refreshed = loaded
 						return errIdentityMatchSnapshotStale
 					}
-					edges, edgeErr := s.loadLinkEdgesTxContext(ctx, tx)
+					edges, edgeErr := s.loadComponentEdgesTxContext(ctx, tx, current.LeftID, current.RightID)
 					if edgeErr != nil {
 						return edgeErr
 					}
@@ -257,7 +257,7 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 						return hashErr
 					}
 					if actual != reviewedFingerprint {
-						edges, edgeErr := s.loadLinkEdgesTxContext(ctx, tx)
+						edges, edgeErr := s.loadComponentEdgesTxContext(ctx, tx, loaded.LeftID, loaded.RightID)
 						if edgeErr != nil {
 							return edgeErr
 						}

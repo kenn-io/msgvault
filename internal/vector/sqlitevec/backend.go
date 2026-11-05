@@ -199,6 +199,10 @@ func (b *Backend) Close() error { return b.db.Close() }
 // that need to share the pool (e.g. the embed worker's VectorsDB field).
 func (b *Backend) DB() *sql.DB { return b.db }
 
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{DB: b.db, Rebind: func(query string) string { return query }}
+}
+
 // Path returns the filesystem path of vectors.db.
 func (b *Backend) Path() string { return b.path }
 
@@ -930,10 +934,12 @@ func distinctMessageIDs(chunks []vector.Chunk) []int64 {
 	return out
 }
 
+const deleteVectorSQL = `DELETE FROM %s WHERE generation_id = ? AND embedding_id = ?`
+
 // deleteForMessageIDs removes every chunk (in both vec0 and embeddings)
-// belonging to the given message_ids under gen. The vec0 delete runs
-// first so its rowids (which equal embeddings.embedding_id) still exist
-// for the subquery to resolve. Used by Upsert for idempotent replace.
+// belonging to the given message_ids under gen. Resolve embedding IDs before
+// deleting metadata, then delete vec0 rows by primary key to avoid a full scan.
+// Used by Upsert for idempotent replace.
 func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable, acceleratorTable string, gen vector.GenerationID, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
@@ -951,15 +957,32 @@ func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable, acceleratorT
 			return fmt.Errorf("delete accelerator vectors: %w", err)
 		}
 	}
-	// vec0 partition-aware filter (generation_id) so the engine can
-	// prune by partition before scanning, then embedding_id IN (...).
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE generation_id = ? AND embedding_id IN (
-			SELECT embedding_id FROM embeddings
-			WHERE generation_id = ?
-			  AND message_id IN (SELECT value FROM json_each(?))
-		)`, vecTable), int64(gen), int64(gen), string(blob)); err != nil {
-		return fmt.Errorf("delete vectors: %w", err)
+	rows, err := tx.QueryContext(ctx, `SELECT embedding_id FROM embeddings
+		WHERE generation_id = ? AND message_id IN (SELECT value FROM json_each(?))`, int64(gen), string(blob))
+	if err != nil {
+		return fmt.Errorf("query embedding ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var embeddingIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("scan embedding id: %w", err)
+		}
+		embeddingIDs = append(embeddingIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read embedding ids: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(deleteVectorSQL, vecTable))
+	if err != nil {
+		return fmt.Errorf("prepare vector delete: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	for _, id := range embeddingIDs {
+		if _, err := stmt.ExecContext(ctx, int64(gen), id); err != nil {
+			return fmt.Errorf("delete vector %d: %w", id, err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM embeddings
@@ -1721,10 +1744,7 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 		return err
 	}
 
-	// deleteForMessageIDs handles vec0 (via the embedding_id subquery)
-	// and embeddings together. Both the vec0 and embeddings deletes
-	// take a single JSON-each batch rather than per-id statements, so
-	// the call count stays at 2 even for a large messageIDs list.
+	// deleteForMessageIDs removes vec0 rows by embedding ID before metadata.
 	accelerator, err := b.readyAcceleratorForWrite(ctx, tx, gen, dim)
 	if err != nil {
 		return err

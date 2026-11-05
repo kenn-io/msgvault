@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
@@ -133,8 +134,10 @@ type SourceStatus struct {
 	NextSyncAt            *string        `json:"next_sync_at"`
 	SchedulerLastError    string         `json:"scheduler_last_error,omitempty"`
 	// SchedulerQueued reports a scheduled run waiting for another job to
-	// finish; SchedulerPending a follow-up run requested while one executes;
+	// finish; SchedulerQueuedAt gives when the wait began.
+	// SchedulerPending reports a follow-up run requested while one executes;
 	// SchedulerStartedAt when the executing run began.
+	SchedulerQueuedAt  *string `json:"scheduler_queued_at,omitempty"`
 	SchedulerQueued    bool    `json:"scheduler_queued,omitempty"`
 	SchedulerPending   bool    `json:"scheduler_pending,omitempty"`
 	SchedulerStartedAt *string `json:"scheduler_started_at,omitempty"`
@@ -332,13 +335,17 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	FromParticipantID int64                     `json:"from_participant_id,omitzero" doc:"Sender participant ID, populated for conversation windows."`
+	ToParticipants    []ConversationParticipant `json:"to_participants,omitempty" doc:"Recipient participants, populated for conversation windows."`
+
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
-	Body     string `json:"body"`
-	BodyHTML string `json:"body_html,omitempty"`
-	IsFromMe bool   `json:"is_from_me,omitzero"`
+	Body     string  `json:"body"`
+	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback."`
+	BodyHTML string  `json:"body_html,omitempty"`
+	IsFromMe bool    `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
 	// out to keep the response within the cumulative inline-body budget.
 	// The snippet is still present; fetch the full body via
@@ -590,6 +597,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		IsFromMe:          qMsg.IsFromMe,
 		Calendar:          qMsg.Calendar,
 		Body:              body,
+		BodyText:          new(qMsg.BodyText),
 		BodyHTML:          qMsg.BodyHTML,
 		Attachments:       attachments,
 	}
@@ -640,10 +648,28 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Vector stats are best-effort and bounded: log errors but still
+	// include whatever partial stats came back. They live in a separate
+	// database, so they are collected while the archive stats load.
+	_, backend, _ := s.vectorComponents()
+	vectorCtx, cancelVector := context.WithTimeout(r.Context(), s.vectorStatsTimeout)
+	var (
+		vs             *vector.StatsView
+		vsErr          error
+		vectorTimedOut bool
+		vectorDone     sync.WaitGroup
+	)
+	vectorDone.Go(func() {
+		vs, vsErr = vector.CollectStats(vectorCtx, backend)
+		vectorTimedOut = errors.Is(vectorCtx.Err(), context.DeadlineExceeded)
+	})
+
 	stats, asOf, stale, err := s.statsSnapshots.get(
 		r.Context(), s.importContext, "", s.statsSnapshotWait, s.getStats,
 	)
 	if err != nil {
+		cancelVector()
+		vectorDone.Wait()
 		if s.writeIfContextError(w, err) {
 			return
 		}
@@ -651,13 +677,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 		return
 	}
-
-	// Vector stats are best-effort and bounded: log errors but still
-	// include whatever partial stats came back.
-	_, backend, _ := s.vectorComponents()
-	vectorCtx, cancelVector := context.WithTimeout(r.Context(), s.vectorStatsTimeout)
-	vs, vsErr := vector.CollectStats(vectorCtx, backend)
-	vectorTimedOut := errors.Is(vectorCtx.Err(), context.DeadlineExceeded)
+	vectorDone.Wait()
 	cancelVector()
 	if vsErr != nil {
 		s.logger.Warn("vector stats", "error", vsErr)
@@ -811,6 +831,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
 		Body:              msg.Body,
+		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
 		Calendar:          msg.Calendar,
@@ -1631,7 +1652,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 				if !scheduled.NextRun.IsZero() {
 					status.NextSyncAt = nullableTimePtr(scheduled.NextRun)
 				}
-				applySchedulerQueueState(&status, scheduled.Queued, scheduled.Pending, scheduled.StartedAt)
+				applySchedulerQueueState(&status, scheduled.Queued, scheduled.Pending, scheduled.StartedAt, scheduled.QueuedAt)
 				break
 			}
 		case sourceScheduleNonSchedulable:
@@ -1687,13 +1708,16 @@ func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) boo
 		if !job.NextRun.IsZero() {
 			status.NextSyncAt = nullableTimePtr(job.NextRun)
 		}
-		applySchedulerQueueState(status, job.Queued, job.Pending, job.StartedAt)
+		applySchedulerQueueState(status, job.Queued, job.Pending, job.StartedAt, job.QueuedAt)
 		return job.Running
 	}
 	return false
 }
 
-func applySchedulerQueueState(status *SourceStatus, queued, pending bool, startedAt time.Time) {
+func applySchedulerQueueState(status *SourceStatus, queued, pending bool, startedAt, queuedAt time.Time) {
+	if queued && !queuedAt.IsZero() {
+		status.SchedulerQueuedAt = nullableTimePtr(queuedAt)
+	}
 	status.SchedulerQueued = queued
 	status.SchedulerPending = pending
 	if !startedAt.IsZero() {

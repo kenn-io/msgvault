@@ -15,6 +15,7 @@ import (
 // SQLite, and to_tsquery must never see a bare boolean operator from a
 // natural-language query.
 func TestPostgreSQLBuildFTSTerm(t *testing.T) {
+	t.Parallel()
 	d := PostgreSQLQueryDialect{}
 
 	cases := []struct {
@@ -57,6 +58,7 @@ func TestPostgreSQLBuildFTSTerm(t *testing.T) {
 // dialect.go's FTS5 escaping (quote-doubling, star-stripping) under
 // direct test now that the hybrid path renders terms per-dialect.
 func TestSQLiteBuildFTSTerm(t *testing.T) {
+	t.Parallel()
 	d := SQLiteQueryDialect{}
 
 	cases := []struct {
@@ -91,6 +93,7 @@ func TestSQLiteBuildFTSTerm(t *testing.T) {
 }
 
 func TestBuildFTSBodyTermScopesExactBodyField(t *testing.T) {
+	t.Parallel()
 	t.Run("PostgreSQL weight D", func(t *testing.T) {
 		expr, arg := (PostgreSQLQueryDialect{}).BuildFTSBodyTerm([]string{"foo-bar", "baz"})
 		assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", expr)

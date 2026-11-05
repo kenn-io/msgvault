@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
@@ -59,7 +60,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type IN ('beeper', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'chatwoot', 'inline')
+		WHERE src.source_type IN ('beeper', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'chatwoot', 'inline', 'apple_messages')
 		  AND (COALESCE(a.attachment_state, '') IN (?, '')
 		       OR (src.source_type = 'chatwoot' AND COALESCE(a.content_hash, '') <> ''))
 		  AND (
@@ -185,17 +186,26 @@ func (s *Store) AttachmentBlobReferenced(ctx context.Context, contentHash, stora
 	if contentHash == "" && storagePath == "" {
 		return false, nil
 	}
+	query, args := attachmentBlobReferenceQuery(contentHash, storagePath)
 	var exists bool
-	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT EXISTS (
-			SELECT 1 FROM attachments
-			WHERE (? <> '' AND (content_hash = ? OR thumbnail_hash = ?))
-			   OR (? <> '' AND (storage_path = ? OR thumbnail_path = ?))
-		)
-	`), contentHash, contentHash, contentHash,
-		storagePath, storagePath, storagePath).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check attachment blob reference: %w", err)
 	}
 	return exists, nil
+}
+
+func attachmentBlobReferenceQuery(contentHash, storagePath string) (string, []any) {
+	var conditions []string
+	var args []any
+	// Empty-input guards in SQL prevent SQLite from using its multi-index OR plan.
+	if contentHash != "" {
+		conditions = append(conditions, "content_hash = ? OR thumbnail_hash = ?")
+		args = append(args, contentHash, contentHash)
+	}
+	if storagePath != "" {
+		conditions = append(conditions, "storage_path = ? OR thumbnail_path = ?")
+		args = append(args, storagePath, storagePath)
+	}
+	return "SELECT EXISTS (SELECT 1 FROM attachments WHERE " + strings.Join(conditions, " OR ") + ")", args
 }

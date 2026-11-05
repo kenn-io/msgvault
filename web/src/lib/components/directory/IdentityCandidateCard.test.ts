@@ -1,14 +1,14 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen, within } from '@testing-library/svelte';
+import { describe, expect, it } from 'vitest';
 
 import type { IdentityMatchCandidate } from '../../directory/review-controller.svelte';
 import IdentityCandidateCard from './IdentityCandidateCard.svelte';
 
-function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
+function completeCandidate(): IdentityMatchCandidate {
   return {
     id: 17,
     left_id: 170,
-    left_kind: 'beeper_user',
+    left_kind: 'participant',
     right_id: 171,
     right_kind: 'participant',
     basis: 'stable_provider_id',
@@ -19,9 +19,9 @@ function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
     confidence: 0.82,
     source: 'synthetic_import',
     source_ref: 'fixture-17',
-    state,
-    review_token: `token-17-${state}`,
-    actionable: state === 'candidate',
+    state: 'accepted',
+    review_token: 'token-17-accepted',
+    actionable: false,
     application_pending: false,
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z',
@@ -50,16 +50,19 @@ function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
 }
 
 describe('IdentityCandidateCard', () => {
-  it('renders every candidate field and each evidence record as labelled evidence', () => {
-    render(IdentityCandidateCard, {
-      candidate: completeCandidate(), pending: false, onAccept: vi.fn(), onReject: vi.fn()
-    });
+  it('shows when no evidence was supplied', () => {
+    render(IdentityCandidateCard, { candidate: { ...completeCandidate(), evidence: [] }, pending: false });
+    expect(screen.getByText('No evidence supplied.')).toBeDefined();
+  });
+
+  it('renders candidate fields and labelled evidence', () => {
+    render(IdentityCandidateCard, { candidate: completeCandidate(), pending: false });
 
     const card = screen.getByRole('article', { name: 'Identity match 17' });
-    expect(screen.getByText('Candidate')).toBeDefined();
-    expect(screen.queryByText('candidate')).toBeNull();
+    expect(screen.getByText('Accepted')).toBeDefined();
+    expect(screen.queryByText('accepted')).toBeNull();
     expect(within(card).getByRole('region', { name: 'Candidate endpoints for identity match 17' })).toBeDefined();
-    expect(within(card).getByText('beeper_user / 170')).toBeDefined();
+    expect(within(card).getByText('participant / 170')).toBeDefined();
     expect(within(card).getByText('participant / 171')).toBeDefined();
     expect(card.textContent).toContain('stable_provider_id');
     expect(card.textContent).toContain('synthetic@example.com');
@@ -99,87 +102,4 @@ describe('IdentityCandidateCard', () => {
     expect(evidence.textContent).toContain('2026-08-01T10:06:00Z');
   });
 
-  it('shows an explicit no-evidence message and hides decisions for reviewed rows', () => {
-    const reviewed = { ...completeCandidate('accepted'), evidence: [] };
-    render(IdentityCandidateCard, {
-      candidate: reviewed, pending: false, onAccept: vi.fn(), onReject: vi.fn()
-    });
-
-    expect(screen.getByText('No evidence supplied.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Link identities' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
-  });
-
-  it('offers both explicit candidate decisions and disables duplicates while pending', async () => {
-    const onAccept = vi.fn();
-    const onReject = vi.fn();
-    const view = render(IdentityCandidateCard, {
-      candidate: completeCandidate(), pending: false, onAccept, onReject
-    });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identities' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
-    expect(onAccept).toHaveBeenCalledOnce();
-    expect(onReject).toHaveBeenCalledOnce();
-
-    await view.rerender({ candidate: completeCandidate(), pending: true, onAccept, onReject });
-    expect(screen.getByRole('button', { name: 'Link identities' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Keep separate' })).toHaveProperty('disabled', true);
-  });
-
-  it('hides review actions for a nonactionable candidate with unsupported endpoints', () => {
-    render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate(), actionable: false, blocker: 'endpoint_unsupported' },
-      pending: false,
-      onAccept: vi.fn(),
-      onReject: vi.fn()
-    });
-
-    expect(screen.queryByRole('button', { name: 'Link identities' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
-  });
-
-  it('offers both explicit decisions for an actionable conflict row', async () => {
-    const onAccept = vi.fn();
-    const onReject = vi.fn();
-    render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate('conflict'), actionable: true },
-      pending: false,
-      onAccept,
-      onReject
-    });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identities' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
-    expect(onAccept).toHaveBeenCalledOnce();
-    expect(onReject).toHaveBeenCalledOnce();
-  });
-
-  it('keeps nonactionable conflict rows free of decision controls', () => {
-    render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate('conflict'), actionable: false, blocker: 'endpoint_unsupported' },
-      pending: false,
-      onAccept: vi.fn(),
-      onReject: vi.fn()
-    });
-
-    expect(screen.queryByRole('button', { name: 'Link identities' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
-  });
-
-  it.each(['candidate', 'conflict'])('keeps review controls available when a %s requires an explicit person merge', async (state) => {
-    const onAccept = vi.fn();
-    const onReject = vi.fn();
-    render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate(state), actionable: false, blocker: 'person_merge_required' },
-      pending: false,
-      onAccept,
-      onReject
-    });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identities' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
-    expect(onAccept).toHaveBeenCalledOnce();
-    expect(onReject).toHaveBeenCalledOnce();
-  });
 });

@@ -17,13 +17,15 @@
     settings,
     onSettingsRefresh = () => undefined,
     cardDAVRequest = undefined,
-    onCardDAVRequestConsumed = () => undefined
+    onCardDAVRequestConsumed = () => undefined,
+    onStatusChange = () => undefined
   }: {
     client: APIClient;
     settings: SettingState[];
     onSettingsRefresh?: () => void | Promise<void>;
     cardDAVRequest?: CardDAVSettingsRequest;
     onCardDAVRequestConsumed?: (key: number) => void;
+    onStatusChange?: () => void;
   } = $props();
   const conflictsController = new CardDAVConflictsController(untrack(() => client));
 
@@ -136,6 +138,11 @@
 
   $effect(() => {
     const request = cardDAVRequest;
+    if (request?.connection) {
+      selected = request.connection;
+      onCardDAVRequestConsumed(request.key);
+      return;
+    }
     if (!request?.conflictID || !available) return;
     untrack(() => {
       void conflictsController.openRequestedConflict({
@@ -173,6 +180,7 @@
   {/if}
   {#key selected}
     <CardDAVConnectionSettings
+      {onStatusChange}
       {client}
       values={selectedValues}
       connection={selected}
@@ -187,13 +195,16 @@
 <style>
   .connection-picker {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-4);
     min-width: 0;
   }
 
   .connection-picker label {
     display: grid;
     gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
   }
 
   .carddav-settings {

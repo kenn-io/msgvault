@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -159,6 +160,10 @@ func (b *Backend) Close() error { return nil }
 // surface; callers that need the shared pool (e.g. the embed worker)
 // can retrieve it here instead of carrying the main handle separately.
 func (b *Backend) DB() *sql.DB { return b.db }
+
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{DB: b.db, Rebind: sqldialect.RebindPostgreSQL, LockGeneration: true}
+}
 
 // CreateGeneration allocates a new building generation. Under the
 // scan-and-fill design there is no pending_embeddings seed: the embed
@@ -478,6 +483,9 @@ func (b *Backend) activateGeneration(
 	if n == 0 {
 		return b.activateGateError(ctx, tx, gen, force)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_checkpoints WHERE generation_id IN (SELECT id FROM index_generations WHERE state = 'retired')`); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit activate generation %d: %w", gen, err)
 	}
@@ -600,6 +608,9 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 		return fmt.Errorf("delete retired generation %d person embeddings: %w", gen, err)
 	}
 	// Scan-and-fill has no per-generation queue to reap.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_checkpoints WHERE generation_id = $1`, int64(gen)); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit retire generation %d: %w", gen, err)
 	}

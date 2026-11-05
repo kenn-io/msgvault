@@ -178,7 +178,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	var queryText string
 	if request.Person != nil {
 		personCTEs, personArgs := personFileMatchCTEs(*request.Person)
-		if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(explore) {
+		if !e.exploreFastPathDisabled {
 			queryText = buildPersonFileSearchFastSQL(personCTEs, exploreConditions, fileConditions, order)
 		} else {
 			queryText = personFileSearchSQL(
@@ -187,7 +187,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 		}
 		args = append(append(personArgs, exploreArgs...), fileArgs...)
 		args = append(args, limit, request.Page.Offset)
-	} else if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(explore) {
+	} else if !e.exploreFastPathDisabled {
 		queryText = buildFileSearchFastSQL(exploreConditions, fileConditions, order)
 		args = append(args, exploreArgs...) // total-count scan
 		args = append(args, fileArgs...)
@@ -492,8 +492,8 @@ func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 `, args
 }
 
-// personFilePopulationSQL retains the legacy single-pass query for filters
-// that already require analytical participant lists and for equivalence tests.
+// personFilePopulationSQL retains the legacy single-pass query for
+// equivalence tests.
 func personFilePopulationSQL(personCTEs, exploreConditions, fileConditions string) string {
 	return "WITH " + personCTEs + `, selected AS (
 	SELECT analytical_entries.*, person_matches.person_participant_ids,
@@ -610,6 +610,8 @@ func fileGroupExpressions(
 		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
+	case timeGranularityDay:
+		return simple("strftime(occurred_at, '%Y-%m-%d')"), nil
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown file group dimension %q", ErrInvalidExploreRequest, dimension)
 	}
@@ -734,8 +736,8 @@ SELECT
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
-// buildFileSearchFastSQL builds the two-phase file page query used when
-// exploreConditionsTouchParticipantLists is false. Phase one orders and
+// buildFileSearchFastSQL builds the two-phase file page query used unless
+// the fast path is disabled for equivalence tests. Phase one orders and
 // limits the filtered attachment population without referencing any
 // participant list column, so the whole-archive per-message list assembly
 // inside analytical_entries is pruned; phase two rebuilds the participant

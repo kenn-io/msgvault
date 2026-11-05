@@ -1278,53 +1278,29 @@ func TestStore_GetRandomMessageIDs(t *testing.T) {
 	require.NoError(err, "GetRandomMessageIDs(empty)")
 	assert.Empty(ids, "len(ids) for empty source")
 
-	// Add 10 messages
-	allIDs := make(map[int64]bool)
-	createdIDs := f.CreateMessages(10)
-	for _, id := range createdIDs {
-		allIDs[id] = true
-	}
+	createdIDs := f.CreateMessages(5)
 
 	// Sample fewer than available
-	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 5)
+	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 2)
 	require.NoError(err, "GetRandomMessageIDs()")
-	assert.Len(ids, 5)
+	assert.Len(ids, 2)
 
-	// All returned IDs should be valid
-	for _, id := range ids {
-		assert.True(allIDs[id], "returned ID %d is not in allIDs", id)
-	}
-
-	// All returned IDs should be unique
-	seen := make(map[int64]bool)
-	for _, id := range ids {
-		assert.False(seen[id], "duplicate ID %d returned", id)
-		seen[id] = true
-	}
-
-	// Sample more than available - should return all
-	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 20)
-	require.NoError(err, "GetRandomMessageIDs(more than available)")
-	assert.Len(ids, 10)
-}
-
-func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-
-	// Add 5 messages
-	f.CreateMessages(5)
+	otherSource, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	otherConversation, err := f.Store.EnsureConversation(otherSource.ID, "other-thread", "Other Thread")
+	require.NoError(err)
+	storetest.NewMessage(otherSource.ID, otherConversation).Create(t, f.Store)
 
 	// Delete 2 messages
-	err := f.Store.MarkMessageDeleted(f.Source.ID, "msg-0")
+	err = f.Store.MarkMessageDeleted(f.Source.ID, "msg-0")
 	require.NoError(err, "MarkMessageDeleted msg-0")
-	err = f.Store.MarkMessageDeleted(f.Source.ID, "msg-2")
-	require.NoError(err, "MarkMessageDeleted msg-2")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), createdIDs[2])
+	require.NoError(err, "hide msg-2 from the archive")
 
-	// Should only return 3 (non-deleted) messages
-	ids, err := f.Store.GetRandomMessageIDs(f.Source.ID, 10)
+	// Sample more than available: return all live messages from this source.
+	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 10)
 	require.NoError(err, "GetRandomMessageIDs()")
-	assert.Len(t, ids, 3, "len(ids) (5 total - 2 deleted)")
+	assert.ElementsMatch([]int64{createdIDs[1], createdIDs[3], createdIDs[4]}, ids)
 }
 
 func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {

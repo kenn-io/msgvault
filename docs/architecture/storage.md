@@ -58,7 +58,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |
@@ -95,6 +95,25 @@ and `body_html` hold the parsed bodies. Keeping these large values separate
 allows metadata scans without reading message content. Search uses the full-text
 index; detail readers fetch bodies by message ID.
 
+Email parsing replaces NUL (`U+0000`) with the visible replacement character
+`�` (`U+FFFD`) in display and search text, including subjects, bodies, display
+names, and attachment filenames. Provider snippets follow the same rule.
+This policy applies to SQLite and PostgreSQL; PostgreSQL cannot store NUL in
+text columns. It keeps the surrounding text searchable without silently joining
+words across a removed character. These projections are not lossless originals.
+
+MIME identity values containing NUL are unusable: message, reply, reference,
+list, and content IDs are omitted from new projections, and invalid address
+tokens are skipped. Historical SQLite identity keys retain their exact comparison
+form, including NUL, so existing duplicate groups can still be processed.
+Replacing characters in these keys could falsely match a different identity.
+The original MIME and decoded attachment bytes remain unchanged, as do raw-part
+fingerprints. Ingestion, replay, message repair, and text re-derivation use this
+same parser policy. Existing email bodies and body-derived snippets are rebuilt
+from retained MIME on the next sync or with `repair-derived`; that pass does not
+rewrite subjects, participants, or attachment metadata. Those fields require
+message repair or re-import when their old projections contain NUL.
+
 **message_raw** -- Raw provider payload storage, compressed with zlib.
 
 | Column | Type | Description |
@@ -112,7 +131,7 @@ part of the envelope.
 
 **source_import_items** -- Durable import receipts.
 
-On unreleased `main`, Apple Mail imports keep two kinds of rows here:
+Apple Mail imports keep two kinds of rows here:
 
 - `emlx-target` rows track one archived message, which several `.emlx` files
   can share. The importer marks the row `pending` before it writes the message,
@@ -142,7 +161,7 @@ fingerprint still record completed rows but always read the file.
 
 The rows reuse the existing table and the sync run's ownership check, without a
 schema migration. They are cache hints rather than integrity checks; see
-[repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
+[repeat imports](../usage/importing.md#repeat-apple-mail-imports).
 
 **participants** -- Observed addresses and handles from source data. These are
 separate from the curated `persons` table.
@@ -252,12 +271,12 @@ results instantly as you group and drill down. On the default SQLite backend, ms
 Parquet so DuckDB can group and filter it without repeatedly joining the
 normalized archive tables.
 
-Ungrouped Everything and Files listings page a scalar message or attachment
+Ungrouped Messages and Files listings page a scalar message or attachment
 population before resolving participant lists for the returned rows. Exact
 totals use separate narrow scans. This page-before-enrichment boundary keeps
 multi-million-message listings inside the daemon's interactive DuckDB memory
 budget without changing cache format or query semantics. Domain-filtered
-Everything listings share the filtered message population between page
+Messages listings share the filtered message population between page
 selection, participant enrichment, and total counting. This avoids repeating
 recipient and conversation-roster membership joins under the interactive
 memory limit. Listings without domain filters retain separate scalar scans.

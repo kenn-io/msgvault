@@ -27,6 +27,8 @@ inference without making a model provider the system of record.
 - SQLite archives have Parquet analytics, packed attachment storage, and
   verifiable backup repositories.
 
+The daemon also serves [native MCP endpoints](../usage/chat.md#native-daemon-endpoints).
+
 ## Current boundaries
 
 - Source APIs and export formats determine which history and media can be
@@ -75,7 +77,7 @@ message text for keyword search. Semantic search stores vectors in a separate
 SQLite index; PostgreSQL uses its own full-text search and optional pgvector.
 See [storage](storage.md) and [search ranking](search-ranking.md).
 
-Opt-in [calendar control](../usage/calendar.md#control-events-unreleased) runs
+Opt-in [calendar control](../usage/calendar.md#control-events) runs
 through the daemon's serialized mutation gate. The daemon verifies source policy,
 delegated grants, OAuth scope, and live calendar access before sending a provider
 write. Successful changes use calendar sync's Store persistence path immediately,

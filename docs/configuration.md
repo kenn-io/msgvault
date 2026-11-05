@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-30"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -120,14 +120,17 @@ endpoints.
 `msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
 only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
-Counts cover meetings and the email and chat messages that were sent or
-received. Drafts, texts that never left your phone, and call or voicemail
-records don't count. Archives imported before this change keep counting
-unsent texts until you import the Synctech backup again with
-`msgvault import-synctech-sms <path> --owner-phone <number>`. A Drive source
-doesn't re-download files it already imported, so download the backup from your
-Drive folder and import it locally with the source's owner phone. The import
-updates the existing messages in place. A group chat at or under `[activity]
+Counts cover meetings, the email and chat messages that were sent or received,
+and Synctech and Google Voice calls that stayed connected for at least
+`min_call_seconds`. A call counts as one message each way, whoever dialed.
+Drafts, texts that never left your phone, missed calls, voicemail, and shorter
+calls don't count. Archives imported before this change keep counting unsent
+texts, and count no calls, until you import the backup again: run
+`msgvault import-synctech-sms <path> --owner-phone <number>` for Synctech, and
+run the Google Voice Takeout import again for Google Voice. A Drive source
+doesn't re-download files it already imported, so download the Synctech backup
+from your Drive folder and run the import locally with the source's owner
+phone. The import updates the existing messages in place. A group chat at or under `[activity]
 max_direct_counterparts` counts for each member. By default, newsletter and
 list messages are left out (`exclude_list_messages = false` counts them), and so
 are messages sent to more people than that limit. A person whose address is one
@@ -138,6 +141,7 @@ of your own in any account is never listed.
 short_window_days = 90
 long_window_days = 365
 exclude_list_messages = true
+min_call_seconds = 120
 
 [people.tiers.tier1]
 min_outbound_short = 2
@@ -161,12 +165,13 @@ min_meeting_days_long = 2
 | `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
 | `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
 | `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
-| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
+| `min_call_seconds` | `120` | How long an answered Synctech or Google Voice call must stay connected to count. Each counted call adds one to the outbound and inbound counts and is its own channel. `0` stops calls from counting. |
+| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window, plus counted calls. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
 | `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
-| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat, calls) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
 | `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
-| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
+| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window, plus counted calls. |
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
 | `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
 
@@ -490,8 +495,8 @@ attachments loose while this setting is enabled.
 Document extraction and local full-text indexing are disabled by default.
 Enabling them does not grant consent or send data. Record consent for the exact
 effective policy before a build can upload a document. Mistral also requires an
-authenticated capability manifest. On `main` after v0.21.0, self-hosted Docling
-uses a configured endpoint without a manifest.
+authenticated capability manifest. Self-hosted Docling uses a configured
+endpoint without a manifest.
 
 | Key | Default | Description |
 |---|---:|---|
@@ -505,8 +510,8 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
-| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB); exceeding this limit fails the extraction |
+| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters; Docling ranges exceeding the aggregate checkpoint limit stay in memory and are resent on retry, and the completed document is truncated at publication |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
 | `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
@@ -524,6 +529,12 @@ HTML bytes. It verifies sources in bounded memory and does not use the Mistral
 disk spool. Its `max_pages_per_document` bounds returned evidence units before
 any whole-document Markdown fallback. It cannot enforce a pre-upload page
 count for every native format.
+
+For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job gets
+its own `total_timeout` and `max_poll_attempts`, while `max_pages_per_document`
+still limits the whole file. See
+[Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for range checkpoints and retry behavior.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training
@@ -551,9 +562,10 @@ enabled.
 Provider uploads are manual-only: `msgvault serve` does not schedule document
 extraction. Each `documents build` or `documents resume` displays its upload
 and cost preflight before requiring `--yes`. Mistral receives its capability
-manifest explicitly; Docling uses its configured endpoint and policy. When
-document indexing is enabled, the daemon’s weekly reconciliation and local
-derivative cleanup remain automatic and make no provider requests.
+manifest explicitly; Docling uses its configured endpoint and policy. The
+daemon reconciles attachments weekly when document indexing is enabled.
+While `msgvault serve` runs, it also cleans stale local derivatives weekly,
+even when indexing is disabled. Neither job contacts a provider.
 
 `[attachments.documents.scope]` accepts these fields:
 
@@ -562,7 +574,7 @@ derivative cleanup remain automatic and make no provider requests.
 | `message_types` | `[]` | Include all supported message sources, or restrict extraction to the listed types |
 | `include_inline` | `false` | Also include inline attachments with an authorized document media type and authoritative role provenance |
 
-Inline scope support is available in v0.21.0. Some mail clients mark
+Some mail clients mark
 ordinary document attachments as inline. Set `include_inline = true` to include
 them; other roles remain excluded. This changes the consent fingerprint. Record
 consent again with `consent-mistral --capabilities <manifest> --yes` or
@@ -895,9 +907,10 @@ messages or contact a provider.
 
 ### Media policy
 
-`[beeper]`, `[inline]`, `[slack]`, `[discord]`, and `[teams]` share one attachment
-policy vocabulary. It decides which chat media is downloaded during sync and
-backfill; message text is always archived.
+`[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share
+one attachment policy vocabulary. It decides which chat media is downloaded
+during sync and backfill; message text is always archived. `[imessage]` takes
+only `media_max_participants` and `max_media_mb`.
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
@@ -972,6 +985,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | Key | Default | Description |
 |---|---|---|
 | `rate_limit_qps` | `5` | Scales Gmail's local quota-unit refill rate: `5` allows 250 units/second; `3` allows 150. Gmail values above `5` are capped at `5`. Also sets Microsoft Teams Graph requests/second, without that cap, so lowering it slows Teams imports too. Reduce it if Gmail reports quota errors; Google's [project quotas](https://developers.google.com/workspace/gmail/api/reference/quota) can be lower than this local budget. |
+| `imap_max_commands_per_minute` | `0` | Evenly spaces each IMAP client's explicit sync read commands and authentication attempts. `0` disables pacing; negative values are invalid. Applies to manual and scheduled syncs. Retries wait for the full delay requested by the server, with at most three retries per command. See [IMAP command limits](usage/imap.md#handle-server-command-limits) for retry behavior and scope. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
@@ -1035,13 +1049,13 @@ configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address, or `iface:NAME` to bind an address on a named interface |
-| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
+| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http`; also authenticates native `/mcp` |
 | `api_key_file` | — | Owner-only file holding the API key |
 | `api_key_env` | — | Name of an environment variable holding the API key |
 | `agent_access` | `false` | Enable restricted agent grants; requires an effective API key. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
@@ -1068,7 +1082,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
-On unreleased `main`, flags and environment variables can configure the server
+Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
 environment variables, then TOML, then defaults. `iface:NAME` resolves at
 startup, preferring a usable IPv4 address and otherwise IPv6. An unknown, down,
@@ -1122,7 +1136,7 @@ the CLI does not inherit the daemon's environment.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
-`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
+`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser
@@ -1148,13 +1162,15 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-Only the `[web]` keys apply right away; every other `config.toml` category takes
-effect after the daemon restarts, and the Settings page says so once per
-category. Two things saved from the Settings page are not `config.toml` rows and
-apply right away: person-enrichment provider API keys, and the CardDAV account,
-which has its own save action. A "Saved. Restart the daemon" banner means the
-file is saved but the running daemon still has its old value. Changing `server.api_key` requires a confirmation and takes
-effect only after restart, which also invalidates browser sessions.
+Use **Save changes** for setting values. Provider API keys, providers, contact
+accounts, and People sweep profiles save through their own buttons.
+
+The `[web]` values, person-enrichment provider keys, and contact accounts apply
+right away. Other settings and embedding provider keys take effect after the
+daemon restarts. A restart banner appears after saving when the running daemon
+still has an old value.
+Changing `server.api_key` takes effect after restart, which also invalidates
+browser sessions.
 
 ### `[integrations.tasks]`
 
@@ -1227,13 +1243,13 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `auto_build_cache` | `true` | Refresh a stale or missing Parquet cache automatically at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds. An explicit `query --fresh` or sync `--build-cache` can still request one |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild. Queries serve the committed snapshot during the interval |
 | `builder_memory_limit` | Adaptive | DuckDB buffer-manager budget for cache builds; an explicit value such as `16GiB` or `512MiB` replaces the adaptive default. Total process memory can exceed it |
-| `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
+| `builder_threads` | min(CPUs, 2) | Maximum DuckDB threads for cache builds; SQLite scanner builds use one worker. Zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
 | `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
 | `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
 | `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
-On unreleased `main`, each thread setting limits both DuckDB's query worker
+Each thread setting limits both DuckDB's query worker
 pool and its separate asynchronous I/O pool from database creation. It is a
 limit per pool, not a cap on all threads in the process.
 
@@ -1244,9 +1260,9 @@ raising these limits in `config.toml`. Restart the daemon to apply the change,
 then retry the query. The limits cap resource use; they do not reserve memory
 or disk space. Cache builds have separate `builder_*` limits.
 
-On unreleased `main`, the builder defaults to one quarter of currently available
-memory, bounded between `256MiB` and `16GiB`. The latest release uses a fixed
-`2GB` default. Linux builds also account for remaining memory under visible
+The builder defaults to one quarter of currently available memory, bounded
+between `256MiB` and `16GiB`. Releases before 0.23.0 used a fixed `2GB`
+default. Linux builds also account for remaining memory under visible
 cgroup v2 ancestor limits. When host memory cannot be detected, the fallback is
 `2GB`; unsupported or unreadable Linux container limits cap the default at
 `2GB` while retaining any lower headroom already detected. The `256MiB` minimum
@@ -1434,7 +1450,7 @@ invite_calendars = []            # subset allowed to change guests or notify the
 | `invite_calendars` | `[]` | Exact IDs allowed to change guests, respond, or notify them; writes still require `write_calendars` |
 | `calendar_aliases` | `{}` | Names mapped to exact calendar IDs for live control; aliases do not expand permissions |
 
-Event control also requires [write consent](usage/calendar.md#control-events-unreleased).
+Event control also requires [write consent](usage/calendar.md#control-events).
 `calendars` selects sync targets; it does not grant write authority. `email` selects
 the OAuth token, while `write_calendars` selects the calendar that owns the event.
 For example, `person@example.com` can create on `team@example.com` when Google
@@ -1502,7 +1518,7 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
-#### Mirror stored attachments to Docbank (unreleased)
+#### Mirror stored attachments to Docbank
 
 Msgvault can mirror stored attachment bytes from every source to a Docbank
 folder. Enable the integration and its separate attachment upload consent.
@@ -1695,7 +1711,7 @@ before choosing media caps or configuring a remote daemon.
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
 separate archive source. See [Chatwoot setup](guides/chatwoot.md) for token and
-inbox registration. This integration is available on `main`.
+inbox registration.
 
 ```toml
 [[chatwoot]]
@@ -1806,6 +1822,24 @@ max_media_mb = 500
 | `media_max_participants` | `20` | Skip media from chats and channels above this many members; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
+
+### `[imessage]`
+
+Media limits for [`import-imessage`](/docs/usage/text-messages/). The command
+reads these keys on every run; the `--max-media-mb` flag overrides
+`max_media_mb` for one run. [`purge-excluded-media`](cli-reference.md#purge-excluded-media)
+reads the same keys, so it removes stored iMessage attachments that exceed them.
+
+```toml
+[imessage]
+media_max_participants = 20
+max_media_mb = 250
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment size cap in MiB |
 
 ### Omi Sources
 
@@ -1936,8 +1970,7 @@ scheduled sync from silently recreating it.
 
 ### Pocket Sources
 
-Pocket sync uses top-level `[[pocket]]` entries. This integration is available
-on `main`; check the release changelog before using it with an installed release.
+Pocket sync uses top-level `[[pocket]]` entries.
 
 ```toml
 [[pocket]]
@@ -2037,7 +2070,7 @@ stored data.
 
 ### Twilio Sources
 
-Unreleased: configure one `[[twilio]]` entry per Twilio account or subaccount.
+Configure one `[[twilio]]` entry per Twilio account or subaccount.
 See the [Twilio meeting guide](usage/meetings.md#twilio) for what sync stores.
 
 ```toml
@@ -2072,8 +2105,7 @@ Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
 Configure these entries on the Mac where Muesli records. With `[remote]`
 configured, the native client reads the local database and Contacts, then sends
 selected meetings using the existing remote API credentials. Without remote
-mode, the daemon reads the files on its own host. Remote Muesli sync and the
-native completion hook are available on `main` and are not yet released.
+mode, the daemon reads the files on its own host.
 
 ```toml
 [[muesli]]
@@ -2162,13 +2194,13 @@ Changing a stored key for vector or multimodal (visual) embeddings requires a da
 restart, like the other `[vector]` settings. Person enrichment and sweep keys
 apply on the next run.
 
-On unreleased `main`, a stored person-enrichment suppression key also takes
-precedence over a custom `suppression_key_env`. Previously, a custom variable
-won. Before upgrading an installation that has both, ensure the stored key
+A stored person-enrichment suppression key also takes precedence over a custom
+`suppression_key_env`. Before 0.22.0, a custom variable won. When upgrading
+an installation that has both, ensure the stored key
 matches the variable's value. If existing suppression records were made with
 a different key, enrichment stops with `ErrSuppressionKeyMismatch`.
 
-On unreleased `main`, the host owner can also install keys without the Web UI:
+The host owner can also install keys without the Web UI:
 
 ```sh
 msgvault credentials set vector.embeddings --from-file /run/secrets/embedding-key
@@ -2275,6 +2307,10 @@ Empty config disables scheduled embedding; you can still run
 when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
+
+Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+
+Completed provider responses are saved in the vector store before the next request, so a resumed pass or restarted daemon does not repeat them; unfinished requests run again. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
 
 #### `[vector.people]`
 
@@ -2386,7 +2422,7 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
 | `MSGVAULT_TELEMETRY_ENABLED` | Set to `0` to turn off anonymous telemetry; any value overrides `[telemetry] enabled` ([Telemetry](#telemetry)) |
 
-These runtime controls are available on unreleased `main`. Environment values
+Environment values
 override TOML. For each server or remote credential group, setting any of its
 three environment variables selects that group's environment sources; within
 the group, inline wins over file, then named environment. A supplied empty
@@ -2409,8 +2445,7 @@ MSGVAULT_HOME=/data MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080 msgvault s
 
 Persist `/data` across restarts so the archive and generated key survive. The
 published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
-and stores its home at `/data`. Use an image containing these unreleased
-features once published. No startup hook or entrypoint wrapper is required.
+and stores its home at `/data`. No startup hook or entrypoint wrapper is required.
 
 ## Telemetry
 
@@ -2431,9 +2466,9 @@ features once published. No startup hook or entrypoint wrapper is required.
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
   CLI recording transcript searches (`media search`) use `text`.
-- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Everything sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
+- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Messages sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
 - `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or a Sync now request on Sources that is refused or times out. TUI People readers and recording transcript hits aren't covered. A Sync now run that fails later counts through `sync_failed`. Its `kind` is `search`, `message`, `sync`, or `other`. It has no daily deduplication, so retries can send repeated events.
-- `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → CardDAV Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
+- `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → Contacts Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
   `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.
@@ -2593,7 +2628,8 @@ auto_confirm_identities = false
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
 # Skip attachments from rooms with more than this many participants
-# (default: 20; 0 = no cap). Shared by [beeper], [inline], [slack], and [teams].
+# (default: 20; 0 = no cap). Shared by [beeper], [inline], [slack], [teams],
+# and [imessage].
 media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"

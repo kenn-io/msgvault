@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,59 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL index check")
+	}
+	_, err := f.Store.DB().Exec("DROP INDEX idx_identity_match_candidates_right")
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
+	var count int
+	require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
+func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
+		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
+	})
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
+	}))
+	_, err = f.Store.DB().Exec("ALTER TABLE document_extractions DROP COLUMN upload_count")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
+	require.NoError(err)
+	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
+	version, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(16, version)
+	var count int
+	require.Error(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
+	version, err = f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	assert.Zero(count)
+	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
+	require.NoError(err)
+	assert.Equal(int64(128), status.VerifiedUploadBytes)
+}
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
@@ -217,6 +271,14 @@ var (
 		14: "1092127cfc654d884f52634204dee6d04d5c4c9d966fe997263d064c871a21ee",
 		15: "571660ef3e1c045c57ada148b252d90acd7ef291458a7a46a1327b1034dde653",
 		16: "62de77a40a4f77177c2bab8d38ee3df0c1c269ca2818c11ae95ad3f0a7e23656",
+		17: "b8cd27ce189a5c7be16d8bef6208a46e622cf796362eb40ba19043fd5fa08bdf",
+		18: "aa3901c4c46a3dbf2575830f2ff6fc16f2f9f66ce8e2c395c8657663db56b8f0",
+		19: "5cf89cccb1daee63eb6ed983101263511b6f06990c4c4677e0ecc186166bf209",
+		24: "743ff4c80a91bd368adb9c140b5f099cef3b604e97a32a4d1a7a7356f77efb48",
+		25: "b47d58c3e09db075a9e66df4c1544e406781e5944e6ec8426e7eb5f95549e51f",
+		27: "0fa85360e177bed150718440d3aea27b8d0eb71b70859608239ddafa26526abd",
+		28: "fa82fa81b7c53e7043ceb4d98855155372ae81d7dbb916c6e4e13957543e6f23",
+		29: "d99ea22b46701498162c909cb7a0f2404f6487e42e0ba0bcf8769c58d0814194",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -235,6 +297,14 @@ var (
 		14: "00ca50153fc0f90dc588225b0ce9b9097caf71dc42a47e73e7d03f2bfc460a93",
 		15: "47f70765d8793d9fdbbe65b259829caffb39d737d386216820f3067d4771c244",
 		16: "ccfde395fe0b24f87e1a32375c67eab640f768083de3e3e5ef965ab918b08903",
+		17: "08e0d79f0aced4f968ff10240fbd16b8af90bab114e8ac15e2dde7500c8eed86",
+		18: "0b50a4dde53b4c696b678b26f07bf34d09809231d76c264603a00fc1865b9f07",
+		19: "bc49846bd633ccbd5930a60cd90fdc50ce392b354b1789936df543306efa36a1",
+		24: "ba816feeaa25dde2fdc93221f47c84bf283e2798c4b92cec1534cd087b3df552",
+		25: "b8d1c951733d7fd80dcac39ed8bb38fccd11e622712c8f7b108b2f16dc2f3d3f",
+		27: "21dcda6fd8282b00a610c195484955ad74cf5d82745e3cfd70ebae94c1882c31",
+		28: "8635b895db8e63c0047919852ebd9d06969867b5ee9dbe0d5864775ee39b1357",
+		29: "9b5dde3f88bebb178ad918e86607113f312fdda56bd859b72450286e1a1f6182",
 	}
 )
 

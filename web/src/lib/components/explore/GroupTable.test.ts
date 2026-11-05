@@ -12,7 +12,7 @@ describe('GroupTable', () => {
 
   it('owns headers, virtual rows, and named states in one focusable grid', async () => {
     const rendered = render(GroupTable, { rows, dimension: 'source', onDrill: vi.fn() });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' });
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Group' }))).toBe(true);
     expect(grid.contains(screen.getByRole('row', { name: /Example source/ }))).toBe(true);
@@ -34,7 +34,7 @@ describe('GroupTable', () => {
   it('leaves aggregate row height to CSS and drills with keyboard focus retained', async () => {
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'source', onDrill });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' });
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
     const first = screen.getByRole('row', { name: /Example source/ });
 
     expect((first as HTMLElement).style.height).toBe('');
@@ -77,7 +77,7 @@ describe('GroupTable', () => {
     });
 
     expect(screen.getByRole('alert').textContent).toContain('msgvault build-cache');
-    expect(screen.getByRole('grid', { name: 'Everything grouped by source' }).getAttribute('aria-rowcount')).toBeNull();
+    expect(screen.getByRole('grid', { name: 'Messages grouped by source' }).getAttribute('aria-rowcount')).toBeNull();
     expect(screen.queryByText('No groups match this view.')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry cache check' }));
     expect(onRetry).toHaveBeenCalledOnce();
@@ -150,7 +150,7 @@ describe('GroupTable', () => {
       onActiveKey,
       onScrollAnchor
     });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     Object.defineProperty(grid, 'clientHeight', { configurable: true, value: 720 });
     resizeCallback?.([], {} as ResizeObserver);
 
@@ -180,7 +180,7 @@ describe('GroupTable', () => {
       onActiveKey,
       onScrollAnchor
     });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     await waitFor(() => expect(grid.scrollTop).toBe(139 * 36 + 5));
     await fireEvent.scroll(grid);
     expect(onActiveKey).not.toHaveBeenCalled();
@@ -224,7 +224,7 @@ describe('GroupTable', () => {
       onActiveKey,
       onScrollAnchor
     });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by source' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' }) as HTMLDivElement;
     await waitFor(() => expect(grid.scrollTop).toBe(139 * 36 + 5));
 
     await rendered.rerender({
@@ -262,7 +262,7 @@ describe('GroupTable', () => {
   it('removes the drill affordance for a non-filterable group dimension', async () => {
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
-    const grid = screen.getByRole('grid', { name: 'Everything grouped by kind' });
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by kind' });
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });
 

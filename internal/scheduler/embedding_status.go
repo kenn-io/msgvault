@@ -1,65 +1,23 @@
 package scheduler
 
-import (
-	"context"
-	"time"
+import "go.kenn.io/msgvault/internal/vector"
 
-	"go.kenn.io/msgvault/internal/vector"
-)
-
-// EmbeddingStatus is live scheduler evidence, including a post-sync pass that
-// inherits the account sync's slot instead of acquiring a second one.
+// EmbeddingStatus reports the embed job's live scheduler state. Cron,
+// post-sync, and continuation passes each wait for gate admission.
 func (s *Scheduler) EmbeddingStatus() vector.EmbeddingStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	status := vector.EmbeddingStatus{Job: vector.EmbeddingJobState{State: "idle"}, Scheduler: vector.EmbeddingSchedulerState{
-		Registered: s.embed.job != nil, Schedule: s.embedSchedule, RunAfterSync: s.embed.runAfterSync,
+		Registered:   s.genericFuncs[embedJobName] != nil,
+		Schedule:     s.genericSchedules[embedJobName],
+		RunAfterSync: s.genericAfterSync[embedJobName],
 	}}
-	if s.embedRunning > 0 {
+	if started, running := s.genericStartedAt[embedJobName]; running {
 		status.Job.State = "running"
-		started := s.embedStartedAt
-		status.Job.StartedAt = &started
-	} else if s.embedQueued > 0 {
+		status.Job.StartedAt = new(started.UTC())
+	} else if queued, waiting := s.genericQueuedAt[embedJobName]; waiting {
 		status.Job.State = "queued"
-	}
-	if s.embedQueued > 0 {
-		queued := s.embedQueuedAt
-		status.Job.QueuedAt = &queued
+		status.Job.QueuedAt = new(queued.UTC())
 	}
 	return status
-}
-
-func (s *Scheduler) runEmbeddingJob(job func(context.Context) error, acquire bool) error {
-	if acquire {
-		s.mu.Lock()
-		if s.embedQueued == 0 {
-			s.embedQueuedAt = time.Now().UTC()
-		}
-		s.embedQueued++
-		s.mu.Unlock()
-		done, ok := s.beginWork("scheduled embedding", true)
-		s.mu.Lock()
-		s.embedQueued--
-		s.mu.Unlock()
-		if !ok {
-			return nil
-		}
-		defer done()
-	}
-	s.mu.Lock()
-	// Overlapping runs report the earliest start, so a later run cannot make
-	// one still in progress look as if it began before the job.
-	if s.embedRunning == 0 {
-		s.embedStartedAt = time.Now().UTC()
-	}
-	s.embedRunning++
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.embedRunning--
-		s.mu.Unlock()
-	}()
-	ctx, end := s.jobContext("embed", false, 0)
-	defer end()
-	return job(ctx)
 }

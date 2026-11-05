@@ -24,6 +24,7 @@ import (
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/consolewindow"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
@@ -687,7 +688,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 // attribution candidate: consumers gate it on is_from_me, so it can be
 // resolved independently without duplicating this predicate in the export.
 func messageCacheAttributionSQL(
-	sourceAttribution string,
+	sourceAttribution, recipientsRelation string,
 	hasSourceAttribution, hasEnvelope bool,
 	envelopePresence, primaryEmailPresence string,
 ) (string, string) {
@@ -708,7 +709,7 @@ func messageCacheAttributionSQL(
 		recipients += ", " + cacheIdentityTextSQL("email_address") + " AS email_address"
 		recipients += ", " + envelopePresence + " AS envelope_present"
 	}
-	recipients += " FROM sqlite_db.message_recipients) smr"
+	recipients += " FROM " + recipientsRelation + ") smr"
 	participantFallback := fmt.Sprintf(`(
 			EXISTS (
 				SELECT 1 FROM %s
@@ -1379,7 +1380,22 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
-	if err := sourceSnapshot.Prepare(maxID); err != nil {
+	publicationPlan := cachePublishPlanForMode(replaceAll)
+	for dataset, changed := range relatedKinds.datasets() {
+		if changed {
+			delete(publicationPlan.Append, dataset)
+			publicationPlan.Replace[dataset] = true
+		}
+	}
+	afterMessageIDs := make(map[string]int64)
+	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
+		if publicationPlan.Append[dataset] {
+			afterMessageIDs[dataset] = lastMessageID
+		} else {
+			afterMessageIDs[dataset] = 0
+		}
+	}
+	if err := sourceSnapshot.Prepare(maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
 
@@ -1436,21 +1452,6 @@ func buildCacheLockedAttempt(
 	// Export each table separately - this is MUCH faster than joining during export
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
-	publicationPlan := cachePublishPlanForMode(replaceAll)
-	for dataset, changed := range relatedKinds.datasets() {
-		if changed {
-			delete(publicationPlan.Append, dataset)
-			publicationPlan.Replace[dataset] = true
-		}
-	}
-	afterMessageIDs := make(map[string]int64)
-	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
-		if publicationPlan.Append[dataset] {
-			afterMessageIDs[dataset] = lastMessageID
-		} else {
-			afterMessageIDs[dataset] = 0
-		}
-	}
 	if err := exportRelatedDatasets(context.Background(), exportDB, sourceSnapshot,
 		maxID, staging.root, afterMessageIDs); err != nil {
 		return nil, err
@@ -1527,8 +1528,16 @@ func buildCacheLockedAttempt(
 	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
+	messagesRelation, err := sourceSnapshot.messageSliceRelation("messages", "id", lastMessageID, maxID)
+	if err != nil {
+		return nil, err
+	}
+	recipientsRelation, err := sourceSnapshot.messageSliceRelation("message_recipients", "message_id", lastMessageID, maxID)
+	if err != nil {
+		return nil, err
+	}
 	messageAttribution, messageOwnerParticipant := messageCacheAttributionSQL(
-		messageSourceAttribution,
+		messageSourceAttribution, recipientsRelation,
 		sourceSnapshot.hasMessageSourceAttribution,
 		sourceSnapshot.hasRecipientEnvelope,
 		sourceSnapshot.identityPresenceSQL("email_address", "envelope_present"),
@@ -1542,7 +1551,7 @@ func buildCacheLockedAttempt(
 		SELECT %s,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
-		FROM sqlite_db.messages m
+		FROM %s m
 		WHERE `+exportableMessageWhere("m")+`%s
 	) TO '%s' (
 		FORMAT PARQUET,
@@ -1550,7 +1559,7 @@ func buildCacheLockedAttempt(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, columns, idFilter, escapedMessagesDir))
+	`, columns, messagesRelation, idFilter, escapedMessagesDir))
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
@@ -1943,12 +1952,12 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 	if cacheSnapshotGOOS != "windows" && cacheSnapshotGOOS != "darwin" &&
 		os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
 		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
-		// (for example in an air-gapped installation). Parallel scanner workers
-		// open independent SQLite connections, so disable only that parallelism
-		// to keep every scan inside the attached database's read transaction.
+		// (for example in an air-gapped installation). Keep every scan on the
+		// attached read transaction. sqlite_query converts unprotected SQLite
+		// values to text, so separate DuckDB pipelines must also run serially.
 		if _, err := duckDB.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite_scanner unavailable, using CSV fallback: %v\n", err)
-		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true"); err != nil {
+		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true; SET threads = 1"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite snapshot scans unavailable, using CSV fallback: %v\n", err)
 		} else {
 			escapedPath := strings.ReplaceAll(dbPath, "'", "''")
@@ -2012,6 +2021,36 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 	return s.duckDB
 }
 
+// messageSliceRelation lets SQLite use its message indexes before DuckDB
+// reads an incremental slice. Cast back to the attached schema because
+// sqlite_query transports columns as VARCHAR.
+func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after, through int64) (string, error) {
+	relation := "sqlite_db." + table
+	if s.csvSnapshot || after == 0 {
+		return relation, nil
+	}
+	rows, err := s.DuckDB().Query("SELECT * FROM " + relation + " LIMIT 0")
+	if err != nil {
+		return "", fmt.Errorf("describe message slice %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
+	}
+	var columns, casts []string
+	for _, typ := range types {
+		column := `"` + typ.Name() + `"`
+		columns = append(columns, column)
+		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ.DatabaseTypeName(), column))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
+	}
+	sqliteSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s > %d AND %s <= %d", strings.Join(columns, ", "), table, idColumn, after, idColumn, through)
+	return "(SELECT " + strings.Join(casts, ", ") + " FROM sqlite_query('sqlite_db', '" + strings.ReplaceAll(sqliteSQL, "'", "''") + "'))", nil
+}
+
 // identityPresenceSQL preserves raw address presence independently of UTF-8
 // validity. CSV snapshots carry a boolean computed by SQLite before invalid
 // identity bytes become NULL; scanner snapshots still have the raw bytes.
@@ -2023,10 +2062,10 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 }
 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
-// read transaction. sqlite_scanner needs no preparation because DuckDB's
-// transaction reads the attached database directly.
-func (s *cacheSourceSnapshot) Prepare(through int64) error {
-	return s.prepareTables(s.tables(through))
+// read transaction. Child tables carry only rows the build reads.
+// sqlite_scanner reads the attached database directly.
+func (s *cacheSourceSnapshot) Prepare(through int64, afterMessageIDs map[string]int64) error {
+	return s.prepareTables(s.tables(through, afterMessageIDs))
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
@@ -2038,7 +2077,7 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 		wanted[name] = true
 	}
 	var selected []cacheSnapshotTable
-	for _, table := range s.tables(through) {
+	for _, table := range s.tables(through, nil) {
 		if wanted[table.name] {
 			selected = append(selected, table)
 			delete(wanted, table.name)
@@ -2055,7 +2094,14 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 	return s.prepareTables(selected)
 }
 
-func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
+func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]int64) []cacheSnapshotTable {
+	childFilter := func(dataset string) string {
+		if afterMessageIDs[dataset] <= 0 {
+			return ""
+		}
+		return fmt.Sprintf(" WHERE message_id IN (SELECT m.id FROM messages m WHERE %s AND m.id > %d AND m.id <= %d)",
+			exportableMessageWhere("m"), afterMessageIDs[dataset], through)
+	}
 	attachmentMIMEColumn := "'' AS mime_type"
 	if s.hasAttachmentMIME {
 		attachmentMIMEColumn = "mime_type"
@@ -2105,12 +2151,12 @@ func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
-		{"message_labels", "SELECT message_id, label_id FROM message_labels",
+		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},
-		{tableAttachments, attachmentQuery,
+		{tableAttachments, attachmentQuery + childFilter(tableAttachments),
 			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}", nil},
 		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}", nil},
 		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
@@ -2523,6 +2569,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	// plus operator-controlled config flags, not untrusted input.
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
 	cmd.Env = daemonRuntimeChildEnv(ctx, buildCacheDaemonChildEnv(os.Environ(), os.Getpid()))
+	consolewindow.Hide(cmd)
 	return cmd, nil
 }
 

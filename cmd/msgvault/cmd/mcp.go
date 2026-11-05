@@ -76,7 +76,7 @@ Add to Claude Desktop config:
 		if err != nil {
 			return usageErr(cmd, err)
 		}
-		st, info, err := OpenHTTPStore(cmd.Context())
+		st, info, err := openMCPHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
@@ -108,19 +108,7 @@ Add to Claude Desktop config:
 		} else {
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
-		opts.AllowProfileWrites = mcpAllowProfileWrites
-		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
-		opts.AllowIdentityScoring = mcpAllowIdentityScoring
-		opts.AllowPersonMerges = mcpAllowPersonMerges
-		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
-		opts.AllowKataWrites = mcpAllowKataWrites
-		opts.AllowCalendarWrites = mcpAllowCalendarWrites
-		if mcpAllowProfileWrites {
-			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
-		}
-		if mcpAllowSourceWrites {
-			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
-		}
+		applyMCPWriteFlags(cmd, "", &opts)
 
 		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
@@ -221,6 +209,9 @@ const messageTagsMinAPISchemaVersion = "3.15.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
+
+// personTierMinAPISchemaVersion adds read-only person tier previews.
+const personTierMinAPISchemaVersion = "3.33.0"
 
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
@@ -332,6 +323,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personTierMinAPISchemaVersion) {
+		opts.PersonTierBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
 		opts.Kata = st
@@ -544,24 +538,7 @@ func init() {
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
 			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
-	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
-		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
-			"can persist profile data, so enable this only for sessions where the user "+
-			"has explicitly authorized profile writes.")
-	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,
-		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
-	mcpCmd.Flags().BoolVar(&mcpAllowIdentityScoring, "allow-identity-scoring", false,
-		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
-	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
-		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
-	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
-		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
-	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
-		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
-	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
-		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
-	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
-		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
+	addMCPWriteFlags(mcpCmd, "")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")
@@ -632,4 +609,48 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
+	flags := cmd.Flags()
+	bind := func(standalone *bool) *bool {
+		if prefix == "" {
+			return standalone
+		}
+		return new(bool)
+	}
+	flags.BoolVar(bind(&mcpAllowProfileWrites), prefix+"allow-profile-writes", false,
+		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
+			"can persist profile data, so enable this only for sessions where the user "+
+			"has explicitly authorized profile writes.")
+	flags.BoolVar(bind(&mcpAllowIdentityDecisions), prefix+"allow-identity-decisions", false,
+		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	flags.BoolVar(bind(&mcpAllowIdentityScoring), prefix+"allow-identity-scoring", false,
+		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
+	flags.BoolVar(bind(&mcpAllowPersonMerges), prefix+"allow-person-merges", false,
+		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	flags.BoolVar(bind(&mcpAllowKataWrites), prefix+"allow-kata-writes", false,
+		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
+	flags.BoolVar(bind(&mcpAllowCardDAVWrites), prefix+"allow-carddav-writes", false,
+		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
+		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
+		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
+}
+
+func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.ServeOptions) {
+	opts.AllowProfileWrites, _ = cmd.Flags().GetBool(prefix + "allow-profile-writes")
+	opts.AllowIdentityDecisions, _ = cmd.Flags().GetBool(prefix + "allow-identity-decisions")
+	opts.AllowIdentityScoring, _ = cmd.Flags().GetBool(prefix + "allow-identity-scoring")
+	opts.AllowPersonMerges, _ = cmd.Flags().GetBool(prefix + "allow-person-merges")
+	opts.AllowKataWrites, _ = cmd.Flags().GetBool(prefix + "allow-kata-writes")
+	opts.AllowCardDAVWrites, _ = cmd.Flags().GetBool(prefix + "allow-carddav-writes")
+	opts.AllowCalendarWrites, _ = cmd.Flags().GetBool(prefix + "allow-calendar-writes")
+	if opts.AllowProfileWrites {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-source-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
+	}
 }

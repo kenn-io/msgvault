@@ -1,6 +1,10 @@
 package gvoice
 
-import "time"
+import (
+	"time"
+
+	"go.kenn.io/msgvault/internal/store"
+)
 
 // fileType classifies a Google Voice Takeout HTML file.
 type fileType int
@@ -115,7 +119,7 @@ func MessageTypeForFileType(ft fileType) string {
 	case fileTypeText, fileTypeGroup:
 		return "google_voice_text"
 	case fileTypeReceived, fileTypePlaced, fileTypeMissed:
-		return "google_voice_call"
+		return store.MessageTypeGoogleVoiceCall
 	case fileTypeVoicemail:
 		return "google_voice_voicemail"
 	default:

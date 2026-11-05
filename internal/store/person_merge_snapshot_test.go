@@ -118,8 +118,8 @@ func TestPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
 }
 
 func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
-	dbURL := skipUnlessPostgresInternal(t)
-	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
+	skipUnlessPostgresInternal(t)
+	assertPersonMergeTableInventory(t, newPGStoreInternal(t))
 }
 
 func assertPersonMergeTableInventory(t *testing.T, st *Store) {
@@ -135,21 +135,19 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT constraints.table_name, columns.column_name
-			FROM information_schema.table_constraints constraints
-			JOIN information_schema.key_column_usage columns
-			  ON columns.constraint_catalog = constraints.constraint_catalog
-			 AND columns.constraint_schema = constraints.constraint_schema
-			 AND columns.constraint_name = constraints.constraint_name
-			JOIN information_schema.constraint_column_usage target
-			  ON target.constraint_catalog = constraints.constraint_catalog
-			 AND target.constraint_schema = constraints.constraint_schema
-			 AND target.constraint_name = constraints.constraint_name
-			WHERE constraints.constraint_type = 'FOREIGN KEY'
-			  AND constraints.table_schema = current_schema()
-			  AND target.table_schema = current_schema()
-			  AND target.table_name = 'persons'
-			ORDER BY constraints.table_name, columns.column_name`
+		query = `SELECT child.relname, columns.attname
+			FROM pg_catalog.pg_constraint constraints
+			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+			JOIN pg_catalog.pg_attribute columns
+			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+			WHERE constraints.contype = 'f'
+			  AND namespace.nspname = current_schema()
+			  AND target.relnamespace = namespace.oid
+			  AND target.relname = 'persons'
+			ORDER BY child.relname, columns.attname`
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)

@@ -1,42 +1,193 @@
 package imessage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"log/slog"
 	"math"
-	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func newChatDB(t *testing.T) (string, *sql.DB) {
-	t.Helper()
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "chat.db")
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
+func TestImportIndexesMessageBodies(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		text any
+		term string
+	}{
+		{name: "incoming SMS", text: strings.Repeat("padding ", 20) + "oldmarker", term: "oldmarker"},
+		{name: "NULL", term: "peer"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			ctx := context.Background()
+			path, db := testutil.NewIMessageChatDB(t)
+			_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
+			require.NoError(err)
+			client, err := NewClient(path)
+			require.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			st := testutil.NewTestStore(t)
+			if !st.FTS5Available() {
+				t.Skip("FTS5 not available")
+			}
+			src, err := st.GetOrCreateSource("apple_messages", "fixture")
+			require.NoError(err)
+			summary, err := client.Import(ctx, st, src.ID)
+			require.NoError(err)
+			assert.Equal(1, summary.MessagesImported)
+			assert.Zero(summary.Skipped)
+			var id int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+			ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.term}}, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), total)
+			assert.Equal([]int64{id}, ids)
+			if tt.text == nil {
+				return
+			}
+			_, err = st.RebuildFTS(nil)
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE message SET text = ?`, strings.Repeat("padding ", 20)+"newmarker")
+			require.NoError(err)
+			_, err = client.Import(ctx, st, src.ID)
+			require.NoError(err)
+			ids, total, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"newmarker"}}, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), total)
+			assert.Equal([]int64{id}, ids)
+			ids, total, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
+			require.NoError(err)
+			assert.Zero(total)
+			assert.Empty(ids)
+		})
+	}
+}
+
+func TestImportClearsSearchIndexWhenMessageTextIsRemoved(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	ctx := context.Background()
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, 'Synthetic oldmarker body')`)
 	require.NoError(err)
-	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`
- CREATE TABLE message (
-  guid TEXT NOT NULL DEFAULT 'synthetic-message', text TEXT, attributedBody BLOB,
-  date INTEGER NOT NULL, is_from_me INTEGER NOT NULL DEFAULT 0,
-  service TEXT DEFAULT 'SMS', cache_has_attachments INTEGER NOT NULL DEFAULT 0,
-  handle_id INTEGER DEFAULT 1
- );
- CREATE TABLE handle (id TEXT);
- CREATE TABLE chat (guid TEXT, display_name TEXT, chat_identifier TEXT);
- CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
- CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
- INSERT INTO handle (id) VALUES ('peer@example.test');
- `)
+	client, err := NewClient(path)
 	require.NoError(err)
-	return path, db
+	t.Cleanup(func() { _ = client.Close() })
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	src, err := st.GetOrCreateSource("apple_messages", "fixture")
+	require.NoError(err)
+	summary, err := client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, summary.MessagesImported)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+	ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	assert.Equal([]int64{id}, ids)
+
+	_, err = db.Exec(`UPDATE message SET text = NULL`)
+	require.NoError(err)
+	summary, err = client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, summary.MessagesImported)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Empty(body)
+	ids, total, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
+	require.NoError(err)
+	assert.Zero(total)
+	assert.Empty(ids)
+}
+
+func TestImportPreservesArchivedBodyWhenAttributedBodyCannotBeDecoded(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	ctx := context.Background()
+	path, db := testutil.NewIMessageChatDB(t)
+	const originalBody = "Synthetic archived body oldmarker"
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, ?)`, originalBody)
+	require.NoError(err)
+	var logs bytes.Buffer
+	client, err := NewClient(path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	src, err := st.GetOrCreateSource("apple_messages", "fixture")
+	require.NoError(err)
+	summary, err := client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, summary.MessagesImported)
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id))
+
+	_, err = db.Exec(`UPDATE message SET text = NULL, attributedBody = ? WHERE ROWID = 1`, []byte("not a valid attributed body"))
+	require.NoError(err)
+	summary, err = client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, summary.MessagesImported)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal(originalBody, body)
+	ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	assert.Equal([]int64{id}, ids)
+	assert.Contains(logs.String(), "failed to decode attributed body")
+}
+
+func TestImportFTSFailureContinues(t *testing.T) {
+	testutil.SkipIfPostgres(t, "drops the SQLite FTS5 table")
+	assert, require := assert.New(t), require.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, 'Synthetic body'), (725760001, 'Subsequent body')`)
+	require.NoError(err)
+	var logs bytes.Buffer
+	client, err := NewClient(path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	src, err := st.GetOrCreateSource("apple_messages", "fixture")
+	require.NoError(err)
+	_, err = st.DB().Exec(`DROP TABLE messages_fts`)
+	require.NoError(err)
+	summary, err := client.Import(context.Background(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(2, summary.MessagesImported)
+	assert.Zero(summary.Skipped)
+	assert.Contains(logs.String(), "failed to index message for search")
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal("Synthetic body", body)
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.NotEmpty(raw)
+	var recipients, labels int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, id).Scan(&recipients))
+	assert.Equal(2, recipients)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, id).Scan(&labels))
+	assert.Equal(1, labels)
 }
 
 func TestImportInvalidDatesRetainsMessages(t *testing.T) {
@@ -61,7 +212,7 @@ func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			ctx := context.Background()
-			path, db := newChatDB(t)
+			path, db := testutil.NewIMessageChatDB(t)
 			_, err := db.Exec(`INSERT INTO message (date,text,attributedBody,cache_has_attachments) VALUES (?,?,?,?)`, tt.date, tt.text, tt.attributed, tt.attachments)
 			require.NoError(err)
 			c, err := NewClient(path)
@@ -131,7 +282,7 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 		t.Run(strconv.FormatBool(useNano), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			ctx := context.Background()
-			path, db := newChatDB(t)
+			path, db := testutil.NewIMessageChatDB(t)
 			dates := []int64{725760000, 757382400, math.MinInt64, math.MaxInt64}
 			if useNano {
 				dates[0], dates[1] = 725760000000000000, 757382400000000000
@@ -168,7 +319,7 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	for _, dates := range [][]int64{nil, {0, math.MinInt64, math.MaxInt64}} {
-		path, db := newChatDB(t)
+		path, db := testutil.NewIMessageChatDB(t)
 		for _, date := range dates {
 			_, err := db.Exec(`INSERT INTO message (date) VALUES (?)`, date)
 			require.NoError(err)
@@ -178,4 +329,15 @@ func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 		assert.False(c.useNanoseconds)
 		require.NoError(c.Close())
 	}
+}
+
+func TestNewClientDoesNotRequireHomeWhenAttachmentCaptureIsDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows resolves the home directory from USERPROFILE")
+	}
+	path, _ := testutil.NewIMessageChatDB(t)
+	t.Setenv("HOME", "")
+	client, err := NewClient(path, WithAttachments("", "", attachmentpolicy.Policy{}))
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
 }

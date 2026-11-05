@@ -36,6 +36,8 @@ jobs:
               - '!{web/**,docs/**,*.md}'
               - 'docs/assets/**'
               - 'docs/screenshots/**'
+              - 'docs/*.go'
+              - 'docs/guides/agent-quickstart.md'
               - 'web/src/lib/settings/cron-corpus.json'
               - 'web/tests/e2e/fixtures/operations-public.json'
               - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
@@ -64,7 +66,7 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install build tools
         env:
@@ -73,7 +75,7 @@ jobs:
           kit-retry 3 5 apt-get -o APT::Update::Error-Mode=any update
           kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Go
         run: |
@@ -122,6 +124,15 @@ jobs:
       - name: Test built CLI on a synthetic archive
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-cli-e2e-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
   checks:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
@@ -130,20 +141,20 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 37
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
-          extra-path: ~/.cache/golangci-lint
+          extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -166,13 +177,22 @@ jobs:
         run: make openapi-check
 
       - name: Lint
-        run: make lint-ci
+        run: |
+          cache=$(git rev-parse --git-path golangci-lint-cache)
+          cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
+          mkdir -p "$cache"
+          cp .custom-gcl.yml "$cache/.custom-gcl.yml"
+          make lint-ci
 
       - name: Vulnerability check
         run: make vulncheck
 
+      - name: Log cache sizes
+        if: github.event_name != 'pull_request'
+        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
+
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   test:
     needs: changes
@@ -180,32 +200,59 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 38
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+
+      # Go's test cache keys repo files by mtime.
+      # Checkout rewrites them, so derive stable times from file contents.
+      - &stable-mtimes
+        name: Stabilize tracked file times
+        run: go run ./scripts/stable-mtimes
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
         run: make test-unsharded TEST_TIMEOUT=17m
 
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/unsharded-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-unsharded-attempt-${{ github.run_attempt }}
+          path: gotestsum/unsharded.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Test build without vector backends
-        run: go test -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/vector-stub.json --rerun-fails=2 --rerun-fails-report gotestsum/vector-stub-reruns.txt
+          --packages ./cmd/msgvault/cmd --
+          -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/vector-stub-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-vector-stub-attempt-${{ github.run_attempt }}
+          path: gotestsum/vector-stub.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
   # that run one at a time inside one binary, so whole they set the wall clock
@@ -235,48 +282,66 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: macos-26
     timeout-minutes: 79
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: macos
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
 
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-macos-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   frontend:
     needs: changes
@@ -284,27 +349,27 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 33
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -338,8 +403,17 @@ jobs:
           echo 'Browser server did not become ready within 30 attempts.' >&2
           exit 1
 
-      - name: Check, test, and build frontend
-        run: make web-check web-test web-build
+      - name: Check and test frontend
+        run: make web-check web-test
+
+      - name: Upload Vitest report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-unit-attempt-${{ github.run_attempt }}
+          path: web/test-results/vitest/unit.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       # The e2e specs generate their archive fixture by running a Go test;
       # compile it here so the first Playwright test doesn't pay the cold
@@ -350,9 +424,19 @@ jobs:
       - name: Run deterministic browser and visual tests
         env:
           PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
+          MSGVAULT_PLAYWRIGHT_SUITE: browser
         run: make web-test-browser
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-browser-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/browser.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7.0.2
         if: failure()
         with:
           name: playwright-browser-failures
@@ -376,27 +460,27 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 31
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -410,9 +494,19 @@ jobs:
       - name: Run accessibility, keyboard, security, and mixed-archive gates
         env:
           PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
+          MSGVAULT_PLAYWRIGHT_SUITE: e2e
         run: make web-e2e
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-e2e-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/e2e.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7.0.2
         if: failure()
         with:
           name: playwright-e2e-failures
@@ -429,15 +523,15 @@ jobs:
     # The sparse benchmark sample is warm; allow for measured macOS query compilation.
     timeout-minutes: 22
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: macos
 
@@ -447,7 +541,7 @@ jobs:
             -bench '^BenchmarkExploreLargeArchive$' -benchtime=3x -count=1 \
             | tee large-archive-benchmark.txt
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: large-archive-benchmark
@@ -460,7 +554,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 47
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       # Reuse these scratch paths in all five Windows jobs.
       - &windows-go-paths
@@ -474,17 +568,17 @@ jobs:
             "$($entry.Key)=$path" >> $env:GITHUB_ENV
           }
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -509,6 +603,8 @@ jobs:
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
+      - *stable-mtimes
+
       - name: Test
         shell: pwsh
         env:
@@ -529,15 +625,34 @@ jobs:
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-reruns.txt `
+            --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload test events
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Print slowest tests
+        if: always()
+        shell: bash
+        run: |
+          for f in gotestsum/*.json; do
+            [ -f "$f" ] || continue
+            go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+          done
+
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: msgvault-windows-amd64
           path: msgvault.exe
 
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   lint-windows:
     needs: changes
@@ -545,31 +660,34 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 64
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - *windows-go-paths
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       # The Windows test job owns and saves this group; lint only reads it.
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
         run: kit-retry 3 5 C:/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
-      # Run the same custom linter as `make custom-gcl` from PowerShell.
-      - name: Lint
+      # Build the same custom linter as `make custom-gcl` from PowerShell.
+      # Two runs lost their runner inside this work with no log. GitHub still
+      # records when each step starts, so separate steps show whether the
+      # runner went silent while building or while linting.
+      - name: Build custom linter
         shell: pwsh
-        env:
+        env: &windows-lint-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
@@ -578,7 +696,13 @@ jobs:
           $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
           bash -c 'kit-retry 3 5 go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$1" custom --destination "$2" --name custom-gcl' -- "$version" "$env:RUNNER_TEMP"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$env:RUNNER_TEMP/custom-gcl.exe" run ./...
+
+      - name: Lint
+        shell: pwsh
+        env: *windows-lint-env
+        # -v logs peak memory and lint time, which shows how close a normal
+        # run comes to the runner's 16 GB.
+        run: '& "$env:RUNNER_TEMP/custom-gcl.exe" run -v ./...'
 
   test-windows-slow-packages:
     needs: changes
@@ -586,21 +710,21 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 21
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - *windows-go-paths
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -612,18 +736,18 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: |
-          $output = go test -v -timeout 9m -tags "fts5 sqlite_vec" `
-            ./internal/api `
-            ./internal/importer `
-            ./scripts 2>&1
-          $status = $LASTEXITCODE
-          if ($status -ne 0) {
-            $output | ForEach-Object { "$_" }
-          } else {
-            $output | Where-Object { "$_" -match '^\s*--- (PASS|SKIP): |^(ok\s|FAIL\s|\?\s)' } | ForEach-Object { "$_" }
-          }
-          exit $status
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-slow.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-slow-reruns.txt
+          --packages "./internal/api ./internal/importer ./scripts" -- -timeout 9m -tags "fts5 sqlite_vec"
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-slow-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-windows-sharded:
     needs: changes
@@ -653,21 +777,21 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - *windows-go-paths
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -689,30 +813,40 @@ jobs:
               -Tags "fts5 sqlite_vec" `
               -Timeout ${{ matrix.timeout }} `
               -PartIndex ${{ matrix.part || 1 }} `
-              -PartCount ${{ matrix.parts || 1 }}
+              -PartCount ${{ matrix.parts || 1 }} `
+              -Suite "windows-sharded-${{ matrix.name }}-$(Split-Path -Leaf $package)"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-windows-pack-restore:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - *windows-go-paths
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -730,7 +864,7 @@ jobs:
             2>&1 | Tee-Object -FilePath pack-restore-benchmark.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: msgvault-windows-pack-restore-benchmark
@@ -754,10 +888,11 @@ jobs:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: testpw
           POSTGRES_DB: msgvault_test
-          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
           --health-cmd "pg_isready -U msgvault_test -d msgvault_test"
           --health-interval 5s
           --health-timeout 5s
@@ -765,19 +900,19 @@ jobs:
     env:
       MSGVAULT_TEST_DB: postgres://msgvault_test:testpw@localhost:5432/msgvault_test
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -792,7 +927,32 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/pgvector.json --rerun-fails=2 --rerun-fails-report gotestsum/pgvector-reruns.txt
+          --packages "./internal/vector/... ./internal/scheduler/..." --
+          -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/pgvector-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pgvector-attempt-${{ github.run_attempt }}
+          path: gotestsum/pgvector.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Test package in isolated shards (pgvector-tagged)
+        if: ${{ !cancelled() }}
+        run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 18m pgvector-cli
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pgvector-cli-attempt-${{ github.run_attempt }}
+          path: gotestsum/pgvector-cli.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
@@ -803,15 +963,16 @@ jobs:
     timeout-minutes: 55
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test
           POSTGRES_DB: msgvault_test
-          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql:rw,size=4g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -819,22 +980,24 @@ jobs:
     env:
       MSGVAULT_TEST_DB: postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+
+      - *stable-mtimes
 
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
@@ -849,8 +1012,17 @@ jobs:
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
+        uses: $/.github/actions/go-cache-save
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # one package per job, each with its own PostgreSQL service so four shards'
@@ -880,15 +1052,18 @@ jobs:
     timeout-minutes: ${{ matrix.job_timeout }}
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test
           POSTGRES_DB: msgvault_test
-          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256"
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         ports:
           - 5432:5432
+        # CI tmpfs peaks: api 427 MiB, pgvector 258 MiB, test-postgres 214 MiB, cli 213 MiB.
+        # Store stays on disk: median test time rose from 709s to 792s with tmpfs in five paired CI runs.
         options: >-
+          ${{ matrix.name != 'store' && '--tmpfs /var/lib/postgresql:rw,size=4g' || '' }}
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -896,19 +1071,19 @@ jobs:
     env:
       MSGVAULT_TEST_DB: postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go caches
-        uses: ./.github/actions/go-cache-restore
+        uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -917,15 +1092,43 @@ jobs:
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/postgres-sharded-${{ matrix.name }}.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: make test-pg-nocgo TEST_TIMEOUT=5m
 
+      - name: Upload test events
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/pg-nocgo-reruns.txt') != '') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-nocgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/pg-nocgo.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: |
-          go test -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/store-concurrency.json --rerun-fails=2 --rerun-fails-report gotestsum/store-concurrency-reruns.txt
+          --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
+
+      - name: Upload test events
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/store-concurrency-reruns.txt') != '') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-store-concurrency-attempt-${{ github.run_attempt }}
+          path: gotestsum/store-concurrency.json
+          retention-days: 14
+          if-no-files-found: ignore

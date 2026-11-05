@@ -3,6 +3,7 @@
  */
 
 export interface DeletionManifestSummary {
+  account?: string;
   created_at: string;
   created_by: string;
   description: string;

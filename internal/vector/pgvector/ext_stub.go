@@ -116,3 +116,7 @@ func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _
 // interface. Keeping the assertion here means changes to the interface
 // break stub and real builds in lockstep.
 var _ vector.Backend = (*Backend)(nil)
+
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{}
+}

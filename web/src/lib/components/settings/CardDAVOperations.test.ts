@@ -24,6 +24,27 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
+  it('shows queue time while a sync is admitted and running', async () => {
+    const controller = new CardDAVController(createAPIClient(vi.fn<typeof fetch>()));
+    const status = {
+      configured: true, available: true, credential_configured: true, enabled: true,
+      scheduled: true, schedule: '0 * * * *', scheduler_running: false, queued_at: '2026-10-01T15:04:00Z'
+    };
+    controller.status = status;
+    controller.statusLoading = false;
+    render(CardDAVOperations, { controller });
+    const queued = screen.getByText('Queued since', { exact: false });
+    expect(queued.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-01T15:04:00Z');
+    controller.status = { ...status, scheduler_running: true };
+    await waitFor(() => expect(screen.getByLabelText('Active CardDAV sync').textContent).toContain('Running'));
+    controller.status = { ...status, active: {
+      id: 1, account_id: 1, trigger: 'scheduled', full: false, state: 'running', started_at: '2026-10-01T15:05:00Z', books: 0, created: 0, updated: 0, removed: 0
+    } };
+    await waitFor(() => expect(screen.getByText('Started', { exact: false }).getAttribute('datetime')).toBe('2026-10-01T15:05:00Z'));
+    expect(screen.getByText('Queued since', { exact: false })).toBeDefined();
+    controller.destroy();
+  });
+
   it('renders independent status, roles, history and never exposes a book URL marker', async () => {
     const forbidden = 'forbidden-url-marker.example.test/private';
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -53,7 +74,7 @@ describe('CardDAVOperations', () => {
     expect(screen.getByText('Manual sync only')).toBeDefined();
     expect(screen.getByText('Partial')).toBeDefined();
     expect(screen.getByText('2 books · 1 created · 3 updated · 1 removed')).toBeDefined();
-    expect(screen.getByText('Full reconciliation required')).toBeDefined();
+    expect(screen.getByText('Next sync reconciles this book')).toBeDefined();
     expect(screen.getByText('No CardDAV sync history yet.')).toBeDefined();
     expect(rendered.container.textContent).not.toContain(forbidden);
     expect(rendered.container.innerHTML).not.toContain(forbidden);
@@ -91,7 +112,7 @@ describe('CardDAVOperations', () => {
 
   it.each([
     { reason: 'credential_missing', available: false, message: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.' },
-    { reason: 'google_authorization_required', available: true, message: 'Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.' },
+    { reason: 'google_authorization_required', available: true, message: 'Check the selected OAuth app\'s client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.' },
     { reason: 'microsoft_authorization_required', available: true, message: 'Run msgvault carddav authorize-microsoft with your account email, then try again.' },
   ])('shows repair instructions for $reason and keeps sync disabled', async ({ reason, available, message }) => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -144,33 +165,47 @@ describe('CardDAVOperations', () => {
     expect((screen.getByRole('button', { name: 'Apply roles for Retained book' }) as HTMLButtonElement).disabled).toBe(true);
     controller.destroy();
   });
-});
 
-
-it('labels history from the API connection rather than the account ID', async () => {
-  const client = createAPIClient(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/status')) return Response.json({
-      configured: false, available: false, credential_configured: false,
-      enabled: false, scheduled: false, schedule: ''
+  it('labels history from the API connection rather than the account ID', async () => {
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({
+        configured: false, available: false, credential_configured: false,
+        enabled: false, scheduled: false, schedule: ''
+      });
+      if (path.endsWith('/runs')) return Response.json({ runs: [
+        { id: 3, account_id: 1, connection: 'work' },
+        { id: 2, account_id: 7, connection: 'default' },
+        { id: 1, account_id: 1 }
+      ].map(run => ({
+        ...run, trigger: 'manual', full: false, state: 'succeeded',
+        started_at: '2026-08-28T09:00:00Z', books: 1, created: 0, updated: 0, removed: 0
+      })) });
+      throw new Error(`Unexpected ${request.method} ${path}`);
     });
-    if (path.endsWith('/runs')) return Response.json({ runs: [
-      { id: 3, account_id: 1, connection: 'work' },
-      { id: 2, account_id: 7, connection: 'default' },
-      { id: 1, account_id: 1 }
-    ].map(run => ({
-      ...run, trigger: 'manual', full: false, state: 'succeeded',
-      started_at: '2026-08-28T09:00:00Z', books: 1, created: 0, updated: 0, removed: 0
-    })) });
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-  const controller = new CardDAVController(client);
-  await controller.load();
-  render(CardDAVOperations, { controller });
+    const controller = new CardDAVController(client);
+    await controller.load();
+    render(CardDAVOperations, { controller });
 
-  expect(screen.getAllByRole('row').slice(1).map(row => row.querySelector('td')?.textContent)).toEqual([
-    'work', 'default', 'Unknown connection'
-  ]);
-  controller.destroy();
+    expect(screen.getAllByRole('row').slice(1).map(row => row.querySelector('td')?.textContent)).toEqual([
+      'work', 'default', 'Unknown connection'
+    ]);
+    controller.destroy();
+  });
+
+  it('calls Sync now with the selected connection', async () => {
+    const controller = new CardDAVController(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      return Response.json({ runs: [] });
+    }));
+    await controller.load();
+    const sync = vi.spyOn(controller, 'sync').mockResolvedValue(undefined);
+    render(CardDAVOperations, { controller, syncConnection: 'work' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
+    expect(sync).toHaveBeenCalledExactlyOnceWith('work');
+    controller.destroy();
+  });
 });

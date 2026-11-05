@@ -1,10 +1,121 @@
 package cmd
 
 import (
+	"encoding/json/v2"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+// serial: verify flags, stdout and http.DefaultTransport are process globals.
+func TestRunVerifyLocalRawSamples(t *testing.T) {
+	resetVerifyFlagsForTest(t)
+	verifySampleSize = 1
+
+	// Only Gmail profile responses are simulated. Store reopening,
+	// sampling, decompression, MIME parsing and result reporting are real.
+	savedTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = savedTransport })
+	http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.String() != "https://gmail.googleapis.com/gmail/v1/users/me/profile" {
+			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
+		}
+		body := `{"emailAddress":"verify@example.test","messagesTotal":1,"historyId":"100"}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})
+
+	for _, tc := range []struct {
+		name         string
+		raw          []byte
+		wantVerified int
+		wantErrors   int
+		wantError    string
+	}{
+		{
+			name:         "valid_empty_body",
+			raw:          []byte("From: sender@example.test\r\nSubject: Original\r\n\r\n"),
+			wantVerified: 1,
+		},
+		{
+			name:       "empty_zlib",
+			raw:        []byte{},
+			wantErrors: 1,
+			wantError:  "empty raw MIME",
+		},
+		{
+			name:       "malformed_mime",
+			raw:        []byte("Content-Type: multipart/mixed\r\n\r\nmissing boundary"),
+			wantErrors: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			_, invocation := setupCommandOAuth(t)
+			putCommandToken(t, invocation, "verify@example.test", oauth.Scopes)
+			cfg := invocation.cfg
+			var st *store.Store
+			testDB := os.Getenv("MSGVAULT_TEST_DB")
+			if store.IsPostgresURL(testDB) {
+				st = testutil.NewTestStore(t)
+				// Point the command at this fixture's clone or private schema,
+				// never the shared test database itself.
+				dsn, err := url.Parse(testDB)
+				require.NoError(err)
+				var database, schema string
+				require.NoError(st.DB().QueryRow("SELECT current_database(), current_schema()").Scan(&database, &schema))
+				dsn.Path = "/" + database
+				query := dsn.Query()
+				query.Set("search_path", schema+",public")
+				dsn.RawQuery = query.Encode()
+				cfg.Data.DatabaseURL = dsn.String()
+			} else {
+				st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			}
+			source, err := st.GetOrCreateSource("gmail", "verify@example.test")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversation(source.ID, "thread", "Original")
+			require.NoError(err)
+			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID,
+				SourceMessageID: "synthetic-verify", MessageType: store.MessageTypeEmail})
+			require.NoError(err)
+			require.NoError(st.UpsertMessageRaw(id, tc.raw))
+			require.NoError(st.Close())
+			command := &cobra.Command{Use: "verify"}
+			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			verifyJSON = true
+			capture := captureStdout(t)
+			err = runVerifyLocal(command, []string{"verify@example.test"})
+			output := capture()
+			// Sample errors are reported in the summary, as for missing RAW;
+			// they do not change the command's existing exit-status contract.
+			require.NoError(err)
+			var result verifyResult
+			require.NoError(json.Unmarshal([]byte(output), &result))
+			assert.Equal(tc.wantVerified, result.SampleVerified)
+			assert.Equal(tc.wantErrors, result.SampleErrors)
+			if tc.wantError != "" {
+				verifyJSON = false
+				capture = captureStdout(t)
+				err = runVerifyLocal(command, []string{"verify@example.test"})
+				output = capture()
+				require.NoError(err)
+				assert.Contains(output, fmt.Sprintf("msg %d: %s", id, tc.wantError))
+			}
+		})
+	}
+}
 
 // TestIsFTSIntegrityError_Classification verifies that the hint-classifier
 // cleanly separates FTS5 shadow-table errors (which rebuild-fts can fix)

@@ -12,26 +12,27 @@
     type ChipTone,
   } from '@kenn-io/kit-ui';
   import { getContext } from 'svelte';
+  import { cardDAVRepairCopy } from '../../carddav/account-settings';
   import { scheduleSummary } from '../../settings/cron';
 
   import type { CardDAVBook, CardDAVBookRoles, CardDAVController } from '../../carddav/controller.svelte';
   import type {
     CardDAVRunResponse as GeneratedCardDAVRunResponse,
-    CardDAVStatusResponse as GeneratedCardDAVStatusResponse,
   } from '../../api/generated/models';
 
   type CardDAVRun = GeneratedCardDAVRunResponse;
-  type RepairReason = NonNullable<GeneratedCardDAVStatusResponse['repair_reason']>;
 
   let {
     controller,
     syncConnection = undefined,
     connectionReady = true,
+    onStatusChange = () => undefined,
     onOpenOperations: providedOpenOperations = undefined
   }: {
     controller: CardDAVController;
     syncConnection?: string;
     connectionReady?: boolean;
+    onStatusChange?: () => void;
     onOpenOperations?: () => void;
   } = $props();
   const shellOpenOperations = getContext<(() => void) | undefined>('msgvault:open-carddav-operations');
@@ -39,17 +40,6 @@
   function openOperations(): void {
     (providedOpenOperations ?? shellOpenOperations)?.();
   }
-
-  const repairCopy: Record<RepairReason, string> = {
-    account_missing: 'CardDAV account discovery is missing. Test and save the account again.',
-    credential_missing: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.',
-    credential_mismatch: 'The stored credential belongs to different CardDAV account settings. Connect the account again and save.',
-    credential_unavailable: 'The stored credential cannot be read right now. Check that its credential store is available, then try again. For password-based accounts, reconnect the provider account or save its password again in CardDAV settings.',
-    google_authorization_required: 'Check the selected OAuth app\'s client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.',
-    microsoft_authorization_required: 'Run msgvault carddav authorize-microsoft with your account email, then try again.',
-    runtime_unavailable:
-      'CardDAV is configured but unavailable in this daemon session. Test and save the account again, or restart the daemon.',
-  };
 
   function changeRole(book: CardDAVBook, field: keyof CardDAVBookRoles, checked: boolean): void {
     const next = { ...controller.rolesFor(book), [field]: checked };
@@ -82,7 +72,7 @@
   }
 </script>
 
-<SettingsSection title="CardDAV status" description="Runtime, credential, scheduler, and recent synchronization state.">
+<SettingsSection title="CardDAV status">
   <div class="section-state" aria-busy={controller.statusLoading}>
     {#if controller.statusLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV status" /> Loading CardDAV status…
@@ -122,14 +112,23 @@
           >
         {/if}
       </div>
-      {#if status.repair_reason}<p class="notice notice--error" role="alert">{repairCopy[status.repair_reason]}</p>{/if}
-      {#if status.active}
+      {#if status.repair_reason}<p class="notice notice--error" role="alert">{cardDAVRepairCopy[status.repair_reason]}</p>{/if}
+      {#if status.queued_at}
+        <p class="helper">
+          Queued since <time datetime={status.queued_at} title={status.queued_at}
+            >{formatTimestamp(status.queued_at)}</time
+          >
+        </p>
+      {/if}
+      {#if status.active || status.scheduler_running}
         <div class="run-summary" aria-label="Active CardDAV sync">
           <span class="working"><Spinner size={14} label="CardDAV sync running" /> Running</span>
-          <strong>{counters(status.active)}</strong>
-          <time datetime={status.active.started_at} title={status.active.started_at}
-            >Started {formatTimestamp(status.active.started_at)}</time
-          >
+          {#if status.active}
+            <strong>{counters(status.active)}</strong>
+            <time datetime={status.active.started_at} title={status.active.started_at}
+              >Started {formatTimestamp(status.active.started_at)}</time
+            >
+          {/if}
         </div>
       {:else if status.latest}
         <div class="run-summary" aria-label="Latest CardDAV sync">
@@ -173,23 +172,14 @@
       <Button
         label={controller.syncPending ? 'Checking CardDAV state…' : 'Sync now'}
         disabled={!controller.canSync || !connectionReady}
-        onclick={() => void controller.sync(false, syncConnection)}
-      />
-      <Button
-        label={controller.syncPending ? 'Checking CardDAV state…' : 'Full sync'}
-        disabled={!controller.canSync || !connectionReady}
-        tone="info"
-        onclick={() => void controller.sync(true, syncConnection)}
+        onclick={async () => { await controller.sync(syncConnection); onStatusChange(); }}
       />
       <Button label="View CardDAV operations" surface="soft" onclick={openOperations} />
     </div>
   </div>
 </SettingsSection>
 
-<SettingsSection
-  title="Address books"
-  description="Choose which discovered books participate in synchronization, lookup, and publication."
->
+<SettingsSection title="Address books">
   <div class="section-state" aria-busy={controller.booksLoading}>
     <p class="helper">
       The archive has one write target across all CardDAV connections. Applying “Publish here” to a book
@@ -216,7 +206,7 @@
         {@const draft = controller.bookDraft(book.id)}
         <Card level="default" padding="sm" class="book-card" ariaLabel={`Address book ${book.name}`} title={book.name}>
           {#snippet actions()}{#if book.needs_full_reconcile}<Chip size="sm" tone="warning" uppercase={false}
-                >Full reconciliation required</Chip
+                >Next sync reconciles this book</Chip
               >{/if}{/snippet}
           {#if book.connection}<p>Connection: {book.connection}</p>{/if}
           <div class="role-controls">
@@ -259,7 +249,7 @@
   </div>
 </SettingsSection>
 
-<SettingsSection title="Sync history" description="Recent manual and scheduled CardDAV runs.">
+<SettingsSection title="Sync history">
   <div class="section-state" aria-busy={controller.runsLoading || controller.runsPageLoading}>
     {#if controller.runsLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV sync history" /> Loading sync history…

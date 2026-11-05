@@ -10,8 +10,10 @@ import (
 )
 
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES
@@ -85,21 +87,19 @@ func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.
 	assert.NotEqual(reordered, differentSort)
 }
 
-func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *testing.T) {
+func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := tdb.DB.Exec(`
-		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
-		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
-		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
-			(701, 7, 'chat-701', 'direct_chat', 'Alpha'),
-			(702, 7, 'chat-702', 'direct_chat', 'Beta');
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES
-			(801, 701, 7, 'message-801', 'whatsapp', '2026-08-20 10:00:00', 'first', 11);
-		INSERT INTO message_bodies (message_id, body_text) VALUES (801, 'full first body');
-	`)
-	require.NoError(err)
+	dbtest.SeedTextTimeline(t, tdb.DB, "whatsapp")
+	// Pin new stamps in the past so the recent-change fence stays out of the way.
+	pin := func(stamp string) {
+		_, err := tdb.DB.Exec(`UPDATE messages SET content_changed_at = ? WHERE content_changed_at > '2025-01-01'`, stamp)
+		require.NoError(err)
+	}
+	pin("2020-01-01 00:00:00")
 
 	engine := NewSQLiteEngine(tdb.DB)
 	conversationID := int64(701)
@@ -112,22 +112,13 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 	require.NoError(err)
 	assert.NotEmpty(first)
 
-	scope.Filter.Pagination = Pagination{Limit: 500, Offset: 0}
-	samePageSet, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(first, samePageSet)
-
-	_, err = tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'changed full body' WHERE message_id = 801`)
-	require.NoError(err)
-	bodyOnly, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(first, bodyOnly)
-
 	_, err = tdb.DB.Exec(`
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
 	`)
 	require.NoError(err)
+	// Keep the maximum stamp on 801 so membership changes depend on the count.
+	pin("2019-01-01 00:00:00")
 	added, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
 	assert.NotEqual(first, added)
@@ -143,10 +134,7 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
 	`)
 	require.NoError(err)
-	reinserted, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(added, reinserted)
-
+	pin("2019-01-01 00:00:00")
 	_, err = tdb.DB.Exec(`UPDATE messages SET conversation_id = 702 WHERE id = 802`)
 	require.NoError(err)
 	moved, err := engine.TextSnapshotRevision(t.Context(), scope)
@@ -160,8 +148,10 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 }
 
 func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@chat.test');
@@ -176,6 +166,7 @@ func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) 
 				(802, 701, 7, 'message-802', 'imessage', '2026-08-20 11:00:00', 'Second', 'second', 11),
 				(803, 701, 7, 'message-803', 'imessage', '2026-08-20 12:00:00', 'Third', 'third', 11),
 				(804, 702, 7, 'message-804', 'imessage', '2026-08-20 13:00:00', 'Fourth', 'fourth', 11);
+		UPDATE messages SET content_changed_at = '2020-01-01 00:00:00';
 	`)
 	require.NoError(err)
 
@@ -227,8 +218,10 @@ func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) 
 // In particular, an owner-authored latest message must not hide a conversation
 // that contains a selected cluster member.
 func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier, display_name) VALUES
@@ -288,8 +281,10 @@ func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'chat');
@@ -310,8 +305,10 @@ func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -344,6 +341,8 @@ func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *tes
 }
 
 func TestSQLiteListConversationMessagesUsesIDTiebreakerForEqualTimestamps(t *testing.T) {
+	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'chat');

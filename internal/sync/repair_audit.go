@@ -126,6 +126,12 @@ func auditGmailEvidence(evidence store.GmailAuditEvidence) (RepairAuditResult, b
 		result.Error = textutil.FirstLine(evidence.RawMIMEError)
 		return result, true
 	}
+	if len(evidence.RawMIME) == 0 {
+		result.Status = AuditInconclusive
+		result.Fields[AuditFieldRawMIME] = AuditInconclusive
+		result.Error = "stored raw MIME is empty"
+		return result, true
+	}
 	parsed, err := mime.Parse(evidence.RawMIME)
 	if err != nil {
 		result.Status = AuditInconclusive
@@ -133,6 +139,7 @@ func auditGmailEvidence(evidence store.GmailAuditEvidence) (RepairAuditResult, b
 		result.Error = textutil.FirstLine(err.Error())
 		return result, true
 	}
+	parsed.OmitNULIdentities()
 	result.Fields[AuditFieldRawMIME] = AuditMatch
 	result.Fields[AuditFieldRFC822MessageID] = compareOptionalString(
 		evidence.RFC822MessageID.Valid, evidence.RFC822MessageID.String, parsed.MessageID,

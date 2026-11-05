@@ -140,13 +140,29 @@ type Store struct {
 	rfc822IDBackfillBatchSizeOverride int
 }
 
+// Hot import writes carry trigger programs whose compilation dominated CPU time.
+// Cache statements per connection; reset entries hold no transactions or locks.
+// 128 fits ~33-64 statements plus recipient variants; larger caches were no faster and use more memory.
+const sqliteStmtCacheParams = "&_stmt_cache_size=128"
+
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
 // (NORMAL only protects against process crashes). msgvault is commonly run as a
 // laptop daemon (`msgvault serve`) where sleep/wake, forced reboots, and OOM kills
 // give many opportunities to leave a torn page on disk; the write volume is tiny
 // so the durability cost is negligible. fullfsync is macOS-only (F_FULLFSYNC
 // fcntl) and a no-op on other platforms.
-const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
+const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON" + sqliteStmtCacheParams
+
+// sqlitePoolSize bounds open SQLite connections. All of them stay idle in the
+// pool: each connection has its own page cache and preloads the metadata FTS
+// tables when it opens, and RunIndependentReads uses several at once, so
+// closing and reopening extras would repeat that work on every request.
+const sqlitePoolSize = 4
+
+func setSQLitePoolSize(db *sql.DB) {
+	db.SetMaxOpenConns(sqlitePoolSize)
+	db.SetMaxIdleConns(sqlitePoolSize)
+}
 
 // IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
 // Exported so cmd-side helpers can decide whether to skip SQLite-only code
@@ -161,7 +177,7 @@ func IsPostgresURL(dbPath string) bool {
 // durability against OS crashes is irrelevant — and on slow-fsync platforms
 // like Windows CI runners, the production FULL setting can push bulk-import
 // tests past their timing tripwires.
-const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON"
+const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON" + sqliteStmtCacheParams
 
 // Open opens or creates the database at the given path.
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
@@ -240,7 +256,7 @@ func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, erro
 	if dbPath == ":memory:" || strings.Contains(dbPath, ":memory:") {
 		db.SetMaxOpenConns(1)
 	} else {
-		db.SetMaxOpenConns(4)
+		setSQLitePoolSize(db)
 	}
 
 	dialect := &SQLiteDialect{}
@@ -414,7 +430,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	db.SetMaxOpenConns(4)
+	setSQLitePoolSize(db)
 
 	dialect := &SQLiteDialect{}
 	if err := dialect.InitConn(db); err != nil {
@@ -1125,6 +1141,10 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	// belongs here rather than inline in schema_pg.sql, where it would build
 	// under the pool-wide statement_timeout and could fail InitSchema outright.
 	concurrentIndexes := []struct{ name, definition string }{
+		{"idx_messages_conversation_id", "ON messages(conversation_id, id)"},
+		{"idx_messages_conversation_content_changed", "ON messages(conversation_id, content_changed_at)"},
+		{"idx_messages_conversation_timeline", "ON messages(conversation_id, COALESCE(sent_at, received_at, internal_date), id) WHERE deleted_at IS NULL"},
+		{"idx_messages_beeper_conversation", "ON messages(conversation_id, message_type) WHERE deleted_at IS NULL"},
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
 		{"idx_messages_account", messagesAccountIndexDefinition},
@@ -1521,6 +1541,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationMatrixEncryptedEventsV1, 1, false,
+		s.registerLegacyMatrixPlaceholders,
+	); err != nil {
+		return fmt.Errorf("register Matrix placeholders: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}
@@ -1633,6 +1659,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
+		}
+	}
+	if version < 18 {
+		// Earlier versions submitted one provider job per extraction attempt.
+		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
+			return fmt.Errorf("backfill document upload counts: %w", err)
 		}
 	}
 	// account: and received: filter on the account columns, and each sync
@@ -2014,6 +2046,30 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_conversation_content_changed
+				    ON messages(conversation_id, content_changed_at)
+			`); err != nil {
+				return err
+			}
+			// Beeper context guards on membership and title triggers seek live messages by conversation.
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_beeper_conversation
+				    ON messages(conversation_id, message_type) WHERE deleted_at IS NULL
+			`); err != nil {
+				return err
+			}
+			// Conversation windows retain source-deleted messages and seek by timestamp and ID.
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_conversation_timeline
+				    ON messages(conversation_id, COALESCE(sent_at, received_at, internal_date), id)
+				    WHERE deleted_at IS NULL
+			`); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
 				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
@@ -2310,6 +2366,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for
@@ -2908,19 +2967,23 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		stats.SourceCount = int64(len(seen))
 	}
 
-	for _, q := range queries {
-		var row *sql.Row
-		if len(q.args) > 0 {
-			row = s.db.QueryRowContext(ctx, q.query, q.args...)
-		} else {
-			row = s.db.QueryRowContext(ctx, q.query)
-		}
-		if err := row.Scan(q.dest); err != nil {
-			if s.dialect.IsNoSuchTableError(err) {
-				continue
+	reads := make([]func(context.Context) error, len(queries))
+	for i, q := range queries {
+		reads[i] = func(ctx context.Context) error {
+			var row *sql.Row
+			if len(q.args) > 0 {
+				row = s.db.QueryRowContext(ctx, q.query, q.args...)
+			} else {
+				row = s.db.QueryRowContext(ctx, q.query)
 			}
-			return nil, fmt.Errorf("get stats %q: %w", q.query, err)
+			if err := row.Scan(q.dest); err != nil && !s.dialect.IsNoSuchTableError(err) {
+				return fmt.Errorf("get stats %q: %w", q.query, err)
+			}
+			return nil
 		}
+	}
+	if err := RunIndependentReads(ctx, s.db.DB, reads...); err != nil {
+		return nil, err
 	}
 
 	// Scoped snapshots omit global size without acquiring a second connection.

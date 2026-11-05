@@ -25,6 +25,9 @@ func TestMediaPolicyDefaultsCapGroupRoomMedia(t *testing.T) {
 	assert.Equal(attachmentpolicy.Policy{
 		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
 	}, cfg.Teams.MediaPolicy("user@example.com"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes,
+	}, cfg.IMessage.MediaPolicy())
 }
 
 func TestLoadMediaPolicyOmittedParticipantCapUsesDefault(t *testing.T) {
@@ -78,16 +81,20 @@ media_max_participants = 0
 
 [teams]
 media_max_participants = 0
+
+[imessage]
+media_max_participants = 0
 `), 0o644))
 
 	cfg, err := Load(configPath, "")
 	require.NoError(err)
 
 	for name, policy := range map[string]attachmentpolicy.Policy{
-		"beeper":  cfg.Beeper.MediaPolicy("signal"),
-		"slack":   cfg.Slack.MediaPolicy("T01"),
-		"discord": cfg.Discord.MediaPolicy("G01"),
-		"teams":   cfg.Teams.MediaPolicy("user@example.com"),
+		"beeper":   cfg.Beeper.MediaPolicy("signal"),
+		"slack":    cfg.Slack.MediaPolicy("T01"),
+		"discord":  cfg.Discord.MediaPolicy("G01"),
+		"teams":    cfg.Teams.MediaPolicy("user@example.com"),
+		"imessage": cfg.IMessage.MediaPolicy(),
 	} {
 		assert.Zero(policy.MaxParticipants, "%s: explicit zero means no cap", name)
 		assert.Equal(attachmentpolicy.ScopeAll, policy.Scope, name)
@@ -137,6 +144,10 @@ max_media_mb = 60
 [teams.accounts_config."user@example.com"]
 media = true
 max_media_mb = 40
+
+[imessage]
+media_max_participants = 6
+max_media_mb = 15
 `), 0o644))
 
 	cfg, err := Load(configPath, "")
@@ -162,6 +173,9 @@ max_media_mb = 40
 	assert.Equal(attachmentpolicy.Policy{
 		Scope: attachmentpolicy.ScopeDirect, MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: 40 << 20,
 	}, cfg.Teams.MediaPolicy("user@example.com"))
+	assert.Equal(attachmentpolicy.Policy{
+		Scope: attachmentpolicy.ScopeAll, MaxParticipants: 6, MaxBytes: 15 << 20,
+	}, cfg.IMessage.MediaPolicy())
 }
 
 func TestLoadRejectsInvalidMediaPolicies(t *testing.T) {
@@ -173,6 +187,9 @@ func TestLoadRejectsInvalidMediaPolicies(t *testing.T) {
 		{name: "scope", content: "[slack]\nmedia_scope = \"rooms\"\n", want: "media_scope"},
 		{name: "participants", content: "[beeper]\nmedia_max_participants = -1\n", want: "media_max_participants"},
 		{name: "provider size", content: "[teams]\nmax_media_mb = -1\n", want: "max_media_mb"},
+		{name: "imessage participants", content: "[imessage]\nmedia_max_participants = -1\n", want: "[imessage]"},
+		{name: "imessage size overflows bytes", content: "[imessage]\nmax_media_mb = 17592186044417\n", want: "[imessage] max_media_mb"},
+		{name: "account size overflows bytes", content: "[teams.accounts_config.a]\nmax_media_mb = 17592186044417\n", want: "max_media_mb"},
 		{name: "account size", content: "[discord.guilds.G01]\nmax_media_mb = -1\n", want: "max_media_mb"},
 	}
 	for _, tt := range tests {

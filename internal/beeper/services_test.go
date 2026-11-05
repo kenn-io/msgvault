@@ -11,6 +11,7 @@ import (
 )
 
 func TestResolveBridgeServiceLadder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		accountID string
@@ -73,6 +74,7 @@ func TestResolveBridgeServiceLadder(t *testing.T) {
 }
 
 func TestResolveUnknownBridgeRegistersItLosslessly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -105,6 +107,7 @@ func TestResolveUnknownBridgeRegistersItLosslessly(t *testing.T) {
 }
 
 func TestResolveUnknownBridgeUsesUserIDPrefixWithOpaqueAccountID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -121,6 +124,7 @@ func TestResolveUnknownBridgeUsesUserIDPrefixWithOpaqueAccountID(t *testing.T) {
 }
 
 func TestResolveUnknownBridgeCacheSeparatesUserIDPrefixes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -142,6 +146,7 @@ func TestResolveUnknownBridgeCacheSeparatesUserIDPrefixes(t *testing.T) {
 }
 
 func TestResolveConfiguredAccountServicePrecedesUserIDPrefix(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -165,6 +170,7 @@ func TestResolveConfiguredAccountServicePrecedesUserIDPrefix(t *testing.T) {
 }
 
 func TestResolvePersistedOpaqueFallbackDoesNotHideUserIDPrefix(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -185,6 +191,7 @@ func TestResolvePersistedOpaqueFallbackDoesNotHideUserIDPrefix(t *testing.T) {
 }
 
 func TestResolveInvalidBridgePrefixFallsBackToAccountID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -199,6 +206,7 @@ func TestResolveInvalidBridgePrefixFallsBackToAccountID(t *testing.T) {
 }
 
 func TestResolveUnclassifiableBridgeIsNotGuessed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -211,6 +219,7 @@ func TestResolveUnclassifiableBridgeIsNotGuessed(t *testing.T) {
 }
 
 func TestServiceScopeFollowsPolicyAndNeverFabricates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		slugOrAlias string
@@ -281,6 +290,7 @@ func TestServiceScopeFollowsPolicyAndNeverFabricates(t *testing.T) {
 }
 
 func TestServiceScopeOfNilServiceIsEmpty(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	kind, value := serviceScope(nil, "acct-1", "@alice:example.org")
@@ -289,6 +299,7 @@ func TestServiceScopeOfNilServiceIsEmpty(t *testing.T) {
 }
 
 func TestServiceSlugCandidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ raw, want string }{
 		{raw: "WhatsApp", want: "whatsapp"},
 		{raw: "Google Messages", want: "google-messages"},

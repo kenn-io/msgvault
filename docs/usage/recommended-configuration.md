@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-29"
 title: Recommended Configuration
 description: Set up optional search and people features from your available provider keys, then check what still needs attention.
 ---
@@ -249,7 +249,7 @@ configure; see [Configuration](/docs/configuration/#activity).
 Chat sources cap collection by conversation size: media from rooms above 20
 participants is skipped with a typed `participant_threshold` marker, direct and
 small-group media is kept. Set `media_max_participants = 0` on a source to lift
-the cap. The per-file default is 250 MiB for Beeper, Slack, and Teams, and 50
+the cap. The per-file default is 250 MiB for Beeper, Slack, Teams, and iMessage, and 50
 MiB for Discord. These limits also apply to existing configurations that omit
 the keys; setup does not need to write them. Explicit values and per-account
 overrides keep their configured policy. See
@@ -331,7 +331,7 @@ attributes. The plan describes this policy in both human and JSON output.
 `setup status` reads local configuration, the process environment, stored
 credentials, and archive consent records. It does not contact a provider. An
 `on` state means those setup checks passed; use the index's status command or
-[Web Operations](/docs/web-ui/#operations) to inspect build progress and
+[Settings Overview](/docs/web-ui/#settings-and-restart-behavior) to inspect build progress and
 coverage.
 
 ```text

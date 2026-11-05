@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { listDirectoryPeople } from '../../api/generated/api/api';
   import { searchParticipants as generatedSearchParticipants } from '../../api/generated/exploration/exploration';
   import { appShortcuts, Button, debounce, Modal, Typeahead, type TypeaheadOption } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
@@ -13,29 +14,33 @@
     /** The currently open cluster's own ID, excluded from results — linking
      * it to itself is rejected by the API and never a meaningful choice. */
     excludeID: number;
+    excludePersonID: number | null;
+    onConfirmPerson: (personID: number) => Promise<LinkOutcome>;
     /** The open person's display name, woven into the dialog title so the
      * flow reads in human terms ("Link another identity for Alice"). */
     personLabel: string;
     onConfirm: (participantID: number) => Promise<LinkOutcome>;
-    onMergeRequired?: (conflict: ValidatedPersonMergeRequired) => void;
+    onMergeRequired: (conflict: ValidatedPersonMergeRequired) => void;
     onClose: () => void;
   }
-  let { client, excludeID, personLabel, onConfirm, onMergeRequired = undefined, onClose }: Props = $props();
+  let { client, excludeID, excludePersonID, onConfirmPerson, personLabel, onConfirm, onMergeRequired, onClose }: Props = $props();
   let query = $state('');
   let results = $state<PersonSummary[]>([]);
+  let savedResults = $state<Array<{ id: number; display_name?: string | null }>>([]);
+  let selectedPersonID = $state<number | null>(null);
   let searching = $state(false);
   let searchError = $state<string | null>(null);
   let selectedID = $state<number | null>(null);
   let confirming = $state(false);
   let confirmError = $state<string | null>(null);
   const options = $derived(
-    results.map(
+    [...savedResults.map(row => ({ name: `person:${row.id}`, label: row.display_name || `Person ${row.id}`, meta: 'Saved person' })), ...results.map(
       (row): TypeaheadOption => ({
         name: String(row.id),
         label: row.display_label,
         meta: identifiersSummary(row),
       }),
-    ),
+    )],
   );
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
@@ -64,6 +69,7 @@
     searchAbort?.abort();
     if (trimmed === '') {
       results = [];
+      savedResults = [];
       searching = false;
       searchError = null;
       return;
@@ -74,24 +80,27 @@
     searching = true;
     searchError = null;
     try {
-      const { data, error, response } = await generatedSearchParticipants(
-        {
-          predicate: {},
-          identity_query: trimmed,
-          sort: { field: 'activity_count', direction: 'desc' },
-          limit: SEARCH_LIMIT,
-        },
-        {
-          ...client,
-          signal: controller.signal,
-        },
-      );
+      const [savedOutcome, observedOutcome] = await Promise.allSettled([
+        listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }),
+        generatedSearchParticipants(
+          {
+            predicate: {},
+            identity_query: trimmed,
+            sort: { field: 'activity_count', direction: 'desc' },
+            limit: SEARCH_LIMIT,
+          },
+          { ...client, signal: controller.signal },
+        ),
+      ]);
       if (generation !== searchGeneration || controller.signal.aborted) return;
-      if (data) {
-        results = (data.rows ?? []).filter((row) => row.id !== excludeID);
-        return;
-      }
-      searchError = messageFor(error, response.status);
+      const saved = savedOutcome.status === 'fulfilled' ? savedOutcome.value : undefined;
+      const observed = observedOutcome.status === 'fulfilled' ? observedOutcome.value : undefined;
+      savedResults = (saved?.data?.people ?? []).filter(row => row.id !== excludePersonID);
+      const seen = new Set(savedResults.map(row => row.id));
+      results = (observed?.data?.rows ?? []).filter(row => row.id !== excludeID && row.profile?.id !== excludePersonID && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
+      const failed = saved && !saved.data ? saved : observed?.data ? undefined : observed;
+      if (failed) searchError = messageFor(failed.error, failed.response.status);
+      for (const outcome of [savedOutcome, observedOutcome]) if (outcome.status === 'rejected') throw outcome.reason;
     } catch (cause: unknown) {
       if (generation === searchGeneration && !controller.signal.aborted) searchError = messageFor(cause, 0);
     } finally {
@@ -106,25 +115,25 @@
     // Focus reaching the search input means the picker reopened for a new choice.
     if (!(event.target instanceof HTMLInputElement)) return;
     selectedID = null;
+    selectedPersonID = null;
     confirmError = null;
   }
-  function selectResult(id: number): void {
+  function selectResult(id: number | null): void {
     selectedID = id;
     confirmError = null;
   }
   async function confirmLink(): Promise<void> {
-    if (selectedID === null || confirming) return;
+    if ((selectedID === null && selectedPersonID === null) || confirming) return;
     confirming = true;
     confirmError = null;
     try {
-      const outcome = await onConfirm(selectedID);
+      const outcome = selectedPersonID !== null ? await onConfirmPerson(selectedPersonID) : await onConfirm(selectedID!);
       if (outcome.ok) {
         onClose();
         return;
       }
       if (outcome.code === 'merge_required') {
-        if (onMergeRequired) onMergeRequired(outcome.conflict);
-        else confirmError = outcome.message;
+        onMergeRequired(outcome.conflict);
         return;
       }
       confirmError =
@@ -161,17 +170,17 @@
 </script>
 
 <Modal
-  title={`Link another identity for ${personLabel}`}
-  ariaLabel={`Link another identity for ${personLabel}`}
+  title={`Merge ${personLabel}`}
+  ariaLabel={`Merge ${personLabel}`}
   onclose={requestClose}
 >
   <div class="link-identity-dialog" aria-busy={confirming} onfocusin={handlePickerFocusIn}>
     <Typeahead
       {options}
-      value={selectedID === null ? '' : String(selectedID)}
+      value={selectedPersonID !== null ? `person:${selectedPersonID}` : selectedID === null ? '' : String(selectedID)}
       fallbackLabel="Choose a person"
-      placeholder="Search people to link"
-      title="Person to link"
+      placeholder="Search people"
+      title="Merge with"
       emptyLabel="No matching people found"
       loading={searching}
       loadingLabel="Searching…"
@@ -179,7 +188,8 @@
       onquery={handleQueryInput}
       error={searchError ?? ''}
       onselect={(value) => {
-        selectResult(Number(value));
+        selectedPersonID = value.startsWith('person:') ? Number(value.slice(7)) : null;
+        selectResult(value.startsWith('person:') ? null : Number(value));
       }}
     />
     {#if confirmError}
@@ -191,8 +201,8 @@
     <Button
       tone="info"
       surface="solid"
-      label="These are the same person"
-      disabled={selectedID === null || confirming}
+      label="Merge"
+      disabled={selectedID === null && selectedPersonID === null || confirming}
       onclick={() => void confirmLink()}
     />
   {/snippet}

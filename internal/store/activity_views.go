@@ -821,11 +821,7 @@ func (s *Store) contactStateFreshnessTxContext(
 	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
-		SELECT CASE WHEN EXISTS (
-			SELECT 1
-			FROM activity_projection_queue
-			WHERE revision > processed_revision
-		) OR EXISTS (
+		SELECT CASE WHEN `+activityProjectionPendingSQL+` OR EXISTS (
 			SELECT 1
 			FROM archive_metadata
 			WHERE key IN (?, ?)

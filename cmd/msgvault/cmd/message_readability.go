@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 // datedAttribution matches a reply header start: "On", then a date with a year, clock time or numeric day.
@@ -56,13 +57,14 @@ func readableMessageDetail(message *query.MessageDetail) *query.MessageDetail {
 	return &display
 }
 
-func messageTextBody(message *query.MessageDetail, stripQuoted bool) string {
-	body := message.BodyText
-	if body == "" {
+func messageTextBody(message *query.MessageDetail, stripQuoted bool) (string, bool) {
+	body := embed.BodyTextForEmbedding(message.BodyText, message.BodyHTML)
+	hasBody := body != ""
+	if !hasBody {
 		body = message.Snippet
 	}
 	if stripQuoted {
 		body = readableMessageBody(body)
 	}
-	return body
+	return body, hasBody
 }

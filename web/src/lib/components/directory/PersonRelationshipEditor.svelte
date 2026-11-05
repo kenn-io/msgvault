@@ -12,7 +12,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { intervalDateError } from '../../directory/dates';
+  import { intervalDateError, formatPartialDate as partialDate } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type {
     CreatePersonRelationshipRequest,
@@ -203,24 +203,6 @@
   function requestClose(): void {
     if (!submitting) onClose();
   }
-  function partialDate(
-    value:
-      | {
-          year?: number;
-          month?: number;
-          day?: number;
-        }
-      | undefined,
-  ): string {
-    if (!value) return '';
-    return [
-      value.year?.toString().padStart(4, '0'),
-      value.month?.toString().padStart(2, '0'),
-      value.day?.toString().padStart(2, '0'),
-    ]
-      .filter(Boolean)
-      .join('-');
-  }
   function failureMessage(value: unknown, status: number): string {
     if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string')
       return value.message;
@@ -356,7 +338,7 @@
   .editor {
     display: grid;
     gap: var(--space-3);
-    min-width: min(30rem, 80vw);
+    min-width: 0;
   }
   label {
     display: grid;

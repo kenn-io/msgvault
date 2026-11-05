@@ -1,7 +1,7 @@
 package scripts
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +19,9 @@ import (
 func TestPackageShardsWindows(t *testing.T) {
 	r := require.New(t)
 	script, err := filepath.Abs("test-package-shards.ps1")
+	r.NoError(err)
+	// This read makes Go's test cache rerun the test when the child's inputs change.
+	_, err = os.ReadFile(script)
 	r.NoError(err)
 	pwsh, err := exec.LookPath("pwsh")
 	r.NoError(err)
@@ -67,13 +70,32 @@ func record(t *testing.T) {
 	}
 	r.NoError(os.WriteFile(filepath.Join(dir, "fixture_test.go"), []byte(source.String()), 0o600))
 
+	// outcomes reads the test2json events every batch appended to the suite file.
+	outcomes := func(t *testing.T) map[string]string {
+		t.Helper()
+		events, err := os.ReadFile(filepath.Join(dir, "gotestsum", "shardfixture.json"))
+		require.NoError(t, err)
+		got := map[string]string{}
+		for line := range strings.Lines(string(events)) {
+			var event struct {
+				Action  string `json:"Action"`
+				Package string `json:"Package"`
+				Test    string `json:"Test"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(line), &event), line)
+			require.Equal(t, "shardfixture", event.Package, line)
+			if event.Test != "" && (event.Action == "pass" || event.Action == "fail") {
+				got[event.Test] = event.Action
+			}
+		}
+		return got
+	}
+
 	run := func(t *testing.T, timeout, fail string, extra ...string) (string, string, error) {
 		t.Helper()
 		output := t.TempDir()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
 		args := append([]string{"-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec", "-Timeout", timeout}, extra...)
-		cmd := exec.CommandContext(ctx, pwsh, args...)
+		cmd := exec.CommandContext(t.Context(), pwsh, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "SHARD_OUTPUT="+output, "SHARD_FAIL="+fail)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -86,6 +108,13 @@ func record(t *testing.T) {
 			require := require.New(t)
 			output, result, err := run(t, timeout, "")
 			require.NoError(err, result)
+			require.Regexp(`(?m)^--- PASS: Test0000_\w+ \(\d+\.\d+s\)\r?\n(?:--- PASS: .*\n)*ok  \tshardfixture\t\d+\.\d{3}s\r?$`, result,
+				"named passes must precede the package line go test prints")
+			passed := outcomes(t)
+			require.Len(passed, count)
+			for _, name := range want {
+				require.Equal("pass", passed[name], name)
+			}
 			files, err := os.ReadDir(output)
 			require.NoError(err)
 			require.Greater(len(files), 4, "fixture must exceed one command line per shard")
@@ -168,5 +197,7 @@ func record(t *testing.T) {
 		_, result, err := run(t, "1m30s", want[count-1])
 		require.Error(err)
 		require.Contains(result, "shard failure sentinel")
+		require.Regexp(`(?m)^FAIL\tshardfixture\t\d+\.\d{3}s\r?$`, result)
+		require.Equal("fail", outcomes(t)[want[count-1]])
 	})
 }

@@ -94,6 +94,11 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 	assert.Equal(int64(f.BuildingGen), v2, "row 2 embed_gen")
 	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)),
 		"exactly the raced row remains")
+	var saved int
+	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&saved))
+	assert.Equal(1, saved, "a missed content stamp retains its response until the next pass invalidates it")
+	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:2'`).Scan(&saved))
+	assert.Zero(saved, "the completed sibling releases its response")
 
 	// (d) A backstop pass (scans from 0, ignoring the watermark) recovers the
 	// CAS-missed row with its corrected content.

@@ -39,7 +39,7 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity,account"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,kind,mailing_list,after,before,deletion,identity,account"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
@@ -50,6 +50,7 @@ const (
 	exploreFilterParticipant = explorecatalog.FilterParticipant
 	exploreFilterDomain      = explorecatalog.FilterDomain
 	exploreFilterMessageType = explorecatalog.FilterMessageType
+	exploreFilterKind        = explorecatalog.FilterKind
 	exploreFilterMailingList = explorecatalog.FilterMailingList
 	exploreFilterAfter       = explorecatalog.FilterAfter
 	exploreFilterBefore      = explorecatalog.FilterBefore
@@ -84,10 +85,11 @@ const (
 	ExploreGroupKind        ExploreGroupDimension = explorecatalog.GroupKind
 	ExploreGroupYear        ExploreGroupDimension = explorecatalog.GroupYear
 	ExploreGroupMonth       ExploreGroupDimension = explorecatalog.GroupMonth
+	ExploreGroupDay         ExploreGroupDimension = explorecatalog.GroupDay
 )
 
 var exploreGroupDimensions = func() []ExploreGroupDimension {
-	values := explorecatalog.GroupingDimensions()
+	values := explorecatalog.RequestGroupingDimensions()
 	dimensions := make([]ExploreGroupDimension, len(values))
 	for i, value := range values {
 		dimensions[i] = ExploreGroupDimension(value)
@@ -129,10 +131,12 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
+	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day grouping; defaults to UTC"`
+	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
 	SearchMode   string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
-	Grouping     []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1"`
+	Grouping     []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1" doc:"Day counts individual messages; other dimensions count entries, with chats collapsed into conversations"`
 	Presentation string                  `json:"presentation,omitempty" enum:"table"`
 	Sort         []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
 	Cursor       string                  `json:"cursor,omitempty"`
@@ -306,6 +310,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	prepared.query.Search = searchSpec
 	if scope != nil {
 		prepared.query.SentOnly = true
+		prepared.query.PersonInteractionsOnly = scope.Dimension == exploreFilterParticipant
 		if err := applyIdentityScope(&prepared.query.Context, *scope); err != nil {
 			writeError(w, http.StatusConflict, "identity_scope_conflict", err.Error())
 			return
@@ -512,8 +517,8 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	groupingStarted := time.Now()
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
-		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec}, Dimension: string(dimension),
-		GroupKey: request.GroupKey, Sort: sortSpec,
+		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec, SentOnly: request.SentOnly}, Dimension: string(dimension),
+		GroupKey: request.GroupKey, Timezone: request.Timezone, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	addExploreTiming(w, "grouping", time.Since(groupingStarted))
@@ -1054,6 +1059,16 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			}
 		case exploreFilterMessageType:
 			result.MessageTypes = append([]string(nil), filter.Values...)
+		case exploreFilterKind:
+			for _, value := range filter.Values {
+				kind := query.EntryKind(strings.ToLower(value))
+				switch kind {
+				case query.EntryEmail, query.EntryConversation, query.EntryEvent, query.EntryMeeting, query.EntryItem:
+					result.Kinds = append(result.Kinds, kind)
+				default:
+					return result, fmt.Errorf("unknown entry kind %q", value)
+				}
+			}
 		case exploreFilterMailingList:
 			values := append([]string(nil), filter.Values...)
 			if len(result.MailingLists) == 0 {

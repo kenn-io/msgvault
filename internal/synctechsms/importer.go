@@ -239,7 +239,20 @@ func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, true, call.Timestamp, body, body, 0, call)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, store.MessageTypeSynctechCall, senderID, recipientIDs, fromMe, true, call.Timestamp, body, body, 0, call)
+	if err != nil {
+		return 0, err
+	}
+	// Only incoming and outgoing calls connected; a voicemail's duration is
+	// the recording, not a conversation.
+	connected := 0
+	if call.Type == CallIncoming || call.Type == CallOutgoing {
+		connected = call.DurationSeconds
+	}
+	if err := i.store.SetMessageMetadata(messageID, store.CallConnectedMetadata(connected)); err != nil {
+		return 0, fmt.Errorf("record call length: %w", err)
+	}
+	return messageID, nil
 }
 
 func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe, sent bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {

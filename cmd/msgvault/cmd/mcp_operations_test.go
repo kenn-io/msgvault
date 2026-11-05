@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -292,6 +293,31 @@ func TestMCPSyncSourceRejectsUnavailableSourcesBeforeConfirmation(t *testing.T) 
 			assertions.True(result.IsError)
 			assertions.Equal(map[string]any{"error": "source_not_schedulable"}, result.StructuredContent)
 			assertions.Zero(approvals.Load())
+		})
+	}
+}
+
+func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+		return daemonclient.LocalDaemonEndpoint{}, errors.New("synthetic discovery failure")
+	})
+	backend := &daemonMCPOperations{client: client, supported: []string{"get_source_scheduler_status", "sync_source"}}
+	for _, name := range backend.supported {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			result, err := backend.ExecuteOperation(t.Context(), name, map[string]any{"account": "sender@example.com", "source_type": "gmail"})
+			require.Error(err)
+			require.NotNil(result)
+			assert.True(result.IsError)
+			data, marshalErr := json.Marshal(result.Output)
+			require.NoError(marshalErr)
+			assert.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
 		})
 	}
 }

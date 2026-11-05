@@ -40,7 +40,7 @@ test('switching CardDAV connections clears credentials and uses selected setting
     });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: /^CardDAV account/ }).click();
+  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
   await expect(page.getByLabel('Username', { exact: true })).toHaveValue('default@example.com');
   await page.getByLabel('Password', { exact: true }).fill('synthetic-default-password');
   await page.getByLabel('Base URL', { exact: true }).fill('https://draft.example.test/');

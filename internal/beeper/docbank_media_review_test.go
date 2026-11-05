@@ -77,6 +77,7 @@ func preparePendingProcess(t *testing.T, worker *MediaSubmitter, destination str
 }
 
 func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-crash", asset: "mxc://beeper.local/profile-crash",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 72)})
@@ -137,6 +138,7 @@ func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
 }
 
 func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"deleted", "replaced"} {
 		t.Run(change, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -207,6 +209,7 @@ func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
 }
 
 func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-unprepared", asset: "mxc://beeper.local/profile-unprepared",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 73)})
@@ -243,6 +246,7 @@ func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
 }
 
 func TestBeeperMediaDailyRescan(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "original", data: syntheticWAV(800, 24)})
@@ -284,29 +288,23 @@ func TestBeeperMediaDailyRescan(t *testing.T) {
 }
 
 func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite authorizer observes reads under the operation gate")
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: syntheticWAV(800, 25)})
-	world.st.DB().SetMaxOpenConns(1)
-	conn, err := world.st.DB().Conn(t.Context())
-	require.NoError(err)
 	held, rawReadsUnderGate := false, 0
-	require.NoError(conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok)
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
-				rawReadsUnderGate++
-			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(conn.Close())
+	refreshAuthorizer := sqliteAuthorizerRefresher(t, world.st, func(action int, table, _, _ string) int {
+		if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
+			rawReadsUnderGate++
+		}
+		return sqlite3.SQLITE_OK
+	})
+	refreshAuthorizer()
 	worker := NewMediaSubmitter(world.st, world.blobs, nil, "gate-reads", world.dir).WithOperationGate(
 		func(context.Context) (func(), bool) {
 			held = true
+			refreshAuthorizer()
 			return func() { held = false }, true
 		})
 	result, err := worker.RunBatch(t.Context())
@@ -316,6 +314,7 @@ func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
 }
 
 func TestBeeperMediaRawReadFailure(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 26)})
@@ -352,6 +351,7 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 }
 
 func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
+	t.Parallel()
 	t.Run("retain-source-gap", func(t *testing.T) {
 		require, assert := require.New(t), assert.New(t)
 		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/retain-gap",
@@ -487,8 +487,9 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				docbank.mu.Unlock()
 
 				denyRawRead := false
+				var refreshAuthorizer func()
 				if failure == "database" {
-					installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+					refreshAuthorizer = installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 				}
 				calls, finalGate := 0, 1
 				if kind != "retain" {
@@ -501,6 +502,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 					if calls == finalGate {
 						if failure == "database" {
 							denyRawRead = true
+							refreshAuthorizer()
 						} else {
 							cancel()
 						}
@@ -575,12 +577,13 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 			`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("d", 64), stale.AttachmentID)
 		require.NoError(err)
 		denyRawRead := false
-		installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+		refreshAuthorizer := installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 		calls := 0
 		worker.WithOperationGate(func(context.Context) (func(), bool) {
 			calls++
 			if calls == 2 {
 				denyRawRead = true
+				refreshAuthorizer()
 			}
 			return func() { denyRawRead = false }, true
 		})
@@ -890,6 +893,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactReactionRefresh(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/reaction-refresh",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "reaction transcript", data: syntheticWAV(800, 40)})
@@ -940,6 +944,7 @@ func TestBeeperMediaArtifactReactionRefresh(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactRevisionChangeDoesNotReuseReceipt(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/revision-change",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "revision transcript", data: syntheticWAV(800, 43)})
@@ -1025,6 +1030,7 @@ func TestBeeperMediaArtifactRevisionChangeDoesNotReuseReceipt(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/final-read-change",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "final read transcript", data: syntheticWAV(800, 41)})
@@ -1094,6 +1100,7 @@ func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
 }
 
 func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		mutate       func(string) string
@@ -1232,6 +1239,7 @@ func findProcessDelivery(t *testing.T, identities []processDeliveryIdentity, key
 }
 
 func TestBeeperMediaProcessActionFence(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/process-action-fence",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "fence transcript", data: syntheticWAV(800, 45)})
@@ -1296,6 +1304,7 @@ func TestBeeperMediaProcessActionFence(t *testing.T) {
 }
 
 func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t,
 		voiceSpec{id: "voice1", asset: "mxc://beeper.example/reregister-one", mime: "audio/wav",
@@ -1371,6 +1380,7 @@ func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
 }
 
 func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t,
 		voiceSpec{id: "pending", asset: "mxc://beeper.example/full-scan-pending", mime: "audio/wav",
@@ -1439,29 +1449,41 @@ func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
 	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
 }
 
-func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) {
+func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) func() {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite authorizer injects a message_raw query failure")
-	st.DB().SetMaxOpenConns(1)
-	conn, err := st.DB().Conn(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return fmt.Errorf("expected SQLite connection, got %T", driverConn)
+	refresh := sqliteAuthorizerRefresher(t, st, func(action int, table, _, _ string) int {
+		if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
+			return sqlite3.SQLITE_DENY
 		}
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
-				return sqlite3.SQLITE_DENY
+		return sqlite3.SQLITE_OK
+	})
+	refresh()
+	return refresh
+}
+
+// Reinstalling the authorizer expires cached statements so it sees the next execution.
+func sqliteAuthorizerRefresher(t *testing.T, st *store.Store, authorizer func(int, string, string, string) int) func() {
+	t.Helper()
+	st.DB().SetMaxOpenConns(1)
+	return func() {
+		t.Helper()
+		conn, err := st.DB().Conn(t.Context())
+		require.NoError(t, err)
+		require.NoError(t, conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			if !ok {
+				return fmt.Errorf("expected SQLite connection, got %T", driverConn)
 			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(t, conn.Close())
+			sqliteConn.RegisterAuthorizer(authorizer)
+			return nil
+		}))
+		require.NoError(t, conn.Close())
+	}
 }
 
 func TestBeeperMediaOperatorRequired(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: syntheticWAV(800, 27)})
@@ -1493,6 +1515,7 @@ func TestBeeperMediaOperatorRequired(t *testing.T) {
 }
 
 func TestBeeperMediaTimestampOffset(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	candidate := store.BeeperMediaCandidate{SourceType: "beeper", SourceIdentifier: "signal",
 		SourceConversationID: "chat", SourceMessageID: "message-1", SourceAttachmentID: "beeper:mxc://audio",

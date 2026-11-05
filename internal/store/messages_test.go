@@ -1757,6 +1757,29 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 	assert.Equal(0, legacyCount, "legacy duplicate should be deleted")
 }
 
+func TestMigrateSourceMessageIDTransfersLoopDecisionBeforeDeletingLegacyTeamsChatCopy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err)
+	legacyID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	scopedID := insertStoreTestMessage(t, st, source.ID, convID, "chat:19:x@thread.v2:m1")
+	_, err = st.MarkLoopDoneContext(t.Context(), legacyID, []store.LoopMessage{{
+		ID: legacyID,
+	}})
+	require.NoError(err)
+
+	require.NoError(st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"))
+	var state string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT state
+		FROM loop_decisions WHERE message_id = ?`), scopedID).Scan(&state))
+	assert.Equal(store.LoopStateDone, state)
+}
+
 func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1792,7 +1815,7 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 	assert.NotZero(parentID)
 }
 
-func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
+func TestListUnresolvedMessageRepliesAfterUsesBoundedConversationKeysetPages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1833,6 +1856,20 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
 	last, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", second[1].MessageID, 2)
 	require.NoError(err)
 	assert.Empty(last)
+	otherRoom, err := st.EnsureConversation(source.ID, "other-channel", "Other")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET conversation_id = ? WHERE id = ?`), otherRoom, ids[0])
+	require.NoError(err)
+	filtered, err := st.ListUnresolvedMessageRepliesAfterContext(t.Context(), source.ID, "discord", 0, 2, convID)
+	require.NoError(err)
+	require.Len(filtered, 2)
+	wantFiltered := ids[1:3]
+	gotFiltered := []int64{filtered[0].MessageID, filtered[1].MessageID}
+	assert.Equal(wantFiltered, gotFiltered)
+	filtered, err = st.ListUnresolvedMessageRepliesAfterContext(t.Context(), source.ID, "discord", 0, 2, otherRoom)
+	require.NoError(err)
+	require.Len(filtered, 1)
+	assert.Equal(ids[0], filtered[0].MessageID)
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {

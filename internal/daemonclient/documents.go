@@ -161,6 +161,7 @@ func documentIndexStatusFromGenerated(
 		RetryOwners: generatedStatus.RetryOwners, TerminalOwners: generatedStatus.TerminalOwners,
 		MissingOwners:         generatedStatus.MissingOwners,
 		StoredPlaintextChunks: generatedStatus.StoredPlaintextChunks,
+		StoredPlaintextRanges: generatedStatus.StoredPlaintextRanges,
 		FailuresExhausted:     generatedStatus.FailuresExhausted,
 	}}
 	result.Status.Failures = make([]store.DocumentFailureDiagnostic, 0, len(generatedStatus.Failures))

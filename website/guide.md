@@ -5,7 +5,7 @@ back up your archive. What gets saved depends on source access and your media
 settings. Optional hosted processing sends selected data to the providers you
 configure.
 
-See the [0.21.0 changelog](/docs/changelog/#0210) for new features and upgrade
+See the [0.23.0 changelog](/docs/changelog/#0230) for new features and upgrade
 steps.
 
 1. [Capture](#capture)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -35,6 +36,7 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 }
 
 func TestExploreAttachmentByteEstimates(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name, sourceType, messageType string
 		sizeEstimate, wantBytes       int64
@@ -77,6 +79,7 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 // mailing-list dimension that drops empty values, splits case variants into
 // separate rows, or applies a broader-than-exact drill predicate.
 func TestExploreGroupsMailingListsPreserveAggregateDrillPopulation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -124,6 +127,7 @@ func TestExploreGroupsMailingListsPreserveAggregateDrillPopulation(t *testing.T)
 // drilling into 'email' (the filter that group row applies) must reproduce
 // the group row's count.
 func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -154,11 +158,38 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down filter must reproduce the group count")
 }
 
+func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 101, Subject: "Older SMS", MessageType: "sms", SentAt: base})
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 101, Subject: "Newer MMS", MessageType: "mms", SentAt: base.Add(time.Hour)})
+	engine := b.BuildEngine()
+
+	groups, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: messageTypeDimension, Page: PageSpec{Limit: 50},
+	})
+	require.NoError(err)
+	require.Len(groups.Rows, 1)
+	assert.Equal("mms", groups.Rows[0].Key)
+	assert.Equal(int64(1), groups.Rows[0].Count)
+
+	entries, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{MessageTypes: []string{"sms"}}, Page: PageSpec{Limit: 50},
+	})
+	require.NoError(err)
+	require.Len(entries.Rows, 1)
+	assert.Equal("sms", entries.Rows[0].MessageType)
+}
+
 // TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank pins the
 // exact-key lookup group detail hydration depends on: the requested group
 // must be returned even when other groups outrank it, so a top-N page can
 // never make a valid selection look unavailable.
 func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -185,6 +216,7 @@ func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
 }
 
 func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -202,6 +234,7 @@ func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
 }
 
 func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -235,6 +268,7 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 }
 
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -297,6 +331,7 @@ func linkedParticipantExploreFixture(t *testing.T) (b *TestDataBuilder, alice, a
 }
 
 func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, _, _ := linkedParticipantExploreFixture(t)
@@ -318,6 +353,7 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 }
 
 func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, curated, want string
 		files               bool
@@ -370,6 +406,7 @@ func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
 }
 
 func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.test")
 	alice := b.AddParticipant("alice@alpha.example.test", "alpha.example.test", "Alice")
@@ -419,6 +456,7 @@ func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {
 }
 
 func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, alice, alias := linkedParticipantExploreFixture(t)
@@ -446,6 +484,7 @@ func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
@@ -463,6 +502,7 @@ func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCountsPerEntryActionSupport(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -483,6 +523,7 @@ func TestExploreSelectionStatsCountsPerEntryActionSupport(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -502,6 +543,7 @@ func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
 
 // Gmail and Graph mail can be deleted at the source. IMAP mail cannot.
 func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -524,6 +566,7 @@ func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
 }
 
 func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
+	t.Parallel()
 	for _, deletion := range []DeletionFilter{DeletionAny, DeletionActive} {
 		t.Run(string(deletion), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -553,6 +596,7 @@ func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -576,6 +620,7 @@ func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
 }
 
 func TestExploreFilesReturnsBoundedChronologicalAttachmentFacts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -601,6 +646,7 @@ func TestExploreFilesReturnsBoundedChronologicalAttachmentFacts(t *testing.T) {
 }
 
 func TestExploreFilesUsesDurableAttachmentIdentityForDuplicateMetadataPages(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -626,6 +672,7 @@ func TestExploreFilesUsesDurableAttachmentIdentityForDuplicateMetadataPages(t *t
 }
 
 func TestExploreMatchCountsBatchesExactLogicalRowCounts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("+15550000000", messageTypeIMessage)
@@ -643,4 +690,47 @@ func TestExploreMatchCountsBatchesExactLogicalRowCounts(t *testing.T) {
 	require.NoError(t, err)
 	assertions.Equal(map[string]int64{"source:1:conversation:700": 2}, result.Counts)
 	assertions.NotEmpty(result.CacheRevision)
+}
+
+func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "slack")
+	alice := b.AddParticipant("alice@example.net", "example.net", "Alice Example")
+	bob := b.AddParticipant("bob@example.net", "example.net", "Bob Example")
+	for _, instant := range []string{"2023-12-31T23:59:59Z", "2024-01-01T00:00:00Z", "2024-01-01T23:59:59Z", "2024-02-29T12:00:00Z", "2025-01-01T00:00:00Z"} {
+		at, err := time.Parse(time.RFC3339, instant)
+		require.NoError(err)
+		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 50, MessageType: "slack", SentAt: at, SizeEstimate: 10})
+		b.AddFrom(id, alice, "Alice Example")
+		b.AddTo(id, bob, "Bob Example")
+		if instant == "2024-01-01T00:00:00Z" {
+			b.AddAttachment(id, 15, "notes.txt")
+		}
+	}
+	draft := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 50, MessageType: "slack", SentAt: time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(draft, alice, "Alice Example")
+	b.unsentMessages = "(SELECT " + strconv.FormatInt(draft, 10) + "::BIGINT AS message_id)"
+	engine := b.BuildEngine()
+	context := Context{Domains: []string{"example.net"}, After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), Before: new(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))}
+	result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day",
+		Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366},
+	})
+	require.NoError(err)
+	require.Len(result.Rows, 2)
+	assert.Equal("2024-01-01", result.Rows[0].Key)
+	assert.Equal(int64(2), result.Rows[0].Count)
+	assert.Equal(int64(25), result.Rows[0].EstimatedBytes)
+	assert.Equal("2024-02-29", result.Rows[1].Key)
+	assert.Equal(int64(1), result.Rows[1].Count)
+	local, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366}})
+	require.NoError(err)
+	require.Len(local.Rows, 3)
+	assert.Equal("2023-12-31", local.Rows[0].Key)
+	for _, timezone := range []string{"Invalid/Zone", "Local"} {
+		_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Timezone: timezone})
+		require.ErrorContains(err, "invalid timezone")
+	}
 }

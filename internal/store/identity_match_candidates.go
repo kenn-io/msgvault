@@ -720,7 +720,7 @@ func (s *Store) decideIdentityMatchCandidateContext(
 			state != IdentityMatchStateRejected &&
 			current.LeftKind == IdentityMatchParticipant &&
 			current.RightKind == IdentityMatchParticipant {
-			edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+			edges, err := s.loadComponentEdgesTxContext(ctx, tx, current.LeftID, current.RightID)
 			if err != nil {
 				return err
 			}
@@ -788,7 +788,7 @@ func (s *Store) decideIdentityMatchCandidateContext(
 func (s *Store) rejectSystemAcceptedIdentityMatchTxContext(
 	ctx context.Context, tx *loggedTx, leftID, rightID, candidateID int64,
 ) error {
-	originalEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	originalEdges, err := s.loadComponentEdgesTxContext(ctx, tx, leftID, rightID)
 	if err != nil {
 		return err
 	}
@@ -836,7 +836,7 @@ func (s *Store) rejectSystemAcceptedIdentityMatchTxContext(
 		return nil
 	}
 	if err := s.reapplyAcceptedIdentityMatchAfterRejectionTxContext(
-		ctx, tx, candidateID, originalEdges,
+		ctx, tx, candidateID, leftID, rightID, originalEdges,
 	); err != nil {
 		return err
 	}
@@ -854,9 +854,10 @@ func (s *Store) reapplyAcceptedIdentityMatchAfterRejectionTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 	rejectedCandidateID int64,
+	leftID, rightID int64,
 	originalEdges []linkEdge,
 ) error {
-	currentEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	currentEdges, err := s.loadComponentEdgesTxContext(ctx, tx, leftID, rightID)
 	if err != nil {
 		return err
 	}
@@ -1098,9 +1099,7 @@ func (s *Store) rewriteIdentityMatchCandidatesForEndpointMergeTx(
 			candidate.LeftKind, candidate.LeftID, candidate.RightKind, candidate.RightID,
 		)
 		if errors.Is(canonicalErr, ErrIdentityMatchSelfLink) {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE participant_links SET identity_match_candidate_id = NULL
-				 WHERE identity_match_candidate_id = ?`, candidate.ID); err != nil {
+			if err := moveParticipantLinkOwnerTx(ctx, tx, oldID, newID, candidate.ID, nil); err != nil {
 				return fmt.Errorf("clear owner of self-link candidate: %w", err)
 			}
 			if err := recordIdentityMatchCandidateRedirectTx(
@@ -1150,7 +1149,7 @@ func (s *Store) rewriteIdentityMatchCandidatesForEndpointMergeTx(
 			conflictNote = "person merge reconciled opposing identity decisions"
 		}
 		if err := s.collapseIdentityMatchCandidateMergeGroupTx(
-			ctx, tx, group, appliedAccepted, preferredID, conflictNote,
+			ctx, tx, oldID, newID, group, appliedAccepted, preferredID, conflictNote,
 		); err != nil {
 			return err
 		}
@@ -1187,9 +1186,17 @@ func (s *Store) loadIdentityMatchCandidateMergeCollisionsTx(
 	return collisions, nil
 }
 
+func moveParticipantLinkOwnerTx(ctx context.Context, tx *loggedTx, oldID, newID, from int64, to any) error {
+	_, err := tx.ExecContext(ctx, `UPDATE participant_links SET identity_match_candidate_id = ?
+		WHERE identity_match_candidate_id = ? AND (participant_a IN (?, ?) OR participant_b IN (?, ?))`,
+		to, from, oldID, newID, oldID, newID)
+	return err
+}
+
 func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 	ctx context.Context,
 	tx *loggedTx,
+	oldID, newID int64,
 	group []identityMatchCandidateMergeRow,
 	appliedAccepted bool,
 	preferredID int64,
@@ -1242,9 +1249,7 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 		); err != nil {
 			return fmt.Errorf("move identity match candidate evidence: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE participant_links
-			SET identity_match_candidate_id = ?
-			WHERE identity_match_candidate_id = ?`, winner.ID, loser.ID); err != nil {
+		if err := moveParticipantLinkOwnerTx(ctx, tx, oldID, newID, loser.ID, winner.ID); err != nil {
 			return fmt.Errorf("move identity match link ownership: %w", err)
 		}
 		if err := recordIdentityMatchCandidateRedirectTx(

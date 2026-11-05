@@ -1,12 +1,16 @@
 <script lang="ts">
-  import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
+  import { downloadRawMessage } from '../../api/download';
+  import { relationshipDestination, tasksSettingsDestination } from './navigation';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
     Button,
     CommandPalette,
+    FlashBanner,
+    showFlash,
+    dismissFlash,
     getThemeMode,
     IconButton,
-    ThemeToggle,
+    PageHeader,
     appShortcuts,
     initShortcuts,
     type PaletteCommand,
@@ -14,6 +18,7 @@
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { visualReadiness } from '../../search/visual-ready.svelte';
   import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
@@ -33,17 +38,14 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { FILE_FAMILY_LABELS } from '../../explore/labels';
-  import { ExploreLoader } from '../../explore/loader.svelte';
+  import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
-  import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import { RelationshipsController } from '../../relationships/controller.svelte';
+  import { ExploreSelectionState, ExploreState, navigationFingerprint } from '../../explore/state.svelte';
+  import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
-  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
-  import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
-  import { OperationsController } from '../../operations/controller.svelte';
+  import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
   import type { OperationSettingsTarget } from '../../operations/labels';
   import type { OperationRunDetail, OperationsURLState } from '../../operations/models';
   import {
@@ -55,23 +57,20 @@
   import {
     createAppearancePreferences,
     type AppearanceDefaults,
-    type DensityPreference,
     type ThemePreference,
   } from '../../theme/preferences.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SaveViewDialog from '../saved-views/SaveViewDialog.svelte';
-  import SavedViewsWorkspace from '../saved-views/SavedViewsWorkspace.svelte';
   import SourcesWorkspace from '../sources/SourcesWorkspace.svelte';
-  import OperationsWorkspace from '../operations/OperationsWorkspace.svelte';
+  import DeletionReview from '../deletions/DeletionReview.svelte';
+  import FileFilters from '../files/FileFilters.svelte';
+  import { fileFilterChips } from '../files/filter-chips';
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
-  import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
-  import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
-  import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
+  import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
-  import PageHeader from './PageHeader.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
@@ -81,12 +80,20 @@
   import DisplayMenu from './DisplayMenu.svelte';
   import NavigationDrawer from './NavigationDrawer.svelte';
   import SearchBar from '../search/SearchBar.svelte';
-  import { SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
+  import { NAVIGATION_ITEMS, SETTINGS_ITEM, SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
   import Menu from '@lucide/svelte/icons/menu';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
+  import { ShellData, viewIncompatibility, viewState } from './shell-data.svelte';
+  import { readerPosition } from '../../explore/reader-position.svelte';
+  import type { JobTarget } from '../../jobs/jobs';
+  import type { SavedView } from '../../api/generated/models';
+  import RunHistoryDialog from './RunHistoryDialog.svelte';
+  import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
+
   const media = mediaReadiness();
+  const visual = visualReadiness();
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -96,11 +103,15 @@
       (key: number) => void,
       SettingsNavigationTarget | undefined,
       string,
-      (categoryID: string) => void
+      (categoryID: string) => void,
+      () => void,
+      (authority: RelatedOperationStatus) => void,
+      () => void,
+      OperationsController,
+      () => Promise<void>
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
-    archiveContextKey?: string;
   }
   let {
     client,
@@ -109,7 +120,6 @@
     settings = undefined,
     appearanceDefaults = { theme: 'system', density: 'compact' },
     searchModeDefault = undefined,
-    archiveContextKey = '',
   }: Props = $props();
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
@@ -161,34 +171,9 @@
     if (fileCount === null) return '';
     return `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`;
   });
-  // Grouped Files hides the Filename and Type controls, but the group request still applies them.
-  const groupedFileFilterChips = $derived.by(() => {
-    const { groupingChain, fileFilenameQuery, fileMIMEFamilies } = exploreState.current;
-    if (groupingChain.length === 0) return [];
-    const chips = [];
-    if (fileFilenameQuery) {
-      chips.push({
-        key: 'filename',
-        label: `Filename: “${fileFilenameQuery}”`,
-        removeLabel: 'Remove filename filter',
-        onRemove: () =>
-          commitNavigation({ fileFilenameQuery: '', activeRow: null, selectedRow: null, scrollAnchor: null }),
-      });
-    }
-    if (fileMIMEFamilies.length > 0) {
-      chips.push({
-        key: 'type',
-        label: `Type: ${fileMIMEFamilies.map((family) => FILE_FAMILY_LABELS[family]).join(', ')}`,
-        removeLabel: 'Remove type filter',
-        onRemove: () =>
-          commitNavigation({ fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }),
-      });
-    }
-    return chips;
-  });
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
-  const archiveNavigationFingerprint = $derived(canonicalFingerprint(exploreState.current));
+  const archiveNavigationFingerprint = $derived(navigationFingerprint(exploreState.current));
 
   $effect(() => {
     void archiveNavigationFingerprint;
@@ -206,43 +191,17 @@
       archiveWasOpen = id !== undefined;
     });
   });
-  const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Everything order.';
+  let fileFiltersReset = $state(0);
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
-    // Typing a search query is itself a user-initiated interaction, even
-    // though it only ever writes committed *draft* state (never a
-    // commit* wrapper) — see the disarming note below. Firing on its own
-    // 250ms after the last keystroke, with no navigation ever committing,
-    // must disarm the one-shot landing fallback exactly like beforeCommit
-    // does; only beforeCommit's own explicit flush of THIS callback (a
-    // navigation committing while the patch is still pending) reached it
-    // before.
-    arrivedWithoutExploreParam = false;
     exploreState.replaceCommittedDraft(patch);
   }, SEARCH_TYPING_DEBOUNCE_MS);
-  // A pending debounced search patch (People/Domains identity search, Files
-  // filename search) applies to whatever state is current when it eventually
-  // fires. If a navigation commits while the patch is still pending, flushing
-  // it first applies the typed text immediately so it is not silently
-  // dropped; the navigation patch is then committed on top and wins for the
-  // fields it touches. Every write to ExploreState funnels through these
-  // wrappers so the pending patch is flushed before any navigation commits.
-  // This shared path is also where the one-shot landing fallback (see
-  // `arrivedWithoutExploreParam` below) gets invalidated: any user-initiated
-  // navigation past the initial landing means a later explicit visit to the
-  // Relationships hub must show its own degraded state, not bounce away.
   function beforeCommit(): void {
+    // Commit pending search text before navigation captures the current state.
     debouncedSearchPatch.flush();
-    arrivedWithoutExploreParam = false;
   }
-  // Transient replaces (active row, scroll anchor) are user navigation too:
-  // apply any pending typed search patch first so it cannot fire later and
-  // clobber the newer transient state with the null active row / scroll
-  // anchor it snapshotted at typing time. Unlike beforeCommit this does not
-  // disarm the landing fallback, because transient replaces also fire
-  // programmatically (e.g. the first loaded row auto-activating); a flush of
-  // a pending patch still disarms it inside the debounced callback itself.
   function replaceTransient(patch: Partial<ExploreURLState>): void {
+    // Apply pending search text before focus or scroll updates replace this entry.
     debouncedSearchPatch.flush();
     exploreState.replaceTransient(patch);
   }
@@ -270,19 +229,11 @@
   }
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitWorkspace(workspace);
-  }
-  function openDirectoryFromRelationship(participantID: number): void {
-    beforeCommit();
-    directoryController.resetForPromotion();
-    directoryPromotionParticipantID = participantID;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: null });
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, peopleDuplicates: false, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
@@ -303,33 +254,57 @@
     commitWorkspace('settings');
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
-  function openOperations(
-    operationLane: OperationsURLState['operationLane'],
-    operationKind: OperationsURLState['operationKind']
-  ): void {
-    announceOperation('Opening filtered operation history.');
-    commitNavigation({
-      workspace: 'operations',
-      operationLane,
-      operationKind,
-      operationState: '',
-      operationStartedFrom: '',
-      operationStartedBefore: '',
-      operationRunID: null,
-      operationStatus: ''
-    });
+  let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
+  let sourcesPage = $state<{ refresh: () => void }>();
+  const runHistory = $derived(exploreState.current.operationHistory
+    ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
+    : undefined);
+  function setRunHistory(state: OperationsURLState): void {
+    beforeCommit();
+    exploreState.openOperationHistory(state);
   }
+  function closeRunHistory(): void {
+    beforeCommit();
+    exploreState.closeOperationHistory();
+  }
+  let displayOpen = $state(false);
+  let personMessages = $state<MessagesTable>();
+  let resultsWidth = $state(0);
+  const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
+  const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
+  const operationsController = new OperationsController(untrack(() => client));
+  const shellData = new ShellData(untrack(() => client), operationsController);
 
+  function openOperations(kind: OperationsURLState['operationKind'] = ''): void {
+    setRunHistory(defaultOperationsState(kind));
+  }
+  function openJob(target: JobTarget): void {
+    if (target.kind === 'source' || target.kind === 'status') openOperationAuthority(target.kind === 'source' ? 'listSourceStatus' : target.authority);
+    else if (target.kind === 'setting') setUpOperation(target.target);
+    else setRunHistory({ ...defaultOperationsState(target.operationKind), operationRunID: target.operationRunID });
+  }
+  async function flashViewError(result: Promise<string | undefined>): Promise<void> {
+    const error = await result;
+    if (error) showFlash(error, { tone: 'danger', durationMs: 8000 });
+  }
+  function flashDecisionError(message: string): void {
+    if (exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates) announceOperation(message);
+    else showFlash(message, { tone: 'danger', durationMs: 8000, action: { label: 'Review duplicates', onclick: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true }) } });
+  }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
+  // Past runs links to another workspace drop the reader selection, as a workspace
+  // switch does, so a meeting under the dialog does not reappear over the destination.
+  function leaveRunHistory(patch: Partial<ExploreURLState>): void {
+    commitNavigation({ ...defaultOperationsState(), operationHistory: false, selectedRow: null, conversationAnchor: null, ...patch });
+  }
+
   function openOperationAuthority(target: RelatedOperationStatus): void {
-    if (target === 'listSourceStatus') {
-      announceOperation('Opening source status.');
-      commitWorkspace('sources');
-      return;
-    }
-    if (target === 'getCardDAVStatus') {
-      openCardDAVSettings();
+    if (target === 'listSourceStatus' || target === 'getCardDAVStatus') {
+      announceOperation(target === 'listSourceStatus' ? 'Opening source status.' : 'Opening CardDAV settings.');
+      leaveRunHistory({ workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
+        ...(target === 'getCardDAVStatus' ? { settingsCategory: 'carddav', settingsAuthority: '' } : {}) });
+      if (target === 'listSourceStatus') sourcesPage?.refresh();
       return;
     }
     const statusTargets: Record<
@@ -341,20 +316,22 @@
       getVisualAttachmentStatus: 'Opening live visual attachment status.'
     };
     announceOperation(statusTargets[target]);
-    commitNavigation({ workspace: 'operations', operationStatus: target });
+    setRunHistory({ ...(runHistory ?? defaultOperationsState()), operationStatus: target });
   }
 
   function openVisualAttachmentSettings(): void {
-    commitNavigation({
-      workspace: 'settings', settingsCategory: 'search', settingsAuthority: 'visual_attachments'
-    });
+    leaveRunHistory({ workspace: 'settings', settingsCategory: 'search', settingsAuthority: 'visual_attachments' });
   }
 
   function setUpOperation(target: OperationSettingsTarget): void {
-    commitNavigation({ workspace: 'settings', ...target });
+    leaveRunHistory({ workspace: 'settings', ...target });
   }
 
-  setContext('msgvault:open-carddav-operations', () => openOperations('contacts', 'carddav_sync'));
+  setContext('msgvault:open-carddav-operations', () => openOperations('carddav_sync'));
+  setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave'], cancel: ExploreState['cancelHeldLeave']) => {
+    exploreState.holdLeave = hold;
+    exploreState.cancelHeldLeave = cancel;
+  });
   function consumeCardDAVSettingsRequest(key: number): void {
     if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;
   }
@@ -387,25 +364,25 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
+    () => { void relationshipsController.loadList(exploreState.predicate()); void identityChanged(); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
     (patch) => commitNavigation(patch),
+    async result => {
+      if (!result.ok && result.kind !== 'merge_required') flashDecisionError(result.message);
+      if (result.ok) await reconcileIdentity();
+    },
   );
-  const relationshipReviewController = new RelationshipReviewController(
-    untrack(() => client),
-    (patch) => commitNavigation(patch),
-  );
-  const factLedgerController = new FactLedgerController(untrack(() => client));
-  const operationsController = new OperationsController(
-    untrack(() => client),
-    (patch) => commitNavigation(patch)
-  );
-  // Participant IDs only enter here from a successfully loaded
-  // /participants/{id} Relationship detail. It is intentionally ephemeral:
-  // browser restoration and ordinary Directory navigation never invent a
-  // promotion context.
-  let directoryPromotionParticipantID = $state<number>();
+  async function reconcileIdentity(): Promise<void> {
+    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+  }
+  async function identityChanged(): Promise<void> {
+    await Promise.all([
+      shellData.refreshDuplicates(),
+      directoryReviewController.invalidate(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates),
+    ]);
+  }
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
   let cardDAVSettingsRequestKey = 0;
   const settingsNavigationTarget = $derived(exploreState.current.workspace === 'settings'
@@ -422,6 +399,43 @@
   let drawerOpen = $state(false);
   let drawerOpenerHost = $state<HTMLElement>();
   let shellRoot = $state<HTMLElement>();
+  let flashRoot = $state<HTMLElement>();
+  $effect(() => {
+    const view = shellData.pending;
+    if (view) return untrack(() => stageUndo(`Deleted ${view.name}`, () => undoViewDeletion(view), () => void flashViewError(shellData.expireDelete())));
+  });
+  $effect(() => {
+    const queued = directoryReviewController.pending;
+    if (queued) return untrack(() => stageUndo(queued.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', () => undoDuplicateDecision(queued.candidate.id), () => void directoryReviewController.settleDecision()));
+  });
+
+  /** The flash only offers Undo; the timer and pagehide make the staged change final. */
+  function stageUndo(message: string, undo: () => Promise<void>, expire: () => void): () => void {
+    const flashID = showFlash(message, { durationMs: 8000, action: { label: 'Undo', onclick: () => void undo() } });
+    const timer = setTimeout(expire, 8000);
+    const refocus = (target: () => HTMLElement | null | undefined) => void tick().then(() => document.activeElement === document.body && target()?.focus());
+    window.addEventListener('pagehide', expire);
+    refocus(() => [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1));
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', expire);
+      dismissFlash(flashID);
+      refocus(() => shellRoot?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? navigationFocusTarget());
+    };
+  }
+
+  async function undoViewDeletion(view: SavedView): Promise<void> {
+    await shellData.undoDelete();
+    await tick();
+    shellRoot?.querySelector<HTMLElement>(`[data-saved-view-id="${view.id}"] .saved-view__open`)?.focus();
+  }
+
+  async function undoDuplicateDecision(candidateID: number): Promise<void> {
+    directoryReviewController.undoDecision();
+    await tick();
+    document.getElementById(`duplicate-${candidateID}`)?.focus();
+  }
+
   let sidebarCollapsed = $state(readSidebarCollapsed());
 
   function readSidebarCollapsed(): boolean {
@@ -448,7 +462,11 @@
   // Below NARROW_WIDTH the sidebar is not rendered, so the drawer opener
   // stands in for the current navigation item.
   function navigationFocusTarget(): HTMLElement | null {
-    return document.querySelector<HTMLElement>('button[aria-current="page"]') ?? drawerOpener();
+    const navigation = document.querySelector<HTMLElement>('button[aria-current="page"]') ?? drawerOpener();
+    if (navigation) return navigation;
+    const heading = shellRoot?.querySelector<HTMLElement>('.app-main h1') ?? null;
+    heading?.setAttribute('tabindex', '-1');
+    return heading;
   }
 
   // trapFocus restores focus while the page column may still be inert, so
@@ -472,44 +490,22 @@
   });
 
   $effect(() => {
-    if (exploreState.current.workspace !== 'operations') return;
-    const operationState: OperationsURLState = {
-      operationLane: exploreState.current.operationLane,
-      operationKind: exploreState.current.operationKind,
-      operationState: exploreState.current.operationState,
-      operationStartedFrom: exploreState.current.operationStartedFrom,
-      operationStartedBefore: exploreState.current.operationStartedBefore,
-      operationRunID: exploreState.current.operationRunID,
-      operationStatus: exploreState.current.operationStatus
-    };
-    const context = archiveContextKey;
-    untrack(() => { void operationsController.applyURLState(operationState, context); });
+    const active = enabled;
+    untrack(() => { if (active) void shellData.refresh(); });
   });
-  // A default landing (no `explore` param at all — the very first visit,
-  // not a URL that named a workspace) starts on the Relationships hub. If
-  // the analytical engine turns out to be unavailable, that default silently
-  // steps down to Everything instead of leaving a first-time visitor on a
-  // hub that can't rank anything. An explicit URL naming (or renaming, via
-  // the legacy people/domains rewrite) relationships is a deliberate choice
-  // and keeps showing the hub's own degraded state instead.
-  //
-  // This is a one-shot allowance for the INITIAL landing only: it is
-  // invalidated (set false) on the first user-initiated navigation — any
-  // commit* wrapper call (see `beforeCommit` above) or a Back/Forward
-  // popstate (see `handleHistoryFocus` below) — so a user who lands by
-  // default, navigates elsewhere, then explicitly clicks back into
-  // Relationships later is never silently bounced away again.
-  let arrivedWithoutExploreParam = untrack(() => {
-    const parameters = new URLSearchParams(window.location.search);
-    return !parameters.has('workspace') && !parameters.has('explore');
+  onMount(() => {
+    shellData.start();
+    if (enabled) void shellData.jobs.refresh();
+    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); void visual?.ready; } };
+    window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener('focus', refresh); shellData.stop(); };
   });
-  let landingFallbackApplied = false;
   let contextualViewerFile = $state<FileViewerTarget>();
   let contextualViewerReturnFocus = $state<HTMLElement>();
   let previousAttachmentID: number | undefined;
   let selectionPreflight = $state<ExplorePreflight>();
   let selectionPreflightController: AbortController | undefined;
-  let pendingDeletionReview = $state<'explicit' | 'all_matching'>();
+  let pendingDeletionReview = $state<GeneratedExploreSelection>();
   let searchInput = $state<HTMLInputElement>();
   // The loader also drives the Files-shell grouped view (AppShell gates its
   // internal load effect on `workspace === 'files' && groupingChain.length >
@@ -525,7 +521,7 @@
       isEnabled: () => enabled,
       onPredicateChange: () => selection.clear(),
       onPagingNotice: (message) => {
-        sortNotice = message ?? DEFAULT_SORT_NOTICE;
+        sortNotice = message ?? '';
       },
       onRestorationFocus: () => focusGrid(),
       onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && !media?.absent ? undefined : count), signal); },
@@ -537,41 +533,32 @@
   // behind an {#if}, so it is destroyed and recreated on every switch away
   // from and back to 'everything'.
   const everythingSession = new EverythingSessionState();
-  const archiveStatus = $derived(
-    loader.loading
-      ? { tone: 'working' as const, label: 'Searching', text: 'Searching' }
-      : loader.error || loader.unavailable
-        ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
-        : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
-  );
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => loader.errorKind ?? (exploreState.current.query.trim() ? 'search' : 'other')); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
     loader.submitted = true;
     loader.retry();
     const workspace = exploreState.current.workspace;
+    if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       focusGrid();
       return;
     }
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitSearchIn('everything', query, mode);
   }
   let paletteOpen = $state(false);
   let keyboardHelpOpen = $state(false);
   let keyboardHelpReturnFocus: HTMLElement | undefined;
   let keyboardHelpScopeCleanup: (() => void) | undefined;
-  let sortNotice = $state(DEFAULT_SORT_NOTICE);
+  let sortNotice = $state('');
   let editableScopeCleanup: (() => void) | undefined;
   let previousSortNoticeWorkspace = untrack(() => exploreState.current.workspace);
   // An epoch is a monotonically increasing restoration event, not a boolean
   // mode. Capture the initial value so ordinary URL commits do not turn into
   // repeated page-one reloads merely because the initial epoch is positive.
-  let appliedDirectoryRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-  let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-  let appliedFactLedgerRestorationEpoch = untrack(() => exploreState.restorationEpoch);
+  let appliedDirectoryReviewContext = untrack(() => ({ epoch: exploreState.restorationEpoch, active: false }));
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
@@ -581,53 +568,14 @@
   // component tests, but normal app navigation reaches the controller here.
   $effect(() => {
     const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
-    appliedDirectoryRestorationEpoch = restorationEpoch;
-    if (exploreState.current.workspace !== 'directory') return;
-    const directoryState = {
-      directoryQuery: exploreState.current.directoryQuery,
-      directoryContactState: exploreState.current.directoryContactState,
-      directoryCategory: exploreState.current.directoryCategory,
-      directoryOrganization: exploreState.current.directoryOrganization,
-      directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-      directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-      directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-      directorySort: exploreState.current.directorySort,
-      directoryPersonID: exploreState.current.directoryPersonID,
-    };
-    untrack(() => directoryController.applyURLState(directoryState, historyRestoration));
-  });
-  // Review offsets are ephemeral like Directory cursors. A Back/Forward
-  // restoration always starts its restored queue at page zero, while an
-  // ordinary workspace round trip keeps the AppShell-owned request/page.
-  $effect(() => {
-    const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
-    appliedDirectoryReviewRestorationEpoch = restorationEpoch;
-    const relationshipState = exploreState.current.relationshipReviewState;
-    const factActive =
-      exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
-    const factHistoryRestoration = factActive && restorationEpoch !== appliedFactLedgerRestorationEpoch;
-    if (factActive) appliedFactLedgerRestorationEpoch = restorationEpoch;
-    untrack(() =>
-      factLedgerController.applyContext(factActive, exploreState.current.directoryPersonID, factHistoryRestoration),
-    );
-    if (exploreState.current.workspace !== 'directory_review') {
-      untrack(() => relationshipReviewController.applyContext(false, relationshipState, historyRestoration));
-      return;
-    }
-    const reviewState = {
-      reviewKind: exploreState.current.reviewKind,
-      identityState: exploreState.current.identityState,
-    };
-    untrack(() => directoryReviewController.applyURLState(reviewState, historyRestoration));
-    untrack(() =>
-      relationshipReviewController.applyContext(
-        reviewState.reviewKind === 'relationship',
-        relationshipState,
-        historyRestoration,
-      ),
-    );
+    const active = exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates;
+    const historyRestoration = !appliedDirectoryReviewContext.active || restorationEpoch !== appliedDirectoryReviewContext.epoch;
+    appliedDirectoryReviewContext = { epoch: restorationEpoch, active };
+    const identityState = exploreState.current.identityState;
+    untrack(() => {
+      void directoryReviewController.settleDecision();
+      if (active) directoryReviewController.applyURLState({ identityState }, historyRestoration);
+    });
   });
   $effect(() => {
     const mode = getThemeMode();
@@ -651,7 +599,7 @@
     untrack(() => {
       if (workspace !== previousSortNoticeWorkspace) {
         previousSortNoticeWorkspace = workspace;
-        sortNotice = DEFAULT_SORT_NOTICE;
+        sortNotice = '';
       }
     });
   });
@@ -707,18 +655,7 @@
     const target = selectionPreflight?.action_targets.find((item) => item.action === 'export');
     if (!target || !apiSelection || selectionPreflight?.count !== 1) return;
     try {
-      const { data, response } = await generatedGetCLIMessageRaw(
-        { id: String(target.message_id) },
-        client,
-      );
-      if (!response.ok || data === undefined)
-        throw new Error('The authorized raw message export is no longer available.');
-      const objectURL = URL.createObjectURL(data);
-      const anchor = document.createElement('a');
-      anchor.href = objectURL;
-      anchor.download = target.filename;
-      anchor.click();
-      URL.revokeObjectURL(objectURL);
+      await downloadRawMessage(client, target.message_id, target.filename);
     } catch (cause) {
       loader.errorKind = 'other';
       loader.error = cause instanceof Error ? cause.message : 'Unable to export the selected message.';
@@ -727,16 +664,15 @@
   function openDeletionReview(mode: 'explicit' | 'all_matching'): void {
     const candidate = apiSelection;
     if (exploreState.current.workspace !== 'everything' || !candidate || candidate.mode !== mode) return;
-    pendingDeletionReview = mode;
-    commitWorkspace('deletions');
+    pendingDeletionReview = candidate;
   }
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
+    if (exploreState.holdNavigation(state, () => void openSavedView(state))) return;
     selection.clear();
-    replaceCommittedNavigation(state);
+    commitNavigation(state);
+    if (exploreState.current.workspace === 'settings') return;
     await tick();
-    const grid = focusableResultsGrid();
-    if (grid) grid.focus();
-    else searchInput?.focus();
+    (focusableResultsGrid() ?? searchInput)?.focus();
   }
   $effect(() => {
     const attachmentID = selectedAttachmentID;
@@ -791,17 +727,22 @@
     editableScopeCleanup = focused ? appShortcuts.pushScope('everything-editable') : undefined;
   }
   function focusGrid(): void {
+    if (document.querySelector('[aria-modal="true"]')) return;
     focusableResultsGrid()?.focus();
   }
   async function restoreHistoryFocus(): Promise<void> {
     await tick();
+    if (runHistory) {
+      await historyDialog?.restoreFocus();
+      return;
+    }
     if (exploreState.current.workspace === 'everything') {
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
+    if (exploreState.current.workspace === 'settings' && document.activeElement?.closest('.app-main')) return;
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? focusableResultsGrid()
-      : null;
+      ? focusableResultsGrid() : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
@@ -815,8 +756,8 @@
   // left out; grouped Files uses the same GroupTable as grouped Everything.
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>([
-      '[role="grid"][aria-label="Everything results"]',
-      '[role="grid"][aria-label^="Everything grouped by"]',
+      '[role="grid"][aria-label="Messages results"]',
+      '[role="grid"][aria-label^="Messages grouped by"]',
       '[role="grid"][aria-label^="Files grouped by"]',
     ].join(', '));
   }
@@ -826,7 +767,7 @@
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
-    if (!grid || event.target === grid) return;
+    if (!grid || event.target === grid || (event.target instanceof Element && event.target.closest('[role="grid"]') && event.target.closest('[role="grid"]') !== grid)) return;
     grid.focus();
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
@@ -845,27 +786,47 @@
     commitNavigation({ selectedRow: recordingSelection(messageID), conversationAnchor: null });
   }
   async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {
-    const origin = canonicalFingerprint(exploreState.current);
+    const origin = navigationFingerprint(exploreState.current);
     const returnSelectedRow = archiveMeetingID !== undefined ? archiveReturnSelection : exploreState.current.selectedRow;
     if (archiveMeetingID === undefined) archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const message = await archivedMeeting.load(meeting.message_id, meeting.conversation_id);
-    if (!message || origin !== canonicalFingerprint(exploreState.current)) return;
-    archiveReturnSelection = returnSelectedRow;
-    commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
-    window.history.replaceState({
-      ...window.history.state,
-      [ARCHIVE_MEETING_HISTORY_KEY]: { id: message.id, returnSelectedRow }
-    }, '', window.location.href);
+    if (!message || origin !== navigationFingerprint(exploreState.current)) return;
+    const open = () => {
+      archiveReturnSelection = returnSelectedRow;
+      commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
+      window.history.replaceState({
+        ...window.history.state,
+        [ARCHIVE_MEETING_HISTORY_KEY]: { id: message.id, returnSelectedRow }
+      }, '', window.location.href);
+    };
+    // Past runs owns the history entries above where it opened, and closing it
+    // rewinds past them, so a meeting that loads behind it opens after it closes.
+    if (exploreState.current.operationHistory) meetingBehindRunHistory = { origin, open };
+    else open();
   }
+  let meetingBehindRunHistory: { origin: string; open: () => void } | undefined;
+  $effect(() => {
+    if (exploreState.current.operationHistory) return;
+    untrack(() => {
+      const pending = meetingBehindRunHistory;
+      meetingBehindRunHistory = undefined;
+      if (pending?.origin === navigationFingerprint(exploreState.current)) pending.open();
+    });
+  });
 
   async function restoreArchiveFocus(fallback: HTMLElement | undefined = undefined): Promise<void> {
     await tick();
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const modal = Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).at(-1);
+    const sourceHref = archiveReturnFocus?.getAttribute('href');
+    const sourceLink = sourceHref && modal
+      ? Array.from(modal.querySelectorAll<HTMLAnchorElement>('a[href]')).find((link) => link.getAttribute('href') === sourceHref)
+      : undefined;
     const target = archiveReturnFocus?.isConnected
       ? archiveReturnFocus
-      : fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
+      : sourceLink ?? modal ?? fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
@@ -953,13 +914,8 @@
     focusGrid();
   }
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
-    const selector =
-      kind === 'filters'
-        ? 'button[aria-label="Filters"]'
-        : kind === 'grouping'
-          ? '[data-group-picker] button'
-          : '[data-sort-menu] button';
-    const control = document.querySelector<HTMLButtonElement>(selector);
+    const selector = { filters: 'button[aria-label="Filter"], button[aria-label="Filters"]', grouping: '[data-group-picker] button', sort: '[data-sort-menu] button' }[kind];
+    const control = (document.querySelector('.everything-workspace') ?? document).querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
   }
@@ -968,15 +924,15 @@
       ? 'Sorting isn’t available while grouped.'
       : exploreState.current.workspace === 'files'
         ? 'Use the Sort menu to change the order.'
-        : 'Everything is always shown newest first.';
+        : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
-  function navigateReader(delta: number): void {
-    if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
-    const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
+  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow, resultsWidth }): void {
+    if (!state.current.selectedRow || rows.length === 0) return;
+    const index = rows.findIndex((row) => row.key === state.current.selectedRow);
     if (index < 0) return;
-    const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
-    if (next && next.key !== exploreState.current.selectedRow) openRow(next);
+    const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))];
+    if (next && next.key !== state.current.selectedRow) open(next);
   }
   function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined, init: KeyboardEventInit = {}): void {
     const resolvedKey = key ?? event?.key;
@@ -1063,25 +1019,19 @@
       }));
     }),
   );
-  const reviewWorkspaceCommand: AppCommand = {
-    id: 'workspace:directory-review',
-    label: 'Open Reviews',
-    section: 'Navigate',
-    keywords: 'Navigate Reviews Directory identity matches fact review',
-    keys: [],
-    combos: [],
-    scopes: [],
-    destructive: false,
-    review: false,
-    run: () => commitWorkspace('directory_review'),
-  };
   const commandRegistry = $derived([
     ...createCommandRegistry(commandHandlers),
-    reviewWorkspaceCommand,
     ...groupingCommands,
   ]);
+  const shellCommands = $derived([
+    { id: 'go:duplicates', label: 'Possible duplicates', section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
+    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
+    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
+    { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
+    ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
+  ]);
   const paletteCommands = $derived(
-    commandRegistry.map(
+    [...commandRegistry.map(
       (command): PaletteCommand => ({
         id: command.id,
         label: command.label,
@@ -1090,10 +1040,10 @@
         combo: command.combos[0],
         disabled: command.disabled,
       }),
-    ),
+    ), ...shellCommands],
   );
   function runPalette(command: PaletteCommand): void {
-    commandRegistry.find(({ id }) => id === command.id)?.run();
+    [...commandRegistry, ...shellCommands].find(({ id }) => id === command.id)?.run();
   }
   // KeyboardHelp's search input takes focus before the Modal's trap records
   // where focus came from, so the shell remembers the return target itself.
@@ -1107,13 +1057,9 @@
     await tick();
     const target = keyboardHelpReturnFocus?.isConnected
       ? keyboardHelpReturnFocus
-      : (shellRoot?.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]') ?? drawerOpener());
+      : (shellRoot?.querySelector<HTMLElement>('button[aria-label="Help"]') ?? drawerOpener());
     keyboardHelpReturnFocus = undefined;
     target?.focus();
-  }
-  function applyTemporaryDensity(value: 'daemon' | DensityPreference): void {
-    if (value === 'daemon') appearance.clearTemporary('density');
-    else appearance.setTemporary({ density: value });
   }
   function openRow(row: EntryRow): void {
     // Single-click selects AND opens; re-opening the already-open row must
@@ -1141,11 +1087,8 @@
     keyboardHelpScopeCleanup?.();
     keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
   });
-  // Hydrates the Relationships hub's detail pane from a URL-carried target
-  // (initial load, or Back/Forward restoring a different one). The hub
-  // itself never opens a target on its own — RelationshipsWorkspace's own
-  // tests drive controller.openTarget explicitly — so AppShell, as the
-  // controller's owner, is the one place that reacts to the URL field.
+  // AppShell owns the People controller and opens the URL target on initial
+  // load and Back/Forward navigation.
   // Tracked (not untracked) so a predicate change alone — e.g. filters set
   // in Everything/Files that carry over when the URL-carried target stays
   // the same — re-opens the target too, mirroring how Everything's own
@@ -1168,7 +1111,7 @@
       if (relationshipsController.target !== null) relationshipsController.clearTarget();
       return;
     }
-    const predicate = exploreState.predicate();
+    const predicate = contextPredicate(exploreState.predicate());
     if (
       relationshipsController.target === target &&
       relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)
@@ -1177,39 +1120,8 @@
     }
     void relationshipsController.openTarget(target, predicate);
   });
-  $effect(() => {
-    if (landingFallbackApplied || !arrivedWithoutExploreParam) return;
-    if (exploreState.current.workspace !== 'relationships') return;
-    if (!relationshipsController.degraded || relationshipsController.degraded.readiness === 'building') return;
-    landingFallbackApplied = true;
-    // A committed replace, not a transient one: `committed` is what the
-    // next push rewrites the current history entry from (see
-    // ExploreState.navigate's 'push' branch). Leaving `committed` behind at
-    // the degraded 'relationships' landing would mean the very next push
-    // silently rewrites this entry back to a state the user never actually
-    // saw, so Back would return to the degraded hub instead of wherever
-    // they actually came from.
-    exploreState.replaceCommittedNavigation({ workspace: 'everything' });
-  });
   function openRelationship(participantID: number): void {
-    commitNavigation({
-      workspace: 'relationships',
-      // Entering the hub never carries the text query (see
-      // ExploreState.commitWorkspace): the relationships ranking and
-      // cluster-timeline endpoints have no text-query input, so a carried
-      // query would half-apply across the hub's surfaces.
-      query: '',
-      relationshipFacet: 'people',
-      relationshipTarget: `cluster:${participantID}`,
-      relationshipFiles: false,
-      relationshipShowAll: false,
-      analysisTarget: null,
-      selectedIdentifier: null,
-      selectedRow: null,
-      activeRow: null,
-      conversationAnchor: null,
-      scrollAnchor: null,
-    });
+    commitNavigation(relationshipDestination(participantID));
   }
   onMount(() => {
     // Kit popovers close on Escape from a document listener and claim the key with preventDefault
@@ -1232,10 +1144,6 @@
       // not survive to later clobber that restored state, so it is discarded
       // rather than flushed.
       debouncedSearchPatch.cancel();
-      // A Back/Forward navigation is user-initiated, same as any commit*
-      // wrapper call — it ends the one-shot landing-fallback allowance (see
-      // `arrivedWithoutExploreParam` above).
-      arrivedWithoutExploreParam = false;
       void restoreHistoryFocus();
     };
     const editableObserver = new MutationObserver(() => queueMicrotask(resyncEditableScope));
@@ -1283,9 +1191,8 @@
     relationshipsController.destroy();
     directoryController.destroy();
     directoryReviewController.destroy();
-    relationshipReviewController.destroy();
-    factLedgerController.destroy();
     operationsController.destroy();
+    void flashViewError(shellData.expireDelete());
     if (ownsState) exploreState.destroy();
   });
 </script>
@@ -1301,10 +1208,21 @@
       active={exploreState.current.workspace}
       collapsed={sidebarCollapsed}
       showCollapseToggle
-      status={archiveStatus}
+      jobs={shellData.jobs}
+      duplicateCount={shellData.duplicateCount}
+      views={shellData.views}
+      deletionsStaged={shellData.deletionsStaged}
+      viewsError={shellData.error}
+      onRetryViews={() => void shellData.refresh()}
+      onPastRuns={() => openOperations()}
+      onOpenJob={openJob}
+      onOpenView={(view) => void openSavedView(viewState(view))}
+      onRenameView={(view, name) => shellData.renameView(view, name)}
+      onDescribeView={(view, description) => shellData.describeView(view, description)}
+      onDeleteView={view => void flashViewError(shellData.deleteView(view))}
       onNavigate={openWorkspaceTab}
       onToggleCollapsed={toggleSidebar}
-      onOpenShortcuts={openKeyboardHelp}
+      onOpenHelp={openKeyboardHelp}
     />
   {/if}
   <div class="app-column" inert={drawerOpen}>
@@ -1316,23 +1234,32 @@
           </IconButton>
         </span>
       {/if}
+      {#if exploreState.current.workspace !== 'relationships' || !exploreState.current.peopleDuplicates}
       <SearchBar
         workspace={exploreState.current.workspace}
-        query={exploreState.current.query}
+        query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
         mode={exploreState.current.searchMode}
-        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
+        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' || exploreState.current.workspace === 'relationships'}
         compact={narrow}
         bind:inputEl={searchInput}
-        onDraft={(query, mode) => exploreState.replaceSearchDraft(query, mode)}
+        onDraft={(query, mode) => exploreState.current.workspace === 'relationships' ? debouncedSearchPatch({ identityQuery: query }) : exploreState.replaceSearchDraft(query, mode)}
         onSubmit={submitGlobalSearch}
+        filterLabel={exploreState.current.relationshipFacet === 'domains' ? 'Filter domains' : 'Filter people'}
       />
+      {/if}
       <div class="app-top-bar__end" aria-label="Appearance controls">
-        <ThemeToggle />
         <DisplayMenu
-          density={appearance.temporary.density ?? 'daemon'}
-          themeOverridden={appearance.temporary.theme !== undefined}
-          onDensityChange={applyTemporaryDensity}
-          onUseDaemonTheme={() => appearance.clearTemporary('theme')}
+          bind:open={displayOpen}
+          theme={appearance.current.theme}
+          density={appearance.current.density}
+          overridden={appearance.current.overridden}
+          onThemeChange={(theme) => appearance.setTemporary({ theme })}
+          onDensityChange={(density) => appearance.setTemporary({ density })}
+          onUseDefaults={() => appearance.clearTemporary()}
+          columns={displayState?.current.presentation === 'table' && displayState.current.groupingChain.length === 0 ? displayState.current.columns : undefined}
+          onColumnsChange={(columns) => { beforeCommit(); displayState?.replaceTransient({ columns }); }}
+          readerPosition={displayResultsWidth >= 960 ? readerPosition.value : undefined}
+          onReaderPositionChange={(value) => readerPosition.set(value)}
         />
       </div>
     </header>
@@ -1343,58 +1270,40 @@
           consumeCardDAVSettingsRequest,
           settingsNavigationTarget,
           exploreState.current.settingsCategory,
-          selectSettingsCategory
+          selectSettingsCategory,
+          () => commitNavigation({ workspace: 'sources' }),
+          openOperationAuthority,
+          () => void shellData.jobs.refresh(true),
+          operationsController,
+          () => directoryController.reloadFirstPage()
         )}{/if}
-      {:else if exploreState.current.workspace === 'saved_views'}
-        <SavedViewsWorkspace
-          {client}
-          onOpen={(state) => {
-            void openSavedView(state);
-          }}
-        />
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace {client} onOpenOperations={() => openOperations('messages', 'source_sync')} />
-      {:else if exploreState.current.workspace === 'operations'}
-        <OperationsWorkspace
-          {client}
-          controller={operationsController}
-          state={{
-            operationLane: exploreState.current.operationLane,
-            operationKind: exploreState.current.operationKind,
-            operationState: exploreState.current.operationState,
-            operationStartedFrom: exploreState.current.operationStartedFrom,
-            operationStartedBefore: exploreState.current.operationStartedBefore,
-            operationRunID: exploreState.current.operationRunID,
-            operationStatus: exploreState.current.operationStatus
-          }}
-          onStateChange={(patch) => commitNavigation(patch)}
-          onNavigate={openOperationAuthority}
-          onConfigure={openVisualAttachmentSettings}
-          onSetUp={setUpOperation}
-          onAnnounce={announceOperation}
-        />
+        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
-        <DeletionsWorkspace
-          {client}
-          selection={apiSelection}
-          reviewOnMount={pendingDeletionReview === apiSelection?.mode}
-          onReviewStarted={() => {
-            pendingDeletionReview = undefined;
-          }}
-        />
+        <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
-        <RelationshipsWorkspace
+        <PeopleWorkspace
+          onMessagesTableChange={(table) => personMessages = table}
+          onConfigureVisualSearch={openVisualAttachmentSettings}
+          sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
+          reviews={directoryReviewController}
+          onDuplicatesChanged={() => void identityChanged()}
+          directory={directoryController}
+          onOpenCardDAVConflict={openCardDAVConflict}
+          onOpenCardDAVSettings={openCardDAVSettings}
+          urlState={exploreState.current}
+          restorationEpoch={exploreState.restorationEpoch}
+          onNavigate={commitNavigation}
+          onReplaceNavigation={replaceCommittedNavigation}
+          onDraftNavigation={replaceCommittedDraft}
           {client}
           controller={relationshipsController}
-          facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
-          showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
+          onFiltersChange={(filters) => commitNavigation({ filters })}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
-          onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1411,62 +1320,30 @@
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onOpenEverything={() => commitWorkspace('everything')}
-          onOpenDirectory={openDirectoryFromRelationship}
+          onOpenPerson={openRelationship}
+          onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
           onOpenFileItem={openFileItem}
           onOpenFileConversation={openFileConversation}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
         />
-      {:else if exploreState.current.workspace === 'directory'}
-        <DirectoryWorkspace
-          {client}
-          controller={directoryController}
-          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-          promotionParticipantID={directoryPromotionParticipantID}
-          state={{
-            directoryQuery: exploreState.current.directoryQuery,
-            directoryContactState: exploreState.current.directoryContactState,
-            directoryCategory: exploreState.current.directoryCategory,
-            directoryOrganization: exploreState.current.directoryOrganization,
-            directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-            directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-            directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-            directorySort: exploreState.current.directorySort,
-            directoryPersonID: exploreState.current.directoryPersonID,
-          }}
-          onOpenCardDAVConflict={openCardDAVConflict}
-          onOpenCardDAVSettings={openCardDAVSettings}
-          onAnnounce={announceOperation}
-          onOpenRelationship={openRelationship}
-          onReviewFacts={(personID) =>
-            commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
-        />
-      {:else if exploreState.current.workspace === 'directory_review'}
-        <DirectoryReviewWorkspace
-          controller={directoryReviewController}
-          relationshipController={relationshipReviewController}
-          factController={factLedgerController}
-          directoryPersonID={exploreState.current.directoryPersonID}
-          {client}
-          onSelectFactPerson={(personID) => commitNavigation({ directoryPersonID: personID })}
-          onOpenPerson={openDirectoryPerson}
-          onAnnounce={announceOperation}
-        />
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
           <PageHeader title="Files">
             {#snippet actions()}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
           </PageHeader>
+          {#snippet filesToolbar(controls: Snippet | undefined)}
           <ContextBar
             {client}
+            messages
+            extraControls={controls}
             query={exploreState.current.query}
             searchMode={exploreState.current.searchMode}
             filters={exploreState.current.filters}
             groupingChain={exploreState.current.groupingChain}
             countLabel={filesCountLabel}
-            extraChips={groupedFileFilterChips}
+            extraChips={fileFilterChips(exploreState.current.fileFilenameQuery, exploreState.current.fileMIMEFamilies, () => commitNavigation({ fileFilenameQuery: '', activeRow: null, selectedRow: null, scrollAnchor: null }), () => commitNavigation({ fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }))}
             sort={exploreState.current.groupingChain.length > 0 ? undefined : {
               options: FILE_SORT_OPTIONS,
               value: fileSortValue(exploreState.current.fileSort),
@@ -1493,7 +1370,7 @@
                 activeRow: null,
                 scrollAnchor: null,
               })}
-            onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+            onClearFilters={() => { commitNavigation({ filters: [], fileFilenameQuery: '', fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }); fileFiltersReset++; }}
             onFiltersChange={(filters) =>
               commitNavigation({
                 filters,
@@ -1509,7 +1386,11 @@
                 selectedRow: null,
                 scrollAnchor: null,
               })}
-          />
+          >
+            {#snippet filterExtra()}{#key fileFiltersReset}<FileFilters filenameQuery={exploreState.current.fileFilenameQuery} mimeFamilies={exploreState.current.fileMIMEFamilies} onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({ fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null })} onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({ fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null })} />{/key}{/snippet}
+          </ContextBar>
+          {/snippet}
+          {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
@@ -1539,10 +1420,12 @@
             />
           {:else}
             <FilesWorkspace
+              onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
               embedded
               showHeader={false}
+              toolbar={filesToolbar}
               bind:fileCount
               bind:fileCountLoading
               predicate={{ ...exploreState.predicate(), grouping: undefined }}
@@ -1590,6 +1473,7 @@
         </main>
       {:else}
         <EverythingWorkspace
+          bind:resultsWidth
           {client}
           {exploreState}
           {loader}
@@ -1618,6 +1502,7 @@
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}
+          onStatusChange={() => void shellData.jobs.refresh(true)}
         />
       {/if}
     </div>
@@ -1629,6 +1514,7 @@
       onSaved={(view) => {
         saveViewOpen = false;
         announceOperation(`Saved view ${view.name}.`);
+        void shellData.refresh();
       }}
       onclose={() => {
         saveViewOpen = false;
@@ -1641,13 +1527,24 @@
         active={exploreState.current.workspace}
         collapsed={false}
         showCollapseToggle={false}
-        status={archiveStatus}
+        jobs={shellData.jobs}
+        duplicateCount={shellData.duplicateCount}
+        views={shellData.views}
+        deletionsStaged={shellData.deletionsStaged}
+        viewsError={shellData.error}
+        onRetryViews={() => void shellData.refresh()}
+        onPastRuns={() => { void closeDrawer().then(() => openOperations()); }}
+        onOpenJob={(target) => { void closeDrawer().then(() => openJob(target)); }}
+        onOpenView={(view) => { void closeDrawer().then(() => openSavedView(viewState(view))); }}
+        onRenameView={(view, name) => shellData.renameView(view, name)}
+        onDescribeView={(view, description) => shellData.describeView(view, description)}
+        onDeleteView={view => { void closeDrawer().then(() => flashViewError(shellData.deleteView(view))); }}
         onNavigate={(id) => {
           openWorkspaceTab(id);
           void closeDrawer();
         }}
         onToggleCollapsed={() => undefined}
-        onOpenShortcuts={() => {
+        onOpenHelp={() => {
           void closeDrawer().then(openKeyboardHelp);
         }}
       />
@@ -1655,10 +1552,11 @@
   {/if}
 </div>
 
-{#if archiveMeetingID !== undefined}
+{#if archiveMeetingID !== undefined && !runHistory}
   <ArchivedMeetingReader {client} message={archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined}
     loading={archivedMeeting.loading} error={archivedMeeting.error} predicate={exploreState.predicate()}
-    anchorID={conversationAnchorId} onClose={closeArchivedMeeting}
+    anchorID={conversationAnchorId} onClose={closeArchivedMeeting} onOpenPerson={openRelationship}
+    onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
     onReload={() => void archivedMeeting.load(archiveMeetingID!)}
     onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)} onAnchorChange={changeConversationAnchor} />
 {:else if archivedMeeting.loading}
@@ -1667,12 +1565,28 @@
   <p class="archive-navigation-status" role="alert">{archivedMeeting.error}</p>
 {/if}
 
-<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Everything commands" onrun={runPalette} />
+{#if runHistory}
+  <RunHistoryDialog bind:this={historyDialog} {client} controller={operationsController} bind:state={() => runHistory!, setRunHistory}
+    onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
+    onConfigure={openVisualAttachmentSettings} />
+{/if}
+<div bind:this={flashRoot}><FlashBanner /></div>
+{#if exploreState.current.workspace === 'relationships' && directoryReviewController.mergeRequired}
+  {@const merge = directoryReviewController.mergeRequired}
+  {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
+    onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
+    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onClose={() => directoryReviewController.mergeRequired = null} />{/key}
+{/if}
+
+
+<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 
 {#if keyboardHelpOpen}
   <KeyboardHelp
     commands={commandRegistry}
     onclose={() => void closeKeyboardHelp()}
+    onOpenCommands={() => { void closeKeyboardHelp().then(() => { paletteOpen = true; }); }}
   />
 {/if}
 
@@ -1693,6 +1607,10 @@
       openFileConversation(entryKey, messageID, conversationID);
     }}
   />
+{/if}
+
+{#if pendingDeletionReview}
+  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refreshDeletions(); }} />
 {/if}
 
 <style>

@@ -746,6 +746,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS failure_detail TEXT`, "document_extractions.failure_detail"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS rebuild_id TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL`, "document_extractions.rebuild_id"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
+		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS upload_count INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0)`, "document_extractions.upload_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS normalization_version INTEGER`, "document_extractions.normalization_version"},
@@ -2167,22 +2168,29 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION mark_activity_projection_conversation(p_conversation_id BIGINT) RETURNS VOID AS $$
+		 BEGIN
+		     INSERT INTO activity_projection_conversation_queue (conversation_id)
+		     VALUES (p_conversation_id)
+		     ON CONFLICT (conversation_id) DO UPDATE SET after_message_id = 0;
+		 END;
+		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     PERFORM mark_activity_projection_conversation(NEW.conversation_id);
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_update() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
-		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     PERFORM mark_activity_projection_conversation(OLD.conversation_id);
+		     PERFORM mark_activity_projection_conversation(NEW.conversation_id);
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_delete() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
+		     PERFORM mark_activity_projection_conversation(OLD.conversation_id);
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
@@ -2373,7 +2381,9 @@ var exclusiveLockTables = []string{
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
+	"calendar_events", "calendar_event_attendees",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
+	"matrix_encrypted_events", "matrix_megolm_claims", "matrix_pending_edits",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
 	// persons and person_participants: MergeParticipants (reached from the
@@ -2385,7 +2395,7 @@ var exclusiveLockTables = []string{
 	// archive. The queue is trigger-written by every message/participant
 	// mutation, so it belongs to the same exclusive write set.
 	"activity_events", "activity_event_persons", "person_contact_state",
-	"activity_projection_queue",
+	"activity_projection_queue", "activity_projection_conversation_queue",
 	// The chat member queue is trigger-written by message and recipient
 	// mutations; the projection cascades with conversations and participants.
 	"chat_members", "chat_members_dirty", "chat_anchors",
@@ -2394,6 +2404,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
+	"loop_decisions",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

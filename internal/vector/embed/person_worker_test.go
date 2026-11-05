@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -535,9 +536,11 @@ func TestPersonWorkerTerminatesLonePoisonRevisionAfterHealthyProbe(t *testing.T)
 	client := &poisonPersonWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 1)
 
-	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
+	passCtx := jobctx.WithProgress(t.Context())
+	result, err := worker.RunOnce(passCtx, 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 1, Failed: 1}, result)
+	check.True(jobctx.HasProgress(passCtx), "a durable rejection marker lets a timed-out pass continue")
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
 	must.NoError(listErr)
 	check.Equal(map[int64]string{1: "rev-reject"}, revisions)
@@ -942,17 +945,23 @@ func TestPersonWorkerEarlyBatchErrorContinuesLaterBatches(t *testing.T) {
 }
 
 type personWorkerMessageRunner struct {
-	runOnce        []vector.GenerationID
-	runBackstop    []vector.GenerationID
-	runOnceResult  *RunResult
-	runOnceErr     error
-	runBackstopErr error
+	runOnce           []vector.GenerationID
+	runBackstop       []vector.GenerationID
+	runOnceResult     *RunResult
+	runOnceErr        error
+	runBackstopResult *RunResult
+	runBackstopErr    error
+	onRunOnce         func(context.Context)
+	onRunBackstop     func(context.Context)
 }
 
 func (r *personWorkerMessageRunner) RunOnce(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
 	r.runOnce = append(r.runOnce, gen)
+	if r.onRunOnce != nil {
+		r.onRunOnce(ctx)
+	}
 	if r.runOnceResult != nil {
 		return *r.runOnceResult, r.runOnceErr
 	}
@@ -960,9 +969,15 @@ func (r *personWorkerMessageRunner) RunOnce(
 }
 
 func (r *personWorkerMessageRunner) RunBackstop(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
 	r.runBackstop = append(r.runBackstop, gen)
+	if r.onRunBackstop != nil {
+		r.onRunBackstop(ctx)
+	}
+	if r.runBackstopResult != nil {
+		return *r.runBackstopResult, r.runBackstopErr
+	}
 	return RunResult{}, r.runBackstopErr
 }
 
@@ -1106,4 +1121,30 @@ func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
 	must.NoError(err)
 	check.Equal([]vector.GenerationID{45}, messages.runBackstop)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+}
+
+func TestGenerationWorkerMarksSkippedPeoplePendingOnStop(t *testing.T) {
+	for _, backstop := range []bool{false, true} {
+		t.Run(fmt.Sprintf("backstop=%t", backstop), func(t *testing.T) {
+			ctx, requestYield := jobctx.WithPreemption(t.Context())
+			source := newPersonWorkerSource(personDocument(9, "rev-pending", "Synthetic Pending"))
+			client := &personWorkerClient{}
+			stopped := &RunResult{ScanComplete: true}
+			messages := &personWorkerMessageRunner{
+				runOnceResult: stopped, runBackstopResult: stopped,
+				onRunOnce: func(context.Context) { requestYield() }, onRunBackstop: func(context.Context) { requestYield() },
+			}
+			worker := NewGenerationWorker(messages, newTestPersonWorker(source, newPersonWorkerBackend(), client, 8))
+
+			run := worker.RunOnce
+			if backstop {
+				run = worker.RunBackstop
+			}
+			result, err := run(ctx, 46, testEmbeddingPassScope())
+
+			require.NoError(t, err)
+			assert.True(t, result.PersonsPending)
+			assert.Empty(t, client.calls, "a stopped message pass must skip person provider work")
+		})
+	}
 }

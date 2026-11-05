@@ -6,11 +6,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // Freeze the existing analytical classifier on its real DuckDB runtime before
 // extracting it for transactional suggestions; whitespace/parameters stay literal.
 func TestFilenameMIMEFamilyParity(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "DuckDB fixtures run on DuckDB only")
+	t.Parallel()
 	require := require.New(t)
 
 	db, err := sql.Open("duckdb", "")

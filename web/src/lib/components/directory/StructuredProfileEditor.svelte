@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, TextInput } from '@kenn-io/kit-ui';
-  import { untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
@@ -37,6 +37,8 @@
     controller: DirectoryProfileController;
     section: StructuredProfileSectionName;
     current?: StructuredProfileRecord;
+    contactKind?: string;
+    nameKind?: string;
     onDone?: () => void;
     onCancel?: () => void;
   }
@@ -45,6 +47,8 @@
     controller,
     section,
     current = undefined,
+    contactKind: presetContactKind,
+    nameKind: presetNameKind,
     onDone = () => undefined,
     onCancel = () => undefined,
   }: Props = $props();
@@ -60,11 +64,12 @@
   const currentDate = initialCurrent as GeneratedPersonDate | undefined;
   const currentMedia = initialCurrent as GeneratedPersonMedia | undefined;
 
-  let nameKind = $state(currentName?.name_kind ?? 'formatted');
+  let nameKind = $state(currentName?.name_kind ?? untrack(() => presetNameKind) ?? 'formatted');
   let formattedName = $state(currentName?.formatted ?? initialCurrent?.original_value ?? '');
-  let givenName = $state(currentName?.given_name ?? '');
+  const formattedPronunciation = currentName?.name_kind === 'phonetic' && !currentName.given_name && !currentName.family_name ? currentName.formatted ?? currentName.original_value : '';
+  let givenName = $state(currentName?.given_name || formattedPronunciation || '');
   let familyName = $state(currentName?.family_name ?? '');
-  let contactKind = $state(currentContact?.address_kind ?? 'email');
+  let contactKind = $state(currentContact?.address_kind ?? untrack(() => presetContactKind) ?? 'email');
   let contactValue = $state(initialSection === 'contact_points' ? (initialCurrent?.original_value ?? '') : '');
   let serviceSlug = $state(currentContact?.service_slug ?? '');
   let scopeKind = $state(currentContact?.scope_kind ?? '');
@@ -75,7 +80,7 @@
   let region = $state(currentAddress?.region ?? '');
   let postalCode = $state(currentAddress?.postal_code ?? '');
   let countryName = $state(currentAddress?.country_name ?? '');
-  let dateKind = $state(currentDate?.date_kind ?? 'birthday');
+  let dateKind = $state(currentDate?.date_kind ?? (untrack(() => controller.structuredProfile?.dates.some(date => date.date_kind === 'birthday')) ? 'anniversary' : 'birthday'));
   let dateValue = $state(
     formatDate(currentDate?.date) ??
       currentDate?.date_text ??
@@ -97,6 +102,11 @@
   let mediaLabel = $state(initialSection === 'media' ? (initialCurrent?.original_value ?? '') : '');
   let submitting = $state(false);
   let validationError = $state<string | null>(null);
+  let formElement = $state<HTMLFormElement>();
+
+  onMount(() => {
+    void tick().then(() => formElement?.querySelector<HTMLElement>('input, select')?.focus());
+  });
 
   const ordinal = initialCurrent?.envelope.ordinal ?? 0;
   const supersede = initialCurrent ? [initialCurrent.envelope.id] : [];
@@ -184,7 +194,7 @@
   function patch(): PersonProfilePatchRequest {
     switch (section) {
       case 'names': {
-        const formatted = formattedName.trim();
+        const formatted = nameKind === 'phonetic' ? [givenName.trim(), familyName.trim()].filter(Boolean).join(' ') : formattedName.trim();
         return {
           names: {
             add: [
@@ -204,7 +214,7 @@
                 name_kind: nameKind,
                 original_value: formatted,
                 formatted,
-                ...(givenName.trim() ? { given_name: givenName.trim() } : {}),
+                ...(givenName.trim() && !(formattedPronunciation && givenName === formattedPronunciation && !familyName.trim()) ? { given_name: givenName.trim() } : {}),
                 ...(familyName.trim() ? { family_name: familyName.trim() } : {}),
                 is_derived: false,
                 envelope: envelope(),
@@ -347,7 +357,7 @@
     <div class="editor-actions"><Button label="Cancel" type="button" onclick={onCancel} /></div>
   </div>
 {:else}
-  <form class="profile-editor" onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
+  <form class="profile-editor" bind:this={formElement} onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
     {#if section === 'names'}
       <label
         >Name kind
@@ -357,7 +367,7 @@
           ><option value="phonetic">Phonetic</option><option value="sort">Sort</option>
         </select>
       </label>
-      <label
+      {#if nameKind !== 'phonetic'}<label
         >Formatted name<TextInput
           bind:value={formattedName}
           ariaLabel="Formatted name"
@@ -366,8 +376,9 @@
           disabled={submitting}
         /></label
       >
-      <label>Given name<TextInput bind:value={givenName} ariaLabel="Given name" block disabled={submitting} /></label>
-      <label>Family name<TextInput bind:value={familyName} ariaLabel="Family name" block disabled={submitting} /></label
+      {/if}
+      <label>{nameKind === 'phonetic' ? 'First name, said as' : 'Given name'}<TextInput bind:value={givenName} required={nameKind === 'phonetic' && !familyName.trim()} ariaLabel={nameKind === 'phonetic' ? 'First name, said as' : 'Given name'} block disabled={submitting} /></label>
+      <label>{nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'}<TextInput bind:value={familyName} ariaLabel={nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'} block disabled={submitting} /></label
       >
     {:else if section === 'contact_points'}
       <label
@@ -392,6 +403,7 @@
           disabled={submitting}
         /></label
       >
+      {#if ['username', 'impp', 'social'].includes(contactKind) || serviceSlug || scopeKind || scopeValue}
       <label>Service<TextInput bind:value={serviceSlug} ariaLabel="Service" block disabled={submitting} /></label>
       <label
         >Service scope kind<TextInput
@@ -409,6 +421,7 @@
           disabled={submitting}
         /></label
       >
+      {/if}
     {:else if section === 'addresses'}
       <label
         >Address kind
@@ -528,14 +541,17 @@
 
 <style>
   .profile-editor {
-    display: grid;
-    gap: var(--space-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--field-gap);
     padding: var(--space-3);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
     background: var(--bg-inset);
   }
   label {
+    flex: 1 1 180px;
+    min-width: 0;
     display: grid;
     gap: var(--space-1);
     color: var(--text-secondary);
@@ -552,6 +568,7 @@
     font: inherit;
   }
   .editor-actions {
+    flex-basis: 100%;
     display: flex;
     justify-content: flex-end;
     gap: var(--space-2);

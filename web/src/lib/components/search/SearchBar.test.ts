@@ -8,7 +8,7 @@ function setup(live: boolean) {
   const onDraft = vi.fn();
   const onSubmit = vi.fn();
   render(SearchBar, { workspace: 'sources', query: 'budget', mode: 'full_text', live, compact: false, onDraft, onSubmit });
-  return { onDraft, onSubmit, input: screen.getByRole('searchbox', { name: 'Search everything' }) };
+  return { onDraft, onSubmit, input: screen.getByRole('searchbox', { name: 'Search messages' }) };
 }
 
 describe('SearchBar', () => {
@@ -23,7 +23,7 @@ describe('SearchBar', () => {
     await fireEvent.input(input, { target: { value: '  merger  ' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Hybrid' }));
     expect((input as HTMLInputElement).value).toBe('  merger  ');
-    await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
+    await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
     expect(onDraft).not.toHaveBeenCalled();
     expect(onSubmit).toHaveBeenCalledWith('merger', 'hybrid');
   });
@@ -39,7 +39,7 @@ describe('SearchBar', () => {
       onDraft: vi.fn(),
       onSubmit
     });
-    const input = screen.getByRole('searchbox', { name: 'Search everything' }) as HTMLInputElement;
+    const input = screen.getByRole('searchbox', { name: 'Search messages' }) as HTMLInputElement;
     expect(input.value).toBe('budget');
 
     await rerender({ query: 'restored', mode: 'hybrid' });
@@ -85,7 +85,7 @@ describe('SearchBar', () => {
       onDraft: vi.fn(),
       onSubmit: vi.fn()
     });
-    const input = screen.getByRole('searchbox', { name: 'Search everything' }) as HTMLInputElement;
+    const input = screen.getByRole('searchbox', { name: 'Search messages' }) as HTMLInputElement;
     await fireEvent.input(input, { target: { value: 'pipeline' } });
 
     await rerender({ mode: 'semantic' });

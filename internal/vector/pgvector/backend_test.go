@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/vectorcheckpoints"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -651,4 +652,9 @@ func TestBackend_Search_SubjectFilter_CaseInsensitive(t *testing.T) {
 	if assert.Len(hits, 1, "escaped-wildcard subject filter hits") {
 		assert.Equal(int64(3), hits[0].MessageID, "want msg 3")
 	}
+}
+
+func TestBackendEmbeddingCheckpointLifecycle(t *testing.T) {
+	b, ctx, _ := newBackendForTest(t)
+	vectorcheckpoints.Lifecycle(ctx, t, b)
 }

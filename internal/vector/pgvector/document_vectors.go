@@ -103,6 +103,35 @@ func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID docum
 	return nil
 }
 
+func (b *DocumentBackend) UnpublishedTokens(ctx context.Context, generationID document.GenerationID, dimension int, tokens []string) (map[string]bool, error) {
+	if err := document.ValidateTokens(generationID, tokens); err != nil {
+		return nil, err
+	}
+	saved := make(map[string]bool, len(tokens))
+	if len(tokens) == 0 {
+		return saved, nil
+	}
+	rows, err := b.db.QueryContext(ctx, `
+		SELECT token FROM document_vector_embeddings
+		WHERE generation_id = $1 AND dimension = $2 AND token = ANY($3::text[])`,
+		int64(generationID), dimension, textArray(tokens))
+	if err != nil {
+		return nil, fmt.Errorf("read saved document vectors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, fmt.Errorf("scan saved document vector: %w", err)
+		}
+		saved[token] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate saved document vectors: %w", err)
+	}
+	return saved, nil
+}
+
 func (b *DocumentBackend) DeleteTokens(ctx context.Context, generationID document.GenerationID, tokens []string) error {
 	if err := document.ValidateTokens(generationID, tokens); err != nil {
 		return err

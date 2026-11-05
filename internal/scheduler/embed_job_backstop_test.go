@@ -253,14 +253,14 @@ END;`)
 
 	// Tick A (within interval): RunOnce only. The sub-watermark straggler is
 	// NOT recovered because RunOnce resumes from the watermark.
-	job.Run(ctx)
+	_ = job.Run(ctx)
 	assert.Equal(1, countMissingE2E(t, mainDB, int64(gen)),
 		"within interval: RunOnce alone misses the sub-watermark straggler")
 
 	// Tick B (interval elapsed): the backstop runs and recovers the
 	// straggler without re-embedding the already-stamped messages.
 	*clock = now.Add(25 * time.Hour)
-	job.Run(ctx)
+	_ = job.Run(ctx)
 	assert.Equal(0, countMissingE2E(t, mainDB, int64(gen)),
 		"after interval: backstop recovers the sub-watermark straggler")
 }

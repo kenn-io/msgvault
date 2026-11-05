@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
@@ -10,60 +11,69 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/relationships', (route) => route.fulfill({ json: {
     rows: [], total_count: 0, cache_revision: 'spacing', identity_revision: 1
   } }));
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
+  await page.goto('/?workspace=relationships');
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
 });
 
-test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
+test('page content uses its header gap across workspaces', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
-  await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
-  await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/carddav/connections', (route) => route.fulfill({ json: { connections: [] } }));
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
     id: 1, name: 'Synthetic saved view', schema_version: 2, revision: 1, canonical_state: {},
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
-  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
+  await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [{
+    id: 'spacing-batch', status: 'pending', message_count: 1, created_at: row.occurred_at, created_by: 'api'
+  }] } }));
+  await page.route('**/api/v1/deletions/spacing-batch', (route) => route.fulfill({ json: {
+    id: 'spacing-batch', status: 'pending', message_count: 1, created_at: row.occurred_at, created_by: 'api', account: 'archive@example.com'
+  } }));
   await page.route('**/api/v1/identity/match-candidates**', (route) => route.fulfill({ json: { candidates: [], limit: 100, offset: 0 } }));
   await page.route('**/api/v1/person-relationship-reviews**', (route) => route.fulfill({ json: { reviews: [] } }));
   const gaps: Record<string, number> = {};
-  for (const label of ['Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings']) {
+  for (const label of ['People', 'Messages', 'Files', 'Sources', 'Deletions', 'Settings']) {
     await selectWorkspace(page, label);
-    if (label === 'Relationships') await expect(page.getByText('No relationships found', { exact: true })).toBeVisible();
-    if (label === 'Directory') await expect(page.getByText('No people found', { exact: true })).toBeVisible();
-    if (label === 'Everything') await expect(page.getByRole('grid', { name: 'Everything results' }).getByText(row.title, { exact: true })).toBeVisible();
+    if (label === 'People') await expect(page.getByText('No people yet', { exact: true })).toBeVisible();
+    if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
-    if (label === 'Operations') await expect(page.getByRole('status', { name: 'Operation history state' })).toHaveText('No operation runs match the current filters.');
-    if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
-    if (label === 'Deletions') await expect(page.getByText('No staged deletions', { exact: true })).toBeVisible();
-    if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
-    if (label === 'Saved views') await expect(page.getByText('Synthetic saved view', { exact: true })).toBeVisible();
+    if (label === 'Deletions') {
+      await page.getByRole('table', { name: 'Staged deletions' }).getByRole('button', { name: /^Open batch from/ }).click();
+      const panel = page.getByRole('dialog', { name: /^Staged / });
+      await expect(panel.getByText('archive@example.com', { exact: true })).toBeVisible();
+      await panel.getByRole('button', { name: 'Close', exact: true }).click();
+    }
+    if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
-    const header = page.locator('.page-header:visible');
+    const header = page.locator('.kit-page-header:visible');
     await expect(header).toHaveCount(1);
     gaps[label] = await header.evaluate((element) => {
-      const divider = element.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(element, '::before').bottom);
       const owner = element.parentElement!;
       let next = element.nextElementSibling;
       if (!next) next = owner.nextElementSibling;
-      while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
-      return next!.getBoundingClientRect().top - divider;
+      while (next && (next.getBoundingClientRect().height === 0 || next.classList.contains('kit-sr-only'))) next = next.nextElementSibling;
+      return next!.getBoundingClientRect().top - element.getBoundingClientRect().bottom;
     });
   }
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 12 : 20])));
+});
+
+test('Past runs keeps its detail below the dialog header on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
-  await page.getByRole('button', { name: 'Open Source sync run' }).click();
-  await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
-  gaps['Focused Operations'] = await page.locator('.focused-detail .page-header').evaluate((header) => {
-    const divider = header.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(header, '::before').bottom);
-    return header.nextElementSibling!.getBoundingClientRect().top - divider;
-  });
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['Relationships', 'Settings'].includes(label) ? 0 : 8])));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
+  const dialog = page.getByRole('dialog', { name: 'Past runs' });
+  await dialog.getByRole('button', { name: 'Open Source sync run' }).click();
+  await expect(dialog.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
+  const gap = await dialog.locator('.kit-modal-header').evaluate((header) => (
+    header.nextElementSibling!.firstElementChild!.getBoundingClientRect().top - header.getBoundingClientRect().bottom
+  ));
+  expect(gap).toBe(12);
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
-  await selectWorkspace(page, 'Everything');
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await selectWorkspace(page, 'Messages');
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press('Shift+A');
   const bar = page.locator('.selection-bar');
@@ -88,45 +98,59 @@ for (const width of [1280, 420]) {
         canonical_state: { query, search_mode: 'full_text' },
         created_at: row.occurred_at, updated_at: row.occurred_at
       }] } }));
-      await selectWorkspace(page, 'Saved views');
-      const view = page.locator('.view-list article').filter({ hasText: 'Long archive search' });
+      await page.reload();
+      const opener = page.getByRole('button', { name: 'Open navigation' });
+      if (await opener.isVisible()) await opener.click();
+      const view = page.locator('.saved-view').filter({ hasText: 'Long archive search' });
       await expect(view).toBeVisible();
-      for (const name of ['Open', 'Edit', 'Delete']) {
-        const action = view.getByRole('button', { name: `${name} Long archive search`, exact: true });
+      const open = view.getByRole('button', { name: 'Long archive search', exact: true });
+      await expect(open).toBeInViewport({ ratio: 1 });
+      await open.click({ trial: true });
+      await view.hover();
+      await view.getByRole('button', { name: 'Long archive search actions', exact: true }).click();
+      for (const name of ['Rename', 'Edit description…', 'Delete']) {
+        const action = page.getByRole('menuitem', { name, exact: true });
         await expect(action).toBeInViewport({ ratio: 1 });
         await action.click({ trial: true });
       }
-      const label = view.locator('.summary .kit-chip__label').filter({ hasText: query });
+      await page.keyboard.press('Escape');
+      if (await opener.isVisible()) await opener.click();
+      await open.click();
+      const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
+      await expect(label).toBeVisible();
       expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
     });
   });
 }
 
-test('a long saved view list keeps every row at its full height and scrolls', async ({ page }) => {
+test('a long sidebar saved view list keeps every row at its full height and scrolls', async ({ page }) => {
   const description = 'Synthetic description that wraps across several lines of the saved view row. '.repeat(4).trim();
-  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 12 }, (_, index) => ({
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 40 }, (_, index) => ({
     id: index + 1, name: `Saved view ${index + 1}`, description, schema_version: 1, revision: 1,
-    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: 'table' },
+    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: index < 20 ? 'table' : 'files' },
     created_at: row.occurred_at, updated_at: row.occurred_at
   })) } }));
-  await selectWorkspace(page, 'Saved views');
-  const views = page.locator('.view-list article');
-  await expect(views).toHaveCount(12);
+  await page.reload();
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  const views = sidebar.locator('.saved-view');
+  await expect(views).toHaveCount(40);
   const rows = await views.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
     return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
   }));
   for (const [index, current] of rows.entries()) {
     expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
+    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(28);
     if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
   }
-  const last = page.getByRole('button', { name: 'Open Saved view 12', exact: true });
+  const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport({ ratio: 1 });
+  expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 });
 
 test('save-view dialog shares header and field insets', async ({ page }) => {
-  await selectWorkspace(page, 'Everything');
+  await selectWorkspace(page, 'Messages');
   await page.getByRole('button', { name: 'Save view…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Save view' });
   await expect(dialog).toBeVisible();
@@ -154,7 +178,7 @@ test('loaded message sender, body, and attachment edges align with the reader', 
       body: 'A plain text archive message.', body_html: '',
       attachments: [{ id: 1, filename: 'Meeting-notes.txt', stored: false }] }]
   } }));
-  await selectWorkspace(page, 'Everything');
+  await selectWorkspace(page, 'Messages');
   await page.getByText(row.title, { exact: true }).click();
   const reader = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
   await expect(reader.getByText('A plain text archive message.')).toBeVisible();
@@ -181,8 +205,8 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     canonical_state: { query: 'archive', search_mode: 'full_text' },
     created_at: row.occurred_at, updated_at: row.occurred_at
   }] } }));
-  await selectWorkspace(page, 'Everything');
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
+  await selectWorkspace(page, 'Messages');
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill('archive');
   await page.getByRole('combobox', { name: 'Group by', exact: true }).click();
   await page.getByRole('option', { name: 'Source', exact: true }).click();
   const chips = page.locator('.context-chips .chip');
@@ -202,7 +226,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
   }
   const longQuery = 'archive '.repeat(100).trim();
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill(longQuery);
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill(longQuery);
   const queryChip = chips.filter({ hasText: longQuery });
   const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
@@ -210,10 +234,11 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   }));
   expect(wrapping).toEqual({ clipped: false, wrapped: true });
   await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
-  await selectWorkspace(page, 'Directory');
-  await page.getByRole('button', { name: 'Filters', exact: true }).click();
+  await selectWorkspace(page, 'People');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter' }).fill('Archive');
-  const filter = page.locator('.filter-chips .chip');
+  const filter = page.locator('.chips .kit-chip').filter({ hasText: 'Archive' });
   await expect(filter).toBeVisible();
   const directoryGeometry = await filter.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
@@ -226,19 +251,6 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   expect(directoryGeometry).toEqual({ height: 26, left: 8, right: 8 });
   const directoryShape = await filter.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
   expect.soft(directoryShape.radius).toBeGreaterThanOrEqual(directoryShape.height / 2);
-  await selectWorkspace(page, 'Saved views');
-  const summary = page.locator('.summary .kit-chip').filter({ hasText: 'archive' });
-  await expect(summary).toBeVisible();
-  const savedShape = await summary.evaluate((element) => {
-    return { radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height };
-  });
-  expect.soft(savedShape.radius).toBeGreaterThanOrEqual(savedShape.height / 2);
-  const savedGeometry = await summary.evaluate((element) => {
-    const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
-    const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
-    return { centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
-  });
-  expect(savedGeometry.centered).toBeLessThanOrEqual(1);
   await selectWorkspace(page, 'Sources');
   const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
   await expect(status).toBeVisible();
@@ -261,19 +273,35 @@ test('linked message uses the page title text scale', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
 });
 
-test('settings cards keep 12px control insets', async ({ page }) => {
-  await selectWorkspace(page, 'Settings');
-  const control = page.locator('.kit-card .row__control').first();
-  await expect(control).toBeVisible();
-  const inset = await control.evaluate((element) => {
-    const card = element.closest('.kit-card')!;
-    return card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - element.getBoundingClientRect().right;
-  });
-  expect(inset).toBe(12);
-});
-
 test('app scrollbars use the shared 8px style', async ({ page }) => {
   await selectWorkspace(page, 'Settings');
   const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
   expect(size).toBe('8px');
+});
+test.describe('touch reading', () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });
+
+  test('body and recording transcript share the reading size in one card', async ({ page }) => {
+    await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+      rows: [{ ...row, message_type: 'beeper', conversation_type: 'direct_chat', conversation_id: 11, anchor_message_id: 1 }],
+      total_count: 1, cache_revision: 'reading-size', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
+      id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
+      messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'beeper',
+        from: 'Example Person', to: [], sent_at: row.occurred_at, body: 'A synthetic voice note body.',
+        attachments: [{ id: 1, filename: 'Voice-note.ogg', mime_type: 'audio/ogg', size_bytes: 2048, stored: false }] }]
+    } }));
+    await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: {
+      message_id: 1, recordings: [{ attachment_id: 1, filename: 'Voice-note.ogg', size_bytes: 2048, state: 'ready',
+        transcript: { origin: 'generated', units: [{ text: 'A synthetic voice note transcript.' }] } }]
+    } }));
+    await selectWorkspace(page, 'Messages');
+    await page.getByText(row.title, { exact: true }).click();
+    const card = page.locator('.message-card');
+    await expect(card.locator('.card-body pre')).toHaveText('A synthetic voice note body.');
+    await expect(card.locator('.transcript')).toContainText('A synthetic voice note transcript.');
+    await expect(card.locator('.card-body pre')).toHaveCSS('font-size', '14px');
+    await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
+  });
 });

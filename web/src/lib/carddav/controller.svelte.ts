@@ -29,6 +29,8 @@ interface VisibilityDocument {
 const FIRST_PAGE_LIMIT = 25;
 const MIN_POLL_MS = 500;
 const MAX_POLL_MS = 8000;
+// While idle, a scheduled connection is re-read so a queued scheduled sync shows up.
+const IDLE_POLL_MS = 30_000;
 export class CardDAVController {
   status = $state<CardDAVStatus>();
   books = $state<CardDAVBook[]>([]);
@@ -90,6 +92,24 @@ export class CardDAVController {
   }
   async load(): Promise<void> {
     await Promise.all([this.retryStatus(), this.refreshRuns()]);
+  }
+  // A summary requested during sync cannot establish the post-sync state.
+  get statusRevision(): number | undefined {
+    return this.syncPending ? undefined : this.statusCommitGeneration;
+  }
+  async refreshFromConnection(status: CardDAVStatus, revision: number | undefined): Promise<void> {
+    if (this.disposed || this.syncPending || revision !== this.statusCommitGeneration) return;
+    this.status ??= status;
+    if (status.active || status.scheduled || status.queued_at || status.scheduler_running) {
+      await this.retryStatus();
+    } else {
+      const statusCommit = ++this.statusCommitGeneration;
+      this.status = status;
+      this.statusLoading = false;
+      this.statusError = null;
+      this.pollFingerprint = statusFingerprint(status);
+      this.recordSuccessfulStatusCommit(statusCommit);
+    }
   }
   async retryStatus(): Promise<void> {
     const loaded = await this.readStatus(true);
@@ -218,8 +238,9 @@ export class CardDAVController {
     }
     if (this.current(context)) this.bookPendingID = undefined;
   }
-  async sync(full: boolean, connection: string | undefined = this.connection): Promise<void> {
+  async sync(connection: string | undefined = this.connection): Promise<void> {
     if (!this.canSync || this.syncPending) return;
+    this.statusCommitGeneration += 1;
     const context = this.generation;
     this.syncAbort?.abort();
     const requestController = new AbortController();
@@ -234,7 +255,7 @@ export class CardDAVController {
     let reconcile = false;
     try {
       const { data, response } = await generatedSyncCardDAV(
-        { full, connection },
+        { full: false, connection },
         {
           ...this.client,
           signal: requestController.signal,
@@ -252,7 +273,7 @@ export class CardDAVController {
           this.syncError = `CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`;
         }
         if (succeeded) {
-          this.syncStatus = full ? 'Full CardDAV sync completed.' : 'CardDAV sync completed.';
+          this.syncStatus = 'CardDAV sync completed.';
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;
@@ -311,6 +332,7 @@ export class CardDAVController {
       this.status.credential_configured &&
       !this.syncUnknown &&
       !this.status.active &&
+      !this.status.scheduler_running &&
       !this.syncPending,
     );
   }
@@ -455,11 +477,15 @@ export class CardDAVController {
       }
     }
   }
+  private hasWork(): boolean {
+    return Boolean(this.status?.active || this.status?.queued_at || this.status?.scheduler_running || this.syncPending);
+  }
   private shouldPoll(): boolean {
-    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.status?.active || this.syncPending);
+    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.hasWork() || this.status?.scheduled);
   }
   private schedulePoll(delay: number): void {
     if (!this.shouldPoll()) return;
+    if (!this.hasWork()) delay = Math.max(delay, IDLE_POLL_MS);
     if (this.pollTimer !== undefined) clearTimeout(this.pollTimer);
     const generation = ++this.pollGeneration;
     this.pollTimer = setTimeout(() => {
@@ -474,7 +500,8 @@ export class CardDAVController {
     this.pollAbort?.abort();
     const requestController = new AbortController();
     this.pollAbort = requestController;
-    const priorActive = Boolean(this.status?.active);
+    const hadWork = this.hasWork();
+    const priorLatest = this.status?.latest;
     try {
       const { data } = await generatedGetCardDAVStatus(
         this.connection ? { connection: this.connection } : undefined,
@@ -502,8 +529,11 @@ export class CardDAVController {
       this.statusError = null;
       this.pollFingerprint = fingerprint;
       this.recordSuccessfulStatusCommit(statusCommit);
-      if (priorActive && !data.active && !this.syncPending) {
+      // A scheduled run can also start and finish between idle reads.
+      const latestChanged = data.latest?.id !== priorLatest?.id || data.latest?.state !== priorLatest?.state;
+      if ((hadWork || latestChanged) && !this.hasWork()) {
         this.stopPolling(false);
+        this.schedulePoll(IDLE_POLL_MS);
         await Promise.all([...(data.available ? [this.loadBooks(true)] : []), this.refreshRuns()]);
         return;
       }
@@ -579,6 +609,6 @@ function uniqueRuns(runs: CardDAVRun[]): CardDAVRun[] {
 }
 function statusFingerprint(status: CardDAVStatus): string {
   const run = status.active;
-  if (!run) return `idle:${status.latest?.id ?? 0}:${status.latest?.state ?? ''}`;
+  if (!run) return `idle:${status.queued_at ?? ''}:${status.scheduler_running}:${status.latest?.id ?? 0}:${status.latest?.state ?? ''}`;
   return [run.id, run.state, run.books, run.created, run.updated, run.removed].join(':');
 }

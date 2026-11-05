@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
@@ -28,6 +30,7 @@ type checkpointingDocumentVectorWorker struct {
 	recorder     operations.Recorder
 	scope        operations.PassScope
 	fingerprint  string
+	afterChunkID int64
 	now          func() time.Time
 }
 
@@ -53,16 +56,22 @@ func (w checkpointingDocumentVectorWorker) Run(
 		pass.finish(ctx, counters, runErr)
 	}()
 	result, runErr = w.worker.Run(ctx, generationID, limit)
-	if !result.Exhausted && result.AfterGenerationID == 0 {
+	if !result.Exhausted && result.AfterGenerationID == 0 && result.Claimed == 0 && result.ProviderCalls == 0 {
 		return result, runErr
 	}
 	delta := store.DocumentVectorUsageDelta{
 		ProviderCalls: int64(result.ProviderCalls), ProviderDocuments: int64(result.ProviderDocuments),
 		ProviderChunks: int64(result.ProviderChunks), ProviderInputChars: int64(result.ProviderInputChars),
 	}
+	checkpointCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	// A rewound cursor must be deleted without changing the incomplete worker result.
 	checkpointErr := w.checkpointer.CheckpointDocumentVectorBuildForFingerprint(
-		ctx, int64(generationID), w.fingerprint, result.AfterChunkID, result.Exhausted, delta, w.now(),
+		checkpointCtx, int64(generationID), w.fingerprint, result.AfterChunkID, result.AfterChunkID == 0, delta, w.now(),
 	)
+	if checkpointErr == nil && !result.Exhausted && result.AfterGenerationID == generationID && result.AfterChunkID > w.afterChunkID {
+		jobctx.RecordProgress(ctx)
+	}
 	return result, errors.Join(runErr, checkpointErr)
 }
 
@@ -180,7 +189,7 @@ func runDocumentVectorWithFeatures(
 	})
 	checkpointed := checkpointingDocumentVectorWorker{
 		worker: worker, checkpointer: st, recorder: st, scope: scope,
-		fingerprint: generation.Fingerprint, now: now,
+		fingerprint: generation.Fingerprint, afterChunkID: cursor, now: now,
 	}
 	reconciler := vectordocument.NewReconciler(vectordocument.ReconcilerDeps{
 		Ledger: st, Worker: checkpointed, Backend: vf.DocumentBackend, Now: now,
@@ -205,7 +214,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 			Ledger: st, Backend: vf.DocumentBackend, Now: func() time.Time { return time.Now().UTC() },
 		})
 		_, err := reconciler.Run(ctx, vectordocument.GenerationID(retired.ID), limit)
-		return err
+		return documentVectorContinuation(ctx, false, err)
 	}
 	if vf.SemanticClient == nil {
 		return nil
@@ -236,10 +245,11 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		if !retired {
 			return store.ErrDocumentVectorInvalidGenerationState
 		}
+		jobctx.RecordProgress(ctx)
 		// Reconcile only the obsolete generation this pass. The next bounded
 		// run creates the desired generation without exceeding one cleanup page.
 		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
-		return reconcileErr
+		return documentVectorContinuation(ctx, false, reconcileErr)
 	}
 	if building == nil {
 		active, err := st.GetActiveDocumentVectorGeneration(ctx)
@@ -248,9 +258,12 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		}
 		switch {
 		case active == nil || active.DocumentVectorGenerationSpec != spec:
-			generation, _, ensureErr := st.EnsureDocumentVectorGeneration(ctx, spec)
+			generation, created, ensureErr := st.EnsureDocumentVectorGeneration(ctx, spec)
 			if ensureErr != nil {
 				return ensureErr
+			}
+			if created {
+				jobctx.RecordProgress(ctx)
 			}
 			building = &generation
 		default:
@@ -259,8 +272,8 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 				return statusErr
 			}
 			if status.CleanupPending > 0 {
-				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope)
-				return reconcileErr
+				result, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope)
+				return documentVectorContinuation(ctx, result.Converged, reconcileErr)
 			}
 			coverage, coverageErr := st.GetDocumentVectorCoverage(ctx, active.ID)
 			if coverageErr != nil {
@@ -273,9 +286,30 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 			if rebuildErr != nil {
 				return rebuildErr
 			}
+			jobctx.RecordProgress(ctx)
 			building = &generation
 		}
 	}
-	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
-	return err
+	result, err := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
+	return documentVectorContinuation(ctx, result.Converged, err)
+}
+
+// documentVectorContinuation asks the scheduler for another bounded pass,
+// queued behind waiting work, when this pass committed progress or yielded
+// cooperatively and the desired generation has not converged. Failures without
+// progress and runtime expiry do not ask for one.
+func documentVectorContinuation(ctx context.Context, converged bool, err error) error {
+	hasProgress := jobctx.HasProgress(ctx)
+	runBudgetExpired := errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)
+	yielded := jobctx.YieldedToWaiter(ctx) || jobctx.PreemptionRequested(ctx)
+	if converged || (!hasProgress && (!yielded || runBudgetExpired)) {
+		return err
+	}
+	if failure := jobctx.ErrorAfterYield(ctx, err); failure != nil {
+		if !hasProgress {
+			return failure
+		}
+		return &scheduler.RescheduleError{Err: failure}
+	}
+	return scheduler.ErrReschedule
 }

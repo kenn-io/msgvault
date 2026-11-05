@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -2644,4 +2645,132 @@ func TestContextWorker_ClosesSourceSnapshotBeforeSemanticCall(t *testing.T) {
 	f.seed("email", f.chatID, time.Now().UTC(), "mail")
 	_, err := f.run()
 	require.NoError(t, err)
+}
+
+func TestContextWorkerZeroWatermarkRetriesDoNotRecordProgress(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	f.seed("beeper", f.chatID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), "retry with an untracked source")
+	assert.Zero(t, latestContextSequence(t, f.store), "the source was imported before journal capture")
+
+	var cancelBudget context.CancelCauseFunc
+	f.client.err = context.Canceled
+	f.client.before = func() { cancelBudget(jobctx.ErrRunBudgetExceeded) }
+	f.restartWorker()
+
+	for attempt := range 2 {
+		ctx := jobctx.WithProgress(t.Context())
+		ctx, cancel := context.WithCancelCause(ctx)
+		cancelBudget = cancel
+		_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+		require.ErrorIs(t, err, context.Canceled, "attempt %d must stop inside its provider request", attempt+1)
+		assert.False(t, jobctx.HasProgress(ctx), "an unchanged zero watermark cannot schedule an immediate continuation")
+		assert.Zero(t, f.progress().ChangeSequence)
+		assert.Empty(t, f.progress().ReconcileCursor)
+		cancel(jobctx.ErrRunBudgetExceeded)
+	}
+	assert.Equal(t, 2, f.client.Calls(), "each pass retries because no provider response was saved")
+}
+
+func TestContextWorkerCleansCheckpointForDeletedUnpublishedDocument(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		deps.Hooks.BeforePublish = func() error {
+			cancel()
+			return nil
+		}
+	})
+	messageID := f.seed("beeper", f.chatID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), "checkpoint before deletion")
+	_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, context.Canceled, "publication must stop after saving the provider response")
+	var checkpoints int
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	require.Positive(t, checkpoints, "the completed provider response remains available for resumption")
+	var documents int
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_documents WHERE generation_id = ?`, int64(f.gen)).Scan(&documents))
+	assert.Zero(t, documents, "the interrupted pass has not published a document")
+
+	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
+	require.NoError(t, err)
+	f.deps.Hooks.BeforePublish = nil
+	f.restartWorker()
+	result, err := f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	assert.Equal(t, 1, f.client.Calls(), "resumption must not embed a document deleted before publication")
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	assert.Zero(t, checkpoints, "reconciliation removes the checkpoint owner that no longer has a source document")
+}
+
+// A chat whose windows need two provider requests keeps the first request's
+// vectors when the pass stops before the second one finishes, and the next
+// pass sends only the unfinished request.
+func TestContextWorker_StoppedPassReusesCompletedRequest(t *testing.T) {
+	for _, stop := range []string{"yield", "runtime limit", "yield and publication failure"} {
+		t.Run(stop, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			ctx, requestYield := jobctx.WithPreemption(ctx)
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Inputs [][]string `json:"inputs"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+				requests = append(requests, strings.Join(request.Inputs[0], " "))
+				switch {
+				case len(requests) == 1 && (stop == "yield" || stop == "yield and publication failure"):
+					requestYield()
+				case len(requests) == 2 && stop == "runtime limit":
+					cancel()
+					<-r.Context().Done()
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"data":[{"index":0,"data":[{"index":0,"embedding":[1,2,3,4]}]}]}`))
+				assert.NoError(t, err)
+			}))
+			defer server.Close()
+			f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+				deps.Client = NewVoyageClient(VoyageConfig{
+					Endpoint: server.URL, Model: "voyage-context-4", Dimension: 4, MaxRetries: 1,
+					Limits: RequestLimits{MaxDocuments: 1},
+				})
+				if stop == "yield and publication failure" {
+					deps.Hooks.BeforePublish = func() error { return errors.New("publication interrupted") }
+				}
+			})
+			day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+			f.seed("beeper", f.chatID, day, "morning window")
+			f.seed("beeper", f.chatID, day.Add(2*time.Hour), "afternoon window")
+			stopped, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+			switch stop {
+			case "yield":
+				require.NoError(err)
+				require.Len(requests, 1)
+			case "runtime limit":
+				require.Error(err)
+				assert.Zero(t, stopped.Failed, "cancellation leaves content failures unstamped")
+				require.Len(requests, 2)
+			default:
+				require.ErrorContains(err, "publication interrupted")
+				require.NotErrorIs(err, jobctx.ErrYieldedToWaiter)
+				require.Len(requests, 1)
+				f.deps.Hooks.BeforePublish = nil
+			}
+			first := requests[0]
+			f.restartWorker()
+			requests = nil
+			result, err := f.run()
+			require.NoError(err)
+			assert.NotContains(t, requests, first, "the completed request is not sent again")
+			assert.Len(t, requests, 1, "only the unfinished request is sent")
+			assert.True(t, result.Contextual.Converged)
+			assert.Zero(t, f.missing())
+			var saved int
+			require.NoError(f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+			assert.Zero(t, saved, "publication releases all checkpoint owners")
+		})
+	}
 }
