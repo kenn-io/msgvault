@@ -2809,6 +2809,7 @@ it('turns on semantic search from an empty full-text result and opens Settings o
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
+  expect(screen.getByText(/Downloads 276.6 MB once to this computer/)).toBeDefined();
   state.replaceSearchDraft('pear', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);
@@ -2818,4 +2819,27 @@ it('turns on semantic search from an empty full-text result and opens Settings o
   expect(state.current.settingsCategory).toBe('overview');
   view.unmount();
   state.destroy();
+});
+
+it.each(['http', 'network'])('keeps the search hint retry available after a %s setup failure', async failure => {
+ window.history.replaceState(null,'',`/?explore=${encodeURIComponent(JSON.stringify({workspace:'everything',query:'orchard',searchMode:'full_text'}))}`);
+ let posts=0;
+ const fetchFn:typeof fetch=async input=>{
+  const request=input as Request;
+  if(new URL(request.url).pathname==='/api/v1/embeddings/local'){
+   if(request.method==='POST' && ++posts===1){
+    if(failure==='network') throw new TypeError('Network interrupted');
+    return Response.json({error:'unavailable',message:'The daemon is stopping'},{status:503});
+   }
+   return Response.json({enabled:false,provider:'',phase:'idle',download_bytes:290000000});
+  }
+  return Response.json(exploreResponse());
+ };
+ const state=new ExploreState(window);const view=render(AppShell,{client:createAPIClient(fetchFn,fetchFn),state});
+ await fireEvent.click(await screen.findByRole('button',{name:'Turn on'}));
+ expect((await screen.findByRole('alert')).textContent).toContain(failure==='network'?'Network interrupted':'The daemon is stopping');
+ expect(state.current.workspace).toBe('everything');
+ await fireEvent.click(screen.getByRole('button',{name:'Turn on'}));
+ await waitFor(()=>expect(state.current.workspace).toBe('settings'));expect(posts).toBe(2);
+ view.unmount();state.destroy();
 });

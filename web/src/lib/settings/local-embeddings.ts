@@ -1,4 +1,5 @@
 import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-ui';
+import { formatBytes } from '../util/format';
 import type { EmbeddingStatus, LocalEmbeddingsStatus } from '../api/generated/models';
 
 export function localSearchState(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus, hostname = ''): SearchByMeaningState {
@@ -23,4 +24,13 @@ export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: Emb
     rebuild: ('Switching rebuilds the index for {count} {items}' + (embedding?.eta_seconds ? ', {time}' : '')) + (status.document_rebuild ? '. Document search also rebuilds on this computer.' : '.'),
     ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index and rebuilds document search on this computer' } : {}),
   };
+}
+
+export function localSearchHintLabels(status: LocalEmbeddingsStatus, hostname: string): Partial<SearchByMeaningLabels> {
+  const state = localSearchState(status, undefined, hostname);
+  const labels = localSearchLabels(status);
+  const disclosure = state.kind === 'off'
+    ? `Downloads ${formatBytes(state.downloadBytes)} once to ${state.host || 'this computer'}`
+    : labels.downloaded || 'Already on this computer';
+  return { ...labels, hint: `Search by meaning is off · ${disclosure}` };
 }

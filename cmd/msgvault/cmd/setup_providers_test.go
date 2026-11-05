@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2011,6 +2012,36 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
 			assert.Equal(t, 1, probes)
 			assert.Equal(t, 1, discoveries)
+		})
+	}
+}
+
+func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *testing.T) {
+	for _, fields := range []string{"", "cron = \"\"", "run_after_sync = false"} {
+		t.Run(fields, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+fields)
+			cfg := fixture.load(t)
+			var keys toml.MetaData
+			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
+			require.NoError(err)
+			ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
+			assert.Equal(planActionSkip, ordinary.Action)
+			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true})
+			snapshot, err := config.ReadConfigFile(fixture.path)
+			require.NoError(err)
+			next, err := config.PreviewConfigTableEdits(snapshot, resumed.edits)
+			require.NoError(err)
+			assert.True(next.Vector.Enabled)
+			assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
+			assert.Equal(cfg.Vector.Backend, next.Vector.Backend)
+			if fields == "cron = \"\"" {
+				assert.Empty(next.Vector.Embed.Schedule.Cron)
+			} else {
+				assert.Equal(setupEmbedCron, next.Vector.Embed.Schedule.Cron)
+			}
+			assert.Equal(fields != "run_after_sync = false", next.Vector.Embed.Schedule.RunAfterSync)
 		})
 	}
 }

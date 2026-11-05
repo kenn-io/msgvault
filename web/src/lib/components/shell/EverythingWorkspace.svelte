@@ -4,6 +4,8 @@
   import { onDestroy, untrack } from 'svelte';
 
   import { getLocalEmbeddings, enableLocalEmbeddings } from '../../api/generated/api/api';
+  import type { LocalEmbeddingsStatus } from '../../api/generated/models';
+  import { localSearchHintLabels } from '../../settings/local-embeddings';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -421,27 +423,29 @@
     readingDetailRetryRevision += 1;
   }
 
-  let localSetupOff = $state(false);
+  let localSetup = $state<LocalEmbeddingsStatus>();
+  let localSetupError = $state('');
   let startingLocalSearch = $state(false);
-  const localSearchOff = $derived(localSetupOff && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
+  const localSearchOff = $derived(localSetup && localSetup.provider !== 'configured' && !localSetup.enabled && !localSetup.running && localSetup.phase === 'idle' && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
   $effect(() => {
-    localSetupOff = false;
+    localSetup = undefined;
     if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text') return;
     const controller = new AbortController();
     void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
-      if (!controller.signal.aborted && response.ok) localSetupOff = Boolean(data && data.provider !== 'configured' && !data.enabled && !data.running && data.phase === 'idle');
+      if (!controller.signal.aborted && response.ok) localSetup = data;
     }).catch(() => undefined);
     return () => controller.abort();
   });
   async function turnOnSearchByMeaning(): Promise<void> {
     if (startingLocalSearch) return;
     startingLocalSearch = true;
+    localSetupError = '';
     try {
-      await enableLocalEmbeddings({ use_builtin: false }, client);
-    } catch { /* Settings shows the current setup state and allows a retry. */ } finally {
-      startingLocalSearch = false;
+      const { response, error } = await enableLocalEmbeddings({ use_builtin: false }, client);
+      if (!response.ok) throw new Error(error?.message || 'Could not turn on search by meaning.');
       commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
-    }
+    } catch (cause) { localSetupError = cause instanceof Error ? cause.message : 'Could not turn on search by meaning.'; }
+    finally { startingLocalSearch = false; }
   }
 
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
@@ -724,19 +728,25 @@
     </div>
   {/if}
 
-  {#if localSearchOff}
-    <div class="local-search-hint"><SearchByMeaningHint onturnon={() => void turnOnSearchByMeaning()} /></div>
+  {#if localSearchOff && localSetup}
+    <div class="local-search-hint">
+      <SearchByMeaningHint labels={localSearchHintLabels(localSetup, window.location.hostname)} onturnon={() => void turnOnSearchByMeaning()} />
+      {#if localSetupError}<p role="alert">{localSetupError}</p>{/if}
+    </div>
   {/if}
-  {#if session.coverage}
-    <SearchCoverage
-      requestedMode={exploreState.current.searchMode}
-      coverage={session.coverage}
-      onaction={handleCoverageAction}
-    />
-  {/if}
-
-  {#if loader.result?.searchDeletionScope === 'active'}
-    <p class="scope-note" role="status">Semantic search covers active messages only.</p>
+  {#if session.coverage || loader.result?.searchDeletionScope === 'active'}
+    <div class="search-notes">
+      {#if session.coverage}
+        <SearchCoverage
+          requestedMode={exploreState.current.searchMode}
+          coverage={session.coverage}
+          onaction={handleCoverageAction}
+        />
+      {/if}
+      {#if loader.result?.searchDeletionScope === 'active'}
+        <p class="scope-note" role="status">Semantic search covers active messages only.</p>
+      {/if}
+    </div>
   {/if}
 
   {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
@@ -903,8 +913,11 @@
 </svelte:element>
 
 <style>
-  .local-search-hint { margin: 0 var(--pane-pad-x) var(--control-gap); }
+  .local-search-hint { margin: 0 0 var(--control-gap); }
   .local-search-hint :global(button) { text-decoration: underline; }
+  .local-search-hint p { margin: var(--control-gap) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
+  .search-notes { display: grid; gap: var(--control-gap); }
+  .search-notes :global(.coverage) { min-height: 0; }
   .everything-workspace {
     display: flex;
     width: 100%;

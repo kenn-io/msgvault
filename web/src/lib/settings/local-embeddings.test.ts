@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import SettingsOverview from '../components/settings/SettingsOverview.svelte';
 import type { LocalEmbeddingsStatus } from '../api/generated/models';
 import { embeddingStatus } from '../../test/operations';
-import { localSearchLabels, localSearchState } from './local-embeddings';
+import { localSearchHintLabels, localSearchLabels, localSearchState } from './local-embeddings';
 
 const off: LocalEmbeddingsStatus = { enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', done_bytes: 0, total_bytes: 0, download_bytes: 290000000 };
 const row = { id: 'message_embedding', name: 'Message search', chip: { text: 'Off', tone: 'muted' as const } };
@@ -43,3 +43,8 @@ for (const kind of ['on', 'ollama'] as const) {
     if (kind === 'ollama') expect(screen.getByRole('button', { name: 'Use built-in instead' })).toBeDefined();
   });
 }
+
+it('discloses the download size and remote host before hint activation', () => {
+ expect(localSearchHintLabels(off,'archive.example.test').hint).toBe('Search by meaning is off · Downloads 276.6 MB once to archive.example.test');
+ expect(localSearchHintLabels({...off,ollama_available:true},'archive.example.test').hint).toBe('Search by meaning is off · Uses Ollama on this computer');
+});

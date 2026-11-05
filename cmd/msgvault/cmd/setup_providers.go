@@ -238,6 +238,7 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // and which vector backend the archive selects.
 type setupDetection struct {
 	localEmbeddings     bool
+	resumeLocalText     bool
 	embeddingEndpoint   string
 	embeddingError      error
 	configKeys          toml.MetaData
@@ -531,7 +532,13 @@ func setupScheduleEdits(keys toml.MetaData, lane string) []config.TableEdit {
 func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
 	lane := setupLanePlan{Lane: laneTextSearch, Label: "Text search"}
 	embeddings := loaded.Vector.Embeddings
+	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true}}
 	switch {
+	case detection.resumeLocalText:
+		lane.Action, lane.Provider, lane.Model = planActionEnable, textEmbeddingProviderName(embeddings), embeddings.Model
+		lane.local = embeddings.LocalOnly
+		lane.edits = append([]config.TableEdit{vectorEdit}, setupScheduleEdits(detection.configKeys, "embed")...)
+		return lane
 	case loaded.Vector.Enabled && !detection.localEmbeddings:
 		lane.Action = planActionKeep
 		lane.Provider = textEmbeddingProviderName(embeddings)
@@ -551,7 +558,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 		lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
 		return lane
 	}
-	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true, "backend": detection.backend}}
+	vectorEdit.Values["backend"] = detection.backend
 	switch {
 	case detection.voyageKey && !detection.localEmbeddings:
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionEnable, "voyage", setupVoyageTextModel, gateVoyage

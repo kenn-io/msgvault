@@ -74,7 +74,13 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return ctx.Err()
 	}
 	if c.gate != nil {
-		release, ok := c.gate.BeginWorkContext(ctx)
+		begin := c.gate.BeginWorkContext
+		if labeled, ok := c.gate.(api.LabeledOperationGate); ok {
+			begin = func(ctx context.Context) (func(), bool) {
+				return labeled.BeginLabeledWorkContext(ctx, "search by meaning setup")
+			}
+		}
+		release, ok := begin(ctx)
 		if !ok {
 			return errors.New("the daemon is stopping")
 		}
@@ -108,7 +114,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	backend, unavailable := setupVectorBackend(c.state.cfg)
 	configured := loaded.Vector.Embeddings.LocalOnly || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != ""
 	useOllama := !builtin && !loaded.Vector.Embeddings.LocalOnly && (configured || available.OllamaAvailable)
-	detection := setupDetection{backend: backend, backendUnavailable: unavailable, configKeys: configKeys, localEmbeddings: !useOllama}
+	detection := setupDetection{backend: backend, backendUnavailable: unavailable, configKeys: configKeys, localEmbeddings: !useOllama, resumeLocalText: configured && !builtin}
 	if useOllama && !configured {
 		detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
 		if err != nil {
@@ -116,26 +122,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		}
 		detection.ollamaEndpoint = detection.embeddingEndpoint
 	}
-	// This explicit action also enables a disabled, previously configured lane.
-	candidate := *loaded
-	candidate.Vector.Enabled = false
-	if useOllama {
-		candidate.Vector.Embeddings.Endpoint = ""
-		candidate.Vector.Embeddings.LocalOnly = false
-		if !candidate.Vector.Embeddings.LocalCompatible() {
-			candidate.Vector.Embeddings = vector.EmbeddingsConfig{}
-		}
-	}
-	if configured && !builtin {
-		candidate.Vector.Embeddings = vector.EmbeddingsConfig{}
-	}
-	lane := planTextSearch(&candidate, detection)
+	lane := planTextSearch(loaded, detection)
 	if lane.Action != planActionEnable {
 		return errors.New(lane.Reason)
-	}
-	if configured && !builtin {
-		lane.edits = lane.edits[:1]
-		delete(lane.edits[0].Values, "backend")
 	}
 	nextConfig, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
 	if err != nil {
@@ -184,6 +173,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if !useOllama {
 		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
+	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
+		return err
+	}
 	rebuildDocuments, err := c.retainLocalSearchConsents(nextCtx, &previousState, &state)
 	if err != nil {
 		return err
@@ -199,12 +191,6 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	}
 	if vf == nil {
 		return errors.New("local search is unavailable in this build")
-	}
-	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
-		if c.handle.vf == nil && vf.Close != nil {
-			_ = vf.Close()
-		}
-		return err
 	}
 	c.handle.mu.Lock()
 	c.handle.vf = vf
@@ -237,7 +223,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	run := func(args ...string) error {
-		args = append(args, "--config", file.Name())
+		args = append(args, "--config", file.Name(), "--home", runtimeConfig.HomeDir)
 		var stderr string
 		err := c.runner.RunCLICommand(nextCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
 			if event.Type == cliStreamStderr {
