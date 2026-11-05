@@ -80,6 +80,15 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freeAfter),
 		"read freelist after vacuum")
 	assert.Zero(freeAfter, "VACUUM should reclaim free pages")
+	var path string
+	require.NoError(f.Store.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	require.NoError(f.Store.Close(), "close compacted archive")
+	reopened, err := store.OpenForTest(path)
+	require.NoError(err, "reopen compacted archive")
+	t.Cleanup(func() { assert.NoError(reopened.Close()) })
+	var freelist int64
+	require.NoError(reopened.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist), "read reopened freelist")
+	assert.Zero(freelist, "close and reopen must preserve compaction")
 }
 
 func TestExecuteGCRejectsPlanMismatchWithoutDeleting(t *testing.T) {
