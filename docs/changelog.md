@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### New features
+
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
@@ -30,6 +32,7 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
 - A saved person's Details tab in People shows that person's open loops in a
   read-only card, with a Check more action when coverage is incomplete.
+- Opt in to [IMAP deletion tracking](configuration.md#sync) with `imap_reconcile_filtered_deletions` when saved folder exclusions skip only Trash or Junk.
 
 ## 0.23.0
 <small>2026-11-04</small>
