@@ -69,7 +69,7 @@ describe('FactLedger', () => {
     expect(rendered.container.innerHTML).not.toContain('allowed sensitive value');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('allowed sensitive value')).toBeDefined();
-    expect(screen.getByText(/^Support · From a message ·/)).toBeDefined();
+    expect(screen.getByText(/^From a message ·/)).toBeDefined();
     await fireEvent.click(screen.getByText('Details', { selector: 'summary' }));
     expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('88');
 
@@ -201,7 +201,7 @@ it('preserves claim order and keeps claim relations visible', async () => {
   expect(rows[0]!.textContent).toContain('Fact value hidden');
   expect(rows[1]!.textContent).toContain('Current City');
   expect(rows[1]!.textContent).toContain('Location');
-  expect(screen.getByText(/Superseded · system/)).toBeDefined();
+  expect(screen.getByText(/Superseded · Added by msgvault/)).toBeDefined();
   expect(rows[2]!.textContent).toContain('Contradicted City');
   expect(rows[2]!.textContent).toContain('Contradicted · From a message');
   expect(rows[3]!.textContent).toContain('Invalid · From a message');
@@ -381,6 +381,41 @@ function savedProfile(lane: 'current' | 'history' = 'current', sensitive = true)
     etags: {}, errors: {},
   });
 }
+
+it('shows a select claim label from its saved definition and preserves the submitted token in Details', async () => {
+  const profile = savedProfile('current', false);
+  profile.attributes!.attributes[0]!.definition.options = { choices: [{ value: 'status_active', label: 'Active' }] };
+  const value = new FactLedgerController(createAPIClient(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{
+      kind: 'attribute', key: 'note', revision, slug: 'status', description: 'Status', value_type: 'text', cardinality: 'single', sensitive: false,
+    }] });
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [{
+      target: { kind: 'attribute', key: 'note', revision }, submitted_value: '"status_active"',
+      relation: 'support', origin: 'extraction', confidence: { reported_score: 920 }, created_at: '2026-08-03',
+    }] });
+    return ledgerResponse(path);
+  }));
+  value.applyContext(true, 42);
+  await vi.waitFor(() => expect(value.initialLoading).toBe(false));
+  render(FactLedger, { controller: value, profile });
+  expect(screen.getByText('Active')).toBeDefined();
+  await fireEvent.click(screen.getByText('Details', { selector: 'summary' }));
+  expect(screen.getByText('Submitted JSON').nextElementSibling?.textContent).toBe('"status_active"');
+  expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('920');
+  value.destroy();
+  profile.destroy();
+});
+
+it.each([
+  ['extraction', 'From a message'], ['enrichment', 'From enrichment'], ['brief', 'From a brief'],
+  ['system', 'Added by msgvault'], ['invalid', 'Invalid submission'],
+])('shows readable provenance for %s claims', (origin, label) => {
+  const value = controller();
+  value.claims.rows[0]!.origin = origin;
+  const view = render(FactLedger, { controller: value });
+  expect(view.container.querySelector('[aria-label="Fact claim"] .meta')?.textContent).toMatch(new RegExp(`^${label} ·`));
+});
 
 it('requires a fresh saved-value reveal after filtering or changing tabs and preserves field identity on reorder', async () => {
   const value = controller();

@@ -8,7 +8,7 @@
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import AttributeSection from './AttributeSection.svelte';
-  import { joinDefinitions } from './attribute-value';
+  import { displayAttributeValue, joinDefinitions } from './attribute-value';
   import { historyProvenance } from './history-format';
   import { organizationName } from './organization-name';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
@@ -26,6 +26,10 @@
   const unpins = $derived(controller.pins.rows.filter(pin => !pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
   const attributeIDs = $derived(pins.filter(pin => pin.kind === 'attribute').flatMap(pin => pin.targetKey ? [pin.targetKey] : []));
   function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet.` : `No ${section} yet`; }
+  const originLabels: Record<string, string> = {
+    extraction: 'From a message', enrichment: 'From enrichment', brief: 'From a brief',
+    system: 'Added by msgvault', invalid: 'Invalid submission',
+  };
 
   onDestroy(() => { destroyed = true; });
 
@@ -102,7 +106,6 @@
     </section>
   {:else if controller.selectedSection === 'claims'}
     <section id="fact-claims-section" aria-label="Claims" tabindex="-1">
-      <h3>Claims</h3>
       {#if controller.claims.loading && controller.claims.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact claims" /> Loading claims…</p>
       {:else if controller.claims.error}<div class="message" role="alert"><p>{controller.claims.error}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>
       {:else}
@@ -110,6 +113,8 @@
         {#if controller.claims.pageError}<div class="message" role="alert"><p>{controller.claims.pageError}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>{/if}
         <div class="rows" aria-busy={controller.claims.loading}>
           {#each controller.claims.rows as row (row.rowToken)}
+            {@const definition = definitions.find(field => field.universal_id === row.targetKey)}
+            {@const relation = row.relation === 'support' ? '' : row.relation === 'contradict' ? 'Contradicted · ' : row.relation === 'supersede' ? 'Superseded · ' : 'Invalid · '}
             {@const sensitivity = controller.claimSensitivity(row)}
             {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.rowToken))}
             <div class="row" aria-label="Fact claim">
@@ -119,14 +124,14 @@
                   <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
                 {:else if !shown}
                   <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
-                {:else}<span>{row.displayValue}</span>{/if}
+                {:else}<span>{definition ? displayAttributeValue(definition, { type: 'text', text: row.displayValue }) : row.displayValue}</span>{/if}
                 <details><summary>Details</summary>
                   <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Reported confidence</dt><dd>{row.reportedScore}</dd></div></dl>
                   {#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</p>{/if}
                   {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
                 </details>
               </div>
-              <span class="meta">{row.relation === 'contradict' ? 'Contradicted' : row.relation === 'invalid' ? 'Invalid' : row.relation === 'supersede' ? 'Superseded' : 'Support'} · {row.origin === 'extraction' ? 'From a message' : row.origin === 'enrichment' ? 'From enrichment' : row.origin} · {formatShortDate(row.createdAt)}</span>
+              <span class="meta">{relation}{originLabels[row.origin] ?? 'Unknown source'} · {formatShortDate(row.createdAt)}</span>
             </div>
           {:else}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/each}
         </div>
