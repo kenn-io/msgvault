@@ -284,8 +284,8 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		}
 
 		for i, msg := range rows {
-			// Rows are ordered by message ID. Keep the last chat placement once.
-			if i+1 < len(rows) && msg.ROWID == rows[i+1].ROWID {
+			// Keep the highest-numbered chat even when a message spans pages.
+			if i > 0 && msg.ROWID == rows[i-1].ROWID {
 				continue
 			}
 			if err := ctx.Err(); err != nil {
@@ -392,7 +392,7 @@ func (c *Client) fetchPage(
 			pageSize = remaining
 		}
 	}
-	sqlQuery += ` ORDER BY m.ROWID ASC, cmj.chat_id ASC LIMIT ?`
+	sqlQuery += ` ORDER BY m.ROWID ASC, cmj.chat_id DESC LIMIT ?`
 	args = append(args, pageSize)
 
 	dbRows, err := c.db.QueryContext(ctx, sqlQuery, args...)

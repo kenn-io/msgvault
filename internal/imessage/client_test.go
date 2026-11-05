@@ -480,10 +480,13 @@ func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, first.MessagesAdded)
 	assert.Zero(first.MessagesUpdated)
-	idle, err := client.Import(t.Context(), st, src.ID)
-	require.NoError(err)
-	assert.Zero(idle.MessagesAdded)
-	assert.Zero(idle.MessagesUpdated)
+	for _, pageSize := range []int{client.pageSize, 1} {
+		client.pageSize = pageSize
+		idle, err := client.Import(t.Context(), st, src.ID)
+		require.NoError(err)
+		assert.Zero(idle.MessagesAdded)
+		assert.Zero(idle.MessagesUpdated, "page size %d", pageSize)
+	}
 }
 
 func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
