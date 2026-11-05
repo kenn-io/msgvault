@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentVerificationReads(t *testing.T) {
@@ -47,11 +48,10 @@ func TestAgentVerificationReads(t *testing.T) {
 	_, revealToken, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	for _, path := range []string{
-		fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/messages/%d", id),
 		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
 		"/search/deep?q=verification",
 		"/search?q=verification&page_size=1&page=2", "/search/fast?q=verification&limit=1&offset=1", "/search/deep?q=verification&limit=1&offset=1", "/search/deep?q=verification&scope=body&limit=1&offset=1", "/cli/search?q=verification&include_snippet=true&limit=1&offset=1",
-		"/messages/filter", "/messages", "/search/domains?domains=example.test", fmt.Sprintf("/cli/message/thread?id=%d", id),
+		"/messages/filter", "/messages", "/search/domains?domains=example.test",
 	} {
 		t.Run(path, func(t *testing.T) {
 			requirements := require.New(t)
@@ -104,7 +104,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 	requestCount := 0
 	tokens := make(map[string]string)
 	for _, mode := range []string{"masked", "reveal"} {
-		permissions := []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionSearchRead}
+		permissions := []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionSearchRead, agentgrant.PermissionAttachmentRead}
 		if mode == "reveal" {
 			permissions = append(permissions, agentgrant.PermissionVerificationRead)
 		}
@@ -112,11 +112,13 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		requirements.NoError(err)
 		tokens[mode] = token
 	}
-	for _, tc := range []struct{ name, subject, text, html string }{
-		{"code", "Account", "Your code is 482913", ""},
-		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>"},
-		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>"},
-		{"uncapped detail", "Account", strings.Repeat("x", 256*1024) + " Your code is 482913", ""},
+	for _, tc := range []struct{ name, subject, text, html, filename string }{
+		{"code", "Account", "Your code is 482913", "", ""},
+		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", ""},
+		{"filename", "Ordinary", "", "", "code-482913.png"},
+		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", ""},
+		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>", ""},
+		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes) + " Your code is 482913", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -124,6 +126,31 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 			_, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, tc.subject, tc.text)
 			requirements.NoError(err)
 			requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: tc.text, Valid: true}, sql.NullString{String: tc.html, Valid: true}))
+			if tc.name == "read summary" {
+				_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
+				requirements.NoError(err)
+			}
+			if tc.filename != "" {
+				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
+				srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+				message, err := st.GetMessage(id)
+				requirements.NoError(err)
+				requirements.Len(message.Attachments, 1)
+				for _, mode := range []string{"masked", "reveal", "owner"} {
+					req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/attachments/%d", message.Attachments[0].ID), nil)
+					if mode == "owner" {
+						req.Header.Set("X-Api-Key", "owner")
+					} else {
+						req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
+					}
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+					if mode != "masked" {
+						assertions.Contains(w.Body.String(), tc.filename)
+					}
+				}
+			}
 
 			for _, withEngine := range []bool{true, false} {
 				paths := []string{fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/messages/%d", id)}
@@ -156,11 +183,14 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						if mode == "masked" && tc.name != "ordinary" {
 							assertions.Equal("[verification content masked]", body.BodyText)
 							assertions.Empty(body.BodyHTML)
-							assertions.NotContains(w.Body.String(), "482913")
+							assertions.NotContains(w.Body.String(), "4829")
 							assertions.NotContains(w.Body.String(), "abcDEF1234567890")
 						} else {
 							assertions.Equal(tc.text, body.BodyText)
 							assertions.Equal(tc.html, body.BodyHTML)
+							if tc.filename != "" {
+								assertions.Contains(w.Body.String(), tc.filename)
+							}
 						}
 					}
 					assertions.Equal(responses["owner"], responses["reveal"])
@@ -206,7 +236,7 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
 	assertions.NotContains(w.Body.String(), "482913")
 
-	// A real loader must also refuse a row that disappeared before hydration.
+	// A loader error must withhold the response, just like an unavailable loader.
 	srv.store = st
 	w = httptest.NewRecorder()
 	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id + 1, Subject: "Your code is 482913"}}, nil))
@@ -216,6 +246,7 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 
 func TestAgentVerificationFields(t *testing.T) {
 	for _, tc := range []struct{ name, subject, snippet, title, text, filename string }{
+		{name: "read summary", subject: "Your verification code is 482913", snippet: "…code is 4829", text: "Your verification code is 482913"},
 		{name: "title cue", subject: "482913", title: "Your verification code"},
 		{name: "body cue", subject: "482913", text: "Your verification code"},
 		{name: "filename cue", subject: "Your verification code", filename: "482913.png"},
@@ -240,13 +271,26 @@ func TestAgentVerificationFields(t *testing.T) {
 			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-			assertions.NotContains(w.Body.String(), "482913")
-			assertions.Contains(w.Body.String(), "[verification content masked]")
+			_, revealToken, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+			requirements.NoError(err)
+			for _, credential := range []string{token, revealToken, "owner"} {
+				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+				if credential == "owner" {
+					req.Header.Set("X-Api-Key", credential)
+				} else {
+					req.Header.Set(apiprotocol.AgentTokenHeader, credential)
+				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+				if credential == token {
+					assertions.NotContains(w.Body.String(), "4829")
+					assertions.Contains(w.Body.String(), "[verification content masked]")
+				} else {
+					assertions.Contains(w.Body.String(), tc.subject)
+					assertions.NotContains(w.Body.String(), "[verification content masked]")
+				}
+			}
 		})
 	}
 }
@@ -262,56 +306,21 @@ func (s *attachmentBodyLoadCounter) PopulateMessageBodiesContext(ctx context.Con
 	return s.Store.PopulateMessageBodiesContext(ctx, messages)
 }
 
-func TestAgentVerificationSharedPNGSkipsBodyLoading(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	hash := fmt.Sprintf("%x", sha256.Sum256(fakePNG))
-	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
-	requirements.NoError(err)
-	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-	requirements.NoError(os.WriteFile(path, fakePNG, 0600))
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "ordinary", "Ordinary", "Ordinary")
-	requirements.NoError(err)
-	requirements.NoError(st.UpsertAttachment(id, "shared.png", "image/png", "", hash, len(fakePNG)))
-	_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Your verification code is 482913", "")
-	requirements.NoError(err)
-	requirements.NoError(st.UpsertAttachment(parentID, "shared.png", "image/png", "", hash, len(fakePNG)))
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
-	counter := &attachmentBodyLoadCounter{Store: st}
-	srv.store = counter
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	for _, blob := range []bool{false, true} {
-		if blob {
-			bs, err := attachmentstore.New(store.NewPackCatalog(st), cfg.AttachmentsDir())
-			requirements.NoError(err)
-			srv.blobStore = bs
-			t.Cleanup(func() { assertions.NoError(bs.Close()) })
-		}
-		for _, endpoint := range []string{"/attachments/" + hash + "/content", "/cli/attachment?content_hash=" + hash} {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-			assertions.Equal(fakePNG, w.Body.Bytes())
-			assertions.Zero(counter.calls, "blob=%t endpoint=%s", blob, endpoint)
-		}
-	}
-}
-
 func TestAgentVerificationAttachments(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "Ordinary", "Ordinary")
+	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "Ordinary", "Ordinary")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	counter := &attachmentBodyLoadCounter{Store: st}
+	srv.store = counter
 	requestCount := 0
 	tokens := map[string]string{"owner": "owner"}
+	_, attachmentToken, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	tokens["attachment-only"] = attachmentToken
 	for _, mode := range []string{"masked", "reveal"} {
 		permissions := []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}
 		if mode == "reveal" {
@@ -326,6 +335,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		blocked          bool
 		parent, shared   bool
 	}{
+		{"shared.png", "image/png", string(fakePNG), false, false, true},
 		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
 		{"order.txt", "text/plain", "Order 1234567 shipped. Read about your verification code\n", false, false, false},
@@ -352,30 +362,33 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 			requirements.NoError(os.WriteFile(path, []byte(tc.body), 0600))
-			messageID := id
-			if tc.parent || tc.name == "code-482913.png" {
-				subject := "Your verification code is 482913"
-				messageKey := tc.name
-				if !tc.parent {
-					subject = "Ordinary"
-					messageKey = "named-image"
-				}
-				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", messageKey, subject, "")
-				requirements.NoError(err)
+			subject := "Ordinary"
+			if tc.parent {
+				subject = "Your verification code is 482913"
 			}
+			_, messageID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, subject, "")
+			requirements.NoError(err)
 			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
 			if tc.shared {
-				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-parent", "Your verification code is 482914", "")
+				subject := "Your verification code is 482914"
+				if tc.mime == "image/png" {
+					subject = "Your verification code is 482913"
+				}
+				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-"+tc.name, subject, "")
 				requirements.NoError(err)
 				requirements.NoError(st.UpsertAttachment(parentID, tc.name, tc.mime, "", hash, len(tc.body)))
 			}
 			backends := []bool{false}
 			endpoints := []string{"/attachments/" + hash + "/content"}
 			callers := []string{"masked"}
-			if tc.name == "code.txt" || tc.name == "ordinary.txt" {
+			if tc.name == "code.txt" || tc.name == "ordinary.txt" || tc.name == "shared.png" {
 				backends = append(backends, true)
 				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
-				callers = append(callers, "reveal", "owner")
+				if tc.name == "shared.png" {
+					callers = []string{"attachment-only"}
+				} else {
+					callers = append(callers, "reveal", "owner")
+				}
 			}
 			for _, blob := range backends {
 				srv.blobStore = nil
@@ -395,41 +408,20 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						} else {
 							req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
 						}
+						counter.calls = 0
 						w := httptest.NewRecorder()
 						srv.Router().ServeHTTP(w, req)
+						if tc.name == "shared.png" {
+							assertions.Zero(counter.calls, "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
+						}
 						if mode == "masked" && tc.blocked {
 							requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
-							assertions.NotContains(w.Body.String(), "482913")
 						} else {
 							assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 							assertions.Equal(tc.body, w.Body.String())
 							if strings.HasPrefix(endpoint, "/cli/attachment?") {
 								assertions.Empty(w.Header().Get("Content-Disposition"))
 							}
-						}
-					}
-				}
-			}
-			if tc.name == "code-482913.png" {
-				attachments, err := srv.queryEngineForContext(context.Background()).GetAttachmentsByHash(context.Background(), hash)
-				requirements.NoError(err)
-				requirements.Len(attachments, 1)
-				for _, endpoint := range []string{fmt.Sprintf("/attachments/%d", attachments[0].ID), fmt.Sprintf("/cli/message?id=%d", messageID)} {
-					for _, mode := range []string{"masked", "reveal", "owner"} {
-						req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
-						if mode == "owner" {
-							req.Header.Set("X-Api-Key", "owner")
-						} else {
-							req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
-						}
-						w := httptest.NewRecorder()
-						srv.Router().ServeHTTP(w, req)
-						assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-						if mode == "masked" && strings.HasPrefix(endpoint, "/cli/message?") {
-							assertions.NotContains(w.Body.String(), "482913")
-							assertions.Contains(w.Body.String(), "verification content masked")
-						} else if mode != "masked" {
-							assertions.Contains(w.Body.String(), tc.name)
 						}
 					}
 				}

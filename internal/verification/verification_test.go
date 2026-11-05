@@ -72,7 +72,6 @@ func TestIs(t *testing.T) {
 		{"cells", Content{HTML: "Your verification code is <td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td>"}, true},
 		{"long cell number", Content{HTML: "Your verification code is " + strings.Repeat("<td>4</td>", 11)}, false},
 		{"mixed", Content{Text: "Your code is K7M2-9QXA"}, true},
-		{"subject cue", Content{Subject: "Your verification code", Text: "482913"}, true},
 		{"bare subject cue", Content{Subject: "Your code", Text: "482913"}, false},
 		{"PIN year", Content{Text: "Your code is 2026"}, true},
 		{"PIN year after colon", Content{Text: "Your verification code is:\n\n2026"}, true},
@@ -105,10 +104,8 @@ func TestIs(t *testing.T) {
 		{"order", Content{Text: "Order 1234567 shipped. Log in to track it."}, false},
 		{"help line", Content{Text: "Sign in help line 1800555"}, false},
 		{"article", Content{Text: "Sign in to read more https://example.test/articles/interesting-article-title"}, false},
-		{"coupon", Content{Text: "Use code SAVE20"}, false},
 		{"booking reference", Content{Subject: "Your trip", Text: "Confirmation code: KXPL2M"}, false},
 		{"promo sale", Content{Subject: "Sale", Text: "Use promo code SAVE2024 for 20% off. Order 55512345"}, false},
-		{"promo code", Content{Text: "Use promo code SAVE2024"}, false},
 		{"unsubscribe", Content{Text: "Sign in https://example.test/unsubscribe?token=abcDEF1234567890"}, false},
 		{"preferences", Content{Text: "Sign in https://example.test/preferences/abcDEF1234567890"}, false},
 		{"tracked sign-in", Content{Subject: "Sign in to Acme", HTML: `<a href="https://u1234567.ct.sendgrid.net/ls/click?upn=u001.Kq3vZ8xY2mN7pL4wR9tB6cD1fG5hJ0kS">Sign in</a>`}, true},
@@ -136,7 +133,14 @@ func TestIs(t *testing.T) {
 		cases = append(cases, testCase{cue, Content{Subject: "Your " + cue, Text: "482913"}, true})
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Is(tc.content)) })
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, Is(tc.content))
+			if tc.name == "promo SAVE20" {
+				for _, text := range []string{"Use code SAVE20", "Use promo code SAVE2024"} {
+					assert.False(t, Is(Content{Text: text}), text)
+				}
+			}
+		})
 	}
 }
 
