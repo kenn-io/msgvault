@@ -68,7 +68,7 @@ func buildRelationshipScaleCache(b *testing.B, emailCount, contactCount int) {
 		datasetSources:  `SELECT 1::BIGINT AS id, 'owner@example.test' AS account_email, 'gmail' AS source_type`,
 		datasetParticipants: fmt.Sprintf(`SELECT i::BIGINT AS id,
 			'person-' || i || '@' || domain AS email_address,
-			domain, 'Person ' || i AS display_name, '' AS phone_number
+			domain, 'Person ' || i AS display_name, '' AS phone_number, false AS is_room
 			FROM (SELECT i, CASE WHEN i = 1 THEN 'example.test'
 				ELSE 'domain-' || i %% 1000 || '.example.test' END AS domain
 				FROM range(1, %d) t(i))`, contactCount+2),

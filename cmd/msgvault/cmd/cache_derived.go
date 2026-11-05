@@ -157,6 +157,7 @@ func refreshDerivedDatasetsOnly(
 		tableConversationParticipants,
 		"account_identities",
 		tableParticipants,
+		"calendar_event_attendees",
 		tableParticipantIdentifiers,
 		"persons", "person_participants",
 	}

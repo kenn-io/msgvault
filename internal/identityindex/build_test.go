@@ -27,7 +27,7 @@ func TestBuildExcludesRooms(t *testing.T) {
 				// Room 4B is both an invite recipient and a conversation member.
 				_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
 					SELECT * FROM read_parquet(?) UNION ALL
-					SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', ''`, parquetDatasetGlob(root, "participants"))
+					SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', '', false`, parquetDatasetGlob(root, "participants"))
 				requirements.NoError(err)
 				replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
 				_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
@@ -887,7 +887,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'email_thread'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`+where)
 	writeRelationshipParquet(tb, db, root, "participants", `
-		SELECT * FROM (VALUES
+		SELECT *, false AS is_room FROM (VALUES
 			(1::BIGINT, 'alice@example.com'::VARCHAR, 'example.com'::VARCHAR, 'Alice'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'bob@example.net'::VARCHAR, 'example.net'::VARCHAR, ''::VARCHAR, ''::VARCHAR),
 			(3::BIGINT, 'alias@example.net'::VARCHAR, 'example.net'::VARCHAR, 'Bob Alias'::VARCHAR, ''::VARCHAR),

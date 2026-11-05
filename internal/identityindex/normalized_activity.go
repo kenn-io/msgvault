@@ -16,7 +16,7 @@ func CanonicalParticipantsSQL(participants, clusters string) string {
 	       min(p.id) OVER (PARTITION BY coalesce(c.canonical_id, p.id))::BIGINT AS canonical_id,
 	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
 	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id
-	WHERE NOT %s`, participants, clusters, RoomDomainSQL("lower(coalesce(p.domain, ''))"))
+	WHERE NOT (%s OR coalesce(p.is_room, false))`, participants, clusters, RoomDomainSQL("lower(coalesce(p.domain, ''))"))
 }
 
 // OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.

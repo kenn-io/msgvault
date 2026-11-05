@@ -939,7 +939,9 @@ func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 			COALESCE(%s, '') AS email_address,
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
-			COALESCE(%s, '') AS phone_number
+			COALESCE(%s, '') AS phone_number,
+			EXISTS (SELECT 1 FROM sqlite_db.calendar_event_attendees a
+				WHERE a.role = 'room' AND lower(a.email) = lower(participants.email_address)) AS is_room
 		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
 }
 
@@ -2150,6 +2152,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
 			identityColumns("email_address")},
+		{"calendar_event_attendees", "SELECT email, role FROM calendar_event_attendees WHERE role = 'room'",
+			"types={'email': 'VARCHAR', 'role': 'VARCHAR'}", identityColumns("email")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
 			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
 			identityColumns("address")},

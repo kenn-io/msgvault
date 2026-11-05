@@ -60,7 +60,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				FROM equivalence_messages WHERE id % 5 = 0 AND id < 19`+unknownRecipient)
 			_, err = db.Exec(`CREATE TEMP TABLE aliased_participants AS
 				SELECT * FROM read_parquet(?) UNION ALL
-				SELECT ?, 'alias@alias.test', 'alias.test', 'Alias', ''`,
+				SELECT ?, 'alias@alias.test', 'alias.test', 'Alias', '', false`,
 				parquetDatasetGlob(root, "participants"), tc.members+1)
 			requirements.NoError(err)
 			replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM aliased_participants")
@@ -265,7 +265,7 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 			if tc.draftOnlyRecipient {
 				_, err = db.Exec(`CREATE TEMP TABLE draft_participants AS
 					SELECT * FROM read_parquet(?) UNION ALL
-					SELECT 4::BIGINT, 'carol@draft.example', 'draft.example', 'Carol Example', ''`, parquetDatasetGlob(root, "participants"))
+					SELECT 4::BIGINT, 'carol@draft.example', 'draft.example', 'Carol Example', '', false`, parquetDatasetGlob(root, "participants"))
 				require.NoError(err)
 				replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM draft_participants")
 				_, err = db.Exec(`CREATE TEMP TABLE draft_recipients AS
