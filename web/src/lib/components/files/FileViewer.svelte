@@ -321,7 +321,7 @@
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     const target = event.target;
     if (target instanceof HTMLElement) {
-      if (target.closest('audio, input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      if (target.closest('audio, input, textarea, select, [role="menu"], [contenteditable]:not([contenteditable="false"])')) return;
       const preview = target.closest<HTMLElement>('.preview');
       if (preview?.querySelector('pre, table') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
@@ -532,9 +532,6 @@
     padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
-    color: var(--text-secondary);
-  }
-  .error {
     margin-top: var(--space-3);
     color: var(--accent-red);
   }

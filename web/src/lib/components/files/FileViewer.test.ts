@@ -506,3 +506,14 @@ it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s 
   expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
   expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
 });
+
+it.each(['ArrowLeft', 'ArrowRight'])('keeps %s inside the open file actions menu', async (key) => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'application/zip' })), file: file(), position: { index: 1, total: 3 }, onStep });
+  await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+  const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
+  item.focus();
+  await fireEvent.keyDown(item, { key });
+  expect(onStep).not.toHaveBeenCalled();
+  expect(screen.getByRole('menu', { name: 'File actions' })).toBeDefined();
+});
