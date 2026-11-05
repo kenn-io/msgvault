@@ -430,8 +430,8 @@ func TestEmailCalendarStaleRevisionDoesNotPinOrganizer(t *testing.T) {
 	t.Run("first applied revision pins organizer within one email", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
-		first := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Accepted\r\nORGANIZER:mailto:owner-a@example.com")
-		later := "BEGIN:VEVENT\r\nUID:family@example.com\r\nSEQUENCE:2\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
+		first := calendarDocument("REQUEST", "DTSTAMP:20270301T120000Z\r\nSEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Accepted\r\nORGANIZER:mailto:owner-a@example.com")
+		later := "BEGIN:VEVENT\r\nUID:family@example.com\r\nDTSTAMP:20270301T120000Z\r\nSEQUENCE:2\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
 		calendar := []byte(strings.Replace(string(first), "END:VCALENDAR\r\n", later+"END:VCALENDAR\r\n", 1))
 		_, source := persistInviteEmail(t, st, "revisions", inviteEmail(calendar))
 		ids := emailEvents(t, st, source)
@@ -449,8 +449,8 @@ func TestEmailCalendarStaleRevisionDoesNotPinOrganizer(t *testing.T) {
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
 
-	stale := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T110000Z\r\nSUMMARY:Stale\r\nORGANIZER:mailto:owner-a@example.com")
-	newer := "BEGIN:VEVENT\r\nUID:family@example.com\r\nSEQUENCE:3\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
+	stale := calendarDocument("REQUEST", "DTSTAMP:20270301T120000Z\r\nSEQUENCE:1\r\nDTSTART:20270302T110000Z\r\nSUMMARY:Stale\r\nORGANIZER:mailto:owner-a@example.com")
+	newer := "BEGIN:VEVENT\r\nUID:family@example.com\r\nDTSTAMP:20270301T120000Z\r\nSEQUENCE:3\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
 	calendar := []byte(strings.Replace(string(stale), "END:VCALENDAR\r\n", newer+"END:VCALENDAR\r\n", 1))
 	persistInviteEmail(t, st, "update", inviteEmail(calendar))
 
