@@ -349,7 +349,11 @@ func newPersonFactsCommand() *cobra.Command {
 				return nil
 			}
 			for _, contest := range response.JSON200.Contests {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s/%s (resolved %s)\n", contest.Target.Kind, contest.Target.Slug, contest.ResolvedAt.Format(time.RFC3339))
+				target := contest.Target.Slug
+				if contest.Target.Kind != contest.Target.Slug {
+					target = contest.Target.Kind + "/" + target
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (resolved %s)\n", target, contest.ResolvedAt.Format(time.RFC3339))
 				if contest.ResolutionRevision != contest.Target.Revision {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Definition changed since resolution.")
 				}
@@ -360,7 +364,7 @@ func newPersonFactsCommand() *cobra.Command {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Current: %s\n", current.Value)
 				}
 				for _, claim := range contest.Claims {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Claim: %s (%s, %s)\n", claim.Value, claim.Relation, claim.Decision.Reason)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Claim: %s (%s; %s)\n", claim.Value, personFactCLIClaimRelation(claim.Relation), personFactCLIDecisionReason(claim.Decision.Reason))
 					if claim.ValidFrom != nil {
 						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
 					}
@@ -391,6 +395,60 @@ func newPersonFactsCommand() *cobra.Command {
 	addPersonFactCLIPageFlags(status, options)
 	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin, contested)
 	return facts
+}
+
+func personFactCLIClaimRelation(relation string) string {
+	switch personfacts.ClaimRelation(relation) {
+	case personfacts.RelationSupport:
+		return "supports"
+	case personfacts.RelationContradict:
+		return "contradicts"
+	case personfacts.RelationSupersede:
+		return "replaces"
+	case personfacts.RelationInvalid:
+		return "invalid relation"
+	default:
+		return relation
+	}
+}
+
+func personFactCLIDecisionReason(reason string) string {
+	switch personfacts.DecisionReason(reason) {
+	case personfacts.ReasonMalformedValue:
+		return "invalid value"
+	case personfacts.ReasonUnsupportedTarget:
+		return "unsupported field"
+	case personfacts.ReasonStaleTargetRevision:
+		return "field definition changed"
+	case personfacts.ReasonUnalignedEvidence:
+		return "evidence does not match the claim"
+	case personfacts.ReasonIdentityMismatch:
+		return "evidence refers to another person"
+	case personfacts.ReasonSensitivePolicy:
+		return "sensitive field restricted by policy"
+	case personfacts.ReasonPinRetained:
+		return "pinned value retained"
+	case personfacts.ReasonBelowThreshold:
+		return "too little confidence to apply"
+	case personfacts.ReasonInsufficientMargin:
+		return "too little advantage over competing claims"
+	case personfacts.ReasonCompetingTie:
+		return "too close to choose"
+	case personfacts.ReasonExplicitContradiction:
+		return "explicitly contradicted"
+	case personfacts.ReasonExplicitSupersession:
+		return "explicitly replaced"
+	case personfacts.ReasonOrganizationAmbiguous:
+		return "organization is ambiguous"
+	case personfacts.ReasonAppliedProjection:
+		return "profile updated"
+	case personfacts.ReasonEvidenceUnsupported:
+		return "evidence no longer supports the claim"
+	case personfacts.ReasonOutsideValidity:
+		return "outside the claim's validity period"
+	default:
+		return reason
+	}
 }
 
 func newPersonFactPinCommand(options *personFactsCLIOptions, pinned bool) *cobra.Command {

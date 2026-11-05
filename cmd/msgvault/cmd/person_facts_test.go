@@ -432,15 +432,33 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	assertions.Contains(defaultOutput, "No contested facts.")
 	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
 	requirements.NoError(err)
-	assertions.Contains(output, "Claim: \"chat\" (support, competing-tie)")
-	assertions.Contains(output, "Claim: \"email\" (support, competing-tie)")
+	assertions.Contains(output, "attribute/primary_channel (resolved 2026-08-22T12:00:00Z)")
+	assertions.Contains(output, "Claim: \"chat\" (supports; too close to choose)")
+	assertions.Contains(output, "Claim: \"email\" (supports; too close to choose)")
 	assertions.NotRegexp("Claim [a-f0-9]{64}:", output)
 	assertions.NotEmpty(target.Revision)
 	assertions.NotEmpty(updatedDefinition.Revision)
 	assertions.NotEqual(target.Revision, updatedDefinition.Revision)
 	assertions.NotContains(output, target.Revision)
 	assertions.NotContains(output, updatedDefinition.Revision)
-	for _, expected := range []string{"primary_channel", "chat", "email", "competing-tie", "https://example.test/chat", "2026-08-22", "Definition changed since resolution"} {
+	for _, expected := range []string{"primary_channel", "chat", "email", "https://example.test/chat", "2026-08-22", "Definition changed since resolution"} {
 		assertions.Contains(output, expected)
 	}
+
+	for _, item := range catalog.Targets {
+		if item.Slug == "employment" {
+			target = item
+		}
+	}
+	requirements.Equal("employment", target.Slug)
+	for i, role := range []string{"Platform", "Infrastructure"} {
+		claims[i].Target = target
+		claims[i].SubmittedValue = json.RawMessage(fmt.Sprintf(`{"organization":{"name":"Example Company","domain":"company.example"},"title":"Engineer","role":%q}`, role))
+	}
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{PersonID: person.ID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "two", End: "three"}}, ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now, Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"}, Claims: claims}, nil)
+	requirements.NoError(err)
+	output, err = runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
+	requirements.NoError(err)
+	assertions.Contains(output, "employment (resolved 2026-08-22T12:00:00Z)")
+	assertions.NotContains(output, "employment/employment")
 }

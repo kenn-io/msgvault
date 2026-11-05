@@ -292,9 +292,9 @@ msgvault person facts pins 7
 current profile values, competing claims, reasons, and supported evidence.
 It does not change the profile or call a model. Deleted, edited, or reassigned
 evidence is omitted when it no longer supports a claim. If a definition changed
-since the decision, the report shows the resolution revision alongside the
-current target revision. Use `--json` for
-machine-readable output and `--include-sensitive` to include sensitive targets.
+since the decision, the report prints "Definition changed since resolution."
+Use `--json` for machine-readable output and `--include-sensitive` to include
+sensitive targets.
 The owner-only HTTP equivalent is `GET /api/v1/people/{id}/fact-contests`; pass
 `include_sensitive=true` to include sensitive targets.
 
