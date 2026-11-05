@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import type { PersonNetwork as PersonNetworkProjection } from '../../directory/models';
-import { chooseSelectOption } from '../../../test/kit-ui';
 import PersonNetwork from './PersonNetwork.svelte';
 
 function rootOnly(depth = 1): PersonNetworkProjection {
@@ -59,68 +58,66 @@ function deferredResponse() {
 }
 
 describe('PersonNetwork', () => {
-  it('sizes the SVG for a hop-three node, its circle, and a bounded label lane', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const depth = Number(new URL(requestOf(input).url).searchParams.get('depth'));
-      return Response.json(depth === 3 ? depthThree() : rootOnly(depth));
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    const initialSVG = await waitFor(() => {
-      const svg = document.querySelector<SVGSVGElement>('.projection > svg');
-      expect(svg).not.toBeNull();
-      return svg!;
-    });
-    expect(initialSVG.viewBox.baseVal.width).toBe(650);
-
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Network depth:/ }), '3 hops');
-    await screen.findByRole('button', { name: 'Open person Depth Three Person' });
-    const svg = document.querySelector<SVGSVGElement>('.projection > svg')!;
-    const group = [...svg.querySelectorAll('g')].find((item) => item.textContent?.includes('Depth Three Person'))!;
-    const originX = Number(group.getAttribute('transform')?.match(/translate\((\d+)/)?.[1]);
-    const radius = Number(group.querySelector('circle')?.getAttribute('r'));
-    const labelX = Number(group.querySelector('text')?.getAttribute('x'));
-    const width = svg.viewBox.baseVal.width;
-
-    expect(width).toBeGreaterThanOrEqual(originX + radius);
-    expect(width).toBeGreaterThanOrEqual(originX + labelX + 160);
-    expect(Number(svg.getAttribute('width'))).toBe(width);
-  });
-
-  it('keeps a root-only projection in the semantic list while hiding the progressive SVG', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(rootOnly())));
-    const controller = new DirectoryEntityController(client, 7);
-
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-
-    const list = await screen.findByRole('list', { name: 'Directory network connections' });
-    await waitFor(() => expect(list.textContent).toContain('Selected Person'));
-    expect(screen.getByText('No curated connections at this depth.')).toBeDefined();
-    expect(document.querySelector('.projection > svg')?.getAttribute('aria-hidden')).toBe('true');
-    expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
-  });
-
-  it('groups every typed relationship and employment by hop and makes both entity kinds actionable', async () => {
+  it('centers relation chips on cross-column and same-column lines and opens records', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(connected())));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
+    const { container } = render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
-    render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
-
-    const list = await screen.findByRole('list', { name: 'Directory network connections' });
-    await waitFor(() => expect(list.textContent).toContain('Hop 1'));
-    const listText = list.textContent?.replace(/\s+/g, ' ') ?? '';
-    expect(listText).toContain('Hop 2');
-    expect(listText).toContain('Selected Person works with Curated Peer');
-    expect(listText).toContain('Curated Peer Engineer Shared Organization');
-    expect(listText).toContain('Curated Peer mentors Second Hop Person');
-
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Open person Curated Peer' })[0]!);
-    await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
+    const list = await screen.findByRole('list', { name: 'Network connections' });
+    expect([...list.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
+      'Selected Person · works with · Curated Peer',
+      'Curated Peer · Engineer · Shared Organization',
+      'Curated Peer · mentors · Second Hop Person'
+    ]);
+    const lines = container.querySelectorAll('line');
+    const chips = container.querySelectorAll<HTMLElement>('.edge-label');
+    expect(chips).toHaveLength(3);
+    for (const index of [0, 1]) {
+      const line = lines[index]!;
+      expect(parseFloat(chips[index]!.style.left)).toBe((Number(line.getAttribute('x1')) + Number(line.getAttribute('x2'))) / 2);
+      expect(parseFloat(chips[index]!.style.top)).toBe((Number(line.getAttribute('y1')) + Number(line.getAttribute('y2'))) / 2);
+    }
+    expect(lines[0]!.getAttribute('x1')).not.toBe(lines[0]!.getAttribute('x2'));
+    expect(lines[1]!.getAttribute('x1')).toBe(lines[1]!.getAttribute('x2'));
+    expect(Math.abs(Number(lines[1]!.getAttribute('y1')) - Number(lines[1]!.getAttribute('y2')))).toBe(112);
+    await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
+    expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
+  });
+
+  it('shares one chip for two relations between the same pair and retains both semantic edges', async () => {
+    const network = connected();
+    network.edges.push({ ...network.edges[0]!, id: 'relationship:34', source_node_id: 'person:8', target_node_id: 'person:7', label: 'mentored by' });
+    const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async () => Response.json(network))), 7);
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByText('works with · mentored by');
+    expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
+    expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(4);
+  });
+
+  it('hides a root-only direct network', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(rootOnly()));
+    const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await waitFor(() => expect(controller.network).not.toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
+  });
+
+  it('shows a failed first load and retries even without an earlier graph', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json(connected()));
+    const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
+    await screen.findByRole('button', { name: 'Curated Peer' });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('sends exact depth and ended-data queries and retains the last projection through loading, error, and retry', async () => {
@@ -129,6 +126,7 @@ describe('PersonNetwork', () => {
     let depthTwoAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
+      if (new URL(request.url).pathname.endsWith('/relationships')) return Response.json({ relationships: [] });
       requests.push(request);
       const url = new URL(request.url);
       const depth = Number(url.searchParams.get('depth'));
@@ -148,13 +146,13 @@ describe('PersonNetwork', () => {
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     expect((await screen.findAllByText('Curated Peer')).length).toBeGreaterThan(0);
 
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Network depth:/ }), '2 hops');
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     expect((await screen.findByRole('status')).textContent).toContain('Loading network');
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
 
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended connections' }));
+    await controller.refreshRelationships(true);
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
@@ -165,11 +163,11 @@ describe('PersonNetwork', () => {
     expect(queries.some((query) => query.get('depth') === '2' && query.get('include_ended') === 'false')).toBe(true);
     expect(queries.filter((query) => query.get('depth') === '2' && query.get('include_ended') === 'true')).toHaveLength(2);
 
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Network depth:/ }), '3 hops');
+    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
   });
 
-  it('discards a stale depth response and describes truncation as an at-most bounded prefix', async () => {
+  it('discards a stale depth response and shows the truncation limit', async () => {
     const depthTwo = deferredResponse();
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -177,18 +175,18 @@ describe('PersonNetwork', () => {
       requests.push(request);
       const depth = Number(new URL(request.url).searchParams.get('depth'));
       if (depth === 2) return depthTwo.promise;
-      return Response.json(depth === 3 ? connected(3, true) : rootOnly(1));
+      return Response.json(depth === 3 ? { ...depthThree(), truncated: true } : connected(1));
     }));
     const controller = new DirectoryEntityController(client, 7);
 
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByText('No curated connections at this depth.');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Network depth:/ }), '2 hops');
+    await screen.findByRole('button', { name: 'Curated Peer' });
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '2')).toBe(true));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Network depth:/ }), '3 hops');
-    expect((await screen.findAllByText('Curated Peer')).length).toBeGreaterThan(0);
+    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+    await screen.findByRole('button', { name: 'Depth Three Person' });
     depthTwo.resolve(Response.json(connected(2)));
-    await waitFor(() => expect(screen.getByText(/bounded prefix/).textContent).toContain('at most 250 nodes and 500 connections at depth 3'));
-    expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('Second Hop Person');
+    await waitFor(() => expect(screen.getByText('Showing up to 250 people and organizations and 500 connections.')).toBeDefined());
+    expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
   });
 });
