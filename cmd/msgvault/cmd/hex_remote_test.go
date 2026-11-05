@@ -99,8 +99,11 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 		`{"source":"system","end_ms":0,"text":"Missing start"}`,
 		`{"source":"system","start_ms":0,"text":"Missing end"}`,
 		`{"source":"system","start_ms":null,"end_ms":null,"text":"Null timestamps"}`,
+		`{"source":"system","start_ms":0,"end_ms":0,"text":"Unknown entry field","extra":true}`,
+		`{"source":"system","start_ms":0,"start_ms":0,"end_ms":0,"text":"Duplicate timestamp"}`,
+		`{"source":"system","source":"system","start_ms":0,"end_ms":0,"text":"Duplicate source"}`,
 	} {
-		check.Equal(http.StatusBadRequest, postEntry(entry), "malformed transcript timestamps must be rejected at the HTTP boundary")
+		check.Equal(http.StatusBadRequest, postEntry(entry), "malformed transcript entries must be rejected at the HTTP boundary")
 		after, err := st.GetMessageRaw(id)
 		must.NoError(err)
 		check.Equal(string(raw), string(after), "invalid transfers must preserve archived evidence")

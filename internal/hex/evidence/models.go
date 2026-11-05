@@ -2,6 +2,7 @@
 package evidence
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -81,6 +82,28 @@ type Meeting struct {
 	TranscriptState     string   `json:"transcript_state"`
 	TranscriptPartial   bool     `json:"transcript_partial,omitempty"`
 	TitleSourceInferred bool     `json:"title_source_inferred,omitempty"`
+}
+
+// UnmarshalJSONFrom requires both timestamps, as Hex's serde does, at every
+// input boundary. Explicit zeros are legitimate; omitted or null are not.
+// The caller's options, such as unknown-member rejection, still apply.
+func (e *Entry) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	type plain Entry
+	var wire struct {
+		plain
+
+		StartMS *int64 `json:"start_ms"`
+		EndMS   *int64 `json:"end_ms"`
+	}
+	if err := json.UnmarshalDecode(dec, &wire); err != nil {
+		return err
+	}
+	if wire.StartMS == nil || wire.EndMS == nil {
+		return errors.New("hex transcript entry requires start_ms and end_ms")
+	}
+	*e = Entry(wire.plain)
+	e.StartMS, e.EndMS = *wire.StartMS, *wire.EndMS
+	return nil
 }
 
 func (e Entry) Speaker() string {
