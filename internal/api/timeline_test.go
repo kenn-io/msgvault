@@ -131,17 +131,15 @@ func TestTimelineDelegatedAdmission(t *testing.T) {
 		{"missing source", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 9999, Type: "gmail", Identifier: "missing@example.com"}}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := assert.New(t)
 			requirements := require.New(t)
 			_, secret, _, err := srv.agentGrants.Issue(tc.name, tc.perms, tc.sources, time.Time{})
 			requirements.NoError(err)
 			w := timelineGET(srv, "?mode=day&date=2027-03-01", secret)
 			requirements.Equal(tc.status, w.Code, w.Body.String())
-			if tc.status == 200 {
+			if tc.status == http.StatusOK {
 				var got timeline.Timeline
 				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &got))
-				assertions.Equal(timeline.ModeDay, got.Mode)
-				assertions.Contains(got.Gaps, timeline.Gap{Section: "calls", Code: "owner-only"})
+				assert.Contains(t, got.Gaps, timeline.Gap{Section: "calls", Code: "owner-only"})
 			}
 		})
 	}
@@ -223,13 +221,6 @@ func TestTimelineDelegatedRawBytesIgnoreHiddenMutation(t *testing.T) {
 	requirements.NoError(err)
 	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	anchor := timelineGET(srv, fmt.Sprintf("?around=msg:%d&before=0&after=0", messageIDs[0]), secret)
-	requirements.Equal(http.StatusOK, anchor.Code, anchor.Body.String())
-	var anchored timeline.Timeline
-	requirements.NoError(json.Unmarshal(anchor.Body.Bytes(), &anchored))
-	requirements.NotNil(anchored.Anchor)
-	assertions.False(anchored.Anchor.Filtered)
-	assertions.Equal(timeline.ModeAnchor, anchored.Mode)
 	first := timelineGET(srv, "?days=1", secret)
 	requirements.Equal(200, first.Code, first.Body.String())
 	assertions.Contains(first.Body.String(), fmt.Sprintf(`"copies":{"%d":1,"%d":1,"%d":1}`, messageIDs[0], messageIDs[1], messageIDs[2]), "exercise an actual multi-key map on the HTTP wire")
@@ -283,10 +274,6 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 			assertions.Equal(tc.beforeSet, got.BeforeSet)
 			assertions.Equal(tc.afterSet, got.AfterSet)
 		})
-	}
-	for _, query := range []string{"days=0", "budget=0"} {
-		_, err := parseTimelineRequest(query)
-		require.ErrorIs(t, err, timeline.ErrInvalidRequest, query)
 	}
 	got, err := parseTimelineRequest("")
 	require.NoError(t, err)

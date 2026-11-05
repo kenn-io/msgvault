@@ -241,10 +241,6 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 		case "get_meeting_context":
 			var first any
 			switch ids := open.Args["message_ids"].(type) {
-			case []int64:
-				if len(ids) > 0 {
-					first = ids[0]
-				}
 			case []any:
 				if len(ids) > 0 {
 					first = ids[0]
@@ -294,10 +290,6 @@ func (m Model) handleTimelineCalendarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 // The daemon client retains JSON numbers, including IDs above 2^53.
 func timelineOpenID(value any) int64 {
 	switch id := value.(type) {
-	case int64:
-		return id
-	case int:
-		return int64(id)
 	case jsontext.Value:
 		n, err := strconv.ParseInt(string(id), 10, 64)
 		if err == nil {

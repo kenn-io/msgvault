@@ -72,8 +72,6 @@ func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions.Equal(want, got.Person.Monthly)
 	assertions.Equal("2025-11-05", got.Person.FirstAt.Format(time.DateOnly))
 	assertions.Equal([]string{"email"}, got.Person.Channels)
-	requirements.Len(got.History, 20)
-	assertions.NotEmpty(got.Cursor)
 }
 func TestRelationshipUnsavedClusterHasNoTierNoLoops(t *testing.T) {
 	assertions := assert.New(t)

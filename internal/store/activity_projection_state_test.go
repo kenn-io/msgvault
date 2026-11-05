@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestActivityProjectionStateIsScoped(t *testing.T) {
@@ -72,6 +73,31 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 			assertions.False(drained.Reconciling)
 		})
 	}
+
+	t.Run("call-only source during timezone transition", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		f := newLogicalCallFixture(t)
+		f.put(t, "call", nil)
+		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.source})
+		_, err := f.st.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
+		requirements.NoError(err)
+		state, err := f.st.ActivityProjectionStateContext(ctx)
+		requirements.NoError(err)
+		assertions.Zero(state.Queued)
+		assertions.Nil(state.OldestQueuedAt)
+		assertions.False(state.Reconciling)
+		source, err := f.st.GetOrCreateSource("gmail", "owner@example.com")
+		requirements.NoError(err)
+		conv, err := f.st.EnsureConversation(source.ID, "ordinary", "Ordinary")
+		requirements.NoError(err)
+		_, err = f.st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "ordinary", MessageType: "email"})
+		requirements.NoError(err)
+		state, err = f.st.ActivityProjectionStateContext(sourcescope.WithSourceIDs(t.Context(), []int64{source.ID}))
+		requirements.NoError(err)
+		assertions.Equal(1, state.Queued)
+		assertions.NotNil(state.OldestQueuedAt)
+		assertions.True(state.Reconciling)
+	})
 }
 
 func TestActivityProjectionStateIncludesConversationMarkers(t *testing.T) {

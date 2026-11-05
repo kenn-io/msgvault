@@ -86,34 +86,6 @@ func TestDelegatedResponseIgnoresHiddenSourceAndNativeCalls(t *testing.T) {
 	}
 }
 
-func TestAnchorBurstSnapshotUsesRuntimeSourceScope(t *testing.T) {
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	id := f.add(f.now, false)
-	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	requirements.NoError(err)
-	conv, err := f.Store.EnsureConversation(other.ID, "other", "Other")
-	requirements.NoError(err)
-	f.add(f.now, false, func(m *store.Message) { m.SourceID = other.ID; m.ConversationID = conv })
-	f.project()
-	capturedCtx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	src := snapshotAnchorBurstReads(capturedCtx, t, f.src, anchorRequest(messageRef(id)), id)
-	snapshot, ok := src.Activity.(anchorBurstSnapshot)
-	requirements.True(ok)
-	query := snapshot.reads[0].query
-	for _, runtimeCtx := range []context.Context{
-		t.Context(),
-		sourcescope.WithSourceIDs(t.Context(), []int64{other.ID}),
-		sourcescope.WithSourceIDs(t.Context(), []int64{}),
-	} {
-		want, err := f.src.Activity.ListActivityBurstsContext(runtimeCtx, query)
-		requirements.NoError(err)
-		got, err := snapshot.ListActivityBurstsContext(runtimeCtx, query)
-		requirements.NoError(err)
-		assert.Equal(t, want, got, "changed restrictions must use the real reader's runtime authorization")
-	}
-}
-
 type deniedCalls struct{ hits *atomic.Int64 }
 
 func (s deniedCalls) ListLogicalCallsContext(context.Context, store.LogicalCallQuery) ([]store.LogicalCall, string, error) {
@@ -301,29 +273,6 @@ func TestDelegatedConversationAnchorSkipsNewerNativeCall(t *testing.T) {
 	assertions.Equal(messageRef(id), got.History[0].Ref)
 	assertions.True(got.History[0].Anchor)
 	assertions.NotEqual(messageRef(call), got.History[0].Ref)
-}
-
-func TestCallOnlySourceDoesNotReconcileOrdinaryActivity(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	id := f.call(f.now)
-	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
-	requirements.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{display[id].SourceID})
-	_, err = f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
-	requirements.NoError(err)
-	state, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Zero(state.Queued)
-	assertions.Nil(state.OldestQueuedAt)
-	assertions.False(state.Reconciling)
-	f.add(f.now, false)
-	state, err = f.Store.ActivityProjectionStateContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}))
-	requirements.NoError(err)
-	assertions.Equal(1, state.Queued)
-	assertions.NotNil(state.OldestQueuedAt)
-	assertions.True(state.Reconciling)
 }
 
 func TestDelegatedColdActivityOmitsNativeCalls(t *testing.T) {

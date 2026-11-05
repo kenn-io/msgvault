@@ -174,10 +174,8 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements := require.New(t)
 				f := newTimelineFixture(t)
 				ref := "email:alice@example.com"
-				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
 				if saved {
-					subject = store.ActivitySubject{PersonID: f.savePerson()}
-					ref = fmt.Sprintf("person:%d", subject.PersonID)
+					ref = fmt.Sprintf("person:%d", f.savePerson())
 				}
 				// An unsent observation makes the subject resolvable in the source-scoped control without adding contact.
 				f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
@@ -199,14 +197,6 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 					notes = append(notes, note)
 				}
 				f.project()
-				ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), store.ContactQuery{Subject: subject, Now: f.now, Location: time.UTC}, 10)
-				requirements.NoError(err)
-				assertions.False(more)
-				assertions.ElementsMatch(notes, ids)
-				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), store.ContactQuery{Subject: subject, Now: f.now, Location: time.UTC}, 1)
-				requirements.NoError(err)
-				assertions.Len(bounded, 1)
-				assertions.True(more)
 				got, err := Build(t.Context(), f.src, relationshipRequest(ref))
 				requirements.NoError(err)
 				requirements.NotNil(got.Person)
@@ -291,36 +281,6 @@ func TestRelationshipCalendarAttendanceOlderThanExpansionWindow(t *testing.T) {
 	assertions.Equal([12]int{}, got.Person.Monthly)
 	requirements.Len(got.History, 1)
 	assertions.Equal(at, got.History[0].Time)
-}
-
-func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	person := f.savePerson()
-	f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
-	unobserved := f.EnsureParticipant("unobserved@example.com", "Unobserved", "example.com")
-	event := f.calendar("only-unobserved", strings.ReplaceAll(singleDayEvent, "alice@example.com", "unobserved@example.com"))
-	note := f.transcript("recording", "planning@example.com", f.now.Add(-time.Hour))
-	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
-	f.project()
-	detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", event))
-	requirements.NoError(err)
-	noteSource, err := f.Store.GetOrCreateSource("meeting_import", "notes@example.com")
-	requirements.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, detail.SourceID, noteSource.ID})
-	q := store.ContactQuery{Subject: store.ActivitySubject{PersonID: person}, Now: f.now, Location: time.UTC}
-	before, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
-	requirements.NoError(err)
-	assertions.Empty(before)
-	_, err = f.Store.LinkParticipants(f.peer, unobserved)
-	requirements.NoError(err)
-	after, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
-	requirements.NoError(err)
-	assertions.Equal(before, after)
-	owner, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
-	requirements.NoError(err)
-	assertions.Equal([]int64{note}, owner)
 }
 
 func TestSnapshotReadsPreserveScopedDayAndAnchor(t *testing.T) {

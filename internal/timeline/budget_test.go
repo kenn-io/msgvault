@@ -155,6 +155,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotEmpty(out.History)
 	assertions.Equal("msg:1", out.History[0].Ref)
+	assertions.Contains(Markdown(out), "13:30 message [details omitted] · #1")
 	assertions.Equal(v.History[0].Open, out.History[0].Open)
 	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
 }
@@ -222,16 +223,6 @@ func TestFitExistingMoreStillContinues(t *testing.T) {
 	out, err := Fit(v, "json", 2048)
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.Cursor)
-}
-func TestFitStubRendersKind(t *testing.T) {
-	v := budgetTimeline(2)
-	v.History[0].Message.People = []Person{
-		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
-		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
-	}
-	out, err := Fit(v, "json", 2048)
-	require.NoError(t, err)
-	assert.Contains(t, Markdown(out), "13:30 message [details omitted] · #1")
 }
 func TestFitTruncatedTextStaysMarkedInMarkdown(t *testing.T) {
 	v := budgetTimeline(1)

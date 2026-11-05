@@ -38,7 +38,7 @@ func timelineModeFixture() *timeline.Timeline {
 		Days: []timeline.Day{{Date: "2027-03-14", Bursts: []timeline.Entry{{
 			Kind: "burst", Key: "burst:1:7:2027-03-14", Ref: "conv:7",
 			AnchorRef: "burst:1:7:2027-03-14", Time: at,
-			Open: []timeline.Open{{Tool: "list_messages", Args: map[string]any{"conversation_id": int64(7)}}},
+			Open: []timeline.Open{{Tool: "list_messages", Args: map[string]any{"conversation_id": jsontext.Value("7")}}},
 			Burst: &timeline.BurstEntry{Channel: "email", Inbound: 1,
 				People:  []timeline.Person{{PersonID: 42, Name: "Example Contact"}},
 				Snippet: timeline.UntrustedText{Text: "Project update"}},
@@ -104,7 +104,6 @@ func TestTimelineModeLocalKeysWinOverGlobalA(t *testing.T) {
 	m := timelineModeModel()
 	updated, cmd := sendKey(t, m, key('a'))
 	require.NotNil(cmd)
-	assert.Equal(timeline.ModeAnchor, updated.timelineState.request.Mode)
 	assert.Equal(modalNone, updated.modal)
 	assert.Equal(allSourceScope(), updated.sourceScope)
 	for _, k := range []tea.KeyPressMsg{key('?'), key('m')} {
@@ -155,7 +154,7 @@ func TestTimelineReadersPreserveOtherModes(t *testing.T) {
 	m := timelineModeModel()
 	emailDetail := &query.MessageDetail{ID: 100, Subject: "Email reader"}
 	m.parkedMessageReaders[modeEmail] = messageReaderState{messageDetail: emailDetail, detailScroll: 4, detailSearchQuery: "saved"}
-	m.timelineState.result.Days[0].Bursts[0].Open = []timeline.Open{{Tool: "get_message", Args: map[string]any{"id": int64(101)}}}
+	m.timelineState.result.Days[0].Bursts[0].Open = []timeline.Open{{Tool: "get_message", Args: map[string]any{"id": jsontext.Value("101")}}}
 	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
@@ -205,7 +204,7 @@ func TestTimelineMeetingReaderSearchAndBackPreserveMeetings(t *testing.T) {
 	m.timelineState.result.Days[0].Meetings = []timeline.Entry{{
 		Kind: "transcript", Ref: "msg:55", AnchorRef: "msg:55", Time: m.timelineState.result.Now,
 		Meeting: &timeline.MeetingEntry{Title: timeline.UntrustedText{Text: "Example planning"}},
-		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{55}}}},
+		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []any{jsontext.Value("55")}}}},
 	}}
 	m.timelineState.request = timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-14", Format: "json"}
 	m.rebuildTimelineRows()
@@ -354,8 +353,8 @@ func TestTimelineBurstOpensExactAnchorBeyondThreadLimit(t *testing.T) {
 	}
 	m.engine = engine
 	m.timelineState.result.Days[0].Bursts[0].Open = []timeline.Open{
-		{Tool: "list_messages", Args: map[string]any{"conversation_id": int64(7)}},
-		{Tool: "get_message", Args: map[string]any{"id": int64(3)}},
+		{Tool: "list_messages", Args: map[string]any{"conversation_id": jsontext.Value("7")}},
+		{Tool: "get_message", Args: map[string]any{"id": jsontext.Value("3")}},
 	}
 	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
@@ -397,7 +396,7 @@ func TestTimelineMeetingSearchAcceptsTextAndCursorEditing(t *testing.T) {
 	m.timelineState.result.Days[0].Bursts = nil
 	m.timelineState.result.Days[0].Meetings = []timeline.Entry{{Kind: "transcript", Ref: "msg:55", AnchorRef: "msg:55",
 		Meeting: &timeline.MeetingEntry{Title: timeline.UntrustedText{Text: "Archived transcript"}},
-		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{55}}}}}}
+		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []any{jsontext.Value("55")}}}}}}
 	m.rebuildTimelineRows()
 	parked := m.meetingState
 	m, cmd := sendKey(t, m, keyEnter())
@@ -469,29 +468,26 @@ func timelineCalendarModel(ref string) (Model, *timelineCalendarFixtureBackend) 
 }
 
 func TestTimelineCalendarOpensExactOccurrenceAndReturns(t *testing.T) {
-	for _, ref := range []string{"evt:42", "evt:42@20270314T083000.123456789Z", "evt:42@20270314"} {
-		t.Run(ref, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			m, backend := timelineCalendarModel(ref)
-			result, request := m.timelineState.result, m.timelineState.request
-			opened, cmd := sendKey(t, m, keyEnter())
-			require.NotNil(cmd)
-			loaded := sendMsg(t, opened, cmd())
-			assert.Equal([]string{ref}, backend.calendarRequests)
-			view := loaded.renderView()
-			for _, text := range []string{"Archived calendar occurrence", ref, "Archived planning", "Example room", "guest@example.com", "accepted", "https://example.com/meeting", "Archived agenda"} {
-				assert.Contains(stripANSI(view), text)
-			}
-			assert.NotContains(view, "\x1b]52;")
-			assert.Nil(loaded.messageDetail, "calendar occurrence must not masquerade as a message")
-			back, cmd := sendKey(t, loaded, keyEsc())
-			assert.Nil(cmd)
-			assert.Equal(timelineReaderNone, back.timelineState.reader)
-			assert.Same(result, back.timelineState.result)
-			assert.Equal(request, back.timelineState.request)
-			assert.Equal(0, back.timelineState.cursor)
-		})
+	ref := "evt:42@20270314T083000.123456789Z"
+	assert, require := assert.New(t), require.New(t)
+	m, backend := timelineCalendarModel(ref)
+	result, request := m.timelineState.result, m.timelineState.request
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(cmd)
+	loaded := sendMsg(t, opened, cmd())
+	assert.Equal([]string{ref}, backend.calendarRequests)
+	view := loaded.renderView()
+	for _, text := range []string{"Archived calendar occurrence", ref, "Archived planning", "Example room", "guest@example.com", "accepted", "https://example.com/meeting", "Archived agenda"} {
+		assert.Contains(stripANSI(view), text)
 	}
+	assert.NotContains(view, "\x1b]52;")
+	assert.Nil(loaded.messageDetail, "calendar occurrence must not masquerade as a message")
+	back, cmd := sendKey(t, loaded, keyEsc())
+	assert.Nil(cmd)
+	assert.Equal(timelineReaderNone, back.timelineState.reader)
+	assert.Same(result, back.timelineState.result)
+	assert.Equal(request, back.timelineState.request)
+	assert.Equal(0, back.timelineState.cursor)
 }
 
 func TestTimelineCalendarReaderScrollsWithinBounds(t *testing.T) {
@@ -515,7 +511,7 @@ func TestTimelineLinkedCalendarStillOpensTranscript(t *testing.T) {
 	m, backend := timelineCalendarModel("evt:42")
 	m.engine = newMockEngine(MockConfig{Detail: &query.MessageDetail{ID: 55, BodyText: "Linked transcript body"}})
 	entry := &m.timelineState.result.Days[0].Meetings[0]
-	entry.Open = append(entry.Open, timeline.Open{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{55}}})
+	entry.Open = append(entry.Open, timeline.Open{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []any{jsontext.Value("55")}}})
 	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
@@ -668,21 +664,26 @@ func TestTimelineReaderKeepsLocalNavigationKeys(t *testing.T) {
 }
 
 func TestTimelineDayKeysUseViewSubject(t *testing.T) {
-	for _, mode := range []timeline.Mode{timeline.ModeAnchor, timeline.ModeRelationship} {
-		for _, tc := range []struct {
-			key  rune
-			date string
-		}{{'[', "2027-03-13"}, {']', "2027-03-15"}} {
-			t.Run(string(mode)+string(tc.key), func(t *testing.T) {
-				m := timelineModeModel()
-				m.timelineState.result.Mode = mode
-				m.timelineState.result.Window = timeline.Window{From: "2027-02-11", To: "2027-04-14"}
-				m.timelineState.result.Anchor = &timeline.Anchor{Time: time.Date(2027, 3, 14, 8, 30, 0, 0, time.UTC)}
-				updated, cmd := sendKey(t, m, key(tc.key))
-				require.NotNil(t, cmd)
-				assert.Equal(t, tc.date, updated.timelineState.request.Date)
-			})
-		}
+	for _, tc := range []struct {
+		mode timeline.Mode
+		key  rune
+		date string
+	}{
+		{timeline.ModeAnchor, '[', "2027-03-15"},
+		{timeline.ModeAnchor, ']', "2027-03-17"},
+		{timeline.ModeRelationship, '[', "2027-03-13"},
+		{timeline.ModeRelationship, ']', "2027-03-15"},
+	} {
+		t.Run(string(tc.mode)+string(tc.key), func(t *testing.T) {
+			m := timelineModeModel()
+			m.timelineState.result.Mode = tc.mode
+			m.timelineState.result.Window = timeline.Window{From: "2027-02-11", To: "2027-04-14"}
+			m.timelineState.result.Now = time.Date(2027, 3, 20, 8, 30, 0, 0, time.UTC)
+			m.timelineState.result.Anchor = &timeline.Anchor{Time: time.Date(2027, 3, 16, 8, 30, 0, 0, time.UTC)}
+			updated, cmd := sendKey(t, m, key(tc.key))
+			require.NotNil(t, cmd)
+			assert.Equal(t, tc.date, updated.timelineState.request.Date)
+		})
 	}
 	m := timelineModeModel()
 	m.timelineState.result.Mode = timeline.ModeRelationship

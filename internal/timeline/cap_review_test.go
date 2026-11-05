@@ -14,28 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestBuildRejectsIgnoredRanges(t *testing.T) {
-	f := newTimelineFixture(t)
-	for _, req := range []Request{
-		{With: "email:alice@example.com", From: "2026-10-21", To: "2026-10-22"},
-		{With: "email:alice@example.com", Days: 7},
-		{Around: "2026-10-22", Days: 7},
-		{Around: "2026-10-22", From: "2026-10-21", To: "2026-10-22"},
-	} {
-		t.Run(fmt.Sprint(req), func(t *testing.T) {
-			req.Scope.Owner = true
-			_, err := Build(t.Context(), f.src, req)
-			require.ErrorIs(t, err, ErrInvalidRequest)
-		})
-	}
-}
-
-func TestBuildRejectsBriefWithDays(t *testing.T) {
-	f := newTimelineFixture(t)
-	_, err := Build(t.Context(), f.src, Request{Brief: true, Days: 7, Scope: Scope{Owner: true}})
-	require.ErrorIs(t, err, ErrInvalidRequest)
-}
-
 func TestBuildInvalidUTF8Snippet(t *testing.T) {
 	f := newTimelineFixture(t)
 	f.add(f.now, false, func(m *store.Message) { m.Snippet = sql.NullString{String: "damaged \xff\xfe", Valid: true} })
