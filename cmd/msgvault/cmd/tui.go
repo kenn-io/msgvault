@@ -43,7 +43,7 @@ Email mode provides aggregate views by:
 Press 'm' to cycle through Email, Texts, Meetings, People, and Timeline. Texts is skipped
 when its engine is unavailable. Meetings remains available before a source is
 configured. People browses every observed contact and remains available when
-Texts is absent. Timeline requires daemon API schema 3.45.0 or newer.
+Texts is absent. Timeline requires daemon API schema 3.46.0 or newer.
 
 Navigation:
   ↑/k, ↓/j    Move up/down

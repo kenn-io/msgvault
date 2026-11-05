@@ -37,7 +37,7 @@ type timelineFakeClient struct {
 	err   error
 }
 
-func (f *timelineFakeClient) APISchemaVersion(context.Context) (string, error) { return "3.45.0", nil }
+func (f *timelineFakeClient) APISchemaVersion(context.Context) (string, error) { return "3.46.0", nil }
 func (f *timelineFakeClient) Timeline(_ context.Context, req timeline.Request) (*timeline.Timeline, string, error) {
 	f.req = req
 	f.calls++
@@ -99,7 +99,7 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = oldSchemaCheck })
 	for _, tc := range []struct{ kind, version string }{
-		{"local", "3.44.0"}, {"remote", "3.44.0"}, {"delegated", "3.44.0"},
+		{"local", "3.45.0"}, {"remote", "3.45.0"}, {"delegated", "3.45.0"},
 	} {
 		t.Run(tc.kind+"/"+tc.version, func(t *testing.T) {
 			kind, version := tc.kind, tc.version
@@ -177,7 +177,7 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 			command.SetOut(&bytes.Buffer{})
 			command.SetErr(&bytes.Buffer{})
 			command.SetArgs(nil)
-			requirements.EqualError(command.ExecuteContext(ctx), fmt.Sprintf(`timeline requires daemon API schema 3.45.0 or newer (daemon reports %q); upgrade and restart the daemon`, version))
+			requirements.EqualError(command.ExecuteContext(ctx), fmt.Sprintf(`timeline requires daemon API schema 3.46.0 or newer (daemon reports %q); upgrade and restart the daemon`, version))
 			assertions.Positive(healthCalls.Load(), "selected endpoint must report its schema")
 			assertions.Positive(cliHealthCalls.Load(), "timeline compatibility probe must use CLI mode")
 			assertions.Zero(timelineCalls.Load())
