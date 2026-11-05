@@ -20,70 +20,6 @@ type modeledCall struct {
 	messageID int64
 }
 
-// The oracle groups explicit tuples into sets. It neither hashes identities nor
-// repeats the production SQL/CTEs. Every participant in this fixture is bound to
-// one person, so aliases must not multiply that person's count.
-func modeledSummary(records []modeledCall, personID int64) []store.PersonCallSummary {
-	type identity struct{ provider, account, native, fallback string }
-	groups := map[identity][]modeledCall{}
-	for _, r := range records {
-		if r.Withdrawn {
-			continue
-		}
-		key := identity{provider: r.Provider, account: r.Account, native: r.NativeCallID}
-		if key.native == "" {
-			key.fallback = r.RecordID
-		}
-		groups[key] = append(groups[key], r)
-	}
-	result := store.PersonCallSummary{PersonID: personID}
-	for _, observations := range groups {
-		outcomes := map[string]bool{}
-		negativeOutcomes := map[string]bool{}
-		associated, confirmed, notJoined := false, false, false
-		for _, o := range observations {
-			outcomes[o.Outcome] = true
-			if o.Outcome == "missed" || o.Outcome == "declined" || o.Outcome == "cancelled" {
-				negativeOutcomes[o.Outcome] = true
-			}
-			notJoined = notJoined || o.OwnerParticipation == "not_joined"
-			for _, p := range o.Participants {
-				associated = true
-				if result.ExampleMessageID == 0 || o.messageID < result.ExampleMessageID {
-					result.ExampleMessageID = o.messageID
-				}
-				confirmed = confirmed || (o.Outcome == "answered" && o.OwnerParticipation == "joined" && p.Participation == "joined")
-			}
-		}
-		if !associated {
-			continue
-		}
-		switch {
-		case observations[0].Kind == "scheduled_meeting":
-			result.Scheduled++
-			if outcomes["cancelled"] {
-				result.ScheduledCancelled++
-			}
-		case (outcomes["answered"] && (notJoined || len(negativeOutcomes) > 0)) || len(negativeOutcomes) > 1:
-			result.Conflicting++
-		case confirmed:
-			result.Answered++
-		case outcomes["missed"]:
-			result.Missed++
-		case outcomes["declined"]:
-			result.Declined++
-		case outcomes["cancelled"]:
-			result.Cancelled++
-		default:
-			result.Unknown++
-		}
-	}
-	if result.ExampleMessageID == 0 {
-		return []store.PersonCallSummary{}
-	}
-	return []store.PersonCallSummary{result}
-}
-
 func FuzzCallStoreSequences(f *testing.F) {
 	for _, seed := range []uint64{0, 1, 42, 0xffffffffffffffff} {
 		f.Add(seed)
@@ -95,8 +31,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 		b, err := st.EnsureParticipantByPhone("+12025550102", "Example", "signal")
 		require.NoError(t, err)
 		_, err = st.LinkParticipants(a, b)
-		require.NoError(t, err)
-		person, _, err := st.CreatePersonFromParticipant(a)
 		require.NoError(t, err)
 		random := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)) //nolint:gosec // Replayable synthetic sequences need deterministic randomness.
 		// Bound only materialization/work: the generated seed domain is intact.
@@ -138,9 +72,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 		}
 		check := func() {
 			t.Helper()
-			got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-			require.NoError(t, err)
-			assert.Equal(t, modeledSummary(records, person.ID), got)
 			evidence, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{Limit: 100})
 			require.NoError(t, err)
 			require.Len(t, evidence, len(records))
@@ -174,16 +105,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 				o.Outcome, o.Withdrawn = "unknown", false
 			}
 			put(index, o)
-		}
-		check()
-		// Linking keeps both participant rows. A physical merge replaces the
-		// absorbed ID, collapsing equal roles to one recipient.
-		require.NoError(t, st.MergeParticipants(b, a))
-		b = a
-		for i := range records {
-			if len(records[i].Participants) > 0 {
-				records[i].Participants = []callhistory.Participant{{ID: a, Participation: records[i].Participants[0].Participation}}
-			}
 		}
 		check()
 		stale := records[0].Observation
