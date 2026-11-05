@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/rederive"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -885,11 +886,12 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
 
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			requirements.NoError(err)
 			_, err = db.Exec(`
-				INSERT INTO messages (id, source_id, source_message_id, sent_at)
-				VALUES (1, 1, 'new-message', ?)
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email');
+				INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+				VALUES (1, 1, 'new-message', 1, 'email', ?)
 			`, now)
 			requirements.NoError(err)
 			requirements.NoError(db.Close())
@@ -1139,7 +1141,7 @@ func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`UPDATE conversations SET title = CAST(X'4261642080' AS TEXT) WHERE id = 102`)
 	require.NoError(err)
@@ -1150,10 +1152,10 @@ func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
 	fresh := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.False(fresh.NeedsBuild, "unchanged invalid title must match the published snapshot: %s", fresh.Reason)
 
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at)
-		VALUES (99, 102, 1, 'msg99', '2026-09-23 10:00:00')`)
+	_, err = db.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at)
+		VALUES (99, 102, 1, 'msg99', 'email', '2026-09-23 10:00:00')`)
 	require.NoError(err)
 	require.NoError(db.Close())
 	appendState := cacheNeedsBuild(dbPath, analyticsDir)
@@ -1161,7 +1163,7 @@ func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
 	assert.False(appendState.HasConversationTypeDrift, "unchanged title must not look like metadata drift")
 	assert.False(appendState.FullRebuild, "new messages alone remain eligible for incremental export")
 
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = 102`)
 	require.NoError(err)
@@ -1665,9 +1667,10 @@ func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) (str
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (1, 1, 'new-message', ?)`, now)
+	_, err = db.Exec(`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email');
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at) VALUES (1, 1, 'new-message', 1, 'email', ?)`, now)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
