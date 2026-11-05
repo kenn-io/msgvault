@@ -202,7 +202,8 @@ func (e *DuckDBEngine) ResolveCanonicalParticipant(ctx context.Context, particip
 	defer release()
 
 	clusters := "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + "')"
-	queryText := "SELECT canonical_id FROM (" + identityindex.CanonicalParticipantsSQL("participants", clusters) + ") WHERE participant_id = ?"
+	participants := "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(datasetParticipants)) + "')"
+	queryText := "SELECT canonical_id FROM (" + identityindex.CanonicalParticipantsSQL(participants, clusters) + ") WHERE participant_id = ?"
 	var canonicalID int64
 	err = e.db.QueryRowContext(ctx, queryText, participantID).Scan(&canonicalID)
 	switch {

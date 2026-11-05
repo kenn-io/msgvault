@@ -338,12 +338,17 @@ func TestResolveCanonicalParticipant(t *testing.T) {
 	assert := assert.New(t)
 
 	b := NewTestDataBuilder(t)
+	roomID := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
 	aID := b.AddParticipant("a@example.com", "example.com", "A")
 	a2ID := b.AddParticipant("a2@example.com", "example.com", "A2")
-	b.LinkCluster(aID, a2ID)
+	b.LinkCluster(roomID, aID, a2ID)
 	loneID := b.AddParticipant("lone@example.com", "example.com", "Lone")
 
-	engine := b.BuildEngine()
+	analytics, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(analytics, "", nil, DuckDBOptions{DisableLegacyAnalyticalViews: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
 	canonical := min(aID, a2ID)
 
 	resolvedFromA, err := engine.ResolveCanonicalParticipant(context.Background(), aID)
