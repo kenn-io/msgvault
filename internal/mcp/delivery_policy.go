@@ -68,7 +68,11 @@ func (h *handlers) writeDeliveryPolicy(ctx context.Context, req toolRequest, res
 	if err != nil {
 		return toolErrorResult("invalid_policy"), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
-	if err := req.confirmUserAction(ctx, fmt.Sprintf("Confirm delivery policy operation (clear=%t): %s. No message will be sent.", reset, details)); err != nil {
+	prompt := fmt.Sprintf("Set delivery policy: %s. No message will be sent.", details)
+	if reset {
+		prompt = fmt.Sprintf("Clear delivery policy: %s. No message will be sent.", details)
+	}
+	if err := req.confirmUserAction(ctx, prompt); err != nil {
 		return confirmationToolError(err)
 	}
 	var receipt *store.DeliveryPolicyReceipt

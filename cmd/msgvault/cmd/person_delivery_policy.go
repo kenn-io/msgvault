@@ -27,11 +27,7 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 			"set":   "Set a person's delivery policy",
 			"clear": "Clear a person's delivery policy override",
 		}[operation],
-		Long: map[string]string{
-			"read":  "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites use the revision from read-delivery-policy.",
-			"set":   "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites return before/after states.",
-			"clear": "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites return before/after states.",
-		}[operation],
+		Long: "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\n",
 		Args: cobra.ExactArgs(map[string]int{"read": 1, "set": 2, "clear": 1}[operation]),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if operation != "read" {
@@ -94,11 +90,14 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 	command.Flags().StringVar(&endpoint, "endpoint", "", "Saved email address; omit for the person default")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	if operation != "read" {
+		command.Long += "Writes return before/after states."
 		command.Flags().Int64Var(&revision, "expected-revision", 0, "Revision from read-delivery-policy")
 		command.Flags().StringVar(&reason, "reason", "", "Owner's reason for the change")
 		command.Flags().BoolVar(&allRoutes, "person-all-routes", false, "Acknowledge approval of the person default across routes")
 		_ = command.MarkFlagRequired("expected-revision")
 		_ = command.MarkFlagRequired("reason")
+	} else {
+		command.Long += "Writes use the revision from read-delivery-policy."
 	}
 	return command
 }
