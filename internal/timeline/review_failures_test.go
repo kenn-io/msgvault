@@ -152,6 +152,7 @@ func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
 }
 
 func TestAnchorWiderProbeFailureKeepsNeighbours(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	anchor := f.add(f.now, false)
 	f.add(f.now.Add(-time.Hour), false)
@@ -159,10 +160,10 @@ func TestAnchorWiderProbeFailureKeepsNeighbours(t *testing.T) {
 	reads := 0
 	f.src.Activity = anchorReadFailure{ActivitySource: f.src.Activity, bursts: errors.New("archive read unavailable"), failAfter: 1, burstReads: &reads}
 	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(anchor)))
-	require.NoError(t, err)
-	assert.Equal(t, 2, reads)
-	require.Len(t, got.History, 1)
-	require.NotNil(t, got.History[0].Burst)
-	assert.Equal(t, 2, got.History[0].Burst.Inbound)
-	assert.Contains(t, got.Gaps, Gap{Section: "history", Code: "unavailable"})
+	requirements.NoError(err)
+	assertions.Equal(2, reads)
+	requirements.Len(got.History, 1)
+	requirements.NotNil(got.History[0].Burst)
+	assertions.Equal(2, got.History[0].Burst.Inbound)
+	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "unavailable"})
 }

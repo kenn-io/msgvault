@@ -45,6 +45,9 @@ func (s storeInventory) Build(ctx context.Context, now time.Time) (Freshness, er
 		if source.LastSyncErrors > 0 {
 			warnings = append(warnings, "last successful sync had errors")
 		}
+		if status == "current" && last == "ok" && len(warnings) == 0 {
+			continue
+		}
 		result.Sources = append(result.Sources, SourceFreshness{SourceID: source.SourceID, Source: source.SourceType + ":" + source.Identifier, Status: status, LastRun: last, Scheduling: source.Scheduling, Warnings: warnings, SyncCommand: source.SyncCommand})
 	}
 	projection := ProjectionFreshness{Name: "activity", State: "current"}

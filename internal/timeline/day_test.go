@@ -582,22 +582,23 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 }
 
 func TestBuildDaySkippedMidnightKeepsHoursAndNote(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	loc, err := time.LoadLocation("America/Santiago")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.src.Location = loc
 	f.src.Clock = func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, loc) }
 	for _, stamp := range []string{"2026-09-06T03:30:00Z", "2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z", "2026-09-07T03:30:00Z"} {
 		at, err := time.Parse(time.RFC3339, stamp)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		f.call(at)
 	}
 	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Sunday note", Author: "owner"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	req := dayRequest()
 	req.Date = "2026-09-06"
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	entries := allDayEntries(got)
 	var calls []string
 	var notes []string
@@ -609,6 +610,6 @@ func TestBuildDaySkippedMidnightKeepsHoursAndNote(t *testing.T) {
 			notes = append(notes, entry.Note.Text.Text)
 		}
 	}
-	assert.ElementsMatch(t, []string{"2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z"}, calls)
-	assert.Equal(t, []string{"Sunday note"}, notes)
+	assertions.ElementsMatch([]string{"2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z"}, calls)
+	assertions.Equal([]string{"Sunday note"}, notes)
 }

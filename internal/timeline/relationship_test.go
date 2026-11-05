@@ -130,20 +130,21 @@ func TestRelationshipCuratedProfileIncludesFreshness(t *testing.T) {
 	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})
 }
 func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	first := f.calendar("first", singleDayEvent)
 	second := f.calendar("second", strings.NewReplacer("planning", "second", "2026-10-22", "2026-09-22").Replace(singleDayEvent))
 	for _, key := range []string{"one", "two"} {
 		note := f.transcript(key, "", f.now.Add(-time.Hour))
-		require.NoError(t, f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: first}))
-		require.NoError(t, f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: second}))
+		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: first}))
+		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: second}))
 	}
 	f.project()
 	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	require.NoError(t, err)
-	require.Len(t, got.History, 2)
-	assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{got.History[0].Ref, got.History[1].Ref})
-	assert.Equal(t, 2, got.Person.InteractionCount)
-	assert.Equal(t, 1, got.Person.Monthly[10])
-	assert.Equal(t, 1, got.Person.Monthly[11])
+	requirements.NoError(err)
+	requirements.Len(got.History, 2)
+	assertions.ElementsMatch([]string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{got.History[0].Ref, got.History[1].Ref})
+	assertions.Equal(2, got.Person.InteractionCount)
+	assertions.Equal(1, got.Person.Monthly[10])
+	assertions.Equal(1, got.Person.Monthly[11])
 }

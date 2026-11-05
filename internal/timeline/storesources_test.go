@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,16 +69,71 @@ func TestFreshnessICSImportIsStatic(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource("ics", "example.ics")
-	requirements.NoError(err)
+	for i := range 32 {
+		_, err := st.GetOrCreateSource("ics", fmt.Sprintf("example-%d.ics", i))
+		requirements.NoError(err)
+	}
 	src, err := NewStoreSources(st, config.NewDefaultConfig())
 	requirements.NoError(err)
 	report, err := src.Inventory.Build(t.Context(), time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	requirements.NoError(err)
-	requirements.Len(report.Sources, 1)
-	assertions.Equal("static", report.Sources[0].Scheduling)
-	assertions.Empty(report.Sources[0].SyncCommand)
-	assertions.Equal("current", report.Sources[0].Status)
+	assertions.Empty(report.Sources)
+	v := budgetTimeline(0)
+	v.Freshness = report
+	out, err := Fit(v, "json", 2048)
+	requirements.NoError(err)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
+}
+
+func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
+	for _, tc := range []struct {
+		name, outcome, status string
+		errors                int
+		disabled, stale, keep bool
+	}{
+		{name: "current"},
+		{name: "stale", stale: true, status: "stale", keep: true},
+		{name: "failed", outcome: "failed", status: "current", keep: true},
+		{name: "cancelled", outcome: "cancelled", status: "current", keep: true},
+		{name: "paused", outcome: "paused", status: "current", keep: true},
+		{name: "partial", errors: 2, status: "current", keep: true},
+		{name: "disabled", disabled: true, status: "current", keep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+			requirements.NoError(err)
+			run, err := st.StartSync(source.ID, "incremental")
+			requirements.NoError(err)
+			requirements.NoError(st.CompleteSync(run, "cursor"))
+			_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET errors_count = ? WHERE id = ?"), tc.errors, run)
+			requirements.NoError(err)
+			if tc.outcome != "" {
+				run, err = st.StartSync(source.ID, "incremental")
+				requirements.NoError(err)
+				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET status = ? WHERE id = ?"), tc.outcome, run)
+				requirements.NoError(err)
+			}
+			cfg := config.NewDefaultConfig()
+			cfg.Accounts = []config.AccountSchedule{{Email: "owner@example.test", Enabled: !tc.disabled}}
+			now := time.Now().UTC()
+			if tc.stale {
+				now = now.Add(48 * time.Hour)
+			}
+			src, err := NewStoreSources(st, cfg)
+			requirements.NoError(err)
+			report, err := src.Inventory.Build(t.Context(), now)
+			requirements.NoError(err)
+			if tc.keep {
+				requirements.Len(report.Sources, 1)
+				assertions.Equal(tc.status, report.Sources[0].Status)
+				assertions.Contains(Markdown(&Timeline{Freshness: report}), "gmail:owner@example.test")
+			} else {
+				assertions.Empty(report.Sources)
+			}
+		})
+	}
 }
 
 func TestFreshnessHiddenSourceChangeLeavesScopedReportUnchanged(t *testing.T) {

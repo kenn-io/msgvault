@@ -113,7 +113,7 @@ Ambiguous references return 409 `ambiguous_reference` with typed `candidates`.
 Owner requests share the open-loop mutation gate because loop reads can cache
 evidence. No archive schema or cache format changes are needed. The route
 requires API schema 3.45.0. See [Timeline](usage/timeline.md) for views,
-freshness, gaps, and continuation.
+freshness, gaps, and continuation. `freshness.sources` lists only sources with a stale, never-synced, or unmeasured status, a failed, cancelled, or paused last run, or sync warnings. Current sources without warnings are omitted, matching Markdown.
 
 ### Archived calendar occurrences, unreleased
 

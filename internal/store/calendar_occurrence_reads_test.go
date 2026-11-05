@@ -366,7 +366,11 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 						continue
 					}
 					requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
-					assertions.Contains(err.Error(), unsupported.Reason)
+					if tc.state == "unresolvable" {
+						assertions.Contains(err.Error(), "missing series master and event bounds")
+					} else {
+						assertions.Contains(err.Error(), unsupported.Reason)
+					}
 				}
 			}
 			if tc.rejectGeneratedRef {
@@ -377,7 +381,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				}
 			}
 			if tc.state == "unresolvable" {
-				assertions.Equal([]CalendarUnexpandable{{MessageID: exception, Reason: "missing series master and event bounds"}}, page.Unexpandable)
+				assertions.Equal([]CalendarUnexpandable{{MessageID: exception, Reason: "exception original start must have whole-second precision"}}, page.Unexpandable)
 				assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), page.Occurrences[0].Ref)
 				assertions.Equal(fmt.Sprintf("evt:%d@20270309T170000Z", master), page.Occurrences[1].Ref)
 			}
