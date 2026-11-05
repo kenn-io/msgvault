@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type logicalCallFixture struct {
@@ -63,6 +64,54 @@ func TestLogicalCallsEmptyKeysStaySeparate(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("m:%d", a), calls[0].IdentityKey)
 	assertions.Equal(fmt.Sprintf("m:%d", b), calls[1].IdentityKey)
 	assertions.Empty(next)
+}
+
+func TestLogicalCallsImportedPhoneContact(t *testing.T) {
+	for _, messageType := range []string{store.MessageTypeSynctechCall, store.MessageTypeGoogleVoiceCall} {
+		for _, outgoing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/outgoing=%t", messageType, outgoing), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := storetest.New(t)
+				peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "phone")
+				require.NoError(err)
+				person, _, err := f.Store.CreatePersonFromParticipant(peer)
+				require.NoError(err)
+				owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "phone")
+				require.NoError(err)
+				at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+				message := f.NewMessage().WithSentAt(at).Build()
+				message.MessageType, message.IsFromMe = messageType, outgoing
+				id, err := f.Store.UpsertMessage(message)
+				require.NoError(err)
+				from, to := peer, owner
+				if outgoing {
+					from, to = owner, peer
+				}
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+				require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(60)))
+				query := store.LogicalCallQuery{After: at, Before: at.Add(time.Hour), ParticipantIDs: []int64{peer}, Limit: 10}
+				calls, next, err := f.Store.ListLogicalCallsContext(t.Context(), query)
+				require.NoError(err)
+				require.Len(calls, 1)
+				assert.Empty(next)
+				assert.Equal(fmt.Sprintf("m:%d", id), calls[0].IdentityKey)
+				assert.Equal("answered", calls[0].Outcome)
+				assert.Equal([]store.CallParticipant{{ParticipantID: peer, PersonID: person.ID, Participation: "joined", Credited: true}}, calls[0].Participants)
+				aggregate, err := f.Store.CallContactAggregateContext(t.Context(), store.ContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: at})
+				require.NoError(err)
+				assert.Equal(1, aggregate.Count)
+				if outgoing {
+					assert.Equal(&at, aggregate.LastOutboundAt)
+					assert.Nil(aggregate.LastInboundAt)
+				} else {
+					assert.Equal(&at, aggregate.LastInboundAt)
+					assert.Nil(aggregate.LastOutboundAt)
+				}
+			})
+		}
+	}
 }
 
 func TestLogicalCallsTimestampIsEarliestObservation(t *testing.T) {
