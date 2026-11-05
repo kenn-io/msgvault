@@ -36,14 +36,24 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 }
 
 func TestCalDAVWindowsPeriodTimeZone(t *testing.T) {
-	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
-		"UID:period@example.org\r\nDTSTART:20270307T140000Z\r\n" +
-		"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H\r\n" +
-		"END:VEVENT\r\nEND:VCALENDAR\r\n"
-	events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, []string{"RDATE;TZID=Eastern Standard Time;VALUE=PERIOD:20270314T090000/PT1H"}, events[0].Event.Recurrence)
+	for _, tc := range []struct{ line, want string }{
+		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=Eastern Standard Time;VALUE=PERIOD:20270314T090000/PT1H"},
+		{"RDATE;TZID=Eastern Standard Time:invalid", "RDATE;TZID=Eastern Standard Time:INVALID"},
+		{"EXDATE;TZID=Invalid/Zone:20270314T090000", "EXDATE;TZID=Invalid/Zone:20270314T090000"},
+	} {
+		t.Run(tc.line, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+				"UID:period@example.org\r\nDTSTART:20270307T140000Z\r\n" + tc.line + "\r\n" +
+				"END:VEVENT\r\nEND:VCALENDAR\r\n"
+			events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+			require.NoError(err)
+			require.Len(events, 1)
+			assert.Equal([]string{tc.want}, events[0].Event.Recurrence)
+			_, err = calrecur.ParseSet(*events[0].Event.Start, false, "", time.UTC, events[0].Event.Recurrence)
+			require.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+		})
+	}
 }
 
 func mustZone(t *testing.T, name string) *time.Location {
@@ -313,6 +323,28 @@ func TestCalDAVLocalTimesInGapAndFold(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestCalDAVParameterEscaping(t *testing.T) {
+	for _, tc := range []struct{ encoded, decoded string }{
+		{"Example ^^ Guest", "Example ^ Guest"},
+		{"Example ^'Guest^'", "Example \"Guest\""},
+		{"Example^nGuest^NName", "Example\nGuest\nName"},
+		{"Example ^^n ^x ^", "Example ^n ^x ^"},
+	} {
+		t.Run(tc.encoded, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:escaping@example.org\r\nDTSTART:20270314T130000Z\r\n" +
+				"ORGANIZER;CN=\"" + tc.encoded + "\":mailto:owner@example.org\r\n" +
+				"ATTENDEE;CN=\"" + tc.encoded + "\":mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+			require.NoError(err)
+			require.Len(events, 1)
+			assert.Equal(tc.decoded, events[0].OrganizerName)
+			require.Len(events[0].ExplicitAttendees, 1)
+			assert.Equal(tc.decoded, events[0].ExplicitAttendees[0].DisplayName)
 		})
 	}
 }

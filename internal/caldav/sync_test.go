@@ -172,7 +172,7 @@ func TestSyncWindowsTimeZone(t *testing.T) {
 	assert.Equal("2027-03-21T13:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
 	assert.Equal("2027-03-21T14:00:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
 	var body string
-	require.NoError(st.DB().QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, page.Occurrences[0].MessageID).Scan(&body))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), page.Occurrences[0].MessageID).Scan(&body))
 	assert.Contains(body, "09:00")
 }
 
