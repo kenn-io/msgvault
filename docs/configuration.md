@@ -1843,7 +1843,7 @@ schedule = "*/10 * * * *"
 ```
 
 `phone` must start with `+`. `path` accepts `~` and resolves relative paths
-against the configuration directory. The Sources page shows run history and
+against the configuration directory when loaded with `--config`. The Sources page shows run history and
 offers **Sync now** for scheduled stores.
 
 ### `[imessage]`
@@ -1867,7 +1867,7 @@ max_media_mb = 250
 |---|---|---|
 | `enabled` | `false` | Enable daemon imports when a schedule is set |
 | `schedule` | — | Five-field cron schedule; Sources also offers **Sync now** |
-| `db_path` | `~/Library/Messages/chat.db` | Source database; accepts `~` and paths relative to the configuration directory |
+| `db_path` | `~/Library/Messages/chat.db` | Source database; accepts `~` and paths relative to the configuration directory when loaded with `--config` |
 | `me` | — | Your phone or email for sender and recipient attribution |
 | `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment size cap in MiB |
