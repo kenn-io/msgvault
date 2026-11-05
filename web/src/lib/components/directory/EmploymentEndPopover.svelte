@@ -25,7 +25,7 @@
   }
   function close(): void {
     if (submitting || !active) return;
-    rowActions?.querySelector<HTMLButtonElement>('[aria-label="Edit employment"]')?.focus();
+    if (document.activeElement === document.body || panel?.contains(document.activeElement)) rowActions?.querySelector<HTMLButtonElement>('[aria-label="Edit employment"]')?.focus();
     onClose();
   }
   onDestroy(() => { active = false; });

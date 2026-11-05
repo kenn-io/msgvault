@@ -77,6 +77,30 @@ test.describe('End employment with two current jobs', () => {
     await expect(page.getByRole('dialog', { name: 'End employment' }).getByRole('alert')).toHaveCount(0);
   });
 
+  test('ending a job preserves focus in an editor opened meanwhile', async ({ page }) => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const ended = { ...employment, revision: 2, is_current: false, is_primary: false, end_date: { year: 2026 } };
+    await page.route('**/api/v1/employments/11/end', async route => {
+      await pending;
+      await page.route('**/api/v1/people/42/employments', list => list.fulfill({ json: { employments: [ended, secondEmployment] } }));
+      await route.fulfill({ headers: { ETag: '"employment-11-r2"' }, json: ended });
+    });
+    try {
+      await page.getByRole('button', { name: 'End employment', exact: true }).first().click();
+      const ending = page.waitForRequest('**/api/v1/employments/11/end');
+      await page.getByRole('textbox', { name: 'Employment end date' }).press('Enter');
+      await ending;
+      await page.getByRole('button', { name: 'Edit employment', exact: true }).nth(1).click();
+      const title = page.getByRole('textbox', { name: 'Employment title' });
+      await title.fill('Teacher draft');
+      release();
+      await expect(page.getByRole('dialog', { name: 'End employment' })).toHaveCount(0);
+      await expect(title).toBeFocused();
+      await expect(title).toHaveValue('Teacher draft');
+    } finally { release(); }
+  });
+
   test('keeps the second job open when the first job finishes ending', async ({ page }) => {
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
