@@ -3593,11 +3593,10 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	withheld, ok := s.prepareVerificationAttachments(w, r, []query.AttachmentInfo{*att})
+	_, ok := s.withholdAttachmentName(w, r, att)
 	if !ok {
 		return
 	}
-	withholdField(&att.Filename, withheld[att.MessageID])
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
 		Filename:    att.Filename,
@@ -3643,7 +3642,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	withheld, ok := s.prepareVerificationAttachments(w, r, attachments)
+	refuse, ok := s.withholdAttachmentName(w, r, &attachments[0])
 	if !ok {
 		return
 	}
@@ -3669,7 +3668,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := s.verificationAttachmentReader(content, att, withheld)
+	reader, apiErr := textAttachmentReader(content, attachments, refuse)
 	if apiErr != nil {
 		_ = content.Close()
 		writeAPIHTTPError(w, apiErr)

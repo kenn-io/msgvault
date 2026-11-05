@@ -2284,6 +2284,8 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
 }
 
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
 func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
 	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }

@@ -30,7 +30,6 @@ var (
 	reverseGap     = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
 	signInAfter    = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in)\b`)
 	useBefore      = regexp.MustCompile(`(?i)\buse\s+$`)
-	uuidToken      = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
 	link           = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
 
@@ -124,11 +123,13 @@ func Is(c Content) bool {
 
 func nearCue(window string, before bool) bool {
 	for _, loc := range codeCue.FindAllStringIndex(window, -1) {
-		gap := window[:loc[0]]
+		gap, breaks := window[:loc[0]], 0
 		if before {
-			gap = window[loc[1]:]
+			gap = strings.ReplaceAll(window[loc[1]:], "\r\n", "\n")
+			gap = strings.Replace(gap, ".\n", "\n", 1) // the cue line may end a sentence
+			breaks = 2
 		}
-		if utf8.RuneCountInString(gap) <= 60 && !strings.ContainsAny(gap, ".!?\n") && (codeGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
+		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
 			return true
 		}
 	}
@@ -150,9 +151,6 @@ func asciiAlnum(b byte) bool {
 }
 
 func tokenValue(value string) bool {
-	if uuidToken.MatchString(value) {
-		return true
-	}
 	letters, digits := 0, 0
 	for _, r := range value {
 		switch {
