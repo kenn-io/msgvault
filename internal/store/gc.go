@@ -165,6 +165,17 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
 		}
 
+		if _, err := q.Exec(`
+			UPDATE line_webhook_events SET raw_json = '{}'
+			WHERE (source_id, target_message_id) IN (
+				SELECT source_id, source_message_id FROM messages
+				WHERE deleted_from_source_at IS NOT NULL
+				  AND NOT (` + managedDraftRetainedMessageSQL + `)
+			)
+		`); err != nil {
+			return fmt.Errorf("clear source-deleted LINE event payloads: %w", err)
+		}
+
 		result, err := q.Exec(`
 		DELETE FROM messages
 		WHERE deleted_from_source_at IS NOT NULL

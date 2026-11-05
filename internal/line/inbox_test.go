@@ -601,6 +601,63 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	})
 }
 
+func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	if f.st.IsPostgreSQL() {
+		t.Skip("archive GC is SQLite-only")
+	}
+	ctx := t.Context()
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
+	message := f.message("gc-retry", "text to purge", f.now.UnixMilli())
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	must.Equal("retry", state)
+	var retryAt time.Time
+	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
+
+	edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
+	edit.Type = "messageEdited"
+	edit.WebhookEventID = "gc-edit"
+	f.enqueue(t, edit, time.Time{})
+	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
+	f.run(t)
+	must.True(f.archived(t, message.Message.ID).deleted)
+	plan, err := f.st.PlanGCContext(ctx)
+	must.NoError(err)
+	deleted, err := f.st.ExecuteGCContext(ctx, plan)
+	must.NoError(err)
+	must.Equal(int64(1), deleted)
+
+	for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
+		var raw string
+		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+		checks.Equal("{}", raw)
+	}
+	f.now = retryAt
+	f.run(t)
+	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+	must.ErrorIs(err, sql.ErrNoRows)
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	checks.Equal("ignored", state)
+	// Scrubbed edits and unsends must remain harmless when reconciled.
+	must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
+
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+	must.ErrorIs(err, sql.ErrNoRows)
+	var raw string
+	var rows int
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
+	checks.Equal(1, rows)
+	checks.Equal("{}", raw)
+}
+
 func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
 	for _, source := range []struct {
 		name   string
