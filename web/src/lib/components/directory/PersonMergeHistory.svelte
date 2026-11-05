@@ -61,8 +61,8 @@
   function addressRows(side: string) {
     return (controller.detail?.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant => {
       const addresses = labels?.addresses.get(participant.participant_id) ?? [];
-      return (addresses.length ? addresses : [{ title: `Participant ${participant.participant_id}`, detail: '' }]).map((address, index) => ({
-        id: `${participant.participant_id}-${index}`, value: address.title, detail: address.detail, meta: splitMeta(participant.split_id)
+      return (addresses.length ? addresses : [{ title: `Participant ${participant.participant_id}`, subtitle: '', detail: '' }]).map((address, index) => ({
+        id: `${participant.participant_id}-${index}`, value: address.title, detail: [address.subtitle, address.detail].filter(Boolean).join(' · '), meta: splitMeta(participant.split_id)
       }));
     });
   }

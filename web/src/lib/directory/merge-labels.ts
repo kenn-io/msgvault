@@ -1,11 +1,11 @@
 import { getParticipant, getPersonProfile } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
 import type { PersonMergeDetail } from '../api/generated/models';
-import { identityChipText } from '../relationships/identity-chip';
+import { identityChipText, type IdentityChipText } from '../relationships/identity-chip';
 
 export async function loadMergeLabels(client: APIClient, detail: PersonMergeDetail, signal: AbortSignal) {
   const names = new Map<number, string>();
-  const addresses = new Map<number, { title: string; detail: string }[]>();
+  const addresses = new Map<number, IdentityChipText[]>();
   let incomplete = false;
   const options = { ...client, signal };
   const personIDs = new Set([detail.merge.survivor_person_id, ...(detail.splits ?? []).map(split => split.new_person_id)]);

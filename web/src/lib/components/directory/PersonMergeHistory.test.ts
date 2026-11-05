@@ -134,6 +134,48 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
 }
 
 describe('PersonMergeHistory', () => {
+  it.each([
+    { email: 'first@example.org', otherEmail: 'second@example.org' },
+    { phone: '+12025550101', otherPhone: '+12025550102' },
+  ])('distinguishes same-named members without identifiers in Inspect and Split: %j', async addresses => {
+    const mergeDetail = detail();
+    mergeDetail.participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
+    mergeDetail.splits = [];
+    const firstAddress = addresses.email ?? addresses.phone!;
+    const secondAddress = addresses.otherEmail ?? addresses.otherPhone!;
+    render(PersonMergeHistory, { client: createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+      if (path === '/api/v1/people/7' || path === '/api/v1/people/12') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json(person(id, 4, [701, 702], 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
+      }
+      if (path === '/api/v1/participants/701' || path === '/api/v1/participants/702') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ identifiers: [], cluster: { members: [{
+          participant_id: id, display_name: 'Member Example',
+          email: addresses.email ? (id === 701 ? firstAddress : secondAddress) : undefined,
+          phone: addresses.phone ? (id === 701 ? firstAddress : secondAddress) : undefined,
+        }] } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }), personID: 7 });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' });
+    const rows = within(heading.parentElement!).getAllByRole('listitem');
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining(firstAddress), expect.stringContaining(secondAddress),
+    ]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Split merged profile' }));
+    await fireEvent.click(await screen.findByRole('checkbox', { name: `Member Example · ${firstAddress}` }));
+    expect(screen.getByRole('checkbox', { name: `Member Example · ${secondAddress}` })).toHaveProperty('checked', false);
+    expect(screen.getByRole('checkbox', {
+      name: `I confirm splitting Member Example · ${firstAddress} from Alex Example (Person 12).`,
+    })).toBeDefined();
+  });
+
   it.each([true, false])('shows every split, including a zero-address split, with exact restore %s', async exact => {
     const mergeDetail = detail();
     mergeDetail.participants = [];

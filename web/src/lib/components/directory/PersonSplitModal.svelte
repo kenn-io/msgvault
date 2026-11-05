@@ -19,7 +19,7 @@
     (controller.sourcePerson ? `Person ${controller.sourcePerson.id}` : 'current source profile'));
   const labels = $derived(controller.labels?.for === controller.detail?.merge.id ? controller.labels : null);
   function participantLabel(id: number): string {
-    return labels?.addresses.get(id)?.map(address => [address.title, address.detail].filter(Boolean).join(' · ')).join(', ') || `Participant ${id}`;
+    return labels?.addresses.get(id)?.map(address => [address.title, address.subtitle, address.detail].filter(Boolean).join(' · ')).join(', ') || `Participant ${id}`;
   }
   const selectionLabel = $derived(controller.isZeroParticipantLineage
     ? 'the zero-participant lineage'
