@@ -121,3 +121,11 @@ it('handles empty meeting activity and action filters', async () => {
     view.unmount(); controller.destroy();
   }
 });
+
+it('formats meeting activity months like grouped months', async () => {
+  const client = createAPIClient(async input => response(input as Request));
+  render(MeetingPanel, { client, scope: { kind: 'direct', scope: { person_id: 7 } } });
+  const table = await screen.findByRole('table', { name: 'Monthly meeting activity' });
+  expect(within(table).getByRole('rowheader', { name: 'Jan 2026' })).toBeDefined();
+  expect(within(table).getByRole('rowheader', { name: 'Feb 2026' })).toBeDefined();
+});

@@ -73,8 +73,8 @@
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
-    ? `minmax(0,1fr) 80px ${timeGroup ? '96px ' : ''}40px`
-    : `minmax(200px,480px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr)' : '1fr'} 40px`);
+    ? `minmax(0,480px) 80px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`
+    : `minmax(200px,480px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`);
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -297,7 +297,7 @@
         <span role="columnheader" class="numeric">Size</span>
         <span role="columnheader">Latest</span>
       {/if}
-      {#if timeGroup}<span role="columnheader">Share</span>{:else if !narrow}<span aria-hidden="true"></span>{/if}
+      {#if timeGroup}<span role="columnheader">Share</span>{/if}
       <span role="columnheader" aria-label="Show items"></span>
     </div>
     <div class="group-body" role="rowgroup">
@@ -369,7 +369,7 @@
                     <div class="share-track" title={`${Number(share.toFixed(1))}% of ${row.total_items.toLocaleString()} items`}><div class="share-fill" style:width={`${share}%`}></div></div>
                   {/if}
                 </div>
-              {:else if !narrow}<span aria-hidden="true"></span>{/if}
+              {/if}
               <span role="gridcell" class="group-action">
                 {#if drillable}<IconButton size="sm" ariaLabel={`Show items in ${display.name}`} onclick={() => onDrill(row)}><ChevronRight size={14} /></IconButton>{/if}
               </span>

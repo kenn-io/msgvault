@@ -64,6 +64,7 @@
   p, h2 { margin: 0; }
   svg { display: block; width: 100%; height: 32px; fill: var(--accent-blue); }
   .activity, .people { display: grid; gap: var(--space-2); }
+  .people { padding-top: var(--space-4); border-top: 1px solid var(--border-muted); }
   .month-labels, h2 { color: var(--text-muted); font-size: var(--font-size-2xs); }
   h2 { font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   .person { color: var(--text-secondary); font-size: var(--font-size-sm); }

@@ -347,6 +347,12 @@
     overflow: auto;
   }
 
+  .group-scroll :global(.meeting-panel-card .panel-heading),
+  .group-scroll :global(.meeting-panel-card .overview-section),
+  .group-scroll :global(.meeting-panel-card .actions-section) {
+    padding-inline: calc(var(--pane-pad-x) - 1px);
+  }
+
   .pane-status {
     display: grid;
     gap: var(--field-gap);

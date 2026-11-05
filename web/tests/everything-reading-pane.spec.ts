@@ -420,3 +420,54 @@ test('a person inspector keeps grouped columns inside the right-side reader layo
   expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await expect(page.getByRole('region', { name: 'Meeting activity' })).toHaveCount(0);
 });
+
+test('keeps group columns close at wide widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+    rows: [{ key: '7', label: 'Example source', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
+    total_count: 1, cache_revision: 'fixture', search_provenance: {}
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['source'] })))}`);
+  const grid = page.getByRole('grid', { name: 'Messages grouped by source' });
+  const row = grid.getByRole('row', { name: /Example source/ });
+  await expect(row).toBeVisible();
+  const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
+  const latest = await row.getByRole('gridcell').nth(3).boundingBox();
+  const action = await row.getByRole('button', { name: /Show items in/ }).boundingBox();
+  expect(group!.width).toBeLessThanOrEqual(480);
+  expect(action!.x - (latest!.x + latest!.width)).toBeLessThanOrEqual(48);
+  await row.getByText('Example source').click();
+  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
+  expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
+});
+
+test('aligns meeting content and separates people in a group inspector', async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+    rows: [{ key: '7', label: 'Person Example', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
+    overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [{ key: '8', label: 'Other Example', count: 2 }] },
+    total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/explore/files', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'cache-groups', search_provenance: {} } }));
+  await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: {
+    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' },
+    totals: { meeting_count: 1, known_duration_count: 1, unknown_duration_count: 0, total_known_seconds: 60, average_known_seconds: 60 },
+    first_meeting_at: null, last_meeting_at: null, undated_count: 0, duration_by_basis: [], months: []
+  } }));
+  await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: {
+    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' }, rows: [], total_count: 0,
+    coverage: { meeting_count: 1, available: 0, partial: 0, unsupported: 1, unavailable: 0 }
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
+  await page.getByRole('grid').getByText('Person Example', { exact: true }).click();
+  const overview = page.getByRole('region', { name: 'Group overview' });
+  const meeting = page.getByRole('region', { name: 'Meeting activity' });
+  await expect(meeting).toBeVisible();
+  const content = await overview.locator('.count-line').boundingBox();
+  const heading = await meeting.getByRole('heading', { name: 'Meeting activity and follow-ups' }).boundingBox();
+  const people = overview.locator('.people');
+  await expect.soft(people).toHaveCSS('border-top-style', 'solid');
+  expect.soft(Math.abs(content!.x - heading!.x)).toBeLessThanOrEqual(1);
+  expect.soft(Math.abs(content!.x + content!.width - heading!.x - heading!.width)).toBeLessThanOrEqual(1);
+});
