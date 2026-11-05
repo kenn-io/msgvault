@@ -159,14 +159,6 @@ func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
 	assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
 	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
-	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
-		requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-		links, err := meetingLinksForTest(t, st, note)
-		requirements.NoError(err)
-		requirements.Len(links, 1)
-		assertions.True(listed.Start.Equal(links[0].Start))
-		assertions.True(listed.End.Equal(links[0].End))
-	}
 	for _, target := range []MeetingLinkRef{{Kind: "evt", MessageID: master, Key: "20270314"}, {Kind: "msg", MessageID: note}} {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
@@ -175,5 +167,13 @@ func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 			assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 			assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		}
+	}
+	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
+		requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+		links, err := meetingLinksForTest(t, st, note)
+		requirements.NoError(err)
+		requirements.Len(links, 1)
+		assertions.True(listed.Start.Equal(links[0].Start))
+		assertions.True(listed.End.Equal(links[0].End))
 	}
 }

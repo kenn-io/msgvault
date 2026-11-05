@@ -252,7 +252,37 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	}
-	slices.SortFunc(pageResult.Suggestions, func(a, b MeetingSuggestion) int {
+	pageResult.Suggestions, err = undecidedMeetingSuggestions(ctx, s.meetingReader(ctx), pageResult.Suggestions, limit, &budget)
+	return pageResult, err
+}
+
+// Drop pairs the owner already linked or split, then rank and cap the page.
+func undecidedMeetingSuggestions(ctx context.Context, r reboundReader, suggestions []MeetingSuggestion, limit int, budget *int) ([]MeetingSuggestion, error) {
+	decided := map[int64]map[string]bool{}
+	for _, suggestion := range suggestions {
+		if decided[suggestion.MemberMessageID] != nil {
+			continue
+		}
+		decisions, err := readMeetingLinkDecisions(ctx, r, suggestion.MemberMessageID)
+		if err != nil {
+			return nil, err
+		}
+		refs := map[string]bool{}
+		for _, d := range decisions {
+			refs[formatMeetingOccurrence(d.Ref)] = true
+			o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+			if err == nil {
+				refs[formatMeetingOccurrence(o.Ref)] = true
+			} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				return nil, err
+			}
+		}
+		decided[suggestion.MemberMessageID] = refs
+	}
+	suggestions = slices.DeleteFunc(suggestions, func(suggestion MeetingSuggestion) bool {
+		return decided[suggestion.MemberMessageID][suggestion.Ref]
+	})
+	slices.SortFunc(suggestions, func(a, b MeetingSuggestion) int {
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes
 		}
@@ -277,8 +307,8 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		limit = 10
 	}
 	limit = min(limit, 100)
-	if len(pageResult.Suggestions) > limit {
-		pageResult.Suggestions = pageResult.Suggestions[:limit]
+	if len(suggestions) > limit {
+		suggestions = suggestions[:limit]
 	}
-	return pageResult, nil
+	return suggestions, nil
 }
