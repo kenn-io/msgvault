@@ -20,9 +20,6 @@ const defaultWhatsAppAppleStorePath = "Library/Group Containers/group.net.whatsa
 
 func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.WhatsAppAppleSource) (retErr error) {
 	state := invocationFromContext(ctx)
-	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
-	}
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
 		retErr = recordSyncAttempt(ctx, "whatsapp", src.Phone, retErr)
@@ -52,9 +49,6 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 
 func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessageConfig) (retErr error) {
 	state := invocationFromContext(ctx)
-	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
-	}
 	identifier := "local"
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.IMessageJobName))
