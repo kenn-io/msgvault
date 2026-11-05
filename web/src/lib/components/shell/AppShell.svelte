@@ -1045,7 +1045,7 @@
   }
   let paletteRecent = $state(readPaletteRecent());
   const recentIds = $derived(paletteRecent.filter(id => paletteCommands.some(command =>
-    command.children ? command.children.some(child => child.id === id) : command.id === id
+    !command.disabled && (command.children ? command.children.some(child => child.id === id && !child.disabled) : command.id === id)
   )));
   $effect(() => {
     try {
@@ -1056,8 +1056,8 @@
   });
   function fallbacks(query: string): PaletteCommand[] {
     return [
-      { id: 'search:archive', label: `Search archive for "${query}"`, icon: Search, combo: 'enter' },
-      { id: 'search:person', label: 'Find person…', icon: Users },
+      { id: 'search:archive', label: `Search archive for "${query}"`, icon: Search, section: 'Search', combo: 'enter' },
+      { id: 'search:person', label: 'Find person…', icon: Users, section: 'Search' },
     ];
   }
   function runPalette(command: PaletteCommand, query: string): void {

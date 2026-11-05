@@ -25,3 +25,18 @@ test('palette shows ordered sections, initial selection, and command icons', asy
   }))).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test('palette keeps fallback rows in Search with and without command matches', async ({ page }) => {
+  await mockArchiveLayout(page);
+  await page.goto('/');
+  await expect(page.getByText('Synthetic archive subject')).toBeVisible();
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Messages commands' });
+  for (const query of ['source', 'zzzxxyy']) {
+    await palette.getByRole('combobox').fill(query);
+    const search = palette.locator('.kit-command-palette__section', { hasText: /^Search$/ });
+    await expect(search).toBeVisible();
+    await expect(search.locator('xpath=following-sibling::*[1]').locator('.kit-command-palette__label')).toHaveText(`Search archive for "${query}"`);
+    await expect(search.locator('xpath=following-sibling::*[2]')).toHaveAccessibleName('Find person…');
+  }
+});
