@@ -18,6 +18,38 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	if err := o.Validate(); err != nil {
 		return 0, err
 	}
+	if o.OccurredAt.IsZero() {
+		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: s.db}, sourceID); err != nil {
+			return 0, err
+		}
+		var id int64
+		err := s.db.QueryRowContext(ctx, s.Rebind(`
+			SELECT m.id FROM messages m JOIN call_details c ON c.message_id = m.id
+			WHERE m.source_id = ? AND m.source_message_id = ?`), sourceID, o.RecordID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
+		}
+		if err != nil {
+			return 0, fmt.Errorf("find calendar event to cancel: %w", err)
+		}
+		metadata, err := s.GetMessageMetadataContext(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		var evidence callhistory.Evidence
+		if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
+			return 0, fmt.Errorf("decode calendar evidence: %w", err)
+		}
+		evidence.Outcome = "cancelled"
+		data, err := json.Marshal(evidence)
+		if err != nil {
+			return 0, fmt.Errorf("encode calendar evidence: %w", err)
+		}
+		if err := s.SetMessageMetadataContext(ctx, id, sql.NullString{String: string(data), Valid: true}); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
 	metadata, err := json.Marshal(o.Evidence)
 	if err != nil {
 		return 0, fmt.Errorf("encode call evidence: %w", err)

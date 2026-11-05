@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"strings"
@@ -60,6 +61,33 @@ type PersonCallSummary struct {
 	ExampleMessageID   int64 `json:"example_message_id"`
 }
 
+// callRowsSQL follows personTierRows: imported phone calls credit connected
+// seconds as answered contact, while calls without connected time stay unknown.
+func (s *Store) callRowsSQL() string {
+	seconds := s.callConnectedSecondsSQL()
+	return `SELECT message_id, projection_version, canonical_key, kind, direction,
+		outcome, owner_participation, occurred_at, duration_seconds, withdrawn FROM call_details
+		UNION ALL
+		SELECT m.id, 1, '', 'call',
+			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
+			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
+			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
+			m.sent_at, NULLIF(` + seconds + `, 0), FALSE
+		FROM messages m WHERE m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')`
+}
+
+// callRolesSQL credits only the counterparty, whoever dialed, as personTierRows does.
+func (s *Store) callRolesSQL() string {
+	return `SELECT message_id, participant_id, recipient_type FROM message_recipients
+		WHERE recipient_type IN ('call_joined', 'call_invited', 'call_unknown')
+		UNION ALL
+		SELECT m.id, r.participant_id,
+			CASE WHEN ` + s.callConnectedSecondsSQL() + ` > 0 THEN 'call_joined' ELSE 'call_unknown' END
+		FROM messages m JOIN message_recipients r ON r.message_id = m.id
+		WHERE m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')
+		AND r.recipient_type = CASE WHEN m.is_from_me THEN 'to' ELSE 'from' END`
+}
+
 // ListCallObservationsContext includes withdrawn evidence for inspection but
 // respects archive and source deletion. It never reads raw payloads or bodies.
 func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([]CallObservationView, error) {
@@ -73,10 +101,9 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	where := []string{"m.deleted_at IS NULL", "m.deleted_from_source_at IS NULL", "m.id > ?"}
 	args := []any{q.AfterID}
 	if q.PersonID != 0 {
-		where = append(where, `EXISTS (SELECT 1 FROM message_recipients r
+		where = append(where, `EXISTS (SELECT 1 FROM (`+s.callRolesSQL()+`) r
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
-			WHERE r.message_id = m.id AND pp.person_id = ?
-			AND r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown'))`)
+			WHERE r.message_id = m.id AND pp.person_id = ?)`)
 		args = append(args, q.PersonID)
 	}
 	if q.After != nil {
@@ -88,22 +115,32 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	args = append(args, limit)
 	out := []CallObservationView{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT m.id, m.source_id, m.source_message_id, m.metadata
-			FROM call_details c JOIN messages m ON m.id = c.message_id
+		rows, err := tx.QueryContext(ctx, `SELECT m.id, m.source_id, m.source_message_id, m.metadata, m.message_type,
+			src.source_type, src.identifier, c.kind, c.direction, c.outcome,
+			c.owner_participation, c.occurred_at, c.duration_seconds, c.withdrawn
+			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
+			JOIN sources src ON src.id = m.source_id
 			WHERE `+strings.Join(where, " AND ")+` ORDER BY m.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var view CallObservationView
-			var metadata string
-			if err := rows.Scan(&view.MessageID, &view.SourceID, &view.RecordID, &metadata); err != nil {
+			var metadata sql.NullString
+			var messageType string
+			if err := rows.Scan(&view.MessageID, &view.SourceID, &view.RecordID, &metadata, &messageType,
+				&view.Provider, &view.Account, &view.Kind, &view.Direction, &view.Outcome,
+				&view.OwnerParticipation, &view.OccurredAt, &view.DurationSeconds, &view.Withdrawn); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			if err := json.Unmarshal([]byte(metadata), &view.Evidence); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("decode call evidence: %w", err)
+			if messageType == callhistory.MessageType {
+				if err := json.Unmarshal([]byte(metadata.String), &view.Evidence); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("decode call evidence: %w", err)
+				}
+			} else {
+				view.Version, view.Precision = 1, "instant"
 			}
 			view.Participants = []callhistory.Participant{}
 			out = append(out, view)
@@ -122,8 +159,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 				CASE WHEN MAX(CASE WHEN recipient_type = 'call_joined' THEN 1 ELSE 0 END) = 1 THEN 'joined'
 				     WHEN MAX(CASE WHEN recipient_type = 'call_invited' THEN 1 ELSE 0 END) = 1 THEN 'invited'
 				     ELSE 'unknown' END
-				FROM message_recipients WHERE message_id = ?
-				AND recipient_type IN ('call_joined', 'call_invited', 'call_unknown')
+				FROM (`+s.callRolesSQL()+`) r WHERE message_id = ?
 				GROUP BY participant_id ORDER BY participant_id`, out[i].MessageID)
 			if err != nil {
 				return err
@@ -179,7 +215,7 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		WITH active AS (
 			SELECT c.*, CASE WHEN c.canonical_key = '' THEN 'm:' || CAST(c.message_id AS TEXT)
 				ELSE 'n:' || c.canonical_key END AS identity_key
-			FROM call_details c JOIN messages m ON m.id = c.message_id
+			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		), identities AS (
 			SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
@@ -194,9 +230,8 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 			SELECT a.identity_key, pp.person_id, MIN(a.message_id) AS example_id,
 				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
 					AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) AS confirmed
-			FROM active a JOIN message_recipients r ON r.message_id = a.message_id
+			FROM active a JOIN (`+s.callRolesSQL()+`) r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
-			WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
 			GROUP BY a.identity_key, pp.person_id
 		), classified AS (
 			SELECT p.person_id, p.example_id,
