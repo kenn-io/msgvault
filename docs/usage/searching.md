@@ -297,7 +297,7 @@ HTTP clients can pass the same values as `deletion_scope` on
 ## Filtering by Message Type
 
 Archives can hold more than email — Google Calendar events, Microsoft Teams
-and Discord messages, text messages, calls, voicemails, and Messenger imports
+and Discord messages, text messages, calls, voicemails, Messenger imports, and Signal imports
 all live in the same database. Restrict a search to one or more kinds with the
 `message_type:` operator or the repeatable/comma-separated `--message-type`
 flag:
