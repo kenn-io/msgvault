@@ -122,7 +122,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.Local), fake.query.From)
 			if strings.HasPrefix(tc.name, "whole window") {
 				requirements.Len(fake.queries, 3)
-				assertions.Equal("", fake.queries[0].Cursor)
+				assertions.Empty(fake.queries[0].Cursor)
 				assertions.Equal("second-page", fake.queries[1].Cursor)
 				assertions.Equal("final-page", fake.queries[2].Cursor)
 				assertions.NotContains(out.String(), "next cursor:")
