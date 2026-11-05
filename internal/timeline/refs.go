@@ -52,6 +52,17 @@ type AnchorRef struct {
 	Time                         time.Time
 }
 
+// personReference splits a with value into its kind and value; bare values are
+// names, or phone numbers when they start with +.
+func personReference(with string) (store.PersonRefKind, string) {
+	kind, value := "name", strings.TrimSpace(with)
+	if k, v, ok := strings.Cut(value, ":"); ok {
+		kind, value = k, v
+	} else if strings.HasPrefix(value, "+") {
+		kind = "phone"
+	}
+	return store.PersonRefKind(kind), value
+}
 func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 	if loc == nil {
 		loc = time.UTC

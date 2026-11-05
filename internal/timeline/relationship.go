@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -14,22 +13,20 @@ import (
 )
 
 func (c *composer) resolvePerson() (store.PersonCandidate, error) {
-	kind, value := "name", strings.TrimSpace(c.req.With)
-	if k, v, ok := strings.Cut(value, ":"); ok {
-		kind, value = k, v
-	} else if strings.HasPrefix(value, "+") {
-		kind = "phone"
-	}
+	kind, value := personReference(c.req.With)
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.PersonCandidate, error) {
-		return c.src.People.ResolvePersonReferenceContext(ctx, store.PersonRefKind(kind), value, nil, 11)
+		return c.src.People.ResolvePersonReferenceContext(ctx, kind, value, nil, 11)
 	})
-	if r.err != nil {
-		if errors.Is(r.err, store.ErrInvalidActivityRequest) {
-			return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
-		}
+	switch {
+	case errors.Is(r.err, store.ErrInvalidActivityRequest):
+		return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
+	case r.err != nil && c.req.Mode == ModeRelationship:
+		// A relationship reports its unavailable subject; a person filter fails closed.
+		c.gap("person", r.err, false)
+		return store.PersonCandidate{}, nil
+	case r.err != nil:
 		return store.PersonCandidate{}, fmt.Errorf("resolve timeline person: %w", r.err)
-	}
-	if len(r.value) == 0 {
+	case len(r.value) == 0:
 		return store.PersonCandidate{}, ErrUnknownReference
 	}
 	if len(r.value) > 1 {
