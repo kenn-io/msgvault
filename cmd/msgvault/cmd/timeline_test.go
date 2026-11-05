@@ -219,7 +219,10 @@ func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {
 	for _, line := range lines {
 		refs = append(refs, strings.Split(line, "\t")[0])
 	}
-	assertions.ElementsMatch([]string{fmt.Sprintf("person:%d", person.ID), fmt.Sprintf("participant:%d", unsavedParticipant)}, refs)
+	assertions.ElementsMatch([]string{
+		fmt.Sprintf("person:%d\tAlex\tsaved@example.com", person.ID),
+		fmt.Sprintf("participant:%d\tAlex\tunsaved@example.com", unsavedParticipant),
+	}, lines)
 	for _, ref := range refs {
 		var selected bytes.Buffer
 		command := newTimelineCommand()
