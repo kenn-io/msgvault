@@ -460,16 +460,7 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 ) bool {
 	// Pre-coverage tokens (including legacy untyped requests) may have been
 	// obtained from a Gmail listing excluding Spam/Trash. Restart those scans.
-	if !checkpointMatchesRequest(run, requestFingerprint) {
-		return false
-	}
-	if (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) &&
-		s.opts.Query == "" && s.opts.Limit == 0 {
-		// A continuation without its original History boundary could skip
-		// arrivals in the already processed prefix. Restart legacy scans.
-		return run.CursorAfter.Valid && run.CursorAfter.String != ""
-	}
-	return true
+	return checkpointMatchesRequest(run, requestFingerprint)
 }
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
@@ -489,7 +480,8 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	)
 	version := "full:v1"
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
-		version = "full:v2-spam-trash"
+		// Checkpoints from before the History boundary was saved must restart.
+		version = "full:v3-history-boundary"
 	}
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
@@ -522,9 +514,7 @@ func (s *Syncer) initSyncState(
 			if priorSync.CursorBefore.Valid {
 				state.pageToken = priorSync.CursorBefore.String
 			}
-			if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
-				state.handoffCursor = priorSync.CursorAfter.String
-			}
+			state.handoffCursor = priorSync.CursorAfter.String
 			state.checkpoint = &store.Checkpoint{
 				PageToken:         state.pageToken,
 				MessagesProcessed: priorSync.MessagesProcessed,
@@ -1379,10 +1369,10 @@ func (s *Syncer) full(
 		}
 	}()
 
-	if state.handoffCursor != "" {
+	if reconcilePresence && state.handoffCursor != "" {
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
 			s.failStoppedSync(state.syncID, err)
-			return nil, fmt.Errorf("inherit Gmail full-sync checkpoint: %w", err)
+			return nil, fmt.Errorf("inherit Gmail recovery checkpoint: %w", err)
 		}
 	}
 

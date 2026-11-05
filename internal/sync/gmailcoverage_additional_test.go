@@ -13,14 +13,19 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func gmailTransportClient(t *testing.T, transport http.RoundTripper) *gmail.Client {
+	t.Helper()
+	old := http.DefaultClient
+	http.DefaultClient = &http.Client{Transport: transport}
+	t.Cleanup(func() { http.DefaultClient = old })
+	return gmail.NewClient(nil, gmail.WithConcurrency(1))
+}
+
 func gmailCoverageTransportEnv(t *testing.T) (*TestEnv, *gmailCoverageTransport) {
 	t.Helper()
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	return e, f
 }
 

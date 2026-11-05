@@ -2182,7 +2182,7 @@ func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
 	requirements.NoError(err)
 	fingerprint := New(gmail.NewMockAPI(), first, nil).fullSyncRequestFingerprint()
 	_, err = first.DB().Exec(
-		`UPDATE sync_runs SET sync_type = 'full', cursor_after = '1000', request_fingerprint = ? WHERE id = ?`,
+		`UPDATE sync_runs SET sync_type = 'full', request_fingerprint = ? WHERE id = ?`,
 		fingerprint, abandonedRun,
 	)
 	requirements.NoError(err)
@@ -3092,7 +3092,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	syncID, err := env.Store.StartSync(source.ID, "full")
 	require.NoError(err, "StartSync")
 	_, err = env.Store.DB().Exec(
-		`UPDATE sync_runs SET cursor_after = '12345', request_fingerprint = ? WHERE id = ?`,
+		`UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?`,
 		env.Syncer.fullSyncRequestFingerprint(), syncID,
 	)
 	require.NoError(err, "record request fingerprint")
