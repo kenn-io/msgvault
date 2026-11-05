@@ -4473,9 +4473,10 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				dir := setupTestSQLite(t)
 				dbPath := filepath.Join(dir, "test.db")
 				cache := filepath.Join(dir, "analytics")
-				db, err := sql.Open("sqlite3", dbPath)
+				st, err := store.OpenForTest(dbPath)
 				require.NoError(err)
-				defer func() { _ = db.Close() }()
+				defer func() { require.NoError(st.Close()) }()
+				db := st.DB()
 				statement := `UPDATE messages SET subject=CAST(X'80' AS TEXT), rfc822_message_id=CAST(X'80' AS TEXT) WHERE id=1`
 				if mode == "identity" {
 					statement = `UPDATE messages SET rfc822_message_id=CAST(X'80' AS TEXT) WHERE id=1`
@@ -4502,7 +4503,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				original, err := os.ReadFile(shards[0])
 				require.NoError(err)
 				if mode == "incremental" {
-					_, err = db.Exec(`INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at) VALUES(6,1,'probe-clean',101,'clean','2025-01-01')`)
+					_, err = db.Exec(`INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at,message_type) VALUES(6,1,'probe-clean',101,'clean','2025-01-01','email')`)
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() { result, err = buildCache(dbPath, cache, false) })
 					require.NoError(err)
