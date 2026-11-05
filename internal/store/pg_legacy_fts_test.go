@@ -85,4 +85,7 @@ func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE deleted_at IS NULL`).Scan(&count))
 	require.Zero(count)
+	var valid bool
+	require.NoError(st.DB().QueryRow(`SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('idx_messages_meeting_start')`).Scan(&valid))
+	require.True(valid)
 }

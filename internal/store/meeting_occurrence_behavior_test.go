@@ -38,7 +38,8 @@ func TestMeetingSchemaPlainSQLiteIntegrity(t *testing.T) {
 	assert.Equal(t, "ok", integrity)
 }
 
-func TestMeetingLinksUnsupportedMasterException(t *testing.T) {
+func testMeetingLinksUnsupportedMasterException(t *testing.T) {
+	t.Helper()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -66,31 +67,6 @@ func TestMeetingLinksUnsupportedMasterException(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(links, 1)
 	assertions.Equal(page.Occurrences[0].Ref, links[0].Ref)
-}
-
-func testMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds(t *testing.T) {
-	t.Helper()
-	cases := []struct {
-		name string
-		raw  string
-	}{
-		{
-			name: "cancellation tombstone",
-			raw:  `{"id":"orphan-cancelled","recurringEventId":"missing-series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, orphan := calendarFixture(t, st, "orphan", tc.raw)
-			_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-
-			err := st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan})
-			requirements.ErrorIs(err, sql.ErrNoRows)
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note])
-		})
-	}
 }
 
 func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
@@ -173,7 +149,8 @@ func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	assert.Empty(t, suggestions.Suggestions)
 }
 
-func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
+func testMeetingUnsupportedSeriesCandidates(t *testing.T) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=HOURLY;COUNT=6"))
@@ -193,19 +170,24 @@ func testMeetingLinkTargetsRequireBounds(t *testing.T) {
 	for _, tc := range []struct{ name, raw string }{
 		{"tombstone", `{"id":"gone","status":"cancelled"}`},
 		{"orphan", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`},
+		{"cancelled orphan", `{"id":"orphan-cancelled","recurringEventId":"missing-series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`},
 		{"partial orphan", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			require := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			_, event := calendarFixture(t, st, "event", tc.raw)
+			key := "event"
+			if tc.name == "cancelled orphan" {
+				key = "orphan"
+			}
+			_, event := calendarFixture(t, st, key, tc.raw)
 			_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
 			err := st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event})
 			require.ErrorIs(err, sql.ErrNoRows)
 			assertions.Contains(err.Error(), "bounds")
 			assertions.Empty(linkedMeetingRefs(t, st, note)[note])
-			if tc.name == "tombstone" {
+			if tc.name == "tombstone" || tc.name == "cancelled orphan" {
 				return
 			}
 			_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -257,7 +239,8 @@ func TestMeetingDedupRawBackfillProjections(t *testing.T) {
 	}
 }
 
-func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
+func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=HOURLY;COUNT=6"))
@@ -304,6 +287,7 @@ func TestMeetingCancelledSuggestions(t *testing.T) {
 		{"MeetingSuggestionsOffsetCancellation", testMeetingSuggestionsOffsetCancellation},
 		{"MeetingLinksSuggestionsRankingAndReadOnly", testMeetingLinksSuggestionsRankingAndReadOnly},
 		{"MeetingLinksUnidentifiedExceptionWithCancelledMaster", testMeetingLinksUnidentifiedExceptionWithCancelledMaster},
+		{"MeetingLinksAllDayExceptionWithTombstoneMaster", testMeetingLinksAllDayExceptionWithTombstoneMaster},
 	} {
 		t.Run(tc.name, tc.run)
 	}
@@ -314,8 +298,20 @@ func TestMeetingLinkTargetBounds(t *testing.T) {
 		name string
 		run  func(*testing.T)
 	}{
-		{"MeetingLinksRejectOrphanExceptionsWithoutCompleteBounds", testMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds},
 		{"MeetingLinkTargetsRequireBounds", testMeetingLinkTargetsRequireBounds},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingUnsupportedSeries(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"manual exception alias", testMeetingLinksUnsupportedMasterException},
+		{"automatic candidates", testMeetingUnsupportedSeriesCandidates},
+		{"exception without original", testMeetingUnsupportedSeriesExceptionWithoutOriginal},
 	} {
 		t.Run(tc.name, tc.run)
 	}

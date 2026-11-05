@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIndependentRecordFromNoteIncludesOtherNotes(t *testing.T) {
+func TestMeetingRecordFromNoteIncludesOtherNotes(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "shared@example.org"))
 	_, a := projectionFixture(t, st, "a", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"shared@example.org"}}`)
@@ -69,7 +69,7 @@ func TestMeetingManualLinkAddsAutomaticLink(t *testing.T) {
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: manual}), links[0].Ref)
 }
 
-func TestIndependentSplitBeforeMasterArrives(t *testing.T) {
+func TestMeetingSplitBeforeMasterArrives(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, exception := calendarFixture(t, st, "exception", `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	note := granolaLinkFixture(t, st, "series_20270314T100000Z")

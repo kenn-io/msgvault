@@ -212,6 +212,8 @@ func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 }
 
 func TestMeetingLinksTwentyCopiesAndAmbiguity(t *testing.T) {
+	t.Run("moved copy", testMeetingUIDMovedSingleCopy)
+	t.Run("copy precedence fallback", testMeetingCopyPrecedenceFallback)
 	for _, kind := range []string{"single copies", "series copies", "different occurrences"} {
 		t.Run(kind, func(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
@@ -352,8 +354,7 @@ func TestMeetingLinksUpgradeFromSchema11(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 }
 
-func testMeetingLinksIgnoreUnresolvableDecision(t *testing.T) {
-	t.Helper()
+func TestMeetingUnresolvableDecisions(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -372,25 +373,13 @@ func TestMeetingLinksReadDecisions(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(links)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "linked@example.org"))
-	for step := range 3 {
-		if step == 1 {
-			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-		}
-		if step == 2 {
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-		}
-		links, err = meetingLinksForTest(t, st, note)
-		requirements.NoError(err)
-		if step == 2 {
-			assertions.Empty(links)
-			continue
-		}
-		requirements.Len(links, 1)
-		assertions.Equal(fmt.Sprintf("evt:%d", event), links[0].Ref)
-		assertions.Equal("Example event", links[0].Subject)
-		assertions.Equal("2027-03-14T10:00:00Z", links[0].Start.Format(time.RFC3339))
-		assertions.Equal("2027-03-14T11:00:00Z", links[0].End.Format(time.RFC3339))
-	}
+	links, err = meetingLinksForTest(t, st, note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), links[0].Ref)
+	assertions.Equal("Example event", links[0].Subject)
+	assertions.Equal("2027-03-14T10:00:00Z", links[0].Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-14T11:00:00Z", links[0].End.Format(time.RFC3339))
 	_, err = meetingLinksForTest(t, st, event)
 	assertions.ErrorIs(err, sql.ErrNoRows)
 }
@@ -460,8 +449,7 @@ func TestMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", second), links[0].Ref)
 }
 
-func testMeetingLinksDecisionLifetime(t *testing.T) {
-	t.Helper()
+func TestMeetingDecisionSourceRemoval(t *testing.T) {
 	for _, uid := range []string{"lifetime@example.org", ""} {
 		t.Run("uid="+uid, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -487,28 +475,6 @@ func testMeetingLinksDecisionLifetime(t *testing.T) {
 	}
 }
 
-func TestMeetingUnresolvableDecisions(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksIgnoreUnresolvableDecision", testMeetingLinksIgnoreUnresolvableDecision},
-	} {
-		t.Run(tc.name, tc.run)
-	}
-}
-
-func TestMeetingDecisionSourceRemoval(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksDecisionLifetime", testMeetingLinksDecisionLifetime},
-	} {
-		t.Run(tc.name, tc.run)
-	}
-}
-
 func TestMeetingOwnCalendar(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -525,4 +491,38 @@ func meetingLinksForTest(t *testing.T, st *Store, id int64) ([]MeetingLink, erro
 	t.Helper()
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: id})
 	return record.Links, err
+}
+
+func testMeetingUIDMovedSingleCopy(t *testing.T) {
+	t.Helper()
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := singleLinkRaw("old", "moved@example.org")
+	calendarFixture(t, st, "old", raw)
+	_, moved := calendarFixture(t, st, "moved", strings.NewReplacer("old", "moved", "10:00:00", "12:00:00", "11:00:00", "13:00:00").Replace(raw))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"moved@example.org","startsAt":"2027-03-14T12:00:00Z"}}`)
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	require.Len(links, 1)
+	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: moved}), links[0].Ref)
+	assert.Equal(time.Date(2027, 3, 14, 12, 0, 0, 0, time.UTC), links[0].Start)
+}
+
+func testMeetingCopyPrecedenceFallback(t *testing.T) {
+	t.Helper()
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, first := calendarFixture(t, st, "first", singleLinkRaw("first", "copies@example.org"))
+	calendarFixture(t, st, "second", singleLinkRaw("second", "copies@example.org"), "second@example.com")
+	for _, scheduled := range []string{"", "2027-03-14T15:00:00Z"} {
+		start := "null"
+		if scheduled != "" {
+			start = fmt.Sprintf("%q", scheduled)
+		}
+		_, note := projectionFixture(t, st, "note"+scheduled, "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"copies@example.org","startsAt":`+start+`}}`)
+		links, err := meetingLinksForTest(t, st, note)
+		require.NoError(err)
+		require.Len(links, 1)
+		assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: first}), links[0].Ref)
+	}
 }

@@ -261,7 +261,6 @@ func TestMeetingAllDayExceptionStates(t *testing.T) {
 	}{
 		{"MeetingLinksAllDayExceptionUsesCalendarZone", testMeetingLinksAllDayExceptionUsesCalendarZone},
 		{"MeetingLinksAllDayExceptionWithUnsupportedRecurrence", testMeetingLinksAllDayExceptionWithUnsupportedRecurrence},
-		{"MeetingLinksAllDayExceptionWithTombstoneMaster", testMeetingLinksAllDayExceptionWithTombstoneMaster},
 		{"MeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget", testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget},
 	} {
 		t.Run(tc.name, tc.run)
