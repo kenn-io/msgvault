@@ -324,3 +324,38 @@ func TestMeetingLinkToolsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
+	backend, imported, _ := newMeetingMCPBackend(t)
+	ctx := t.Context()
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, true).Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-errors-test", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, session.Close()) })
+	for _, tc := range []struct {
+		name, tool string
+		args       map[string]any
+		code       string
+	}{
+		{"invalid ref", ToolGetMeetingRecord, map[string]any{"ref": "wrong"}, "invalid"},
+		{"missing", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
+		{"suggest", ToolSuggestMeetingLinks, map[string]any{"ref": "wrong"}, "invalid"},
+		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(imported[0].MessageID), "event": "wrong"}, "invalid"},
+		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(imported[0].MessageID), "event": "evt:1@bad"}, "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			require.NoError(err)
+			require.True(result.IsError)
+			require.NotEmpty(result.Content)
+			content, ok := result.Content[0].(*sdkmcp.TextContent)
+			require.True(ok)
+			assert.Contains(t, content.Text, tc.code)
+		})
+	}
+}

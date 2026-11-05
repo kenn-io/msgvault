@@ -90,7 +90,7 @@ msgvault meetings unlink 42 --event evt:81@20270314T100000Z
 
 `suggest` accepts `msg:<id>` for a note or `evt:<id>[@occurrence key]` for an event. It returns up to ten overlapping candidates, ranked by overlap minutes, shared attendees, and shared title words. Plain output warns on stderr when calendar entries could not be fully expanded, while still listing readable candidates. `--json` includes those entries in an `unexpandable` array with their `message_id` and `reason`. Check this array before treating an empty or partial result as complete. Suggestions leave links unchanged.
 
-`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. After `link`, this list shows the chosen occurrence instead of automatic matches. `unlink` applies to all calendar copies of that occurrence and survives source removal and reimport when the event has an iCalendar UID.
+`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. `link` adds the chosen occurrence to automatic matches. `unlink` applies to all calendar copies of that occurrence.
 
 ### meetings context
 

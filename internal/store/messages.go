@@ -996,10 +996,7 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
-		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
-			return err
-		}
-		return nil
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 

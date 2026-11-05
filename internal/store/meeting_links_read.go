@@ -55,25 +55,47 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		return record, err
 	}
 	defer release()
-	if ref.Kind == "msg" {
-		record.Links, err = s.MeetingLinksContext(ctx, ref.MessageID)
-		if err == nil {
-			record.MessageIDs = append(record.MessageIDs, ref.MessageID)
-		}
-		return record, err
-	}
 	r := s.meetingReader(ctx)
 	budget := calrecur.RequestReadBudget
+	if ref.Kind == "msg" {
+		var found int64
+		if err := r.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, ref.MessageID).Scan(&found); err != nil {
+			return record, err
+		}
+		record.MessageIDs = append(record.MessageIDs, ref.MessageID)
+		occurrences, err := s.meetingMemberOccurrences(ctx, r, ref.MessageID, &budget)
+		if err != nil {
+			return record, err
+		}
+		for _, occurrence := range occurrences {
+			record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(occurrence.Ref), Subject: occurrence.Row.Subject, Start: occurrence.Start, End: occurrence.End})
+			members, err := s.meetingOccurrenceMembers(ctx, r, occurrence, &budget)
+			if err != nil {
+				return record, err
+			}
+			record.MessageIDs = append(record.MessageIDs, members...)
+		}
+		slices.Sort(record.MessageIDs)
+		record.MessageIDs = slices.Compact(record.MessageIDs)
+		return record, nil
+	}
 	target, err := resolveMeetingOccurrence(ctx, r, ref.OccurrenceRef, &budget)
 	if err != nil {
 		return record, err
 	}
 	record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(target.Ref), Subject: target.Row.Subject, Start: target.Start, End: target.End})
+	record.MessageIDs, err = s.meetingOccurrenceMembers(ctx, r, target, &budget)
+	return record, err
+}
+
+func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, target linkOccurrence, budget *int) ([]int64, error) {
+	membersOut := []int64{}
 	var copies []CalendarEventRow
+	var err error
 	if target.Identity.ICalUID != "" {
-		copies, err = meetingEventRows(ctx, r, s.calendarUIDPredicate(), []any{target.Identity.ICalUID}, &budget)
+		copies, err = s.meetingIdentityRows(ctx, r, target.Identity, budget)
 		if err != nil {
-			return record, err
+			return membersOut, err
 		}
 	}
 	values := []any{target.Row.Event.ProviderEventID}
@@ -100,9 +122,9 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
  SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`)
  UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.target_message_id IN (`+placeholders(len(targets))+`)
  ) candidates JOIN messages m ON m.id = candidates.message_id
- WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL ORDER BY m.id LIMIT ?`, append(args, budget+1)...)
+ WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL ORDER BY m.id LIMIT ?`, append(args, *budget+1)...)
 	if err != nil {
-		return record, err
+		return membersOut, err
 	}
 	defer func() { _ = rows.Close() }()
 	var members []int64
@@ -110,28 +132,28 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return record, err
+			return membersOut, err
 		}
 		members = append(members, id)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return record, err
+		return membersOut, err
 	}
-	budget -= len(members)
-	if budget < 0 {
-		return record, calendarRecurrenceBudgetError()
+	*budget -= len(members)
+	if *budget < 0 {
+		return membersOut, calendarRecurrenceBudgetError()
 	}
 	for _, id := range members {
-		occurrences, err := s.meetingMemberOccurrences(ctx, r, id, &budget)
+		occurrences, err := s.meetingMemberOccurrences(ctx, r, id, budget)
 		if err != nil {
-			return record, err
+			return membersOut, err
 		}
 		for _, occurrence := range occurrences {
 			if occurrence.Identity == target.Identity {
-				record.MessageIDs = append(record.MessageIDs, id)
+				membersOut = append(membersOut, id)
 				break
 			}
 		}
 	}
-	return record, nil
+	return membersOut, nil
 }

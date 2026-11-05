@@ -26,7 +26,7 @@ func readMeetingLinkDecisions(ctx context.Context, r SQLReader, memberID int64) 
 	return out, rows.Err()
 }
 
-// LinkMeetingContext replaces automatic evidence with the owner's chosen links.
+// LinkMeetingContext adds the owner's chosen link to automatic evidence.
 func (s *Store) LinkMeetingContext(ctx context.Context, memberID int64, occurrence OccurrenceRef) error {
 	return s.writeMeetingLinkDecision(ctx, memberID, occurrence, "link")
 }
