@@ -90,6 +90,50 @@ function deferredResponse() {
 }
 
 describe('PersonMergeHistoryController', () => {
+  it.each([false, true])('reloads split labels and discards a late initial lookup %s', async lateInitial => {
+    let detailReads = 0;
+    let nameReads = 0;
+    const late = deferredResponse();
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/person-merges/41') {
+        const fresh = detail();
+        if (++detailReads > 1) {
+          fresh.splits = [splitResult().split];
+          fresh.participants![0]!.split_id = 55;
+        }
+        return Response.json(fresh);
+      }
+      if (request.method === 'POST') return Response.json({ error: 'person_merge_revision_conflict' }, { status: 409 });
+      if (path.startsWith('/api/v1/people/')) {
+        const id = Number(path.split('/').at(-1));
+        if (id === 7 && ++nameReads === 1 && lateInitial) return late.promise;
+        return Response.json(person(id, 4, [701, 702], id === 19 ? 'Fresh Restored' : 'Synthetic Source'), { headers: { ETag: `"person-${id}-r4"` } });
+      }
+      if (path.startsWith('/api/v1/participants/')) {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ identifiers: [{ participant_id: id, type: 'email', value: detailReads > 1 ? 'fresh@example.org' : 'old@example.org' }] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
+    const initial = controller.selectMerge(41);
+    if (lateInitial) await vi.waitFor(() => expect(nameReads).toBe(1));
+    else await initial;
+    await controller.openSplit();
+    controller.setParticipantSelected(701, true);
+    expect(controller.confirmSplit()).toBe(true);
+    await controller.submitSplit();
+    late.resolve(Response.json(person(7, 4, [], 'Old Source')));
+    await initial;
+
+    expect(controller.detail?.splits?.[0]?.new_person_id).toBe(19);
+    expect(controller.labels?.names.get(19)).toBe('Fresh Restored');
+    expect(controller.labels?.addresses.get(701)?.map(address => address.title)).toEqual(['fresh@example.org']);
+    controller.destroy();
+  });
+
   it('uses exact pagination and keeps Previous on a successful empty nonzero page', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

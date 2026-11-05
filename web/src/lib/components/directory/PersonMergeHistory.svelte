@@ -76,6 +76,14 @@
       id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field'
     }));
   }
+  function splitRows() {
+    return (controller.detail?.splits ?? []).map(split => ({
+      id: split.id,
+      value: labels?.names.get(split.new_person_id) ?? 'a profile',
+      detail: split.exact_reversal ? 'Exact restore' : 'Partial restore',
+      meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}`
+    }));
+  }
 
   function snapshotText(value: unknown): string {
     const encoded = JSON.stringify(value, null, 2);
@@ -138,6 +146,7 @@
           {#if rows.length}<HistorySection level={5} title={side === 'absorbed' ? 'Message addresses from the merged-in profile' : `Message addresses from ${survivor ?? 'the surviving profile'}`} {rows} />{/if}
         {/each}
         {#if !controller.detail.participants?.length}<p class="muted">No message addresses were linked to this merge.</p>{/if}
+        {#if splitRows().length}<HistorySection level={5} title="Splits" rows={splitRows()} />{/if}
         {#if reviewRows().length}<HistorySection level={5} title="Needs review" rows={reviewRows()} />{/if}
       {/if}
 

@@ -212,7 +212,7 @@ export class PersonMergeHistoryController {
         this.detailLoading = false;
         const detail = this.detail;
         const labels = await loadMergeLabels(this.client, detail, request.signal);
-        if (this.ownsDetail(request, generation, context, mergeID)) this.labels = { for: mergeID, ...labels };
+        if (this.ownsDetail(request, generation, context, mergeID) && this.detail === detail) this.labels = { for: mergeID, ...labels };
       } else {
         this.detail = retainedDetail;
         this.detailError = failureMessage(response.error, response.response.status);
@@ -485,9 +485,12 @@ export class PersonMergeHistoryController {
           'The split was stale, but the current source and merge detail could not both be reloaded. Try again.';
         return false;
       }
+      const labels = await loadMergeLabels(this.client, merge.data, owner.signal);
+      if (!this.ownsSplit(owner, generation, context, target.mergeID)) return false;
       this.sourcePerson = source.data;
       this.sourceETag = etag;
       this.detail = merge.data;
+      this.labels = { for: target.mergeID, ...labels };
       this.selectedParticipantIDs = [];
       this.clearConfirmation();
       this.splitNeedsFreshState = false;

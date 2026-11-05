@@ -134,6 +134,23 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
 }
 
 describe('PersonMergeHistory', () => {
+  it.each([true, false])('shows every split, including a zero-address split, with exact restore %s', async exact => {
+    const mergeDetail = detail();
+    mergeDetail.participants = [];
+    mergeDetail.splits![0]!.exact_reversal = exact;
+    mergeDetail.splits!.push({ ...mergeDetail.splits![0]!, id: 56, new_person_id: 20, actor: 'web' });
+    renderRegressionHistory(mergeDetail, true);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Splits' });
+    const splits = within(heading.parentElement!);
+    expect(splits.getAllByRole('listitem')).toHaveLength(2);
+    expect(splits.getByText('a profile')).toBeDefined();
+    expect(splits.getByText('Alex Example')).toBeDefined();
+    expect(splits.getAllByText(exact ? 'Exact restore' : 'Partial restore')).toHaveLength(2);
+    expect(splits.getByText(/^You · Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
+    expect(splits.getByText(/^Web · Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
+  });
+
   it('ties split addresses to a profile when its destination was deleted', async () => {
     renderRegressionHistory(detail(), true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
