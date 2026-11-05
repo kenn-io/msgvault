@@ -2065,7 +2065,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_conversation_sent_at_julianday
-				    ON messages(conversation_id, julianday(sent_at), id, source_id)
+				    ON messages(conversation_id, NULLIF(julianday(sent_at), 1721425.5), id, source_id)
 				    WHERE deleted_at IS NULL
 			`); err != nil {
 				return err

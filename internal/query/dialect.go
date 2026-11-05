@@ -362,6 +362,7 @@ func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {
-	return "julianday(" + column + ")"
+	// Keep zero times undated, as the timestamp key does.
+	return "NULLIF(julianday(" + column + "), 1721425.5)"
 }
 func (PostgreSQLQueryDialect) DateOrderExpression(column string) string { return column }

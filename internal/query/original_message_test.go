@@ -522,6 +522,7 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 
 	firstInvalid, undated := earlier, later
 	secondInvalid := f.CreateMessage("invalid-second")
+	zeroTime := f.CreateMessage("zero-time")
 	dated := f.CreateMessage("dated")
 	for _, tc := range []struct {
 		id     int64
@@ -529,6 +530,7 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	}{
 		{firstInvalid, "z-invalid"}, {undated, nil},
 		{secondInvalid, "a-invalid"}, {dated, "2026-01-15 14:00:00+00:00"},
+		{zeroTime, "0001-01-01 00:00:00+00:00"},
 	} {
 		_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id = ?", tc.sentAt, tc.id)
 		require.NoError(err)
@@ -539,5 +541,5 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	for _, message := range page.Messages {
 		ids = append(ids, message.ID)
 	}
-	assert.Equal([]int64{dated, firstInvalid, undated, secondInvalid}, ids)
+	assert.Equal([]int64{dated, firstInvalid, undated, secondInvalid, zeroTime}, ids)
 }
