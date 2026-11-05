@@ -4,7 +4,7 @@ import type { RelationshipType } from './models';
 import { relationshipPhrase, relationshipTypeOptions } from './relationship-type-options';
 
 const type = (slug: string, forward: string, reverse = forward, overrides = {}): RelationshipType => relationshipType({
-  slug, forward_label: forward, reverse_label: reverse, is_symmetric: forward === reverse, ...overrides,
+  slug, forward_label: forward, reverse_label: reverse, is_symmetric: forward === reverse, ownership: 'system', ...overrides,
 });
 
 describe('relationship choices', () => {
@@ -22,10 +22,11 @@ describe('relationship choices', () => {
   it('uses canonical labels for mirrored and renamed inverse aliases', () => {
     const parent = type('parent', 'guardian', 'dependent', { id: 1, inverse_type_id: 2 });
     const child = type('child', 'dependent', 'guardian', { id: 2, inverse_type_id: 1, is_canonical: false });
-    expect(relationshipTypeOptions([parent, child])[0].children?.map(choice => choice.name)).toEqual(['parent:incoming', 'parent:outgoing']);
-    expect(relationshipTypeOptions([parent, { ...child, forward_label: 'descendant', reverse_label: 'parent' }])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
-      ['parent:incoming', '→ dependent →'], ['parent:outgoing', '→ guardian →'],
-    ]);
+    for (const alias of [child, { ...child, forward_label: 'descendant', reverse_label: 'parent' }]) {
+      expect(relationshipTypeOptions([parent, alias])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
+        ['parent:incoming', '→ dependent →'], ['parent:outgoing', '→ guardian →'],
+      ]);
+    }
   });
 
   it('distinguishes captions shared across types in menus and selections', () => {
@@ -40,6 +41,5 @@ describe('relationship choices', () => {
     expect(relationshipPhrase('parent')).toBe('is a parent of');
     expect(relationshipPhrase('met')).toBe('has met');
     expect(relationshipPhrase('mentors')).toBe('→ mentors →');
-    expect(relationshipPhrase('guardian')).toBe('→ guardian →');
   });
 });

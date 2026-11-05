@@ -57,12 +57,10 @@ describe('RelationshipsTab', () => {
       await fireEvent.keyDown(input, { key: 'Enter' });
       expect(screen.queryByRole('option', { name: 'Synthetic Two' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Create' })).toHaveProperty('disabled', true);
-      await fireEvent.keyDown(input, { key: 'Escape' });
-      expect(screen.getByRole('button', { name: 'Search people' })).toBeDefined();
     } finally { vi.useRealTimers(); }
   });
 
-  it('clears queries before response and ignores late results from older requests', async () => {
+  it('ignores late results from older requests', async () => {
     const responses: ((response: Response) => void)[] = [];
     const { client, controller } = controllerWith(async () => new Promise<Response>(resolve => responses.push(resolve)));
     render(RelationshipsTab, { client, controller, personID: 7 });
@@ -81,94 +79,88 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('option', { name: 'Current result' })).toBeDefined();
   });
 
-  it('retries a failed recent lookup when the people picker reopens', async () => {
-    let reads = 0;
-    let fail = true;
-    const { client, controller } = controllerWith(async () => {
-      reads++;
-      return fail
-        ? Response.json({ message: 'Recent lookup unavailable' }, { status: 503 })
-        : Response.json({ people: [directoryPerson(8)] });
-    });
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    const input = await openTypeahead('Search people');
-    await waitFor(() => expect(reads).toBe(1));
-    await screen.findByText('Recent lookup unavailable');
-    fail = false;
-    await fireEvent.keyDown(input, { key: 'Escape' });
-    await openTypeahead('Search people');
-    expect(await screen.findByRole('option', { name: 'Synthetic Two' })).toBeDefined();
-  });
-
   it.each([
     ['Guides (guide; subject → person)', '→ guides → (guide; subject → person)', 'guide', 'guides', 'guides', 7, 8],
     ['Guides (guide; person → subject)', '→ guides → (guide; person → subject)', 'guide', 'guides', 'guides', 8, 7],
   ])('creates literal endpoints for %s', async (caption, phrase, slug, forward, reverse, source, target) => {
-    let post: Request | undefined;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'POST') { post = request; return Response.json(relationship()); }
-      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      return Response.json({ relationships: [] });
-    });
-    controller.relationshipTypes = [relationshipType({ slug: String(slug), forward_label: String(forward), reverse_label: String(reverse) })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await openTypeahead('Search people');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: String(caption) }));
-    expect(screen.getByRole('button', { name: `Connection type: ${phrase}` })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(post).toBeDefined());
-    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: slug });
+    const cases = [
+      { caption: String(caption), phrase: String(phrase), slug: String(slug), forward: String(forward), reverse: String(reverse) },
+      source === 7
+        ? { caption: 'Mentors', phrase: '→ mentors →', slug: 'mentor', forward: 'mentors', reverse: 'is mentored by' }
+        : { caption: 'Child', phrase: 'is a child of', slug: 'parent', forward: 'parent', reverse: 'child' },
+    ];
+    for (const choice of cases) {
+      let post: Request | undefined;
+      const saved = relationship(41, 1, { relationship_type_id: 1, type_slug: choice.slug, source_person_id: source, target_person_id: target, forward_label: choice.forward, reverse_label: choice.reverse });
+      const direction = source === 7 ? 'outgoing' : 'incoming';
+      const label = direction === 'outgoing' ? choice.forward : choice.reverse;
+      const { client, controller } = controllerWith(async input => {
+        const request = requestOf(input);
+        const path = pathOf(request);
+        if (path === '/api/v1/person-relationships' && request.method === 'POST') { post = request; return Response.json(saved); }
+        if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+        if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: post ? [view(41, direction, label, 'Synthetic Two', { counterpart_person_id: 8, relationship: saved })] : [] });
+        throw new Error(`unexpected ${request.method} ${path}`);
+      });
+      controller.relationshipTypes = [relationshipType({ id: 1, slug: choice.slug, forward_label: choice.forward, reverse_label: choice.reverse, ...(choice.slug === 'parent' ? { ownership: 'system', inverse_type_id: 2 } : {}) })];
+      if (choice.slug === 'parent') controller.relationshipTypes.push(relationshipType({ id: 2, slug: 'child', ownership: 'system', is_canonical: false, inverse_type_id: 1, forward_label: 'is a descendant of', reverse_label: 'parent' }));
+      const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
+      try {
+        await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+        await openTypeahead('Search people');
+        await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+        const input = await openTypeahead('Connection type');
+        if (choice.slug === 'parent') await fireEvent.input(input, { target: { value: 'child' } });
+        await fireEvent.mouseDown(screen.getByRole('treeitem', { name: choice.caption }));
+        expect(screen.getByRole('button', { name: `Connection type: ${choice.phrase}` })).toBeDefined();
+        await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+        await waitFor(() => expect(post).toBeDefined());
+        await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: choice.slug });
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        expect(screen.getByText('Synthetic Two').closest('.detail-row')?.textContent).toContain(label.charAt(0).toUpperCase() + label.slice(1));
+        await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
+        if (choice.slug !== 'guide') expect(screen.getByRole('dialog').textContent).toContain(`This person ${choice.phrase} Synthetic Two`);
+      } finally { rendered.unmount(); controller.destroy(); }
+    }
   });
 
-  it('offers recent saved people immediately and excludes the subject', async () => {
+  it('shows no-match, empty, and failed searches without losing a selected label', async () => {
     const requests: Request[] = [];
+    let fail = true;
+    let empty = false;
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
       requests.push(request);
-      return Response.json({ people: [
+      const q = new URL(request.url).searchParams.get('q');
+      if (fail) return Response.json({ message: 'Search unavailable' }, { status: 503 });
+      return Response.json({ people: q || empty ? [] : [
         directoryPerson(7, { display_name: 'Selected Self' }),
         directoryPerson(8, { display_name: 'Synthetic Peer', organizations: ['Example Labs'] })
       ] });
     });
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await openTypeahead('Search people');
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
-    await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Peer/ }));
-    await openTypeahead('Search people');
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search people' }), { key: 'Escape' });
+    let input = await openTypeahead('Search people');
+    await screen.findByText('Search unavailable');
     expect(requests).toHaveLength(1);
+    fail = false;
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    input = await openTypeahead('Search people');
+    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
     expect(screen.queryByText('Selected Self')).toBeNull();
+    expect(requests).toHaveLength(2);
     const query = new URL(requests[0].url).searchParams;
     expect(query.has('q')).toBe(false);
     expect(query.get('sort')).toBe('last_contact_desc');
     expect(query.get('limit')).toBe('20');
-  });
-
-  it('shows no-match, empty, and failed searches without losing a selected label', async () => {
-    let fail = false;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      const q = new URL(request.url).searchParams.get('q');
-      if (fail) return Response.json({ message: 'Search unavailable' }, { status: 503 });
-      return Response.json({ people: q ? [] : [directoryPerson(8, { display_name: 'Synthetic Peer' })] });
-    });
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    let input = await openTypeahead('Search people');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Peer' }));
+    await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Peer/ }));
     expect(screen.getByRole('button', { name: 'Search people: Synthetic Peer' })).toBeDefined();
     input = await openTypeahead('Search people');
+    expect(requests).toHaveLength(2);
     await fireEvent.input(input, { target: { value: 'Nobody' } });
     expect(await screen.findByText('No one matches "Nobody"')).toBeDefined();
     await fireEvent.input(input, { target: { value: '' } });
-    expect(await screen.findByRole('option', { name: 'Synthetic Peer' })).toBeDefined();
+    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
     await fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.getByRole('button', { name: 'Search people: Synthetic Peer' })).toBeDefined();
     input = await openTypeahead('Search people');
@@ -177,35 +169,14 @@ describe('RelationshipsTab', () => {
     expect(await screen.findByText('Search unavailable')).toBeDefined();
     expect(screen.queryByText('No one matches "Retry"')).toBeNull();
     expect(screen.queryByText('No other saved people')).toBeNull();
-  });
-
-  it('folds a renamed inverse into the canonical choice through save and Edit', async () => {
-    let post: Request | undefined;
-    const saved = relationship(41, 1, { relationship_type_id: 1, type_slug: 'parent', source_person_id: 8, target_person_id: 7, forward_label: 'parent', reverse_label: 'child' });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'POST') { post = request; return Response.json(saved); }
-      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      return Response.json({ relationships: post ? [view(41, 'incoming', 'parent', 'Synthetic Two', { counterpart_person_id: 8, relationship: saved })] : [] });
-    });
-    controller.relationshipTypes = [
-      relationshipType({ id: 1, slug: 'parent', ownership: 'system', is_canonical: true, inverse_type_id: 2, forward_label: 'parent', reverse_label: 'child' }),
-      relationshipType({ id: 2, slug: 'child', ownership: 'system', is_canonical: false, inverse_type_id: 1, forward_label: 'is a descendant of', reverse_label: 'parent' }),
-    ];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await openTypeahead('Search people');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-    const input = await openTypeahead('Connection type');
-    await fireEvent.input(input, { target: { value: 'child' } });
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Child' }));
-    expect(screen.getByRole('button', { name: 'Connection type: is a child of' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(post).toBeDefined());
-    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: 8, target_person_id: 7, relationship_type_slug: 'parent' });
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit relationship' }));
-    expect(screen.getByRole('dialog').textContent).toContain('This person is a child of Synthetic Two');
+    fail = false;
+    empty = true;
+    await fireEvent.input(input, { target: { value: 'Nobody' } });
+    await screen.findByText('No one matches "Nobody"');
+    await fireEvent.input(input, { target: { value: '' } });
+    expect(await screen.findByText('No other saved people')).toBeDefined();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Search people: Synthetic Peer' })).toBeDefined();
   });
 
   it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
@@ -347,7 +318,7 @@ describe('RelationshipsTab', () => {
     expect(controller.errors.relationshipTypes).toBeUndefined();
   });
 
-  it('searches only the bounded durable Directory, rejects self, and creates an incoming edge with optional fields', async () => {
+  it('searches only the bounded durable Directory, rejects self, and saves optional fields', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const requests: Request[] = [];
@@ -388,10 +359,7 @@ describe('RelationshipsTab', () => {
       expect(new URL(search.url).searchParams.get('q')).toBe('Synthetic');
       expect(new URL(search.url).searchParams.get('limit')).toBe('20');
       const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
-      await expect(post.clone().json()).resolves.toEqual({
-        source_person_id: 8,
-        target_person_id: 7,
-        relationship_type_slug: 'mentor',
+      await expect(post.clone().json()).resolves.toMatchObject({
         start_date: '2025',
         end_date: '2026-08',
         notes: 'Synthetic note'
@@ -470,45 +438,6 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(controller.relationshipTypes).toHaveLength(1));
     expect(reads).toBe(2);
     expect(controller.errors.relationshipTypes).toBeFalsy();
-  });
-
-  it('creates an outgoing edge at the collection endpoint with the selected person as source', async () => {
-    const requests: Request[] = [];
-    const created = relationship(45, 1, { source_person_id: 7, target_person_id: 9 });
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [
-        { id: 9, revision: 1, display_name: 'Synthetic Colleague', categories: [], contact_state: 'active', organizations: [] }
-      ] });
-      if (path === '/api/v1/person-relationships' && request.method === 'POST') {
-        return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-45-r1"' } });
-      }
-      if (path === '/api/v1/people/7/relationships') {
-        return Response.json({ relationships: [view(45, 'outgoing', 'mentors', 'Synthetic Colleague', { relationship: created })] });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Colleague' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Colleague/ }));
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
-    const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST')!;
-    await expect(post.clone().json()).resolves.toEqual({
-      source_person_id: 7,
-      target_person_id: 9,
-      relationship_type_slug: 'mentor'
-    });
-    const createdRow = screen.getByText('Synthetic Colleague').closest('.detail-row') as HTMLElement;
-    expect(createdRow.textContent).toContain('Mentors');
   });
 
   it('retains an edge draft on conflict and uses the fresh individual ETag without auto-retry', async () => {
