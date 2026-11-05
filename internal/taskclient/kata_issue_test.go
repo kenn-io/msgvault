@@ -123,3 +123,30 @@ func TestOpenIssues(t *testing.T) {
 		assert.NotEqual(closed.UID, issue.UID)
 	}
 }
+
+func TestOpenIssuesWithOlderKataAPI(t *testing.T) {
+	t.Parallel()
+	native := katatest.New(t)
+	handler := native.Service.Handler()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet && r.URL.Query().Get("sort") == "created" {
+			http.Error(w, "unsupported sort", http.StatusUnprocessableEntity)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
+	require.NoError(t, err)
+	created, err := client.CreateTask(t.Context(), katatest.Project, "older-api-issue", KataCreate{Title: "Review the budget"})
+	require.NoError(t, err)
+	issues, truncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	assert.Equal(t, created.UID, issues[0].UID)
+	assert.False(t, truncated)
+}
