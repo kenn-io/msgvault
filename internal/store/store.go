@@ -83,10 +83,9 @@ type Store struct {
 	lastSyncOptimize time.Time
 	// syncOptimizeNow and checkpointRetryBackoff are test seams, nil in
 	// production.
-	syncOptimizeNow           func() time.Time
-	syncOptimizeHook          func()
-	checkpointRetryBackoff    []time.Duration
-	documentVectorOperationMu sync.Mutex
+	syncOptimizeNow        func() time.Time
+	syncOptimizeHook       func()
+	checkpointRetryBackoff []time.Duration
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from test files. They belong to the
 	// Store rather than the package because more than one Store can be
@@ -1693,12 +1692,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	if version < 18 {
-		// Earlier versions submitted one provider job per extraction attempt.
-		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
-			return fmt.Errorf("backfill document upload counts: %w", err)
-		}
-	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
@@ -1940,6 +1933,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	// Replace callers before dropping the document helper they used. Each
+	// committed migration boundary must leave message writes usable.
+	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
+		return err
 	}
 	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, 1, false,

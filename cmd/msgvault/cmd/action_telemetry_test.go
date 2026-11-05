@@ -25,7 +25,6 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
@@ -56,13 +55,10 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			return search.RunE(cmd, []string{"needle"})
 		},
 		"show-message": func(cmd *cobra.Command) error { return showHTTPMessage(cmd, "1") },
-		"documents": func(cmd *cobra.Command) error {
-			return runSearchDocuments(cmd, store.DocumentSearchRequest{Query: "needle", SearchMode: " Hybrid "}, true, defaultDocumentsCommandDeps())
-		},
-		"visual": func(cmd *cobra.Command) error { return multimodalSearchCmd.RunE(cmd, []string{"needle"}) },
-		"vector": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
-		"hybrid": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
-		"sync":   func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{}) },
+		"visual":       func(cmd *cobra.Command) error { return multimodalSearchCmd.RunE(cmd, []string{"needle"}) },
+		"vector":       func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"hybrid":       func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"sync":         func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{}) },
 		"muesli-hook": func(cmd *cobra.Command) error {
 			return muesliHookCmd.RunE(cmd, nil)
 		},
@@ -92,7 +88,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			{name: "body output failure", outputFails: true, body: true},
 		} {
 			fails, outputFails := outcome.fails, outcome.outputFails
-			if outcome.nonempty && action != "search" && action != "media" && action != "documents" && action != "visual" && action != "vector" && action != "hybrid" {
+			if outcome.nonempty && action != "search" && action != "media" && action != "visual" && action != "vector" && action != "hybrid" {
 				continue
 			}
 			if outcome.indexState != "" && action != "search" {
@@ -139,8 +135,6 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						_, _ = fmt.Fprintf(w, `{"results":%s,"index_state":%q}`, results, outcome.indexState)
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
-					case "documents":
-						_, _ = fmt.Fprintf(w, `{"results":%s,"effective_mode":"hybrid"}`, results)
 					case "sync-omi":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = fmt.Fprintln(w, `{"type":"stdout","data":"Omi sync output"}`)
@@ -195,7 +189,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				} else {
 					require.NoError(err, "telemetry failures leave the action successful")
 				}
-				kind := map[string]string{"search": "text", "media": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
+				kind := map[string]string{"search": "text", "media": "text", "show-message": "", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
 				if action == "sync-omi" && !fails {
 					output, ok := cmd.OutOrStdout().(*bytes.Buffer)
 					require.True(ok)

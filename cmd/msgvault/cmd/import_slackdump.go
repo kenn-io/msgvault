@@ -42,7 +42,7 @@ func newImportSlackdumpCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportSlackdump(cmd, args[0], opts)
 		},

@@ -427,7 +427,7 @@ var operationGateExemptPaths = map[string]bool{
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate. Kata evidence preparation
-// only reads message bodies and extracted document text. Message tag reads and
+// only reads message bodies and Docbank renditions. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
@@ -619,7 +619,6 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"show-deletion":     true,
 	"embeddings list":   true,
 	"embeddings status": true,
-	"documents search":  true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,
@@ -688,7 +687,6 @@ var cliRunCommandGroups = map[string]bool{
 	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
-	"documents":  true,
 }
 
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.

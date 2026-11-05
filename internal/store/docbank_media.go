@@ -732,6 +732,8 @@ func (s *Store) ListMessageMediaOccurrences(
 	return slices.Concat(occurrences, archived, uncaptured), nil
 }
 
+const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
+
 func (s *Store) listMessageOccurrenceRows(
 	ctx context.Context, destination string, messageID int64, scope *personscope.Scope,
 ) ([]MessageMediaOccurrence, error) {

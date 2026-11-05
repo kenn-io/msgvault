@@ -30,7 +30,7 @@ test('Past runs offers advertised actions and announces completion', async ({ pa
 test('Past runs keeps focus through history and related status, and preserves Messages', async ({ page }) => {
   await installOperations(page);
   await openHistory(page, '/?workspace=sources');
-  const sourceRow = page.getByRole('button', { name: 'Open Document extraction run' });
+  const sourceRow = page.getByRole('button', { name: 'Open Visual embedding run' });
   for (let index = 0; index < 120 && !(await sourceRow.evaluate(element => document.activeElement === element)); index += 1) await page.keyboard.press('Tab');
   await expect(sourceRow).toBeFocused();
   await sourceRow.press('Enter');
@@ -45,7 +45,7 @@ test('Past runs keeps focus through history and related status, and preserves Me
   await page.keyboard.press('Enter');
   await expect(sourceRow).toBeFocused();
   await page.keyboard.press('Enter');
-  const link = page.getByRole('button', { name: 'Open Document index status' });
+  const link = page.getByRole('button', { name: 'Open Visual attachment status' });
   await link.click();
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(link).toBeFocused();
@@ -72,11 +72,11 @@ test('Past runs keeps focus through history and related status, and preserves Me
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
   await expect(grid.getByText('Synthetic subject 2')).toBeVisible();
   expect(exploreRequests).toBe(1);
-  const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  const row = page.getByRole('button', { name: 'Open Visual embedding run' });
   await row.click();
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   await expect(page.getByRole('dialog')).toHaveAccessibleName('Past runs');
-  await expect(page.getByRole('region', { name: 'Operation run detail' }).getByText('Document extraction', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Operation run detail' }).getByText('Visual embedding', { exact: true })).toBeVisible();
   await page.goBack();
   await expect(row).toBeFocused();
   expect(exploreRequests).toBe(1);

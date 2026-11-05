@@ -74,7 +74,7 @@ there.`,
 			if !isDaemonCLISubprocess() {
 				// The export directory and --contacts file are caller-local
 				// inputs; a configured remote daemon cannot read them.
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportIMazingCSV(cmd, args[0], opts)
 		},

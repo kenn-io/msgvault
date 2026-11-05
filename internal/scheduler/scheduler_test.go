@@ -1875,55 +1875,6 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
-func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		syncErr  error
-		wantRuns int64
-	}{
-		{name: "successful sync", wantRuns: 1},
-		{name: "failed sync", syncErr: errors.New("sync failed")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-				syncDone := make(chan struct{})
-				s := New(func(context.Context, string) error {
-					close(syncDone)
-					return test.syncErr
-				})
-				var runs atomic.Int64
-				documentDone := make(chan struct{}, 1)
-				requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-					runs.Add(1)
-					documentDone <- struct{}{}
-					return nil
-				}, "", true))
-				requirements.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
-				s.Start()
-				defer func() { <-s.Stop().Done() }()
-				requirements.NoError(s.TriggerSync("test@example.test", false))
-				select {
-				case <-syncDone:
-				case <-time.After(time.Second):
-					requirements.Fail("sync did not complete")
-				}
-				if test.wantRuns == 1 {
-					select {
-					case <-documentDone:
-					case <-time.After(time.Second):
-						requirements.Fail("document vector job did not run")
-					}
-				} else {
-					synctest.Wait()
-				}
-				assertions.Equal(test.wantRuns, runs.Load())
-			})
-		})
-	}
-}
-
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3487,34 +3438,6 @@ func TestStartJobDroppedFollowUpIsLogged(t *testing.T) {
 	})
 }
 
-func TestSchedulerRunsEmbedAndDocumentVectorAfterSync(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		s := New(func(context.Context, string) error { return nil })
-		order := make(chan string, 8)
-		runner := &fakeRunner{onRunOnce: func(vector.GenerationID) { order <- "embed" }}
-		job := &EmbedJob{Worker: runner, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
-		require.NoError(s.SetEmbedJob(job, "", true))
-		require.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-			order <- "document vector"
-			return nil
-		}, "", true))
-		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
-		s.Start()
-		defer func() { <-s.Stop().Done() }()
-
-		require.NoError(s.TriggerSync("test@example.test", false))
-		synctest.Wait()
-		got := make([]string, 0, 2)
-		for len(order) > 0 {
-			got = append(got, <-order)
-		}
-		// Each indexer waits for gate admission, so they may run in either order.
-		assert.ElementsMatch([]string{"embed", "document vector"}, got)
-	})
-}
-
 type labelRecordingTracker struct {
 	mu     sync.Mutex
 	labels []string
@@ -3541,11 +3464,9 @@ func TestScheduledVectorJobsHoldGateUnderOwnLabel(t *testing.T) {
 		defer func() { <-s.Stop().Done() }()
 		job := &EmbedJob{Worker: &fakeRunner{}, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
 		require.NoError(s.SetEmbedJob(job, "0 0 1 1 *", false))
-		require.NoError(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "0 0 1 1 *", false))
 		s.onJobTick(embedJobName)
-		s.onJobTick(documentVectorJobName)
 		synctest.Wait()
-		assert.Equal(t, []string{"scheduled embedding", "scheduled document indexing"}, tracker.labels)
+		assert.Equal(t, []string{"scheduled embedding"}, tracker.labels)
 	})
 }
 
@@ -3619,31 +3540,6 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 		close(release)
 		synctest.Wait()
 	})
-}
-
-func TestDocumentVectorRuntimeLimitLogsOnlyIndependentReconciliationErrors(t *testing.T) {
-	for _, independent := range []bool{false, true} {
-		t.Run(fmt.Sprintf("independent=%t", independent), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				var logs bytes.Buffer
-				s := New(nil).WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
-				defer func() { <-s.Stop().Done() }()
-				require.NoError(t, s.SetDocumentVectorJob(func(ctx context.Context) error {
-					<-ctx.Done()
-					err := ctx.Err()
-					if independent {
-						err = errors.Join(err, errors.New("synthetic publication failure"))
-					}
-					return &RescheduleError{Err: err}
-				}, "0 0 1 1 *", false))
-				mustStartJob(t, s, documentVectorJobName)
-				time.Sleep(5*time.Minute + time.Second)
-				synctest.Wait()
-				assert.Equal(t, independent, bytes.Contains(logs.Bytes(), []byte("scheduled document vector reconciliation failed")))
-				assert.False(t, s.JobStatus()[0].Pending, "a pass without progress waits for the next trigger")
-			})
-		})
-	}
 }
 
 func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {

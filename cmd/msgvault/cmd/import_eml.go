@@ -49,7 +49,7 @@ duplicate messages receive every mailbox label where they appear.`,
 			cfg := state.cfg
 			logger := state.logger
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			if flags.identifier == "" {
 				return usageErr(cmd, errors.New("--identifier is required"))

@@ -30,6 +30,17 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
 - A saved person's Details tab in People shows that person's open loops in a
   read-only card, with a Check more action when coverage is incomplete.
+
+- Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
+
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank newer than v0.16.0), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
+
+  A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
+
+  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
+
+- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
+
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
 ## 0.23.0
@@ -404,7 +415,7 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   that scope; the former `upload_consent` no longer permits uploads. Document
   extraction with `include_inline = true` also needs fresh consent. See
   [audio processing](usage/beeper.md#send-audio-to-docbank) and
-  [document indexing](usage/document-indexing.md).
+  [document indexing](https://github.com/kenn-io/msgvault/blob/v0.21.0/docs/usage/document-indexing.md).
 - **Allow one full analytics rebuild.** Existing caches need a full rebuild
   before later refreshes can reuse retained data. Existing message embeddings
   remain compatible. Build the optional SQLite search accelerator with

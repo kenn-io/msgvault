@@ -7,12 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *testing.T) {
+func TestSetBeeperAttachmentClassificationsReconcilesStaleRows(t *testing.T) {
 	f := storetest.New(t)
 	require := require.New(t)
 	assert := assert.New(t)
@@ -35,15 +34,6 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	} {
 		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID, attachment))
 	}
-	reconciler, err := documentindex.NewReconciler(f.Store, documentindex.ReconcilerConfig{
-		AttachmentPageSize: 10, ChangePageSize: 10,
-	})
-	require.NoError(err)
-	_, err = reconciler.Reconcile(t.Context())
-	require.NoError(err)
-
-	var beforeRevision, afterRevision int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&beforeRevision))
 	var beforeDerivedRevision int64
 	require.NoError(f.Store.DB().QueryRow(`
 		SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&beforeDerivedRevision))
@@ -52,8 +42,6 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	})
 	require.NoError(err)
 	assert.EqualValues(2, changed)
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
-	assert.Equal(beforeRevision, afterRevision, "attachment classification leaves occurrence reconciliation to its journal owner")
 	var afterDerivedRevision int64
 	require.NoError(f.Store.DB().QueryRow(`
 		SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'`).Scan(&afterDerivedRevision))
@@ -78,24 +66,11 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	assert.JSONEq(`{"shared_url":"https://other.example"}`, metadata)
 	assert.Equal("preview", role)
 	assert.Equal("provider_explicit", roleSource)
-	result, err := reconciler.Reconcile(t.Context())
-	require.NoError(err)
-	assert.Positive(result.ChangesConsumed)
-	var occurrenceCount int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
-		SELECT COUNT(*) FROM document_occurrences WHERE message_id = ?`), messageID).Scan(&occurrenceCount))
-	assert.Zero(occurrenceCount, "the existing reconciler removes the now-ineligible preview occurrence")
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
-	assert.Greater(afterRevision, beforeRevision)
-	reconciledRevision := afterRevision
-
 	changed, err = f.Store.SetBeeperAttachmentClassifications(messageID, map[string]store.BeeperAttachmentClassification{
 		"beeper:voice": {Metadata: `{"source_transcript":{"provider":"beeper","text":"hello"}}`, IsPreview: true},
 	})
 	require.NoError(err)
 	assert.Zero(changed)
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
-	assert.Equal(reconciledRevision, afterRevision)
 	require.NoError(f.Store.DB().QueryRow(`
 		SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'`).Scan(&afterDerivedRevision))
 	assert.Equal(beforeDerivedRevision+1, afterDerivedRevision)
