@@ -19,19 +19,10 @@ type activityWindow struct {
 }
 
 func (c *composer) readActivity(q store.BurstQuery) (activityWindow, error) {
-	var result activityWindow
-	for {
-		page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
-		result.bursts = append(result.bursts, page.Bursts...)
-		result.noise = page.NoiseOmitted
-		result.more = page.NextKey != nil
-		if err != nil {
-			return result, err
-		}
-		if page.NextKey == nil {
-			break
-		}
-		q.AfterKey = page.NextKey
+	page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
+	result := activityWindow{bursts: page.Bursts, noise: page.NoiseOmitted, more: page.NextKey != nil}
+	if err != nil {
+		return result, err
 	}
 	seen := map[int64]bool{}
 	from, to := c.bounds()
@@ -91,17 +82,7 @@ func (c *composer) collectDay() dayRead {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold && c.src.Activity == nil {
 					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						var result store.BurstPage
-						query := query
-						for {
-							page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, query)
-							result.Bursts = append(result.Bursts, page.Bursts...)
-							result.NoiseOmitted, result.NextKey = page.NoiseOmitted, page.NextKey
-							if err != nil || page.NextKey == nil {
-								return result, err
-							}
-							query.AfterKey = page.NextKey
-						}
+						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
 					})
 				} else if !c.req.IncludeCold {
 					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
@@ -182,7 +163,9 @@ func (c *composer) readCalls(ctx context.Context, q store.LogicalCallQuery) ([]s
 }
 func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.DailyNoteEntry, error) {
 	result := []store.DailyNoteEntry{}
-	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
+	start, _ := time.Parse(time.DateOnly, from.In(c.loc).Format(time.DateOnly))
+	end, _ := time.Parse(time.DateOnly, to.In(c.loc).Format(time.DateOnly))
+	for date := start; date.Before(end); date = date.AddDate(0, 0, 1) {
 		for offset := 0; ; offset += 100 {
 			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date.Format(time.DateOnly), 100, offset)
 			result = append(result, notes...)

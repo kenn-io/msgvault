@@ -145,7 +145,7 @@ func (m Model) timelineCalendarView() string {
 	if lines == nil {
 		message := "Loading archived calendar occurrence…"
 		if !m.timelineState.loading {
-			message = "Could not load archived calendar occurrence. Press r to retry or Esc to go back."
+			message = "Could not load archived calendar occurrence."
 		}
 		return m.fillScreenDetail(message)
 	}

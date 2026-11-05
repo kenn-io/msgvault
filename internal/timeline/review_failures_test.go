@@ -19,6 +19,8 @@ type anchorReadFailure struct {
 	ActivitySource
 
 	latest, bursts, display error
+	failAfter               int
+	burstReads              *int
 }
 
 func (s anchorReadFailure) LatestEligibleMessageContext(ctx context.Context, id int64) (int64, error) {
@@ -28,7 +30,10 @@ func (s anchorReadFailure) LatestEligibleMessageContext(ctx context.Context, id 
 	return s.ActivitySource.LatestEligibleMessageContext(ctx, id)
 }
 func (s anchorReadFailure) ListActivityBurstsContext(ctx context.Context, q store.BurstQuery) (store.BurstPage, error) {
-	if s.bursts != nil {
+	if s.burstReads != nil {
+		*s.burstReads++
+	}
+	if s.bursts != nil && (s.burstReads == nil || *s.burstReads > s.failAfter) {
 		return store.BurstPage{}, s.bursts
 	}
 	return s.ActivitySource.ListActivityBurstsContext(ctx, q)
@@ -144,4 +149,20 @@ func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(fitted.Days, markdown.Days)
 	assertions.Contains(Markdown(markdown), "Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, +2")
+}
+
+func TestAnchorWiderProbeFailureKeepsNeighbours(t *testing.T) {
+	f := newTimelineFixture(t)
+	anchor := f.add(f.now, false)
+	f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	reads := 0
+	f.src.Activity = anchorReadFailure{ActivitySource: f.src.Activity, bursts: errors.New("archive read unavailable"), failAfter: 1, burstReads: &reads}
+	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(anchor)))
+	require.NoError(t, err)
+	assert.Equal(t, 2, reads)
+	require.Len(t, got.History, 1)
+	require.NotNil(t, got.History[0].Burst)
+	assert.Equal(t, 2, got.History[0].Burst.Inbound)
+	assert.Contains(t, got.Gaps, Gap{Section: "history", Code: "unavailable"})
 }

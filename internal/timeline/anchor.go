@@ -148,7 +148,7 @@ func anchorWindow(at time.Time, loc *time.Location) Window {
 	return Window{From: at.In(loc).AddDate(0, 0, -31).Format(time.DateOnly), To: at.In(loc).AddDate(0, 0, 31).Format(time.DateOnly)}
 }
 
-func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
+func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	from := target.at.In(c.loc).AddDate(0, 0, -days)
 	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
 	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
@@ -224,15 +224,17 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	}
 	c.t.Omitted.Noise = activity.value.noise + cold.value.NoiseOmitted
 	c.t.Omitted.Cold = coldCount.value
+	probeErr := errors.Join(activity.err, cold.err, coldCount.err, calendar.err, calls.err, notes.err)
 	if c.req.Conversation {
-		return c.conversationEntries(target.conversationID, from, to)
+		entries, err := c.conversationEntries(target.conversationID, from, to)
+		return entries, errors.Join(probeErr, err)
 	}
 	occurrences := calendar.value.Occurrences
 	if target.occurrence != nil {
 		occurrences = append(slices.Clone(occurrences), *target.occurrence)
 	}
 	entries, _ := c.mergeEntries(mergeBursts(activity.value.bursts, cold.value.Bursts), activity.value.meetings, occurrences, calls.value, notes.value)
-	return c.filterSubject(entries)
+	return c.filterSubject(entries), probeErr
 }
 func anchorMatches(e Entry, target anchorTarget) bool {
 	if e.Key == target.ref.Ref || e.Ref == target.ref.Ref || target.occurrence != nil && e.Ref == target.occurrence.Ref {
@@ -281,7 +283,14 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	c.t.Anchor = &Anchor{Ref: target.ref.Ref, Kind: target.ref.Kind, Time: target.at}
 	var entries []Entry
 	for _, days := range []int{1, 2, 4, 8, 16, 31} {
-		entries = c.probeAnchor(target, days)
+		probe, err := c.probeAnchor(target, days)
+		if err != nil {
+			if entries == nil {
+				entries = probe
+			}
+			break
+		}
+		entries = probe
 		before, after := 0, 0
 		for _, e := range entries {
 			if anchorMatches(e, target) {
@@ -325,9 +334,9 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	}
 }
 
-func (c *composer) conversationEntries(conversation int64, from, to time.Time) []Entry {
+func (c *composer) conversationEntries(conversation int64, from, to time.Time) ([]Entry, error) {
 	if c.src.Activity == nil {
-		return nil
+		return nil, nil
 	}
 	readMessages := func(ctx context.Context, read func(context.Context, store.MessageQuery) ([]store.ActivityMessage, error)) ([]store.ActivityMessage, error) {
 		messages := []store.ActivityMessage{}
@@ -396,5 +405,5 @@ func (c *composer) conversationEntries(conversation int64, from, to time.Time) [
 		ref := messageRef(m.MessageID)
 		entries = append(entries, Entry{Kind: entryKindMessage, Key: ref, Ref: ref, AnchorRef: ref, Time: m.OccurredAt, Open: c.messageOpen(m.MessageID), HiddenText: d.HiddenText, Message: &MessageEntry{Direction: string(m.Direction), People: people, PeopleCount: len(people), Snippet: UntrustedText{Text: text}}})
 	}
-	return c.filterSubject(entries)
+	return c.filterSubject(entries), errors.Join(r.err, cold.err)
 }

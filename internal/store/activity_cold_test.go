@@ -171,6 +171,44 @@ func TestColdAdapterKeepsSavedAutomatedAliasesVisible(t *testing.T) {
 	assertions.Equal(1, cold.Bursts[0].Inbound)
 }
 
+// A room above the default audience limit retains its roster without direct contact.
+func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	src, err := f.Store.GetOrCreateSource("beeper", "quiet-account")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
+	room := coldTimelineRoom(t, f, src.ID, "quiet-room")
+	for i := range 28 {
+		participant := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
+		requirements.NoError(f.Store.EnsureConversationParticipant(room, participant, "member"))
+	}
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	id := addColdTimelineMessage(t, f, room, src.ID, at, false)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
+	q := timelineBurstQuery()
+	q.Filters.IncludeNoise = true
+	for _, limit := range []int{0, 30} {
+		p, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
+		requirements.NoError(err)
+		_, err = p.RunOnce(t.Context())
+		requirements.NoError(err)
+		cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		requirements.Len(cold.Bursts, 1)
+		b := cold.Bursts[0]
+		assertions.Equal(store.ChannelChat, b.Channel)
+		assertions.Equal(id, b.AnchorMessageID)
+		assertions.Len(b.Counterparts, 30)
+		if limit == 0 {
+			assertions.Zero(b.Inbound, "large inbound room contributes no direct contact")
+		} else {
+			assertions.Equal(1, b.Inbound, "configured limit admits the room as direct contact")
+		}
+	}
+}
+
 // Bypassing live eligibility, scope, or exact archive-zone dating leaks a row here.
 func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	requirements := require.New(t)

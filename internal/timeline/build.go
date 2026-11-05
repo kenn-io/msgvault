@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -282,9 +283,10 @@ func parallel(ctx context.Context, tasks ...func()) {
 }
 
 func (c *composer) bounds() (time.Time, time.Time) {
-	from, _ := time.ParseInLocation(time.DateOnly, c.t.Window.From, c.loc)
-	to, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	return from, to.AddDate(0, 0, 1)
+	from, _, _ := calrecur.CivilDateBoundary(c.t.Window.From, c.loc)
+	end, _ := calrecur.AddCivilDateDays(c.t.Window.To, 1)
+	to, _, _ := calrecur.CivilDateBoundary(end, c.loc)
+	return from, to
 }
 func (c *composer) filters() store.ActivityFilters {
 	f := c.src.Filters

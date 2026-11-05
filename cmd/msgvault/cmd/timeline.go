@@ -39,7 +39,7 @@ func newTimelineCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "timeline",
 		Short:   "Read activity by day, person, or anchor",
-		Long:    "Read a bounded timeline of archived messages, meetings, calls, and notes.\nUse an entry's open targets to read its details.",
+		Long:    "Read a bounded timeline of archived messages, meetings, calls, and notes.\nUse --json for each entry's detail tool and arguments.",
 		Args:    cobra.NoArgs,
 		Example: "  msgvault timeline\n  msgvault timeline --with person:7\n  msgvault timeline --around msg:42 --before 5 --after 5\n  msgvault timeline --brief --json",
 	}

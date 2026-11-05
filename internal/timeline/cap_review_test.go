@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,43 +57,4 @@ func TestAnchorColdConversationWithIncludeCold(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(message.Anchor.Time, conversation.Anchor.Time)
 	assert.Equal(message.History, conversation.History)
-}
-
-func TestRelationshipHistoryBeyondBurstCap(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	testutil.SkipIfPostgres(t, "large burst query exceeds the timeline read deadline on PostgreSQL")
-	f := newTimelineFixture(t)
-	var oldest int64
-	var cutoff Entry
-	for i := range 5001 {
-		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("history-%d", i), "Synthetic conversation")
-		require.NoError(err)
-		at := f.now.Add(-time.Duration(i) * time.Second)
-		oldest = f.add(at, false, func(m *store.Message) { m.ConversationID = conv })
-		if i == 4999 {
-			cutoff = Entry{Kind: "burst", Key: fmt.Sprintf("burst:%d:%d:2026-10-22", f.Source.ID, conv), Time: at}
-		}
-	}
-	f.project()
-	f.src.Loops, f.src.Inventory = nil, nil
-	req := Request{With: "email:alice@example.com", Mode: ModeRelationship, Format: "json", Budget: 65536, Scope: Scope{Owner: true}}
-	src := snapshotActivityBurstReads(t.Context(), t, f.src, store.BurstQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Filters: f.src.Filters, After: new(time.Time), Descending: true, Limit: maxBursts})
-	snapshot, ok := src.Activity.(anchorBurstSnapshot)
-	require.True(ok)
-	contactQuery := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Filters: f.src.Filters, Now: f.now, Location: f.src.Location}
-	snapshot.contactQuery = &contactQuery
-	var err error
-	snapshot.contact, err = f.src.Activity.MessageContactAggregateContext(t.Context(), contactQuery)
-	require.NoError(err)
-	src.Activity = snapshot
-	// Resume after the 5,000th burst without rebuilding the preceding 250 pages.
-	req.Cursor, err = EncodeCursor(CursorBinding{ArchiveUID: f.src.ArchiveUID, Request: req, Window: Window{From: "2026-10-21", To: "2026-10-22"}, Timezone: f.src.Location.String(), Now: f.now}, map[string]string{"history": historyKey(cutoff)})
-	require.NoError(err)
-	require.NotEmpty(req.Cursor)
-	got, err := Build(t.Context(), src, req)
-	require.NoError(err)
-	require.Len(got.History, 1)
-	assert.Equal([]int64{oldest}, got.History[0].Burst.LatestMessageIDs)
-	assert.Empty(got.Cursor)
 }

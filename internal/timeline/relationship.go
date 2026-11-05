@@ -203,26 +203,37 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			if seen[key] {
 				continue
 			}
-			seen[key] = true
-			at := displays[id].OccurredAt
+			resolved := false
 			for _, ref := range info.ExactOccurrenceRefs {
-				if c.src.Calendar != nil {
-					d, e := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
-					if e == nil {
-						o := d.CalendarOccurrence
-						occurrences = append(occurrences, o)
-						stamp := o.Start
-						if o.AllDay {
-							stamp, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
-						}
-						at = &stamp
-						break
-					}
-					c.gap("meetings", e, false)
+				if c.src.Calendar == nil {
+					continue
+				}
+				d, err := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
+				if err != nil {
+					c.gap("meetings", err, false)
+					continue
+				}
+				resolved = true
+				o := d.CalendarOccurrence
+				if seen[o.Ref] {
+					continue
+				}
+				seen[o.Ref] = true
+				occurrences = append(occurrences, o)
+				at := o.Start
+				if o.AllDay {
+					at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+				}
+				if !at.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: &at, LastAt: &at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(at, c.t.Now, c.loc)}, false)
 				}
 			}
-			if at != nil && !at.After(c.t.Now) {
-				c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+			if !resolved {
+				seen[key] = true
+				at := displays[id].OccurredAt
+				if at != nil && !at.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+				}
 			}
 		}
 	}

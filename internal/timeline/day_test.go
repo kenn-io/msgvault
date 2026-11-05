@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -525,28 +524,7 @@ func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
 	}
 }
 
-func TestBuildDayReadsBeyondBurstPage(t *testing.T) {
-	testutil.SkipIfPostgres(t, "large burst query exceeds the timeline read deadline on PostgreSQL")
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	var newest int64
-	for i := range maxBursts + 1 {
-		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("page-%d", i), "Synthetic conversation")
-		requirements.NoError(err)
-		newest = f.add(f.now.Add(time.Duration(i)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
-	}
-	f.project()
-	f.src.Loops, f.src.Inventory = nil, nil
-	src := snapshotActivityBurstReads(t.Context(), t, f.src, store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts})
-	got, err := Build(t.Context(), src, dayRequest())
-	requirements.NoError(err)
-	entries := allDayEntries(got)
-	requirements.NotEmpty(entries)
-	assertions.Equal([]int64{newest}, entries[0].Burst.LatestMessageIDs)
-	assertions.NotEmpty(got.Cursor)
-}
-
-func TestReadActivityConsumesPages(t *testing.T) {
+func TestReadActivityReportsBurstCap(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	for i := range 3 {
@@ -568,9 +546,9 @@ func TestReadActivityConsumesPages(t *testing.T) {
 			c := composer{ctx: t.Context(), src: f.src, t: &Timeline{Window: Window{From: "2026-10-22", To: "2026-10-22"}}, loc: time.UTC}
 			got, err := c.readActivity(tc.query)
 			requirements.NoError(err)
-			requirements.Len(got.bursts, 3)
-			assertions.Equal([]int64{3}, got.bursts[2].LatestMessageIDs)
-			assertions.False(got.more)
+			requirements.Len(got.bursts, 2)
+			assertions.Equal([]int64{2}, got.bursts[1].LatestMessageIDs)
+			assertions.True(got.more)
 		})
 	}
 }
@@ -601,4 +579,36 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 	requirements.Len(got.Days, 1)
 	requirements.NotNil(got.Days[0].Summary)
 	assertions.Equal(1, got.Days[0].Summary.PeopleCount)
+}
+
+func TestBuildDaySkippedMidnightKeepsHoursAndNote(t *testing.T) {
+	f := newTimelineFixture(t)
+	loc, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	f.src.Location = loc
+	f.src.Clock = func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, loc) }
+	for _, stamp := range []string{"2026-09-06T03:30:00Z", "2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z", "2026-09-07T03:30:00Z"} {
+		at, err := time.Parse(time.RFC3339, stamp)
+		require.NoError(t, err)
+		f.call(at)
+	}
+	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Sunday note", Author: "owner"})
+	require.NoError(t, err)
+	req := dayRequest()
+	req.Date = "2026-09-06"
+	got, err := Build(t.Context(), f.src, req)
+	require.NoError(t, err)
+	entries := allDayEntries(got)
+	var calls []string
+	var notes []string
+	for _, entry := range entries {
+		if entry.Kind == "call" {
+			calls = append(calls, entry.Time.UTC().Format(time.RFC3339))
+		}
+		if entry.Kind == "note" {
+			notes = append(notes, entry.Note.Text.Text)
+		}
+	}
+	assert.ElementsMatch(t, []string{"2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z"}, calls)
+	assert.Equal(t, []string{"Sunday note"}, notes)
 }
