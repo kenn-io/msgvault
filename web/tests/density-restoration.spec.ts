@@ -149,6 +149,19 @@ test.describe('phone width', () => {
 test.describe('phone interactions', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
+  for (const workspace of ['everything', 'files'] as const) {
+    test(`${workspace} shows the roster when the sender is unavailable`, async ({ page }) => {
+      await page.route(`**/api/v1/${workspace === 'files' ? 'files/search' : 'explore'}`, route => route.fulfill({ json:
+        workspace === 'files'
+          ? { files: [{ ...file(1), sender_label: '', participant_labels: ['Alice Recipient', 'Zoe Sender'] }], total_count: 1, cache_revision: 'fallback' }
+          : { rows: [{ ...entry(1), sender_label: '' }], total_count: 1, cache_revision: 'fallback' }
+      }));
+      await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace })))}`);
+      const grid = page.getByRole('grid', { name: workspace === 'files' ? 'Files results' : 'Messages results' });
+      await expect(grid.locator('.phone-sender')).toHaveText('Alice Recipient, Zoe Sender');
+    });
+  }
+
   test('labels a group with one item in the singular', async ({ page }) => {
     await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
       rows: [group(1), group(2)], total_count: 2, cache_revision: 'singular', search_provenance: {}

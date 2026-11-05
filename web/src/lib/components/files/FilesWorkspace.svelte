@@ -1007,7 +1007,7 @@
                     >
                     <span class="cell--size" role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span class="cell--direction" role="gridcell">{relationship(row)}</span>{/if}
-                    <span class="cell--people" role="gridcell"><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label}</span></span>
+                    <span class="cell--people" role="gridcell"><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label || people(row)}</span></span>
                     <span class="cell--source" role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
                     <span class="cell--message" role="gridcell">
                       {#if onOpenItem}

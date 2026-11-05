@@ -79,6 +79,18 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	}
 }
 
+func TestOpenAPISenderLabelSchemaVersion(t *testing.T) {
+	t.Parallel()
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		for _, name := range []string{"EntryRow", "FileSearchRow", "PersonFileSearchRow"} {
+			schema := doc.Components.Schemas.Map()[name]
+			require.NotNil(t, schema, name)
+			assert.Contains(t, schema.Properties, "sender_label", name)
+		}
+		assert.Equal(t, "3.44.0", doc.Info.Version)
+	}
+}
+
 func TestFilenameSuggestionIntegratedAPIVersion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -527,7 +527,7 @@
                     {:else if column === 'people'}
                       {@const label = people(row)}
                       <span class="desktop-people"><Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip></span>
-                      <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label}</span>
+                      <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label || label}</span>
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}
