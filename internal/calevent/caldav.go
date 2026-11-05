@@ -222,12 +222,8 @@ func decodeCalDAVComponent(c ical.Event, calendarZone string, zone *time.Locatio
 	if err != nil {
 		return item, fmt.Errorf("CalDAV identity: %w", err)
 	}
-	if p.Get(ical.PropStatus) != nil {
-		status, err := c.Status()
-		if err != nil {
-			return item, fmt.Errorf("CalDAV STATUS: %w", err)
-		}
-		e.Status = strings.ToLower(string(status))
+	if v := p.Get(ical.PropStatus); v != nil {
+		e.Status = strings.ToLower(v.Value)
 	}
 	if v := p.Get("SEQUENCE"); v != nil {
 		n, err := v.Int()

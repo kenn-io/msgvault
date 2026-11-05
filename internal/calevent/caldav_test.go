@@ -114,7 +114,11 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 			require.Len(t, events, 1)
 			assert.Equal(t, "tentative", events[0].Event.Status)
 		}},
-		{"invalid status", "BEGIN:VEVENT\r\nUID:invalid\r\nDTSTART:20270314T130000Z\r\nSTATUS:COMPLETED\r\nEND:VEVENT\r\n", "CalDAV STATUS", nil},
+		{"nonstandard status", "BEGIN:VEVENT\r\nUID:nonstandard\r\nDTSTART:20270314T130000Z\r\nSTATUS:COMPLETED\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
+			t.Helper()
+			require.Len(t, events, 1)
+			assert.Equal(t, "completed", events[0].Event.Status)
+		}},
 		{"cancelled sparse", "BEGIN:VEVENT\r\nUID:day\r\nRECURRENCE-ID;VALUE=DATE:20270314\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
 			t.Helper()
 			require.Len(t, events, 1)
