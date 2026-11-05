@@ -1038,15 +1038,15 @@
   function readPaletteRecent(): string[] {
     try {
       const ids: unknown = JSON.parse(localStorage.getItem(PALETTE_RECENT_KEY) ?? '[]');
-      return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+      return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string').slice(0, 5) : [];
     } catch {
       return [];
     }
   }
   let paletteRecent = $state(readPaletteRecent());
-  const recentIds = $derived([...new Set(paletteRecent)].filter(id => paletteCommands.some(command =>
+  const recentIds = $derived(paletteRecent.filter(id => paletteCommands.some(command =>
     command.children ? command.children.some(child => child.id === id) : command.id === id
-  )).slice(0, 5));
+  )));
   $effect(() => {
     try {
       localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(paletteRecent));
@@ -1066,7 +1066,7 @@
     } else if (command.id === 'search:person') {
       commitNavigation({ workspace: 'relationships', identityQuery: query, relationshipFacet: 'people', peopleDuplicates: false, relationshipTarget: null, directoryPersonID: null, relationshipFiles: false });
     } else {
-      paletteRecent = [command.id, ...paletteRecent.filter(id => id !== command.id)];
+      paletteRecent = [command.id, ...paletteRecent.filter(id => id !== command.id)].slice(0, 5);
       [...commandRegistry, ...groupingCommands, ...shellCommands].find(({ id }) => id === command.id)?.run();
     }
   }

@@ -246,6 +246,24 @@ describe('AppShell', () => {
     }
   });
 
+  it('stores only the five most recently run command ids', async () => {
+    localStorage.setItem('msgvault.palette.recent', JSON.stringify(['go:everything', 'view:3', 'view:4', 'view:5', 'view:6', 'view:7']));
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    try {
+      await waitFor(() => expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:everything', 'view:3', 'view:4', 'view:5', 'view:6']));
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'People' }));
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:relationships', 'go:everything', 'view:3', 'view:4', 'view:5']);
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Messages' }));
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:everything', 'go:relationships', 'view:3', 'view:4', 'view:5']);
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
   it('opens the palette on Messages and remembers People across remounts', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
