@@ -201,31 +201,6 @@ func TestManager_ResumeTerminalManifestRequiresJournalCleanup(t *testing.T) {
 	}
 }
 
-func TestManager_CancelManifest_AtomicFold(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	mgr := testManager(t)
-	m := setupInProgress(t, mgr, "atomic cancel progress")
-	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
-	original, err := os.Stat(path)
-	require.NoError(err)
-	m.Execution.LastProcessedIndex = 2
-	m.Execution.Succeeded = 2
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
-	require.NoError(mgr.CancelManifest(m.ID))
-	cancelledPath := filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json")
-	published, err := os.Stat(cancelledPath)
-	require.NoError(err)
-	assert.False(os.SameFile(original, published), "cancellation must replace the file instead of rewriting it in place")
-	_, err = os.Stat(journalPath(path))
-	require.ErrorIs(err, os.ErrNotExist)
-	loaded, err := LoadManifest(cancelledPath)
-	require.NoError(err)
-	assert.Equal(StatusCancelled, loaded.Status)
-	assert.Equal(2, loaded.Execution.LastProcessedIndex)
-	assert.Equal(2, loaded.Execution.Succeeded)
-}
-
 func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -305,8 +280,10 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
 			path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
 			cancelledPath := filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json")
+			original, err := os.Stat(path)
+			require.NoError(err)
 			// Prove progress is journaled before exercising the fold.
-			_, err := os.Stat(journalPath(path))
+			_, err = os.Stat(journalPath(path))
 			require.NoError(err)
 			switch failure {
 			case "readonly":
@@ -320,6 +297,11 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			}
 
 			require.NoError(mgr.CancelManifest(m.ID))
+			if failure == "none" {
+				published, err := os.Stat(cancelledPath)
+				require.NoError(err)
+				assert.False(os.SameFile(original, published), "cancellation must replace the file instead of rewriting it in place")
+			}
 			assert.True(mgr.ManifestCancelled(m.ID))
 			_, err = os.Stat(journalPath(path))
 			if failure != "cleanup" {
