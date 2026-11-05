@@ -95,7 +95,7 @@
 <style>
   .overview {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 8rem 13rem;
+    grid-template-columns: minmax(0, 1fr) 6rem max-content;
     margin: 0;
     padding: 0;
     border: 1px solid var(--border-default);
@@ -117,11 +117,11 @@
   .row__local { display: grid; grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; min-width: 0; }
   .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-template-columns: subgrid; min-height: 24px; gap: var(--control-gap) var(--section-gap); }
   .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
-  .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; }
+  .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; justify-self: start; }
   .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
   .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
-  .row__local :global(.kit-search-by-meaning__warning) { max-width: 65ch; }
+  .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { text-wrap: wrap; }
   .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; gap: var(--control-gap) var(--section-gap); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); grid-column: 1 / 3; color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; }
@@ -147,7 +147,7 @@
     display: flex;
     min-width: 0;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: var(--control-gap);
   }
   .row__guide {
@@ -171,6 +171,7 @@
       justify-content: flex-start;
     }
     .row__chip { justify-content: flex-end; }
+    .row__local :global(.kit-search-by-meaning) { min-height: 0; }
     .row__local :global(.kit-chip) { justify-self: end; }
     .row__recovery .row__coverage { grid-column: 1 / -1; }
     .row__recovery .row__action { grid-column: 1 / -1; }
