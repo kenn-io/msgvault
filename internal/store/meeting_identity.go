@@ -98,7 +98,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	requested := map[string]linkOccurrence{}
 	copyQueries := []meetingEventQuery{}
 	for i, ref := range refs {
-		o, err := resolveMeetingOccurrence(ctx, r, ref, &budget)
+		o, err := resolvedMeetingOccurrence(ctx, r, ref, &budget)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

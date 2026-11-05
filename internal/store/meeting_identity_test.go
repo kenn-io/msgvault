@@ -349,6 +349,34 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 	assert.LessOrEqual(reads, 12)
 }
 
+func TestMeetingIdentityLongRunningDailySeriesBatch(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "daily", `{"id":"daily","iCalUID":"daily@example.org","start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 20))
+	require.NoError(err)
+	require.Len(page.Occurrences, 20)
+	assert.Empty(page.Unexpandable)
+	refs := make([]string, 0, 20)
+	for i, occurrence := range page.Occurrences {
+		ref := fmt.Sprintf("evt:%d@202703%02dT100000Z", series, i+1)
+		assert.Equal(ref, occurrence.Ref)
+		single, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+		require.NoError(err)
+		assert.Equal("occ:"+ref, single.ByOccurrence[ref].Key)
+		refs = append(refs, ref)
+	}
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs})
+	require.NoError(err)
+	assert.Len(got.ByOccurrence, 20)
+	for _, ref := range refs {
+		assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+		assert.Equal(ref, got.ByOccurrence[ref].OccurrenceRef)
+		assert.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+	}
+}
+
 func TestMeetingIdentityCompletesNewManualGroups(t *testing.T) {
 	for _, mode := range []string{"manual chain", "transcript only with split"} {
 		t.Run(mode, func(t *testing.T) {

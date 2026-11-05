@@ -39,6 +39,7 @@ type linkOccurrence struct {
 
 type reboundReader struct {
 	loggedReader
+
 	dialect Dialect
 	batch   *meetingIdentityBatch
 }
@@ -641,7 +642,7 @@ func meetingIdentityCopyRefs(identity meetingIdentity, rows []CalendarEventRow) 
 func meetingIdentityCopyOccurrences(ctx context.Context, r reboundReader, identity meetingIdentity, rows []CalendarEventRow, budget *int) ([]linkOccurrence, error) {
 	var out []linkOccurrence
 	for _, ref := range meetingIdentityCopyRefs(identity, rows) {
-		o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
+		o, err := resolvedMeetingOccurrence(ctx, r, ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			continue
 		}

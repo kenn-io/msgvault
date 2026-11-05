@@ -18,6 +18,27 @@ type meetingIdentityBatch struct {
 	events          map[string][]CalendarEventRow
 	keys            map[int64]meetingLinkKey
 	decisions       map[int64][]meetingLinkDecision
+	occurrences     map[OccurrenceRef]linkOccurrence
+}
+
+// Reuse successful resolutions only within the batch's read snapshot.
+func resolvedMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
+	if err := ctx.Err(); err != nil {
+		return linkOccurrence{}, err
+	}
+	if r.batch != nil {
+		if o, ok := r.batch.occurrences[ref]; ok {
+			return o, nil
+		}
+	}
+	o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
+	if err == nil && r.batch != nil {
+		if r.batch.occurrences == nil {
+			r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+		}
+		r.batch.occurrences[ref] = o
+	}
+	return o, err
 }
 
 type meetingEventQuery struct {
