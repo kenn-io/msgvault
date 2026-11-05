@@ -108,6 +108,27 @@ describe('PersonNetwork', () => {
     expect(container.querySelector('.edge-label')?.textContent).toBe('← mentors');
   });
 
+  it('marks an upward same-column relationship label bottom to top', async () => {
+    const network: PersonNetworkProjection = {
+      root_person_id: 7, depth: 2, truncated: false,
+      nodes: [
+        { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+        { id: 'person:8', kind: 'person', entity_id: 8, label: 'Alpha', hop: 1 },
+        { id: 'person:9', kind: 'person', entity_id: 9, label: 'Beta', hop: 1 }
+      ],
+      edges: [
+        { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' },
+        { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', label: 'knows' },
+        { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' }
+      ]
+    };
+    const { controller } = controllerWith(networkFetcher(network));
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Beta' });
+    expect([...container.querySelectorAll('.edge-label')].map((chip) => chip.textContent)).toContain('↑ mentors');
+  });
+
   it('joins three relations between direct people in reading order', async () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);
