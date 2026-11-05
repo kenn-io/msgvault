@@ -12,19 +12,23 @@
 
 <style>
   .command {
-    display: inline-flex;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
     min-height: var(--control-h);
     align-items: center;
     gap: var(--control-gap);
-    padding: 0 var(--space-2) 0 var(--pane-pad-x);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-inset);
   }
   code {
     min-width: 0;
-    overflow-wrap: anywhere;
+    flex: 1;
+    overflow-x: auto;
+    white-space: pre;
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);

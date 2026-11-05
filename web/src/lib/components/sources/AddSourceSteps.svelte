@@ -14,8 +14,8 @@
   {#each kind.fields as field, index (field.id)}
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
-  {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
   {#if posix && cmd}
+    {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
     {#if posix === cmd}
       <CommandLine command={posix} />
     {:else}
@@ -26,16 +26,17 @@
         <CommandLine command={cmd} />
       </div>
     {/if}
+    <p>Run this in a terminal where msgvault is installed. When it finishes, {kind.id === 'mbox' ? '' : 'run the printed first sync command, then '}reload Sources to see the new source.</p>
   {/if}
-  <p>Run this in a terminal where msgvault is installed. When it finishes, {kind.id === 'mbox' ? '' : 'run the printed first sync command, then '}reload Sources to see the new source.</p>
   <a href={kind.docs} target="_blank" rel="noreferrer">Learn more</a>
 </div>
 
 <style>
   .steps { display: grid; gap: var(--space-4); }
-  .heading { display: flex; align-items: center; gap: var(--control-gap); }
-  h3 { margin: 0; color: var(--text-primary); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
+  .heading { display: flex; align-items: center; gap: var(--control-gap); margin-bottom: var(--space-4); }
+  h3 { margin: 0; color: var(--text-primary); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
   label, .terminal { display: grid; gap: var(--control-gap); }
+  .terminal + .terminal { margin-top: var(--space-4); }
   label { color: var(--text-primary); font-size: var(--font-size-sm); }
   p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
   a { color: var(--link-ink); font-size: var(--font-size-sm); }

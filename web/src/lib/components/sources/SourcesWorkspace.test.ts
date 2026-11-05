@@ -528,6 +528,9 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up MBOX file' }));
+    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Email address'), { target: { value: 'you@example.com' } });
+    await fireEvent.input(dialog.getByLabelText('Full path to the file'), { target: { value: '/tmp/export.mbox' } });
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, reload Sources to see the new source.')).toBeDefined();
   });
 
@@ -538,9 +541,10 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
-    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     const email = dialog.getByLabelText('Email address');
+    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
     await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
+    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account -- you@gmail.com' })).toHaveLength(1);
     expect(dialog.queryByText('POSIX shell')).toBeNull();
     expect(dialog.queryByText('Command Prompt')).toBeNull();
@@ -561,10 +565,13 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
+    expect(dialog.queryByText("You'll be prompted for your password.")).toBeNull();
+    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
+    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
     expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
-    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
-    await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
     expect(dialog.getByText('POSIX shell')).toBeDefined();
     expect(dialog.getByText('Command Prompt')).toBeDefined();
     expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();

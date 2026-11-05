@@ -46,7 +46,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
     template: 'msgvault import-mbox -- {email} {path}',
   },
   {
-    id: 'contacts', name: 'Contacts (CardDAV)', description: 'Import address books from Google, Microsoft, or a CardDAV server.',
+    id: 'contacts', name: 'Contacts (CardDAV)', description: 'Import address books from Google, Microsoft, or CardDAV.',
     settings: 'carddav',
   },
 ];
