@@ -513,7 +513,7 @@ func (s *Store) GetPerson(id int64) (*Person, error) {
 
 func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error) {
 	var person *Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		person, err = s.getPersonTx(ctx, tx, id)
 		return err

@@ -215,7 +215,7 @@ func (s *Store) exportMessageSources(
 
 	for _, source := range selected {
 		var completedAt *time.Time
-		run, err := s.GetLastSuccessfulSync(source.id)
+		run, err := s.GetLastSuccessfulSyncContext(ctx, source.id)
 		if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 			return fmt.Errorf("load message export source sync: %w", err)
 		}

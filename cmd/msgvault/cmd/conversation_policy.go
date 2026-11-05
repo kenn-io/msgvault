@@ -14,12 +14,16 @@ import (
 )
 
 type conversationPolicyDeps struct {
-	open   func(context.Context) (*store.Store, func(), error)
-	config func(context.Context) *config.Config
+	openReadOnly func(context.Context) (*store.Store, func(), error)
+	open         func(context.Context) (*store.Store, func(), error)
+	config       func(context.Context) *config.Config
 }
 
 func newPolicyCmd() *cobra.Command {
 	cmd := newPolicyLocalCmd(conversationPolicyDeps{
+		openReadOnly: func(ctx context.Context) (*store.Store, func(), error) {
+			return openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
+		},
 		open: func(ctx context.Context) (*store.Store, func(), error) {
 			state := invocationFromContext(ctx)
 			if state == nil || state.cfg == nil {
@@ -59,7 +63,7 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use: "list", Short: "List rooms, effective tiers and staged overrides as JSON", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			st, closeStore, err := deps.open(cmd.Context())
+			st, closeStore, err := deps.openReadOnly(cmd.Context())
 			if err != nil {
 				return err
 			}
