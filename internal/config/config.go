@@ -1201,7 +1201,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
 	for i := range cfg.WhatsAppApple {
 		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
-		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+		if cfg.WhatsAppApple[i].Enabled && !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
 			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
 		}
 	}

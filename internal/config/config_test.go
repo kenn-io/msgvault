@@ -2606,10 +2606,18 @@ func TestLoadAppleImportPaths(t *testing.T) {
 func TestLoadApplePhoneRequiresPlus(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(path, []byte("[[whatsapp_apple]]\nphone = '15550000000'\n"), 0600))
+	require.NoError(os.WriteFile(path, []byte("[[whatsapp_apple]]\nenabled = true\nphone = '15550000000'\n"), 0600))
 	_, err := Load(path, "")
 	require.ErrorContains(err, "whatsapp_apple[0].phone must start with +")
 	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
 	require.NoError(err)
 	require.ErrorContains(cfg.DaemonConfigError(), "whatsapp_apple[0].phone must start with +")
+}
+
+func TestLoadDisabledAppleSourceWithoutPhone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[[whatsapp_apple]]\nenabled = false\n"), 0600))
+	cfg, err := Load(path, "")
+	require.NoError(t, err)
+	assert.NoError(t, cfg.DaemonConfigError())
 }

@@ -2252,7 +2252,7 @@ func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
 func TestEditConfigRejectsInvalidAppleSchedule(t *testing.T) {
 	for _, tc := range []struct{ name, before, key, errorKey string }{
 		{"imessage", "[imessage]\nschedule = '0 * * * *'\n", "imessage.schedule", "imessage.schedule"},
-		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule"},
+		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nphone = '+15550100'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
