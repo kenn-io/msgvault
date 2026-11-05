@@ -118,6 +118,9 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				checks.Equal(attachmentID, queued[0].AttachmentID)
 				checks.Equal("occurrence", queued[0].OccurrenceKey)
 				checks.Equal(peoplesweep.EvidenceEffectSourceDeleted, queued[0].EvidenceEffect)
+				// The conversation sweep skipped the document row before the upgrade.
+				exec(`UPDATE person_sweep_cursors SET optimistic_sequence=? WHERE person_id=? AND source_lane='document_text'`, before, personID)
+				exec(`UPDATE person_sweep_cursors SET optimistic_sequence=? WHERE person_id=? AND source_lane='conversation_text'`, queued[0].Sequence+1, personID)
 			}
 
 			var logs bytes.Buffer
@@ -155,7 +158,17 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 					}
 				}
 				requirements.Equal(queued, pending)
-				changes, err := f.Store.BuildPersonSweepEvidenceStatusChanges(ctx, personID, pending)
+				cursor := loadPersonSweepCursor(t, f.Store, peoplesweep.CursorKey{
+					PersonID: personID, SourceLane: peoplesweep.SourceConversationText,
+					ProgramFingerprint: "program", CatalogFingerprint: "catalog",
+				})
+				window, err := f.Store.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{
+					PersonID: personID, Lane: peoplesweep.SourceConversationText,
+					Mode: peoplesweep.GenerationCursorOptimistic, AfterSequence: cursor.OptimisticSequence,
+					ThroughSequence: latestPersonSweepSequence(t, f.Store), Limit: 100,
+				})
+				requirements.NoError(err)
+				changes, err := f.Store.BuildPersonSweepEvidenceStatusChanges(ctx, personID, window.Changes)
 				requirements.NoError(err)
 				checks.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}}, changes)
 			}
