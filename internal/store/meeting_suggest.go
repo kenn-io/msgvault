@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -252,13 +253,14 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	}
-	pageResult.Suggestions, err = undecidedMeetingSuggestions(ctx, s.meetingReader(ctx), pageResult.Suggestions, limit, &budget)
+	pageResult.Suggestions, err = s.undecidedMeetingSuggestions(ctx, s.meetingReader(ctx), pageResult.Suggestions, limit, &budget)
 	return pageResult, err
 }
 
 // Drop pairs the owner already linked or split, then rank and cap the page.
-func undecidedMeetingSuggestions(ctx context.Context, r reboundReader, suggestions []MeetingSuggestion, limit int, budget *int) ([]MeetingSuggestion, error) {
+func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader, suggestions []MeetingSuggestion, limit int, budget *int) ([]MeetingSuggestion, error) {
 	decided := map[int64]map[string]bool{}
+	identities := map[int64]map[meetingIdentity]bool{}
 	for _, suggestion := range suggestions {
 		if decided[suggestion.MemberMessageID] != nil {
 			continue
@@ -268,20 +270,46 @@ func undecidedMeetingSuggestions(ctx context.Context, r reboundReader, suggestio
 			return nil, err
 		}
 		refs := map[string]bool{}
+		matched := map[meetingIdentity]bool{}
+		occurrences, err := s.meetingMemberOccurrences(ctx, r, suggestion.MemberMessageID, budget)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range occurrences {
+			matched[o.Identity] = true
+		}
 		for _, d := range decisions {
 			refs[formatMeetingOccurrence(d.Ref)] = true
 			o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
 			if err == nil {
 				refs[formatMeetingOccurrence(o.Ref)] = true
+				matched[o.Identity] = true
 			} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				return nil, err
 			}
 		}
 		decided[suggestion.MemberMessageID] = refs
+		identities[suggestion.MemberMessageID] = matched
 	}
-	suggestions = slices.DeleteFunc(suggestions, func(suggestion MeetingSuggestion) bool {
-		return decided[suggestion.MemberMessageID][suggestion.Ref]
-	})
+	filtered := suggestions[:0]
+	for _, suggestion := range suggestions {
+		if decided[suggestion.MemberMessageID][suggestion.Ref] {
+			continue
+		}
+		id, key, _ := strings.Cut(strings.TrimPrefix(suggestion.Ref, "evt:"), "@")
+		messageID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse suggested event reference %q: %w", suggestion.Ref, err)
+		}
+		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
+		if err != nil {
+			return nil, err
+		}
+		if !identities[suggestion.MemberMessageID][o.Identity] {
+			filtered = append(filtered, suggestion)
+		}
+	}
+	suggestions = filtered
 	slices.SortFunc(suggestions, func(a, b MeetingSuggestion) int {
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes

@@ -67,7 +67,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 			return err
 		}
 		for _, d := range decisions {
-			rows, err := meetingEventRows(ctx, r, "e.message_id = ?", []any{d.Ref.MessageID}, &budget)
+			rows, err := meetingEventRowsByID(ctx, r, d.Ref.MessageID, &budget)
 			if err != nil {
 				return err
 			}

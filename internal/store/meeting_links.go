@@ -171,7 +171,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	}
 	if ref.Key == "" {
 		if row.Event.Kind == meetingSeriesKind {
-			return linkOccurrence{}, sql.ErrNoRows
+			return linkOccurrence{}, fmt.Errorf("series reference needs @<occurrence key>: %w", sql.ErrNoRows)
 		}
 		if row.Event.Start == nil || row.Event.End == nil {
 			return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)

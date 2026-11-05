@@ -84,6 +84,9 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	if target.Identity.ICalUID != "" {
 		values = append(values, target.Identity.ICalUID)
 	}
+	if target.Row.ICalUID != "" && target.Row.ICalUID != target.Identity.ICalUID {
+		values = append(values, target.Row.ICalUID)
+	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
 	for _, row := range copies {
 		targets = append(targets, row.MessageID)
