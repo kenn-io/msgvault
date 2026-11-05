@@ -28,8 +28,7 @@
   code {
     min-width: 0;
     flex: 1;
-    overflow-x: auto;
-    white-space: pre;
+    overflow-wrap: anywhere;
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
