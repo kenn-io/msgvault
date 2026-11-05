@@ -73,6 +73,13 @@ func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
 	assert.Equal(2, metadata[id].AttachmentCount)
 }
 
+func TestSearchMetadataEmptyIDs(t *testing.T) {
+	f := storetest.New(t)
+	metadata, err := f.Store.GetSearchMetadata(t.Context(), nil, search.Parse("project meeting"), true)
+	require.NoError(t, err)
+	assert.Empty(t, metadata)
+}
+
 func TestSearchMetadataORExcerpts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

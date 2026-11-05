@@ -14,7 +14,7 @@ func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
 	req := require.New(t)
 	db := newFTSProbeDB(t, false)
 	query := fmt.Sprintf(searchMetadataSnippetSQL, "?, ?, ?")
-	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, `"project"* "meeting"*`, 1, 2, 3)
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, `"project"* "meeting"*`, 1, 3, 1, 2, 3)
 	req.NoError(err)
 	defer func() { req.NoError(rows.Close()) }()
 	var ftsScans int
@@ -27,6 +27,8 @@ func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
 			_, constraints, ok := strings.Cut(detail, ":")
 			req.True(ok, "FTS scan must report its constraints: %s", detail)
 			assert.Contains(constraints, "M", "FTS scan must use MATCH: %s", detail)
+			assert.Contains(constraints, ">", "FTS scan must use the lower rowid bound: %s", detail)
+			assert.Contains(constraints, "<", "FTS scan must use the upper rowid bound: %s", detail)
 			assert.NotContains(constraints, "=", "FTS scan must avoid one MATCH per ID: %s", detail)
 		}
 	}
