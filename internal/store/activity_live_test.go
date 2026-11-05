@@ -20,7 +20,7 @@ func TestLiveEligibilityExcludesChangesAfterProjection(t *testing.T) {
 			transcript := f.add(t, f.ConvID, f.Source.ID, now.Add(-time.Minute), false, "")
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), transcript)
 			requirements.NoError(err)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			q := timelineContactQuery(f)
 			attended, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 			requirements.NoError(err)

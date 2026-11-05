@@ -40,7 +40,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 			observedID := f.add(t, observedRoom, observedSource.ID, observedAt, false, "<shared@example.com>")
 			countedID := f.add(t, countedRoom, countedSource.ID, contact.Now, false, "shared@example.com")
 			requirements.Less(observedID, countedID)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			for _, precondition := range []struct {
 				room      int64
 				direction store.ActivityDirection
@@ -145,7 +145,7 @@ func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 			require.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.owner, f.peer}, nil))
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), owner2, received, sent)
 			require.NoError(err)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			fullQuery := timelineBurstQuery()
 			fullQuery.Filters.IncludeNoise = true
 			full, err := f.Store.ListActivityBurstsContext(t.Context(), fullQuery)
@@ -200,7 +200,7 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 			requirements.NoError(err)
 			firstID := f.add(t, f.ConvID, f.Source.ID, contact.Now, false, tc.first)
 			f.add(t, room, source.ID, contact.Now, false, tc.second)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
 			requirements.NoError(err)
 			assertions.Equal(tc.count, aggregate.Count)

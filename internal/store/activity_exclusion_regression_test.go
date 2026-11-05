@@ -27,7 +27,7 @@ func TestActivityMixedConversationExcludesNoiseBeforeDisplay(t *testing.T) {
 				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), excluded)
 				requirements.NoError(err)
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			contact := timelineContactQuery(f)
 			contact.Subject = store.ActivitySubject{ParticipantIDs: []int64{personalPeer, f.peer}}
 			contact.Now = at.Add(2 * time.Hour)
@@ -101,7 +101,7 @@ func TestActivityUnicodeAddressExclusions(t *testing.T) {
 			} else {
 				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			bq := timelineBurstQuery()
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
 			requirements.NoError(err)

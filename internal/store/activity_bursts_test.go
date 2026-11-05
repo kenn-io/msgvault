@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -48,13 +47,6 @@ func (f *timelineActivityFixture) add(t *testing.T, conv, source int64, at time.
 	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{recipient}, []string{"Recipient"}))
 	return id
 }
-func projectTimelineActivity(t *testing.T, f *timelineActivityFixture, zone string) {
-	t.Helper()
-	p, err := activity.NewProjector(f.Store, activity.Options{Timezone: zone, BatchSize: 10000})
-	require.NoError(t, err)
-	_, err = p.RunOnce(t.Context())
-	require.NoError(t, err)
-}
 func timelineBurstQuery() store.BurstQuery {
 	return store.BurstQuery{FromDate: "2026-10-01", ToDate: "2026-11-30", Limit: 5000}
 }
@@ -63,7 +55,7 @@ func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 	requirements.NoError(err)
 	requirements.Len(got.Bursts, 1)
@@ -124,7 +116,7 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 				}
 				q := timelineContactQuery(f)
 				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-				projectTimelineActivity(t, f, "UTC")
+				projectTierSignals(t, f.Fixture, "UTC", 0)
 				q.Subject = subject
 				want := 0
 				if tc.excluded == "" {
@@ -169,7 +161,7 @@ func TestBurstsApplySourceScope(t *testing.T) {
 	conv, err := f.Store.EnsureConversation(other.ID, "other", "Other")
 	requirements.NoError(err)
 	f.add(t, conv, other.ID, at, false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}), timelineBurstQuery())
 	requirements.NoError(err)
 	requirements.Len(got.Bursts, 1)
@@ -212,7 +204,7 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 		f.add(t, conv, f.Source.ID, at.Add(time.Duration(i)*time.Minute), false, "")
 	}
 	// Project the three interleaved rows without replacing the large fixture.
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	for _, subject := range []store.ActivitySubject{{}, {ParticipantIDs: []int64{f.peer}}} {
 		q := timelineBurstQuery()
 		q.Limit = 2
@@ -247,7 +239,7 @@ func TestBurstsKeepLocalDateAcrossDSTDay(t *testing.T) {
 	f := newTimelineActivityFixture(t)
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), false, "")
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), true, "")
-	projectTimelineActivity(t, f, "America/New_York")
+	projectTierSignals(t, f.Fixture, "America/New_York", 0)
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 	requirements.NoError(err)
 	requirements.Len(got.Bursts, 1)
@@ -261,7 +253,7 @@ func TestBurstsOutboundOwnerIsNotNoise(t *testing.T) {
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 	requirements.NoError(err)
 	requirements.Len(got.Bursts, 1)
@@ -277,7 +269,7 @@ func TestBurstsPhoneCounterpartsAreNotEmailExclusions(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(f.Store.SetParticipantIdentifier(f.peer, "phone", "+14155550123"))
 	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	q := timelineBurstQuery()
 	q.Filters.IncludeNoise = true
 	got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
@@ -299,7 +291,7 @@ func TestActivityListExclusionCanBeDisabled(t *testing.T) {
 	id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
 	requirements.NoError(err)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	filters := store.ActivityFilters{Exclusions: persontiers.DefaultConfig()}
 	filters.Exclusions.ExcludeListMessages = false
 	query := timelineBurstQuery()
@@ -339,7 +331,7 @@ func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
 			id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=?,subject=? WHERE id=?`), tc.kind, tc.subject, id)
 			requirements.NoError(err)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(tc.want, aggregate.Count)

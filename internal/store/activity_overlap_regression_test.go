@@ -42,7 +42,7 @@ func TestOverlappingMailboxThreadsKeepMailboxConversations(t *testing.T) {
 					f.add(t, conv, source, at.Add(time.Duration(message)*time.Hour), false, fmt.Sprintf("<message-%d@example.com>", message))
 				}
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 			require.NoError(err)
 			counts := map[int64]int{}

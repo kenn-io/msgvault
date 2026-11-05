@@ -34,7 +34,7 @@ func TestScopedTierHiddenIdentifier(t *testing.T) {
 	hiddenAt := q.Now.AddDate(0, 0, -1)
 	f.add(t, conv, hidden.ID, hiddenAt, false, "")
 	f.peer = peer
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
 	before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
 	requirements.NoError(err)
@@ -67,7 +67,7 @@ func TestScopedActivityHiddenIdentifier(t *testing.T) {
 	hiddenAt := q.Now
 	f.add(t, conv, hidden.ID, hiddenAt, false, "")
 	f.peer = peer
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
 
 	before, err := f.Store.MessageContactAggregateContext(ctx, q)
@@ -111,7 +111,7 @@ func TestTierAndTimelineOwnerAgree(t *testing.T) {
 			require.NoError(err)
 			require.NoError(f.Store.AddAccountIdentity(other.ID, "alice@example.com", "manual"))
 			f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			q := timelineContactQuery(f)
 			q.Subject = subject
 			q.Now = tierAsOf
@@ -146,7 +146,7 @@ func TestCoauthorExclusionsPreserveHumanCredit(t *testing.T) {
 	automated := f.EnsureParticipant("noreply@example.com", "Automated", "example.com")
 	id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
 	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.peer, automated}, nil))
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	tier, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
 	require.NoError(err)
 	require.Equal(1, tier.Signals.InboundLong)
@@ -176,7 +176,7 @@ func TestCopyWinnerIndependentOfWindow(t *testing.T) {
 	requirements.NoError(err)
 	f.add(t, conv, other.ID, day, false, "<shared@example.com>")
 	f.add(t, conv, other.ID, day.Add(time.Hour), true, "<other@example.com>")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	for _, to := range []string{"2026-10-20", "2026-10-21"} {
 		t.Run(to, func(t *testing.T) {
 			require := require.New(t)
@@ -212,7 +212,7 @@ func TestActivityWindowDateAndTimestampBounds(t *testing.T) {
 	day := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, -1), false, "")
 	f.add(t, f.ConvID, f.Source.ID, day, false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	before := day.Add(-time.Hour)
 	for _, tc := range []struct {
 		name, from, to, want string
@@ -264,7 +264,7 @@ func TestActivityInstantWindowReturnsCompleteConversationDays(t *testing.T) {
 	noise := f.add(t, f.ConvID, f.Source.ID, first.Add(time.Hour), false, "")
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
 	requirements.NoError(err)
-	projectTimelineActivity(t, f, "America/New_York")
+	projectTierSignals(t, f.Fixture, "America/New_York", 0)
 	for _, tc := range []struct {
 		name          string
 		after, before *time.Time
@@ -321,7 +321,7 @@ func TestActivityInstantWindowSingleBounds(t *testing.T) {
 	first := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
 	morning := f.add(t, f.ConvID, f.Source.ID, first, false, "")
 	afternoon := f.add(t, f.ConvID, f.Source.ID, first.Add(6*time.Hour), false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	noon := first.Add(3 * time.Hour)
 	for _, q := range []store.BurstQuery{{After: &noon, Limit: 10}, {Before: &noon, Limit: 10}} {
 		page, err := f.Store.ListActivityBurstsContext(t.Context(), q)

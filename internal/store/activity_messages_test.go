@@ -18,7 +18,7 @@ func TestActivityMessagesConversationKeyset(t *testing.T) {
 	for i := range 501 {
 		ids = append(ids, f.add(t, f.ConvID, f.Source.ID, at.Add(time.Duration(i/2)*time.Second), i%2 == 1, ""))
 	}
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	for _, desc := range []bool{false, true} {
 		q := store.MessageQuery{ConversationID: f.ConvID, Descending: desc, Limit: 500}
 		got, err := f.Store.ListActivityMessagesContext(t.Context(), q)
@@ -41,7 +41,7 @@ func TestLatestEligibleMessageSkipsDrafts(t *testing.T) {
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	want := f.add(t, f.ConvID, f.Source.ID, at, false, "")
 	draft := f.add(t, f.ConvID, f.Source.ID, at.Add(time.Hour), true, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), draft)
 	require.NoError(t, err)
 	got, err := f.Store.LatestEligibleMessageContext(t.Context(), f.ConvID)

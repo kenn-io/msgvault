@@ -139,12 +139,10 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  AND aep.local_date BETWEEN ? AND ?
  AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
- (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
- (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
- (ae.direction='outbound' AND aep.role IN ('addressed','member')))
- AND ((`+countedMessageTypeSQL("m", "c")+`
+ ae.ref_kind='meeting' OR
+ ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
- OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?))))
+ OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?)))
  AND NOT `+matrixPendingEncryptedSQL("m")+`
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {

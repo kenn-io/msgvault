@@ -17,7 +17,7 @@ func TestActivityReadersUseInstantForOffsetBounds(t *testing.T) {
 			f := newTimelineActivityFixture(t)
 			at := timelineContactQuery(f).Now
 			id := f.add(t, f.ConvID, f.Source.ID, at, false, "")
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			zone := time.FixedZone("offset", offset*3600)
 			after, before := at.Add(-time.Hour).In(zone), at.Add(time.Hour).In(zone)
 			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, After: &after, Before: &before, Limit: 10})
@@ -45,7 +45,7 @@ func TestContactReadersUseInstantForOffsetClock(t *testing.T) {
 					_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), id)
 					requirements.NoError(err)
 				}
-				projectTimelineActivity(t, f, "UTC")
+				projectTierSignals(t, f.Fixture, "UTC", 0)
 				// Earlier clock has a later wall time, and later clock an earlier one.
 				q.Now = q.Now.Add(time.Duration(hours) * time.Hour).In(time.FixedZone("offset", -hours*8*3600))
 				want := 0

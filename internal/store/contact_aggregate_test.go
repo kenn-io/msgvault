@@ -21,7 +21,7 @@ func TestMessageAggregateCountsOnlyCountedInScope(t *testing.T) {
 	q := timelineContactQuery(f)
 	f.add(t, f.ConvID, f.Source.ID, q.Now.AddDate(-2, 0, 0), false, "")
 	f.add(t, f.ConvID, f.Source.ID, q.Now, true, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(2, got.Count)
@@ -44,7 +44,7 @@ func TestMessageAggregateInitiationUsesSevenDayGap(t *testing.T) {
 	}{{-30, false}, {-24, true}, {-17, true}, {-9, false}} {
 		f.add(t, f.ConvID, f.Source.ID, q.Now.AddDate(0, 0, v.days), v.out, "")
 	}
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.InitiatedByContact)
@@ -82,7 +82,7 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 			for i, at := range ats {
 				f.add(t, f.ConvID, f.Source.ID, at, tc.zone != "UTC" && (i == 2 || tc.zone == "America/Asuncion" && i == 1), "")
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			require.NoError(err)
 			assert.Equal(tc.want, got.Monthly)
@@ -105,7 +105,7 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), id)
 		requirements.NoError(err)
 	}
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)
 	assertions.Len(got, 2)
@@ -128,7 +128,7 @@ func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	storedLast := now.AddDate(0, 0, -1)
 	f.add(t, f.ConvID, f.Source.ID, storedLast, false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	stored, err := f.Store.ContactStateContext(t.Context(), person.ID, now)
 	requirements.NoError(err)
 	requirements.Equal(&storedLast, stored.LastContactAt)
@@ -165,7 +165,7 @@ func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id IN (?,?)`), futureID, pastID)
 				require.NoError(err)
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			if transcript {
 				ids, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 				require.NoError(err)

@@ -25,7 +25,7 @@ func TestActivityReadersDefaultMissingPolicyToFull(t *testing.T) {
 	id := f.add(t, conv, src.ID, timelineContactQuery(f).Now, false, "")
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
 	requirements.NoError(err)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	var projected int
 	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
 	requirements.Equal(1, projected)

@@ -18,7 +18,7 @@ func TestCalendarEventFromExcludedSenderRemainsVisible(t *testing.T) {
 	conversationID := f.ConvID
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='calendar_event' WHERE id=?`), id)
 	require.NoError(err)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 	require.NoError(err)
 	assert.Zero(page.NoiseOmitted)
@@ -67,7 +67,7 @@ func TestImportedMIMEInvitationFromExcludedSenderIsNoise(t *testing.T) {
 	var messageType string
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id,conversation_id,message_type FROM messages WHERE source_id=? AND source_message_id='invitation'`), f.Source.ID).Scan(&id, &conversationID, &messageType))
 	require.Equal("email", messageType)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	query := timelineBurstQuery()
 	page, err := f.Store.ListActivityBurstsContext(t.Context(), query)
 	require.NoError(err)
@@ -107,7 +107,7 @@ func TestCalendarFileInvitationFromExcludedSenderRemainsVisible(t *testing.T) {
 	var attachments int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=?`), id).Scan(&attachments))
 	require.Equal(1, attachments)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 	require.NoError(err)
 	assert.Zero(page.NoiseOmitted)

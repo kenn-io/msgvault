@@ -39,7 +39,7 @@ func TestCleartextMarkerIsOrdinaryMessage(t *testing.T) {
 				}
 				ids = append(ids, id)
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
 			requirements.NoError(err)
 			if pending {
@@ -110,7 +110,7 @@ func TestMissingIDCannotCollideWithRealID(t *testing.T) {
 	q := timelineContactQuery(f)
 	id := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(-time.Hour), false, "")
 	f.add(t, f.ConvID, f.Source.ID, q.Now, true, fmt.Sprintf("id:%d", id))
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(2, got.Count)
@@ -132,7 +132,7 @@ func TestPromotionPreservesLinkedContactCounts(t *testing.T) {
 	q.Subject.ParticipantIDs = []int64{f.peer, alias}
 	f.peer = alias
 	f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	before, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(1, before.Count)
@@ -142,7 +142,7 @@ func TestPromotionPreservesLinkedContactCounts(t *testing.T) {
 	unprojected, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(before, unprojected)
-	projectTimelineActivity(t, f, "UTC")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
 	after, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(before, after)

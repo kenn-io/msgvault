@@ -18,7 +18,7 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
 			f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 			if trigger != "message" {
-				projectTimelineActivity(t, f, "UTC")
+				projectTierSignals(t, f.Fixture, "UTC", 0)
 			}
 			before, err := f.Store.ActivityProjectionStateContext(ctx)
 			requirements.NoError(err)
@@ -35,7 +35,7 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 			requirements.NoError(err)
 			f.add(t, conv, hidden.ID, q.Now, false, "")
 			if trigger != "message" {
-				projectTimelineActivity(t, f, "UTC")
+				projectTierSignals(t, f.Fixture, "UTC", 0)
 				if trigger == "identity" {
 					requirements.NoError(f.Store.AddAccountIdentity(hidden.ID, "alice@example.com", "manual"))
 				} else {
@@ -65,7 +65,7 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 			empty, err := f.Store.ActivityProjectionStateContext(sourcescope.WithSourceIDs(t.Context(), []int64{}))
 			requirements.NoError(err)
 			assertions.False(empty.Reconciling)
-			projectTimelineActivity(t, f, "UTC")
+			projectTierSignals(t, f.Fixture, "UTC", 0)
 			drained, err := f.Store.ActivityProjectionStateContext(ctx)
 			requirements.NoError(err)
 			assertions.Zero(drained.Queued)
