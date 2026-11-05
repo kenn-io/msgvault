@@ -136,7 +136,7 @@ To keep Messages current with the daemon, enable a schedule under
 [`[imessage]`](/docs/configuration/#imessage) and run `msgvault serve`.
 Grant Full Disk Access to the process running the daemon. Every run re-reads
 all of `chat.db` and writes only what changed, including late arrivals
-and edits. An idle rerun measured about 5 seconds per 20,000 messages.
+and edits.
 Choose an interval that allows for the time it takes to read your database. Sources shows run history and offers **Sync now**.
 
 ```bash

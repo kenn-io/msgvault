@@ -1874,7 +1874,7 @@ max_media_mb = 250
 
 Grant Full Disk Access to the process running the daemon. Every run re-reads
 all of `chat.db` and writes only what changed, including late arrivals
-and edits. An idle rerun measured about 5 seconds per 20,000 messages.
+and edits.
 Choose a schedule interval that allows for the time it takes to read your database.
 
 ### Omi Sources
