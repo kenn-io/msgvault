@@ -179,7 +179,7 @@
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
         {:else}
-          <ExistingPicker load={loadIssues} noun="open issues" moreNote="25 most recently updated open issues. Enter a ref for others." empty="No open issues yet." disabled={busy} bind:selected />
+          <ExistingPicker load={loadIssues} noun="open issues" legend="Issues and refs" moreNote="25 most recently updated open issues. Enter a ref for others." empty="No open issues yet." disabled={busy} bind:selected />
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>

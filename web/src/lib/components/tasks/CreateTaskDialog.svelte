@@ -131,7 +131,7 @@
       void create();
     }}
   >
-    <p class="project"><span>Project</span><strong>{project}</strong></p>
+    <label>Project<TextInput ariaLabel="Project" value={project} readonly block /></label>
     <label>Task title<TextInput ariaLabel="Task title" bind:value={title} disabled={pending} autocomplete="off" block /></label>
     <label>Description<textarea aria-label="Description" bind:value={description} disabled={pending}></textarea></label>
     <label
@@ -231,15 +231,6 @@
     border-radius: var(--radius-sm);
     background: var(--bg-canvas);
     color: var(--text-primary);
-  }
-  .project {
-    display: flex;
-    justify-content: space-between;
-    margin: 0;
-  }
-  .project span {
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
   }
   details {
     color: var(--text-muted);

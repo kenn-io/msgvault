@@ -20,7 +20,8 @@ describe('CreateTaskDialog', () => {
       oncreated, onclose: vi.fn()
     });
 
-    expect(screen.getByText('project')).toBeDefined();
+    expect(screen.getByLabelText('Project')).toHaveProperty('value', 'project');
+    expect(screen.getByLabelText('Project')).toHaveProperty('readOnly', true);
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
       expect(screen.getByText(value)).toBeDefined();
     }

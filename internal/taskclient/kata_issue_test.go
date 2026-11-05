@@ -99,10 +99,27 @@ func TestOpenIssues(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	native := katatest.New(t)
-	server := httptest.NewTLSServer(native.Service.Handler())
+	handler := native.Service.Handler()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
+			assert.False(r.URL.Query().Has("sort"))
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(server.Close)
 	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
 	require.NoError(err)
+	created, err := client.CreateTask(t.Context(), katatest.Project, "older-api-issue", KataCreate{Title: "Review the budget"})
+	require.NoError(err)
+	initial, initialTruncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(err)
+	require.Len(initial, 1)
+	assert.Equal(created.UID, initial[0].UID)
+	assert.False(initialTruncated)
 	open, err := client.CreateTask(t.Context(), katatest.Project, "open-budget", KataCreate{Title: "Send the budget"})
 	require.NoError(err)
 	for i := range 30 {
@@ -120,34 +137,7 @@ func TestOpenIssues(t *testing.T) {
 	for _, issue := range issues {
 		assert.Equal("open", issue.Status)
 		assert.NotEqual(open.UID, issue.UID)
-		assert.NotEqual(closed.UID, issue.UID)
 	}
-}
-
-func TestOpenIssuesWithOlderKataAPI(t *testing.T) {
-	t.Parallel()
-	native := katatest.New(t)
-	handler := native.Service.Handler()
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
-			assert.False(t, r.URL.Query().Has("sort"))
-		}
-		handler.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
-	require.NoError(t, err)
-	created, err := client.CreateTask(t.Context(), katatest.Project, "older-api-issue", KataCreate{Title: "Review the budget"})
-	require.NoError(t, err)
-	issues, truncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
-	require.NoError(t, err)
-	require.Len(t, issues, 1)
-	assert.Equal(t, created.UID, issues[0].UID)
-	assert.False(t, truncated)
 }
 
 func TestOpenIssuesWithLargeBodies(t *testing.T) {

@@ -2,9 +2,10 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', legend = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
+    legend?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -44,7 +45,7 @@
   {:else if items.length === 0}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>
   {:else}
     <div class="results" class:overflowing={items.length > 5}>
-      <RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      <RadioGroup legend={legend || noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
     </div>
   {/if}
   {#if !loading && query.trim() === listedQuery && !error && truncated}<p class="more-note">{moreNote}</p>{/if}
@@ -55,7 +56,7 @@
   .picker :global(.kit-text-input__control) { font-size: 16px; }
   .picker :global(.kit-text-input:has(.kit-text-input__control:focus-visible)) { outline-width: 1px; border-color: var(--border-default); }
   :global(:root.high-contrast) .picker :global(.kit-text-input:has(.kit-text-input__control:focus-visible)) { outline-width: 3px; }
-  .results { max-height: 16rem; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: 12px; }
+  .results { max-height: 15rem; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: 12px; }
   .results.overflowing { mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent); }
   .results :global(.kit-radio-group__legend) { font-weight: 400; }
   .results :global(.kit-radio-group__option) { min-height: 32px; }

@@ -16,12 +16,13 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
-  it('clears a pick before the filter debounce can post a stale task', async () => {
+  it('clears a picked task when filtering or returning to Existing', async () => {
+    let lists = 0;
     const posts = vi.fn();
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (request.method === 'POST') posts();
-      if (request.url.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Send the budget' }], truncated: true });
+      if (request.url.includes('/search')) return Response.json({ tasks: ++lists < 3 ? [{ id: 'task-1', title: 'Send the budget' }] : [], truncated: lists === 1 });
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
@@ -33,20 +34,7 @@ describe('TaskLinks', () => {
     expect(link).toHaveProperty('disabled', true);
     await fireEvent.click(link);
     expect(posts).not.toHaveBeenCalled();
-  });
-
-  it('clears a picked task when Existing remounts without it', async () => {
-    let lists = 0;
-    const posts = vi.fn();
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (request.method === 'POST') posts();
-      if (request.url.includes('/search')) return Response.json({ tasks: ++lists === 1 ? [{ id: 'task-1', title: 'Earlier task' }] : [] });
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Earlier task' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Send the budget' }));
     expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', false);
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));

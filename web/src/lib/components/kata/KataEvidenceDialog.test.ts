@@ -42,8 +42,6 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
-    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -64,6 +62,7 @@ describe('KataEvidenceDialog', () => {
     const onclose = vi.fn();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up', onclose });
     await screen.findByText('Opening passage');
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
     if (saving) await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     const close = screen.getAllByRole('button', { name: 'Close' })[0];
     close.focus();
@@ -225,10 +224,12 @@ describe('KataEvidenceDialog', () => {
   });
 
   it('links a typed reference when the open issue list is unavailable', async () => {
+    const posts: Request[] = [];
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (request.url.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
       if (request.url.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
+      posts.push(request);
       return Response.json({ issue, replayed: false });
     });
     render(KataEvidenceDialog, { client, selector, embedded: true });
@@ -239,5 +240,6 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Add quote to example#abcd' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
+    expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
   });
 });

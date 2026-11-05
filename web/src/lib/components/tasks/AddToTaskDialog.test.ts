@@ -19,29 +19,6 @@ function pendingCreate() {
 }
 
 describe('Add to task', () => {
-  it('names the selected destination and hides destination choices after filing', async () => {
-    const reference = { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } };
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
-      if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      if (request.method === 'POST') return Response.json({ issue: { uid: 'one', qualified_ref: 'example#abcd', status: 'open' }, replayed: false });
-      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() }, context: new Map([[kataReadinessKey, readiness]]) });
-    try {
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
-      await screen.findByText('Quote');
-      await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-      await screen.findByText('example#abcd');
-      expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
-      expect(screen.getByRole('dialog', { name: 'Add to Kata' })).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Done' })).toBeDefined();
-    } finally { view.unmount(); readiness.dispose(); }
-  });
   it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }
@@ -79,16 +56,20 @@ describe('Add to task', () => {
     const pending = new Promise<Response>(resolve => { finish = resolve; });
     const reference = { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'chat', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } };
     const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready' });
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
       if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
-      return pending;
+      if (request.method === 'POST') return pending;
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
     const readiness = new KataReadiness(client);
     await waitFor(() => expect(readiness.ready).toBe(true));
     const onclose = vi.fn();
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Chat', email: false, onclose }, context: new Map([[kataReadinessKey, readiness]]) });
+    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Chat', email: true, onclose }, context: new Map([[kataReadinessKey, readiness]]) });
     try {
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
+      expect(screen.getByRole('dialog', { name: 'Add to Kata' })).toBeDefined();
       await screen.findByText('Quote');
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
@@ -96,6 +77,7 @@ describe('Add to task', () => {
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', qualified_ref: 'example#abcd', status: 'open' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });
+      expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).toHaveBeenCalledOnce();
     } finally { view.unmount(); readiness.dispose(); }
