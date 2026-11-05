@@ -1199,11 +1199,20 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
 	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
+	applePhones := make(map[string]bool)
 	for i := range cfg.WhatsAppApple {
 		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
-		if cfg.WhatsAppApple[i].Enabled && !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+		if !cfg.WhatsAppApple[i].Enabled {
+			continue
+		}
+		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
 			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
 		}
+		phone := cfg.WhatsAppApple[i].Phone
+		if applePhones[phone] {
+			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone duplicates enabled phone %q", i, phone))
+		}
+		applePhones[phone] = true
 	}
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for i := range cfg.Muesli {

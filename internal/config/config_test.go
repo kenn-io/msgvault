@@ -2621,3 +2621,34 @@ func TestLoadDisabledAppleSourceWithoutPhone(t *testing.T) {
 	require.NoError(t, err)
 	assert.NoError(t, cfg.DaemonConfigError())
 }
+
+func TestLoadApplePhoneUniqueness(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		first, second bool
+		secondPhone   string
+		wantDuplicate bool
+	}{
+		{name: "enabled duplicates", first: true, second: true, secondPhone: "+15550000000", wantDuplicate: true},
+		{name: "disabled first", second: true, secondPhone: "+15550000000"},
+		{name: "disabled second", first: true, secondPhone: "+15550000000"},
+		{name: "both disabled", secondPhone: "+15550000000"},
+		{name: "distinct enabled phones", first: true, second: true, secondPhone: "+15550000001"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := fmt.Sprintf("[[whatsapp_apple]]\nenabled = %t\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = %t\nphone = '%s'\n", tc.first, tc.second, tc.secondPhone)
+			require.NoError(os.WriteFile(path, []byte(content), 0600))
+			_, err := Load(path, "")
+			if tc.wantDuplicate {
+				require.ErrorContains(err, "whatsapp_apple[1].phone duplicates enabled phone")
+				cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
+				require.NoError(err)
+				require.ErrorContains(cfg.DaemonConfigError(), "whatsapp_apple[1].phone duplicates enabled phone")
+			} else {
+				require.NoError(err)
+			}
+		})
+	}
+}
