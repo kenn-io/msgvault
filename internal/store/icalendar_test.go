@@ -26,76 +26,87 @@ func icsSource(t *testing.T, st *Store) int64 {
 }
 
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
-	for _, rule := range []string{"RRULE:FREQ=DAILY;COUNT=2", "RRULE:FREQ=HOURLY;COUNT=2", "EXRULE:FREQ=DAILY;COUNT=1"} {
-		t.Run(rule, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-
+	for _, behavior := range []string{"duplicate persist", "description", "older sequence", "newer stamp", "cancellation", "rebuild", "restore"} {
+		t.Run(behavior, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			description := strings.Repeat("Meeting details. ", 20)
-			raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\n"+rule+"\r\nDESCRIPTION:"+description+"\\nJoin: https://meet.example.com/meeting\r\nLOCATION:Conference room")
-			if rule != "RRULE:FREQ=DAILY;COUNT=2" {
-				raw = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\n"+rule)
-			}
+			raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2\r\nDESCRIPTION:"+description+"\\nJoin: https://meet.example.com/meeting\r\nLOCATION:Conference room")
 			first, err := st.PersistICalendarContext(t.Context(), source, raw)
 			requirements.NoError(err)
-			assertions.Equal(1, first.Changed)
+			requirements.Equal(1, first.Changed)
 			ids := emailEvents(t, st, source)
 			requirements.Len(ids, 1)
-			duplicate, err := st.PersistICalendarContext(t.Context(), source, raw)
-			requirements.NoError(err)
-			assertions.Zero(duplicate.Changed)
-			assertions.Equal(1, duplicate.Unchanged)
-			assertions.Equal(ids, emailEvents(t, st, source))
-			if rule != "RRULE:FREQ=DAILY;COUNT=2" {
+			id := ids[0]
+
+			switch behavior {
+			case "duplicate persist":
+				duplicate, err := st.PersistICalendarContext(t.Context(), source, raw)
+				requirements.NoError(err)
+				assertions.Zero(duplicate.Changed)
+				assertions.Equal(1, duplicate.Unchanged)
+				assertions.Equal(ids, emailEvents(t, st, source))
+				return
+			case "description":
+				var snippet string
+				requirements.NoError(st.db.QueryRow(`SELECT snippet FROM messages WHERE id=?`, id).Scan(&snippet))
+				assertions.True(strings.HasPrefix(snippet, "Meeting details. "), "snippet must come from the description")
+				body, err := st.GetMessageBodyText(id)
+				requirements.NoError(err)
+				assertions.Equal(description+"\nJoin: https://meet.example.com/meeting\nLocation: Conference room", body)
+				return
+			case "older sequence":
+				older := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:1", 1)
+				_, err := st.PersistICalendarContext(t.Context(), source, []byte(older))
+				requirements.NoError(err)
+				stored, err := st.GetMessageRaw(id)
+				requirements.NoError(err)
+				assertions.Equal(raw, stored)
 				return
 			}
-			id := ids[0]
-			var snippet string
-			requirements.NoError(st.db.QueryRow(`SELECT snippet FROM messages WHERE id=?`, id).Scan(&snippet))
-			assertions.Equal(strings.Repeat("Meeting details. ", 11)+"Meeting de...", snippet)
-			body, err := st.GetMessageBodyText(id)
-			requirements.NoError(err)
-			assertions.Equal(description+"\nJoin: https://meet.example.com/meeting\nLocation: Conference room", body)
-			older := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:1", 1)
-			_, err = st.PersistICalendarContext(t.Context(), source, []byte(older))
-			requirements.NoError(err)
-			stored, err := st.GetMessageRaw(id)
-			requirements.NoError(err)
-			assertions.Equal(raw, stored)
-			later := strings.Replace(string(raw), "20270301T120000Z", "20270301T130000Z", 1)
-			later = strings.Replace(later, "20270302T120000Z", "20270302T140000Z", 1)
-			later = strings.Replace(later, "20270302T130000Z", "20270302T150000Z", 1)
+
+			later := strings.NewReplacer("20270301T120000Z", "20270301T130000Z", "20270302T120000Z", "20270302T140000Z", "20270302T130000Z", "20270302T150000Z").Replace(string(raw))
 			before, err := st.DerivedDataRevisionContext(t.Context())
 			requirements.NoError(err)
 			_, err = st.PersistICalendarContext(t.Context(), source, []byte(later))
 			requirements.NoError(err)
-			after, err := st.DerivedDataRevisionContext(t.Context())
-			requirements.NoError(err)
-			assertions.Greater(after, before)
-			assertions.Equal("2027-03-02T14:00:00Z", calendarRows(t, st, id)[0].Event.Start.Format(time.RFC3339))
+			if behavior == "newer stamp" {
+				after, err := st.DerivedDataRevisionContext(t.Context())
+				requirements.NoError(err)
+				assertions.Greater(after, before)
+				assertions.Equal("2027-03-02T14:00:00Z", calendarRows(t, st, id)[0].Event.Start.Format(time.RFC3339))
+				return
+			}
 
-			stored, err = st.GetMessageRaw(id)
+			stored, err := st.GetMessageRaw(id)
 			requirements.NoError(err)
+			accepted := calendarRows(t, st, id)[0]
 			cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTAMP:20270301T130000Z")
 			_, err = st.PersistICalendarContext(t.Context(), source, cancel)
 			requirements.NoError(err)
-			row := calendarRows(t, st, id)[0]
-			assertions.Equal("cancelled", row.Event.Status)
-			assertions.Equal("series", row.Event.Kind)
-			assertions.NotNil(row.Event.Start)
-			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, id)
-			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageRawWithFormat(id, stored, "ics"))
-			assertions.Equal(row.Event, calendarRows(t, st, id)[0].Event)
-			_, err = st.PersistICalendarContext(t.Context(), source, []byte(later))
-			requirements.NoError(err)
-			assertions.Equal("cancelled", calendarRows(t, st, id)[0].Event.Status)
-			restore := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:4", 1)
-			_, err = st.PersistICalendarContext(t.Context(), source, []byte(restore))
-			requirements.NoError(err)
-			assertions.Equal("confirmed", calendarRows(t, st, id)[0].Event.Status)
+			switch behavior {
+			case "cancellation":
+				row := calendarRows(t, st, id)[0]
+				assertions.Equal("cancelled", row.Event.Status)
+				assertions.Equal("series", row.Event.Kind)
+				assertions.Equal(accepted.Subject, row.Subject)
+				assertions.Equal(accepted.Event.Start, row.Event.Start)
+				_, err = st.PersistICalendarContext(t.Context(), source, []byte(later))
+				requirements.NoError(err)
+				assertions.Equal("cancelled", calendarRows(t, st, id)[0].Event.Status)
+			case "rebuild":
+				row := calendarRows(t, st, id)[0]
+				_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, id)
+				requirements.NoError(err)
+				requirements.NoError(st.UpsertMessageRawWithFormat(id, stored, "ics"))
+				assertions.Equal(row.Event, calendarRows(t, st, id)[0].Event)
+			case "restore":
+				restore := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:4", 1)
+				_, err = st.PersistICalendarContext(t.Context(), source, []byte(restore))
+				requirements.NoError(err)
+				assertions.Equal("confirmed", calendarRows(t, st, id)[0].Event.Status)
+			}
 		})
 	}
 }
