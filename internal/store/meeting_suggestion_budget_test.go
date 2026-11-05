@@ -24,7 +24,7 @@ func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
 }
 
-func TestIndependentReviewReadableSuggestionsWithOverBudgetEvidence(t *testing.T) {
+func TestMeetingSuggestionsWithOverBudgetEvidence(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	for i := range 201 {

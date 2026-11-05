@@ -66,7 +66,7 @@ func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
 	}
 }
 
-func TestIndependentReviewHiddenCalendarDecisionInverse(t *testing.T) {
+func TestMeetingRecordHiddenCalendarDecisionAfterMerge(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"), "history@example.com")
@@ -82,7 +82,7 @@ func TestIndependentReviewHiddenCalendarDecisionInverse(t *testing.T) {
 	}
 }
 
-func TestIndependentReviewAutomaticLinkAfterHiddenCalendarMerge(t *testing.T) {
+func TestMeetingAutomaticLinkAfterHiddenCalendarMerge(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"))

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewUnlinkAfterCalendarSourceMerge(t *testing.T) {
+func TestMeetingUnlinkAfterCalendarSourceMerge(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"), "history@example.com")
@@ -25,7 +25,7 @@ func TestReviewUnlinkAfterCalendarSourceMerge(t *testing.T) {
 	assert.Empty(t, record.Links)
 }
 
-func TestReviewExceptionUIDInverseRecord(t *testing.T) {
+func TestMeetingExceptionUIDInverseRecord(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	master := strings.Replace(linkSeriesRaw, `"iCalUID":"weekly@example.org",`, `"status":"cancelled",`, 1)
@@ -42,7 +42,7 @@ func TestReviewExceptionUIDInverseRecord(t *testing.T) {
 	}
 }
 
-func TestReviewSuggestionsExcludeResolvedPairs(t *testing.T) {
+func TestMeetingSuggestionsExcludeResolvedPairs(t *testing.T) {
 	for _, mode := range []string{"automatic", "link", "split"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
@@ -72,7 +72,7 @@ func TestReviewSuggestionsExcludeResolvedPairs(t *testing.T) {
 	}
 }
 
-func TestReviewSeriesMasterNeedsOccurrenceKey(t *testing.T) {
+func TestMeetingSeriesMasterNeedsOccurrenceKey(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)

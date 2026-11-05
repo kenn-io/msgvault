@@ -80,7 +80,7 @@ func TestMeetingSplitBeforeMasterArrives(t *testing.T) {
 	assert.Empty(t, record.Links)
 }
 
-func TestIndependentReviewRecurringRecordIgnoresOtherDates(t *testing.T) {
+func TestMeetingRecordIgnoresOtherRecurringDates(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	raw := strings.ReplaceAll(strings.ReplaceAll(linkSeriesRaw, "2027-03-07", "2024-01-01"), "FREQ=WEEKLY;COUNT=6", "FREQ=DAILY;COUNT=1500")
@@ -88,11 +88,8 @@ func TestIndependentReviewRecurringRecordIgnoresOtherDates(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2024-01-01T10:00:00Z"}}`)
 	start := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
 	for i := 1; i < 1100; i++ {
-		var id int64
-		err := st.db.QueryRow(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) SELECT source_id,conversation_id,?,'meeting_transcript' FROM messages WHERE id = ? RETURNING id`, fmt.Sprintf("daily-%d", i), note).Scan(&id)
-		requirements.NoError(err)
-		_, err = st.db.Exec(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id,scheduled_at) VALUES (?,'ical_uid','weekly@example.org','',?)`, id, start.AddDate(0, 0, i))
-		requirements.NoError(err)
+		at := start.AddDate(0, 0, i).Format(time.RFC3339)
+		projectionFixture(t, st, fmt.Sprintf("daily-%d", i), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":%q}}`, at))
 	}
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20240101T100000Z"})
 	requirements.NoError(err)
