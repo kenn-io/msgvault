@@ -24,6 +24,7 @@ import (
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/consolewindow"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
@@ -2568,6 +2569,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	// plus operator-controlled config flags, not untrusted input.
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
 	cmd.Env = daemonRuntimeChildEnv(ctx, buildCacheDaemonChildEnv(os.Environ(), os.Getpid()))
+	consolewindow.Hide(cmd)
 	return cmd, nil
 }
 

@@ -459,7 +459,7 @@ var contentChangedAtTriggerNames = []struct {
 // built by testutil.NewTestStore, reproducing the shape of an archive that
 // predates the column, on both backends. SQLite refuses ALTER TABLE ... DROP
 // COLUMN while any trigger or index still references the column, so the
-// removal must happen in dependency order: triggers first, then the index,
+// removal must happen in dependency order: triggers first, then indexes,
 // then the column. DROP TRIGGER syntax differs by backend -- PostgreSQL
 // triggers are namespaced per-table and require "ON <table>"; SQLite triggers
 // are named at the schema level and reject a table clause.
@@ -473,9 +473,11 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 		_, err := st.DB().Exec(stmt)
 		require.NoErrorf(t, err, "drop trigger %s", trg.name)
 	}
-	_, err := st.DB().Exec(`DROP INDEX IF EXISTS idx_messages_content_changed_at`)
-	require.NoError(t, err, "drop idx_messages_content_changed_at")
-	_, err = st.DB().Exec(`ALTER TABLE messages DROP COLUMN content_changed_at`)
+	for _, index := range []string{"idx_messages_content_changed_at", "idx_messages_conversation_content_changed"} {
+		_, err := st.DB().Exec(`DROP INDEX IF EXISTS ` + index)
+		require.NoErrorf(t, err, "drop %s", index)
+	}
+	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN content_changed_at`)
 	require.NoError(t, err, "drop content_changed_at column")
 }
 
