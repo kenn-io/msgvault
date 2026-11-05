@@ -359,7 +359,12 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 			}
 			for _, unsupported := range page.Unexpandable {
 				if unsupported.MessageID == exception || tc.state == "missing bounds" {
-					_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", unsupported.MessageID))
+					detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", unsupported.MessageID))
+					if tc.state == "fractional original" {
+						requirements.NoError(err)
+						assertions.Equal(exception, detail.MessageID)
+						continue
+					}
 					requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
 					assertions.Contains(err.Error(), unsupported.Reason)
 				}
