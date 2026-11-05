@@ -181,8 +181,9 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings     MeetingBackend
+	MeetingLinks bool
+	Calendar     CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
