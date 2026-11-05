@@ -96,3 +96,25 @@ func TestIMAPMembershipGenerationSeekUsesPrimaryKeySQLite(t *testing.T) {
 		})
 	}
 }
+
+func TestIMAPMembershipMailboxesUsesMessageIndexWithStaleStatsSQLite(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, err := OpenForTest(filepath.Join(t.TempDir(), "imap-mailboxes-plan.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchema())
+	seedLiveMessages(t, st, 2000)
+	_, err = st.db.Exec(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id)
+		VALUES (1, 'INBOX', 1, 1, 1)`)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`ANALYZE imap_message_memberships`)
+	requirements.NoError(err)
+	// Keep the statistics from the small membership table after a large import.
+	_, err = st.db.Exec(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id)
+		SELECT 1, 'INBOX', 1, id, id FROM messages WHERE id > 1`)
+	requirements.NoError(err)
+	plan := explainPlan(t, st, imapMembershipMailboxesQuery(true), 1, 2000)
+	assertions.Contains(plan, "USING INDEX idx_imap_message_memberships_source_message (source_id=? AND message_id=?)")
+	assertions.NotContains(plan, "SCAN imap_message_memberships")
+}

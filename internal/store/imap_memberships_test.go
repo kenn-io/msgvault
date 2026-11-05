@@ -1401,3 +1401,34 @@ func TestApplyIMAPMailboxDeltas_CheckpointIgnoresPostgreSQLDateStyle(t *testing.
 	assertions.True(messageTombstoned(t, st, untrackedID))
 	assertions.Equal(1, membershipCount(t, st, source.ID))
 }
+
+func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "empty-baseline@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(source.ID, "empty-baseline", "Empty account")
+	requirements.NoError(err)
+	f := imapMembershipFixture{store: st, source: source, convID: convID}
+	messageID := f.createMessage(t, "archived", "")
+	labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
+	requirements.NoError(err)
+
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+	requirements.Empty(messageLabels(t, st, messageID), "the first baseline cleans legacy tombstone labels")
+	requirements.Zero(membershipCount(t, st, source.ID))
+	var checkpoint string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&checkpoint))
+	requirements.NotEmpty(checkpoint)
+
+	// Reapply a label to make an unnecessary legacy recapture observable.
+	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+	assertions.Equal([]string{"Legacy"}, messageLabels(t, st, messageID), "an established baseline skips legacy tombstones")
+	assertions.True(messageTombstoned(t, st, messageID))
+}
