@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.45.0"
+const calendarEventsMinAPISchemaVersion = "3.46.0"
 const calendarEventDeletedStatus = "deleted"
 
 var calendarLiveOnlyFlags = []string{"account", "dry-run", "read-only", "send-updates"}

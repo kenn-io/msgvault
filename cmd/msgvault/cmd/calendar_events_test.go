@@ -58,7 +58,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
-		{name: "old daemon", version: "3.44.0", wantErr: "calendar events require daemon API schema 3.45.0 or newer"},
+		{name: "old daemon", version: "3.44.0", wantErr: "calendar events require daemon API schema 3.46.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
 		{name: "dry run", args: []string{"--dry-run"}, wantErr: "--dry-run is only valid"},
 		{name: "read only", args: []string{"--read-only"}, wantErr: "--read-only is only valid"},
