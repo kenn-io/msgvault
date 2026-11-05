@@ -77,6 +77,10 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 					"{\"source\":\"system\",\"start_ms\":0,\"end_ms\":100,\"text\":\"Partial prefix\"}\nunfinished",
 					"malformed complete line\n",
 					"{\"source\":\"system\",\"start_ms\":0,\"end_ms\":1000,\"text\":\"Partial replacement\"}\nmalformed complete line\n",
+					"{\"source\":\"system\",\"text\":\"Missing timestamps\"}\n",
+					"{\"source\":\"system\",\"end_ms\":0,\"text\":\"Missing start\"}\n",
+					"{\"source\":\"system\",\"start_ms\":0,\"text\":\"Missing end\"}\n",
+					"{\"source\":\"system\",\"start_ms\":null,\"end_ms\":null,\"text\":\"Null timestamps\"}\n",
 				} {
 					must.NoError(os.WriteFile(filepath.Join(dir, "transcript.ndjson"), []byte(text), 0600))
 					sum, err = sync()
@@ -94,7 +98,7 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 				must.NoError(err)
 				assertRetained(sum)
 			}
-			must.NoError(os.WriteFile(filepath.Join(dir, "transcript.ndjson"), []byte("{\"source\":\"system\",\"start_ms\":0,\"end_ms\":100,\"text\":\"Short\"}\n \t"), 0600))
+			must.NoError(os.WriteFile(filepath.Join(dir, "transcript.ndjson"), []byte("{\"source\":\"system\",\"start_ms\":0,\"end_ms\":0,\"text\":\"Short\"}\n \t"), 0600))
 			sum, err = sync()
 			must.NoError(err)
 			check.Equal(int64(1), sum.MeetingsUpdated)
