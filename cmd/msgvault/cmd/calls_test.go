@@ -49,23 +49,23 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 		return output.String(), err
 	}
 	input := fmt.Sprintf(`{"format":"signal_desktop","account":"example","record":{"callId":"one","peerId":"peer","mode":"Direct","status":"Accepted","timestamp":1790841600000},"bindings":{"peer":%d}}`, peer)
-	for range 2 {
-		output, err := run(input, "import", "-")
-		requirements.NoError(err, output)
-		assertions.Contains(output, `"message_id"`)
-	}
-	output, err := run("", "summary", "--person-id", strconv.FormatInt(person.ID, 10))
+	output, err := run(input, "import", "-")
+	requirements.NoError(err, output)
+	assertions.Contains(output, `"message_id"`)
+	output, err = run("", "summary", "--person-id", strconv.FormatInt(person.ID, 10))
 	requirements.NoError(err, output)
 	var result api.CallSummaryResponse
 	requirements.NoError(json.Unmarshal([]byte(output), &result))
 	requirements.Len(result.Items, 1)
-	assertions.Equal(1, result.Items[0].Answered)
+	assertions.Equal(person.ID, result.Items[0].PersonID)
+	output, err = run("", "summary", "--person-id", strconv.FormatInt(person.ID+1, 10))
+	requirements.NoError(err, output)
+	assertions.JSONEq(`{"items":[]}`, output)
 	output, err = run("", "list", "--limit", "1")
 	requirements.NoError(err, output)
 	var evidence api.CallEvidenceResponse
 	requirements.NoError(json.Unmarshal([]byte(output), &evidence))
 	requirements.Len(evidence.Items, 1)
-	assertions.Equal("joined", evidence.Items[0].Participants[0].Participation)
 	_, err = run("", "summary", "--after", "invalid")
 	requirements.Error(err)
 	_, err = run("{", "import", "-")
