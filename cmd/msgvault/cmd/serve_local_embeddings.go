@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/kit/embedlocal"
@@ -16,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/visual"
-	"time"
 )
 
 type localEmbeddingsController struct {
@@ -90,7 +90,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	}
 	// A configured lane changes provider only through Use built-in instead.
 	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(loaded.Vector.Embeddings.Endpoint, loaded.Chat.Server) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
-		return nil
+		return errors.New("search by meaning already uses a configured provider; change its settings before selecting local search")
 	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
@@ -184,7 +184,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if !useOllama {
 		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
-	rebuildDocuments, err := c.retainDocumentConsents(nextCtx, &previousState, &state)
+	rebuildDocuments, err := c.retainLocalSearchConsents(nextCtx, &previousState, &state)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,20 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	}
 	run := func(args ...string) error {
 		args = append(args, "--config", file.Name())
-		return c.runner.RunCLICommand(nextCtx, api.CLIRunRequest{Args: args}, nil)
+		var stderr string
+		err := c.runner.RunCLICommand(nextCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+			if event.Type == cliStreamStderr {
+				stderr += event.Data
+				if len(stderr) > 8192 {
+					stderr = stderr[len(stderr)-8192:]
+				}
+			}
+			return nil
+		})
+		if detail := strings.TrimSpace(stderr); err != nil && detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
 	}
 	if building != nil && building.Fingerprint != fingerprint {
 		if err := run("embeddings", "retire", strconv.FormatInt(int64(building.ID), 10), "--yes"); err != nil {
@@ -262,8 +275,30 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	return nil
 }
 
-// Keep each previously authorized document purpose on the explicitly selected local provider.
-func (c *localEmbeddingsController) retainDocumentConsents(ctx context.Context, before, after *invocation) (bool, error) {
+// Keep authorized search consumers on the explicitly selected local provider.
+func (c *localEmbeddingsController) retainLocalSearchConsents(ctx context.Context, before, after *invocation) (bool, error) {
+	if before.cfg.Vector.Enabled && before.cfg.Vector.People.Enabled {
+		profile, err := before.cfg.Vector.SemanticPersonEmbeddingProfile()
+		if err != nil {
+			return false, err
+		}
+		active, err := c.store.HasActivePersonSemanticEmbeddingConsent(ctx, profile.Fingerprint)
+		if err != nil {
+			return false, err
+		}
+		if active {
+			next, err := after.cfg.Vector.SemanticPersonEmbeddingProfile()
+			if err != nil {
+				return false, err
+			}
+			if _, err := c.store.EnsurePersonSemanticEmbeddingProfile(ctx, next); err != nil {
+				return false, err
+			}
+			if _, _, err := c.store.GrantPersonSemanticEmbeddingConsent(ctx, next.Fingerprint, personProviderConsentActor); err != nil {
+				return false, err
+			}
+		}
+	}
 	if !before.cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return false, nil
 	}

@@ -809,3 +809,26 @@ it('turns on local search once and keeps unrelated drafts when setup finishes', 
   await screen.findByText('On', {}, { timeout: 3000 });
   expect(screen.getByText('1 unsaved change')).toBeDefined();
 });
+
+it.each(['http', 'network'])('recovers setup polling after a temporary %s failure', async failure => {
+  let started = false;
+  let failed = false;
+  const { client, operationsController } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') {
+      started = true;
+      return Response.json({ enabled: false, provider: '', phase: 'indexing', running: true }, { status: 202 });
+    }
+    if (started && !failed) {
+      failed = true;
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return new Response('', { status: 503 });
+    }
+    return Response.json({ enabled: started, provider: started ? 'builtin' : '', phase: 'idle', download_bytes: 290000000 });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
+  await screen.findByText('On', {}, { timeout: 3000 });
+  expect(failed).toBe(true);
+  expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+});

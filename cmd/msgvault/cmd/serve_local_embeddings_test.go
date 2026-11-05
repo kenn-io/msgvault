@@ -43,7 +43,7 @@ type localBuildTestRunner struct {
 	failBuild   bool
 }
 
-func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, _ func(api.CLIRunEvent) error) error {
+func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
 	r.calls = append(r.calls, slices.Clone(req.Args))
 	index := slices.Index(req.Args, "--config")
 	require.Positive(r.t, index)
@@ -56,7 +56,12 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	if r.failBuild && req.Args[1] == "build" {
 		r.failBuild = false
-		return errors.New("synthetic build interrupted")
+		if emit != nil {
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: strings.Repeat("index progress\n", 1024)}))
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "embedding scope matched 0 live messages; "}))
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "sync the scoped account(s) first\n"}))
+		}
+		return errors.New(cliSubprocessExitSentinel)
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
@@ -78,10 +83,10 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 }
 
 func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) {
-	for _, initialModel := range []string{"", "nomic-embed-text", "different-model", "available-ollama", "matching-build", "other-build", "documents", "build-failure"} {
+	for _, initialModel := range []string{"", "nomic-embed-text", "different-model", "available-ollama", "matching-build", "other-build", "documents", "people", "people-unconsented", "build-failure"} {
 		t.Run("initial="+initialModel, func(t *testing.T) {
 			pendingKind := initialModel
-			if pendingKind == "documents" {
+			if pendingKind == "documents" || strings.HasPrefix(pendingKind, "people") {
 				initialModel = "different-model"
 			}
 			if pendingKind == "build-failure" {
@@ -130,6 +135,9 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			if pendingKind == "documents" {
 				content += "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n"
 			}
+			if strings.HasPrefix(pendingKind, "people") {
+				content += "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n"
+			}
 			path := filepath.Join(dir, "config.toml")
 			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 			snapshot, err := config.ReadConfigFile(path)
@@ -146,6 +154,20 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			state := &invocation{cfg: cfg, logger: slog.New(slog.DiscardHandler)}
 			runner := &localBuildTestRunner{t: t, home: dir}
 			ctx := withInvocation(t.Context(), state)
+			if strings.HasPrefix(pendingKind, "people") {
+				participant, err := st.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
+				require.NoError(t, err)
+				_, _, err = st.CreatePersonFromParticipantContext(ctx, participant)
+				require.NoError(t, err)
+				if pendingKind == "people" {
+					profile, err := cfg.Vector.SemanticPersonEmbeddingProfile()
+					require.NoError(t, err)
+					_, err = st.EnsurePersonSemanticEmbeddingProfile(ctx, profile)
+					require.NoError(t, err)
+					_, _, err = st.GrantPersonSemanticEmbeddingConsent(ctx, profile.Fingerprint, "test")
+					require.NoError(t, err)
+				}
+			}
 			if pendingKind == "documents" {
 				seedLocalSearchDocument(t, st, messageID)
 				spec, err := configuredDocumentVectorSpec(ctx, st)
@@ -189,6 +211,11 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			defer func() { <-sched.Stop().Done() }()
 			handle := startVectorInit(ctx, st, cfg.DatabaseDSN(), nil, srv, sched)
 			require.True(t, handle.WaitTimeout(5*time.Second))
+			if pendingKind == "people" {
+				results, err := handle.vf.PersonSearchEngine.Search(ctx, "orchard", 5)
+				require.NoError(t, err)
+				require.Len(t, results, 1)
+			}
 			var oldDocumentID int64
 			if pendingKind == "documents" {
 				require.NoError(t, runScheduledDocumentVectorGeneration(jobctx.WithProgress(ctx), st, handle.vf, 100))
@@ -252,7 +279,10 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			status := httptest.NewRecorder()
 			serve(status, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
 			if pendingKind == "build-failure" {
-				assert.Contains(t, status.Body.String(), "synthetic build interrupted")
+				var failure api.LocalEmbeddingsStatus
+				require.NoError(t, json.Unmarshal(status.Body.Bytes(), &failure))
+				assert.Contains(t, failure.Error, "embedding scope matched 0 live messages; sync the scoped account(s) first")
+				assert.LessOrEqual(t, len(failure.Error), len(cliSubprocessExitSentinel)+2+8192)
 				// The saved provider survives a daemon restart, and the existing CLI
 				// recovery command can finish the same index.
 				persisted, err := config.ReadConfigFile(path)
@@ -311,6 +341,15 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			serve(search, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=orchard&mode=vector", nil))
 			require.Equal(t, http.StatusOK, search.Code, search.Body.String())
 			assert.Contains(t, search.Body.String(), "Orchard")
+			if strings.HasPrefix(pendingKind, "people") {
+				results, err := handle.vf.PersonSearchEngine.Search(ctx, "orchard", 5)
+				if pendingKind == "people" {
+					require.NoError(t, err)
+					require.Len(t, results, 1)
+				} else {
+					require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+				}
+			}
 			catalog := mcpCall("tools/list", `{}`)
 			require.Equal(t, http.StatusOK, catalog.Code, catalog.Body.String())
 			assert.Contains(t, catalog.Body.String(), `"find_similar_messages"`)
@@ -400,7 +439,7 @@ api_key_env = "EXAMPLE_EMBEDDING_KEY"
 			require.NoError(t, err)
 			assert.Equal(t, "configured", status.Provider)
 			for _, builtin := range []bool{false, true} {
-				require.NoError(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}))
+				require.ErrorContains(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
 			}
 			after, err := os.ReadFile(fixture.path)
 			require.NoError(t, err)

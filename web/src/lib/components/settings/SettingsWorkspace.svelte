@@ -128,12 +128,16 @@
       localError = data.error ?? '';
       if (data.running || data.phase !== 'idle') {
         statusRevision += 1;
-        localTimer = setTimeout(() => void loadLocalSearch(), 1000);
       } else if (previous) {
         await loadSettings(true);
         refreshFeatureStatus();
       }
-    } catch { /* The normal settings view remains usable if setup is unavailable. */ }
+    } catch { /* Keep observing an active setup after a temporary request failure. */ }
+    finally {
+      if (!localController.signal.aborted && localStatus && (localStatus.running || localStatus.phase !== 'idle')) {
+        localTimer = setTimeout(() => void loadLocalSearch(), 1000);
+      }
+    }
   }
   async function turnOnLocalSearch(builtin: boolean): Promise<void> {
     if (localPosting || localStatus?.running || (localStatus && localStatus.phase !== 'idle')) return;
