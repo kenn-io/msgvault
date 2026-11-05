@@ -130,7 +130,7 @@ func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		message := "Meeting or event occurrence not found"
-		if err != sql.ErrNoRows {
+		if errors.Unwrap(err) != nil {
 			message = strings.TrimSuffix(err.Error(), ": "+sql.ErrNoRows.Error())
 		}
 		writeError(w, 404, "meeting_not_found", message)
