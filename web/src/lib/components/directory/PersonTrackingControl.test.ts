@@ -1,3 +1,4 @@
+import { definition } from '../../directory/attribute-fixtures.test-support';
 import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
@@ -61,12 +62,7 @@ describe('PersonTrackingControl', () => {
       const target = catalog(false).targets[0]!;
       return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, kind: 'employment', slug: 'employment' }] });
     });
-    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [{
-      id: 8, universal_id: '00000000-0000-4000-8000-000000000008', object_type: 'person', slug: 'time-zone', label: 'Local time zone',
-      value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, is_required: false, ownership: 'user',
-      ui_creatable: true, ui_editable: true, api_mutable: true, is_searchable: true, is_sensitive: false, is_audited: true,
-      is_deletable: true, history_exempt: false, is_active: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-    }] });
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time-zone', label: 'Local time zone' })] });
     expect(await screen.findByText('Local time zone')).toBeDefined();
     expect(screen.getByText('Favorite foods')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();

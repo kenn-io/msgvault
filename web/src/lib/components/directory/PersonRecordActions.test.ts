@@ -1,4 +1,5 @@
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
+import { definition } from '../../directory/attribute-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -43,6 +44,23 @@ describe('PersonRecordActions', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('loads definition labels when opening updates from a profile without definitions', async () => {
+    renderActions(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/attribute-definitions')) {
+        expect(url.searchParams.get('object_type')).toBe('person');
+        return Response.json({ definitions: [definition({ slug: 'favorites_food', label: 'Favorite food' })] });
+      }
+      if (url.pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', description: 'Food preferences from conversations', value_type: 'text', cardinality: 'multi', sensitive: false }] });
+    }));
+
+    await choose('Keep this profile updated');
+    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
   });
 
   it('renames the selected person with the current strong ETag', async () => {

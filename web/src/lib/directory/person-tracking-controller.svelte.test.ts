@@ -71,7 +71,7 @@ describe('PersonTrackingController', () => {
     expect(requests.some(({ path }) => path.includes('/participants/'))).toBe(false);
     expect(controller.tracking).toEqual({ person_id: 7, tracked: true, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', slug: 'timezone', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
+      kind: 'attribute', slug: 'timezone', sensitive: false
     }]);
     expect(JSON.stringify(controller.targets)).not.toMatch(/fingerprint|universal|forbidden/i);
     controller.destroy();
@@ -120,7 +120,7 @@ describe('PersonTrackingController', () => {
     expect(controller.personID).toBe(9);
     expect(controller.tracking).toEqual({ person_id: 9, tracked: false, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', slug: 'timezone', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
+      kind: 'attribute', slug: 'timezone', sensitive: false
     }]);
     controller.destroy();
   });
@@ -304,15 +304,15 @@ describe('PersonTrackingController', () => {
 
     expect(controller.tracking).toBeUndefined();
     expect(controller.trackingError).toBe('Unable to load profile maintenance state.');
-    expect(controller.targets[0]?.description).toBe('Time zone');
+    expect(controller.targets[0]?.slug).toBe('timezone');
     await controller.retryTracking();
     expect(controller.tracking?.tracked).toBe(false);
     await controller.retryCatalog(true);
-    expect(controller.targets[0]?.description).toBe('Time zone');
+    expect(controller.targets[0]?.slug).toBe('timezone');
     expect(controller.catalogError).toBe('Unable to load eligible profile fields.');
     expect(controller.catalogIncludesSensitive).toBe(false);
     await controller.retryCatalog(true);
-    expect(controller.targets[0]?.description).toBe('Private note');
+    expect(controller.targets[0]?.slug).toBe('private-note');
     expect(controller.catalogIncludesSensitive).toBe(true);
     expect(queries).toEqual(['?include_sensitive=false', '?include_sensitive=true', '?include_sensitive=true']);
     controller.destroy();

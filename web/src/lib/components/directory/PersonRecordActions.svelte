@@ -62,7 +62,7 @@
     <MenuItem disabled={!controller.canWritePerson} textValue="Rename" onselect={beginRename}>
       Rename
     </MenuItem>
-    <MenuItem textValue="Keep this profile updated" onselect={async () => { await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
+    <MenuItem textValue="Keep this profile updated" onselect={async () => { await controller.reloadDefinitions(); await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
     <MenuItem textValue="Publish to address book" onselect={async () => { await tick(); maintenance = 'publication'; }}>Publish to address book</MenuItem>
     <MenuItem textValue="History" onselect={() => void openHistory()}>History</MenuItem>
     <MenuItem disabled={!controller.canWritePerson} tone="danger" textValue="Delete" onselect={beginDelete}>

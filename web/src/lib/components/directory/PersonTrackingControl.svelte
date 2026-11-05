@@ -83,7 +83,7 @@
     {:else if !controller.trackingLoading && !controller.trackingError}
       <p>Profile maintenance state is unavailable.</p>
     {/if}
-    <p class="helper">Uses archived conversations when a people sweep runs.</p>
+    <p class="helper">Updates use archived conversations and require the people sweep to be enabled in Settings.</p>
     {#if controller.pending}
       <p class="working" role="status" aria-busy="true"><Spinner size={14} label="Updating profile maintenance" />Updating profile maintenance…</p>
     {/if}
