@@ -76,16 +76,32 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	if version > MaxDatabaseVersion {
 		return nil, fmt.Errorf("%w: database version %d is newer than the newest tested version %d", ErrUnsupportedDatabase, version, MaxDatabaseVersion)
 	}
-	tables, err := tableNames(ctx, db)
+	recipient, err := sqliteutil.TableColumns(ctx, db, "recipient")
 	if err != nil {
 		return nil, err
 	}
-	if !tables["recipient"] || !tables["thread"] {
+	thread, err := sqliteutil.TableColumns(ctx, db, "thread")
+	if err != nil {
+		return nil, err
+	}
+	if len(recipient) == 0 || len(thread) == 0 {
 		return nil, fmt.Errorf("%w: the recipient and thread tables are missing; "+
 			"pass the database.sqlite file written by a Signal Android backup", ErrUnsupportedDatabase)
 	}
-	if !tables["message"] {
-		if tables["mms"] || tables["sms"] {
+	s := &schema{}
+	if s.messageColumns, err = sqliteutil.TableColumns(ctx, db, "message"); err != nil {
+		return nil, err
+	}
+	if len(s.messageColumns) == 0 {
+		mms, err := sqliteutil.TableColumns(ctx, db, "mms")
+		if err != nil {
+			return nil, err
+		}
+		sms, err := sqliteutil.TableColumns(ctx, db, "sms")
+		if err != nil {
+			return nil, err
+		}
+		if len(mms) > 0 || len(sms) > 0 {
 			return nil, fmt.Errorf("%w: this database predates Signal Android database version %d; "+
 				"open the backup in a current Signal Android release and create a new backup",
 				ErrUnsupportedDatabase, MinDatabaseVersion)
@@ -93,10 +109,6 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		return nil, fmt.Errorf("%w: the message table is missing", ErrUnsupportedDatabase)
 	}
 
-	s := &schema{}
-	if s.messageColumns, err = sqliteutil.TableColumns(ctx, db, "message"); err != nil {
-		return nil, err
-	}
 	for _, column := range requiredMessageColumns {
 		if !s.messageColumns[column] {
 			return nil, fmt.Errorf("%w: message.%s is missing; msgvault reads Signal Android "+
@@ -108,10 +120,6 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		return nil, fmt.Errorf("%w: database version %d predates Signal Android database version %d", ErrUnsupportedDatabase, version, MinDatabaseVersion)
 	}
 
-	recipient, err := sqliteutil.TableColumns(ctx, db, "recipient")
-	if err != nil {
-		return nil, err
-	}
 	if s.recipientACI = firstColumn(recipient, "aci", "uuid"); s.recipientACI == "" {
 		return nil, fmt.Errorf("%w: recipient.aci is missing", ErrUnsupportedDatabase)
 	}
@@ -123,24 +131,20 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	}
 	s.recipientName = recipientNameExpr(recipient)
 
-	thread, err := sqliteutil.TableColumns(ctx, db, "thread")
-	if err != nil {
-		return nil, err
-	}
 	if s.threadRecipient = firstColumn(thread, "recipient_id", "thread_recipient_id"); s.threadRecipient == "" {
 		return nil, fmt.Errorf("%w: thread.recipient_id is missing", ErrUnsupportedDatabase)
 	}
 
-	switch {
-	case tables["attachment"]:
-		s.attachmentTable = "attachment"
-	case tables["part"]:
-		s.attachmentTable = "part"
-	}
-	if s.attachmentTable != "" {
-		if s.attachmentColumns, err = sqliteutil.TableColumns(ctx, db, s.attachmentTable); err != nil {
+	for _, table := range []string{"attachment", "part"} {
+		if s.attachmentColumns, err = sqliteutil.TableColumns(ctx, db, table); err != nil {
 			return nil, err
 		}
+		if len(s.attachmentColumns) > 0 {
+			s.attachmentTable = table
+			break
+		}
+	}
+	if s.attachmentTable != "" {
 		s.attachmentMessage = firstColumn(s.attachmentColumns, "message_id", "mid")
 		s.attachmentType = firstColumn(s.attachmentColumns, "content_type", "ct")
 		if s.attachmentMessage == "" || s.attachmentType == "" {
@@ -149,34 +153,26 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		}
 	}
 
-	if tables["groups"] {
-		groups, err := sqliteutil.TableColumns(ctx, db, "groups")
-		if err != nil {
-			return nil, err
-		}
-		s.hasGroups = groups["group_id"] && groups["title"]
+	groups, err := sqliteutil.TableColumns(ctx, db, "groups")
+	if err != nil {
+		return nil, err
 	}
-	if tables["group_membership"] {
-		membership, err := sqliteutil.TableColumns(ctx, db, "group_membership")
-		if err != nil {
-			return nil, err
-		}
-		s.hasGroupMembership = membership["group_id"] && membership["recipient_id"]
+	s.hasGroups = groups["group_id"] && groups["title"]
+	membership, err := sqliteutil.TableColumns(ctx, db, "group_membership")
+	if err != nil {
+		return nil, err
 	}
-	if tables["reaction"] {
-		reaction, err := sqliteutil.TableColumns(ctx, db, "reaction")
-		if err != nil {
-			return nil, err
-		}
-		s.hasReactions = reaction["message_id"] && reaction["author_id"] && reaction["emoji"]
+	s.hasGroupMembership = membership["group_id"] && membership["recipient_id"]
+	reaction, err := sqliteutil.TableColumns(ctx, db, "reaction")
+	if err != nil {
+		return nil, err
 	}
-	if tables["mention"] {
-		mention, err := sqliteutil.TableColumns(ctx, db, "mention")
-		if err != nil {
-			return nil, err
-		}
-		s.hasMentions = mention["message_id"] && mention["recipient_id"] && mention["range_start"]
+	s.hasReactions = reaction["message_id"] && reaction["author_id"] && reaction["emoji"]
+	mention, err := sqliteutil.TableColumns(ctx, db, "mention")
+	if err != nil {
+		return nil, err
 	}
+	s.hasMentions = mention["message_id"] && mention["recipient_id"] && mention["range_start"]
 	return s, nil
 }
 
@@ -220,24 +216,4 @@ func firstColumn(columns map[string]bool, names ...string) string {
 		}
 	}
 	return ""
-}
-
-func tableNames(ctx context.Context, db *sql.DB) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table'`)
-	if err != nil {
-		return nil, fmt.Errorf("inspect signal database: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	tables := make(map[string]bool)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan signal table name: %w", err)
-		}
-		tables[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list signal tables: %w", err)
-	}
-	return tables, nil
 }
