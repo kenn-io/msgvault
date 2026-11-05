@@ -12,11 +12,16 @@ import (
 func TestCalendarAccountTotalsMatchListing(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
-	env.AddMessage(dbtest.MessageOpts{SourceID: 1, ConversationID: 1, MessageType: "calendar_event", Subject: "Invite"})
+	eventID := env.AddMessage(dbtest.MessageOpts{SourceID: 1, ConversationID: 1, MessageType: "calendar_event", Subject: "Invite"})
 	sourceID := int64(1)
 	filter := MessageFilter{AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}}}
 	rows, err := env.Engine.ListMessages(env.Ctx, filter)
 	requirements.NoError(err)
+	ids := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	assertions.Contains(ids, eventID)
 	stats, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{Filter: &filter})
 	requirements.NoError(err)
 	assertions.Equal(int64(len(rows)), stats.MessageCount)

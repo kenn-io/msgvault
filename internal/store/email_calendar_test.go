@@ -221,26 +221,12 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 	assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
 }
 
-func TestEmailCalendarNULSummaryPreservesEmail(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Before\x00after"))
-	id, source := persistInviteEmail(t, st, "nul-summary", raw)
-	stored, err := st.GetMessageRaw(id)
-	requirements.NoError(err)
-	assertions.Equal(raw, stored)
-	ids := emailEvents(t, st, source)
-	requirements.Len(ids, 1)
-	rows := calendarRows(t, st, ids...)
-	requirements.Len(rows, 1)
-	assertions.Equal("Before\uFFFDafter", rows[0].Subject)
-}
-
 func TestEmailCalendarNULAttendeePreservesEmail(t *testing.T) {
-	for _, tc := range []struct{ name, property, wantName, wantEmail string }{
-		{"attendee name", "ATTENDEE;CN=Before\x00after:mailto:guest@example.org", "Before\uFFFDafter", "guest@example.org"},
-		{"organizer name", "ORGANIZER;CN=Before\x00after:mailto:organizer@example.com", "Before\uFFFDafter", "organizer@example.com"},
-		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org"},
+	for _, tc := range []struct{ name, property, wantName, wantEmail, wantSubject string }{
+		{"summary", "SUMMARY:Before\x00after", "", "", "Before\uFFFDafter"},
+		{"attendee name", "ATTENDEE;CN=Before\x00after:mailto:guest@example.org", "Before\uFFFDafter", "guest@example.org", ""},
+		{"organizer name", "ORGANIZER;CN=Before\x00after:mailto:organizer@example.com", "Before\uFFFDafter", "organizer@example.com", ""},
+		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -254,39 +240,13 @@ func TestEmailCalendarNULAttendeePreservesEmail(t *testing.T) {
 			requirements.Len(ids, 1)
 			rows := calendarRows(t, st, ids...)
 			requirements.Len(rows, 1)
-			requirements.Len(rows[0].Event.Attendees, 1)
-			assertions.Equal(tc.wantName, rows[0].Event.Attendees[0].DisplayName)
-			assertions.Equal(tc.wantEmail, rows[0].Event.Attendees[0].Email)
-		})
-	}
-}
-
-func TestEmailCalendarRejectsRevisionAfterSourceMerge(t *testing.T) {
-	for _, tc := range []struct{ name, organizer, sequence string }{
-		{"different organizer", "other@example.org", "3"},
-		{"older sequence", "organizer@example.com", "1"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, from := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com")))
-			into, err := st.GetOrCreateSource("mbox", "destination@example.com")
-			requirements.NoError(err)
-			_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
-			requirements.NoError(err)
-			ids := emailEvents(t, st, into.ID)
-			requirements.Len(ids, 1)
-			raw := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:"+tc.sequence+"\r\nDTSTART:20270303T120000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:"+tc.organizer))
-			id := persistInviteEmailForSource(t, st, into.ID, "rejected", raw)
-			stored, err := st.GetMessageRaw(id)
-			requirements.NoError(err)
-			assertions.Equal(raw, stored)
-			assertions.Equal(ids, emailEvents(t, st, into.ID))
-			fromDate := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), fromDate, fromDate.AddDate(0, 0, 2))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			assertions.Equal("Original", page.Occurrences[0].Subject)
+			if tc.wantSubject != "" {
+				assertions.Equal(tc.wantSubject, rows[0].Subject)
+			} else {
+				requirements.Len(rows[0].Event.Attendees, 1)
+				assertions.Equal(tc.wantName, rows[0].Event.Attendees[0].DisplayName)
+				assertions.Equal(tc.wantEmail, rows[0].Event.Attendees[0].Email)
+			}
 		})
 	}
 }
@@ -433,26 +393,47 @@ func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
 }
 
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
-	for _, cancel := range []bool{false, true} {
-		t.Run(fmt.Sprintf("cancel=%t", cancel), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, initialSequence, sequence, organizer, wantSubject string
+		cancel, reject                                          bool
+	}{
+		{"update", "", "1", "organizer@example.com", "Moved", false, false},
+		{"cancel", "", "1", "organizer@example.com", "Moved", true, false},
+		{"different organizer", "SEQUENCE:2\r\n", "3", "other@example.org", "Original", false, true},
+		{"older sequence", "SEQUENCE:2\r\n", "1", "organizer@example.com", "Original", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			_, from := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com")))
+			_, from := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", tc.initialSequence+"DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com")))
 			into, err := st.GetOrCreateSource("mbox", "destination@example.com")
 			requirements.NoError(err)
 			_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
 			requirements.NoError(err)
-			persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270303T120000Z\r\nSUMMARY:Moved\r\nORGANIZER:mailto:organizer@example.com")))
-			if cancel {
+			ids := emailEvents(t, st, into.ID)
+			requirements.Len(ids, 1)
+			subject := "Moved"
+			if tc.reject {
+				subject = "Rejected"
+			}
+			raw := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:"+tc.sequence+"\r\nDTSTART:20270303T120000Z\r\nSUMMARY:"+subject+"\r\nORGANIZER:mailto:"+tc.organizer))
+			id := persistInviteEmailForSource(t, st, into.ID, "update", raw)
+			if tc.reject {
+				stored, err := st.GetMessageRaw(id)
+				requirements.NoError(err)
+				assertions.Equal(raw, stored)
+				assertions.Equal(ids, emailEvents(t, st, into.ID))
+			}
+			if tc.cancel {
 				persistInviteEmailForSource(t, st, into.ID, "cancel", inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")))
 			}
 			fromDate := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), fromDate, fromDate.AddDate(0, 0, 2))
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
-			assertions.Equal("Moved", page.Occurrences[0].Subject)
+			assertions.Equal(tc.wantSubject, page.Occurrences[0].Subject)
 			status := "confirmed"
-			if cancel {
+			if tc.cancel {
 				status = "cancelled"
 			}
 			assertions.Equal(status, page.Occurrences[0].Status)
