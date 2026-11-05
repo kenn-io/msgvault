@@ -618,6 +618,63 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	})
 }
 
+func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
+	for _, source := range []struct {
+		name   string
+		source Source
+		path   string
+	}{
+		{"user", Source{Type: "user", UserID: testUser}, "/v2/bot/profile/" + testUser},
+		{"group", Source{Type: "group", GroupID: testGroup, UserID: testUser}, "/v2/bot/group/" + testGroup + "/member/" + testUser},
+		{"room", Source{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser}, "/v2/bot/room/R00000000000000000000000000000001/member/" + testUser},
+	} {
+		for _, cached := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/cached=%t", source.name, cached), func(t *testing.T) {
+				must := require.New(t)
+				checks := assert.New(t)
+				f := newInboxFixture(t)
+				cachedAt := f.now.Add(-25 * time.Hour)
+				cachedRaw := `{"userId":"` + testUser + `","displayName":"Cached Name"}`
+				wantName := ""
+				if cached {
+					must.NoError(f.st.CacheLineProfileContext(t.Context(), f.source.ID, testUser, cachedRaw, cachedAt))
+					wantName = "Cached Name"
+				}
+				f.api.Enqueue(http.MethodGet, source.path, lineapi.Response{Status: http.StatusNotFound})
+				message := f.message("1", "text survives a missing profile", f.now.UnixMilli())
+				message.Source = source.source
+				f.enqueue(t, message, time.Time{})
+				f.run(t)
+
+				archived := f.archived(t, "1")
+				checks.Equal("text survives a missing profile", archived.body)
+				var state string
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
+				checks.Equal("processed", state)
+				var name sql.NullString
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), archived.id).Scan(&name))
+				checks.Equal(wantName, name.String)
+				raw, at, err := f.st.LineProfileContext(t.Context(), f.source.ID, testUser)
+				if cached {
+					must.NoError(err)
+					checks.Equal(cachedRaw, raw)
+					checks.True(cachedAt.Equal(at), "a missing profile must leave the cache timestamp unchanged")
+				} else {
+					must.ErrorIs(err, sql.ErrNoRows)
+				}
+
+				message.Message.ID = "2"
+				message.WebhookEventID = "event-2"
+				f.enqueue(t, message, time.Time{})
+				f.run(t)
+				checks.Equal(2, f.api.Count(http.MethodGet, source.path), "the next event fetches a fresh profile")
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), f.archived(t, "2").id).Scan(&name))
+				checks.Equal("Example User", name.String)
+			})
+		}
+	}
+}
+
 func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -865,14 +922,13 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		other := "U00000000000000000000000000000003"
 		firstPath := "/v2/bot/group/" + testGroup + "/member/" + testUser
 		otherPath := "/v2/bot/group/" + testGroup + "/member/" + other
-		f.api.Enqueue(http.MethodGet, firstPath, lineapi.Response{Status: http.StatusNotFound}, lineapi.Response{Status: http.StatusNotFound})
+		f.api.Enqueue(http.MethodGet, firstPath, lineapi.Response{Status: http.StatusNotFound})
 		f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "members-joined", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: other}}}}, time.Time{})
 		f.run(t)
 		status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 		must.NoError(err)
-		checks.Equal(int64(1), status.Pending, "the failed profile remains scheduled for retry")
-		f.now = f.now.Add(24 * time.Hour)
-		f.run(t)
+		checks.Zero(status.Pending)
+		checks.Zero(status.Failed)
 		var name sql.NullString
 		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
 		checks.Equal("Example User", name.String)

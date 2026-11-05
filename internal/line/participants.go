@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -109,9 +110,12 @@ func (p *Processor) profile(ctx context.Context, source Source, userID string) (
 	if fresh {
 		return profile, nil
 	}
-	previousName := profile.DisplayName
+	previous := profile
 	profile, err = p.client.Profile(ctx, source, userID)
 	if err != nil {
+		if apiErr, ok := errors.AsType[*APIError](err); ok && apiErr.StatusCode == http.StatusNotFound {
+			return previous, nil
+		}
 		return profile, retryEvent(err)
 	}
 	if profile.UserID != userID {
@@ -125,7 +129,7 @@ func (p *Processor) profile(ctx context.Context, source Source, userID string) (
 	if err != nil {
 		return Profile{}, err
 	}
-	if err = p.store.UpdateLineParticipantNameContext(ctx, pid, previousName, profile.DisplayName); err != nil {
+	if err = p.store.UpdateLineParticipantNameContext(ctx, pid, previous.DisplayName, profile.DisplayName); err != nil {
 		return Profile{}, err
 	}
 	raw, err := json.Marshal(profile)
