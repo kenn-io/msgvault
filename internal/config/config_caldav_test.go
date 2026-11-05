@@ -12,7 +12,7 @@ import (
 
 func TestCalDAVConfigRejectsInvalidSources(t *testing.T) {
 	requirements := require.New(t)
-	for _, change := range []func(*CalDAVSource){func(s *CalDAVSource) { s.MaxEvents = -1 }, func(s *CalDAVSource) { s.MaxEvents = 200001 }, func(s *CalDAVSource) { s.URL = "http://calendar.example.org" }, func(s *CalDAVSource) { s.URL = "https://user:secret@calendar.example.org" }, func(s *CalDAVSource) { s.TimeZone = "Custom/Zone" }, func(s *CalDAVSource) { s.TimeZone = "Local" }, func(s *CalDAVSource) { s.Name = "../other" }, func(s *CalDAVSource) { s.PasswordFile = "" }, func(s *CalDAVSource) { s.Calendars = []string{"https://other.example.org/home/"} }} {
+	for _, change := range []func(*CalDAVSource){func(s *CalDAVSource) { s.MaxEvents = -1 }, func(s *CalDAVSource) { s.MaxEvents = 200001 }, func(s *CalDAVSource) { s.URL = "http://calendar.example.org" }, func(s *CalDAVSource) { s.URL = "https://user:secret@calendar.example.org" }, func(s *CalDAVSource) { s.TimeZone = "Custom/Zone" }, func(s *CalDAVSource) { s.TimeZone = "Local" }, func(s *CalDAVSource) { s.Name = "../other" }, func(s *CalDAVSource) { s.PasswordFile = "" }, func(s *CalDAVSource) { s.Calendars = []string{"https://other.example.org/home/"} }, func(s *CalDAVSource) { s.Calendars = []string{"http://calendar.example.org/home/"} }} {
 		src := CalDAVSource{Name: "personal", URL: "https://calendar.example.org/dav", Username: "owner@example.org", PasswordFile: "password", TimeZone: "UTC"}
 		cfg := NewDefaultConfig()
 		cfg.CalDAV.Sources = []CalDAVSource{src}

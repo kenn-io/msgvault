@@ -81,7 +81,7 @@ func (c *Config) validateCalDAV() error {
 		}
 		for _, raw := range s.Calendars {
 			collection, err := url.Parse(raw)
-			if err != nil || collection.Scheme != u.Scheme || !netguard.SameOrigin(collection, u) || collection.User != nil || collection.RawQuery != "" || collection.Fragment != "" || !strings.HasSuffix(collection.Path, "/") {
+			if err != nil || !netguard.SameOrigin(collection, u) || collection.User != nil || collection.RawQuery != "" || collection.Fragment != "" || !strings.HasSuffix(collection.Path, "/") {
 				return errors.New("caldav.calendars requires absolute same-origin collection URLs ending with slash")
 			}
 		}

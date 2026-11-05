@@ -131,10 +131,7 @@ func ParseCalDAVResource(ctx context.Context, raw []byte, calendarZone string) (
 		return nil, errors.New("CalDAV resource exceeds 1000 components")
 	}
 	seen := map[string]bool{}
-	for _, component := range calendar.Children {
-		if component.Name != ical.CompEvent {
-			continue
-		}
+	for _, component := range calendar.Events() {
 		for _, child := range component.Children {
 			if child.Name != ical.CompAlarm {
 				return nil, errors.New("unsupported nested CalDAV event component")
@@ -171,7 +168,7 @@ func calDAVCivilDate(p *ical.Prop) (string, error) {
 
 var calDAVParameterEscapes = strings.NewReplacer("^^", "^", "^n", "\n", "^N", "\n", "^'", "\"")
 
-func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Location) (CalDAVEvent, error) {
+func decodeCalDAVComponent(c ical.Event, calendarZone string, zone *time.Location) (CalDAVEvent, error) {
 	p := c.Props
 	// RFC 5545 enumerated parameter values are case-insensitive.
 	for _, values := range p {
@@ -225,8 +222,12 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	if err != nil {
 		return item, fmt.Errorf("CalDAV identity: %w", err)
 	}
-	if v := p.Get("STATUS"); v != nil {
-		e.Status = strings.ToLower(v.Value)
+	if p.Get(ical.PropStatus) != nil {
+		status, err := c.Status()
+		if err != nil {
+			return item, fmt.Errorf("CalDAV STATUS: %w", err)
+		}
+		e.Status = strings.ToLower(string(status))
 	}
 	if v := p.Get("SEQUENCE"); v != nil {
 		n, err := v.Int()

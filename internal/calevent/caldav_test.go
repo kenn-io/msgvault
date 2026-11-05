@@ -28,6 +28,7 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(events, 2)
 	master := events[0]
+	assertions.Equal("confirmed", master.Event.Status)
 	assertions.Equal("Planning, session", master.Summary)
 	assertions.Equal("series", master.Event.Kind)
 	assertions.Equal(time.Date(2027, 3, 7, 14, 0, 0, 0, time.UTC), *master.Event.Start)
@@ -108,6 +109,12 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 		name, body, wantErr string
 		check               func(*testing.T, []CalDAVEvent)
 	}{
+		{"tentative", "BEGIN:VEVENT\r\nUID:tentative\r\nDTSTART:20270314T130000Z\r\nSTATUS:tentative\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
+			t.Helper()
+			require.Len(t, events, 1)
+			assert.Equal(t, "tentative", events[0].Event.Status)
+		}},
+		{"invalid status", "BEGIN:VEVENT\r\nUID:invalid\r\nDTSTART:20270314T130000Z\r\nSTATUS:COMPLETED\r\nEND:VEVENT\r\n", "CalDAV STATUS", nil},
 		{"cancelled sparse", "BEGIN:VEVENT\r\nUID:day\r\nRECURRENCE-ID;VALUE=DATE:20270314\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
 			t.Helper()
 			require.Len(t, events, 1)
