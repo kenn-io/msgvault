@@ -116,7 +116,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 				Snippet: sql.NullString{String: textutil.PrefixRunes(a.Body, 200), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
 			BodyText: sql.NullString{String: a.Body, Valid: true}, Metadata: &metadata, RawMIME: raw, RawFormat: "line_push_receipt_json",
 			Recipients:     recipients,
-			PreserveLabels: true, FTS: &FTSDoc{Body: a.Body, FromAddr: senderName},
+			PreserveLabels: true, FTS: &FTSDoc{Body: a.Body},
 		}
 	}
 	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
