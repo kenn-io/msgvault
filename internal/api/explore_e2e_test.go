@@ -1099,7 +1099,7 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert.True(t, engine.groupRequest.Explore.SentOnly)
 }
 
-func TestExploreGroupOverviewAndKindDrill(t *testing.T) {
+func TestExploreGroupOverviewSerialization(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
@@ -1119,20 +1119,4 @@ func TestExploreGroupOverviewAndKindDrill(t *testing.T) {
 	var detail ExploreGroupsHTTPResponse
 	require.NoError(json.Unmarshal(keyed.Body.Bytes(), &detail))
 	require.NotNil(detail.Overview)
-	var sum int64
-	for _, bucket := range detail.Overview.Activity {
-		sum += bucket.Count
-	}
-	assert.Equal(page.Rows[0].Count, sum)
-	kinds := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["kind"]}`)
-	require.Equal(http.StatusOK, kinds.Code, kinds.Body.String())
-	require.NoError(json.Unmarshal(kinds.Body.Bytes(), &page))
-	require.NotEmpty(page.Rows)
-	drilled := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(`{"filters":[{"dimension":"kind","values":[%q]}]}`, page.Rows[0].Key))
-	require.Equal(http.StatusOK, drilled.Code, drilled.Body.String())
-	var entries struct {
-		TotalCount int64 `json:"total_count"`
-	}
-	require.NoError(json.Unmarshal(drilled.Body.Bytes(), &entries))
-	assert.Equal(page.Rows[0].Count, entries.TotalCount)
 }

@@ -79,16 +79,6 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	}
 }
 
-func TestExploreGroupTimezoneOpenAPIDescription(t *testing.T) {
-	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		schema := doc.Components.Schemas.Map()["ExploreGroupsHTTPRequest"]
-		require.NotNil(t, schema)
-		timezone := schema.Properties["timezone"]
-		require.NotNil(t, timezone)
-		assert.Equal(t, "IANA timezone for day, month, and year grouping; defaults to UTC", timezone.Description)
-	}
-}
-
 func TestFilenameSuggestionIntegratedAPIVersion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

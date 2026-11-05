@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -84,42 +85,37 @@ describe('MeetingPanel', () => {
   });
 });
 
-it('handles empty meeting activity and action filters', async () => {
-  {
-    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics')
-      ? meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 } })
-      : meetingActions()));
-    const controller = new MeetingsController(createMeetingsAPI(client));
-    const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
-    expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
-    await controller.setScope(scope);
-    expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
-    view.unmount(); controller.destroy();
-    const errorView = render(MeetingPanel, { client: createAPIClient(async () => Response.json({ error: 'meeting_scope_changed', message: 'Scope changed.' }, { status: 409 })), scope, hideWhenEmpty: true });
-    expect(await screen.findByRole('button', { name: 'Reload meeting activity' })).toBeDefined();
-    errorView.unmount();
-  }
-  {
-    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics') ? meetingMetrics() : meetingActions()));
-    const controller = new MeetingsController(createMeetingsAPI(client));
-    await controller.setScope(scope);
-    const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
-    expect(screen.queryByRole('button', { name: 'Apply action filters' })).toBeNull();
-    await controller.setFilters({ status: 'pending' });
-    expect(await screen.findByRole('button', { name: 'Apply action filters' })).toBeDefined();
-    view.unmount(); controller.destroy();
-  }
-  {
-    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
-    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics') ? meetingMetrics() : meetingActions()));
-    const controller = new MeetingsController(createMeetingsAPI(client));
-    await controller.setScope(scope);
-    const view = render(MeetingPanel, { client, scope, controller });
-    expect(screen.getByRole('button', { name: 'Apply action filters' })).toBeDefined();
-    view.unmount(); controller.destroy();
-  }
+it('hides meeting activity after an empty scope loads', async () => {
+  const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+  const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics')
+    ? meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 } })
+    : meetingActions()));
+  const controller = new MeetingsController(createMeetingsAPI(client));
+  const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
+  await controller.setScope(scope);
+  await tick();
+  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+  view.unmount();
+  controller.destroy();
+});
+
+it('shows reload on a scope error even when empty activity is hidden', async () => {
+  const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+  render(MeetingPanel, { client: createAPIClient(async () => Response.json({ error: 'meeting_scope_changed', message: 'Scope changed.' }, { status: 409 })), scope, hideWhenEmpty: true });
+  expect(await screen.findByRole('button', { name: 'Reload meeting activity' })).toBeDefined();
+});
+
+it('shows action filters in a hidden-when-empty panel only when a filter is set', async () => {
+  const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+  const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics') ? meetingMetrics() : meetingActions()));
+  const controller = new MeetingsController(createMeetingsAPI(client));
+  await controller.setScope(scope);
+  const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
+  expect(screen.queryByRole('button', { name: 'Apply action filters' })).toBeNull();
+  await controller.setFilters({ status: 'pending' });
+  expect(await screen.findByRole('button', { name: 'Apply action filters' })).toBeDefined();
+  view.unmount();
+  controller.destroy();
 });
 
 it('formats meeting activity months like grouped months', async () => {

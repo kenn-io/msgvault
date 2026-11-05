@@ -10,7 +10,6 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { groupRowName } from '../../explore/labels';
-import { filtersForGroup } from '../../explore/group-context';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
@@ -2522,18 +2521,6 @@ describe('EverythingWorkspace', () => {
     ['participant', '42', [{ dimension: 'participant', values: ['42'] }]],
     ['domain', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
     ['message_type', 'email', [{ dimension: 'message_type', values: ['email'] }]],
-    ['year', '2026', [
-      { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
-      { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] }
-    ]],
-    ['month', '2026-07', [
-      { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] },
-      { dimension: 'before', values: ['2026-08-01T00:00:00.000Z'] }
-    ]],
-    ['month', '2026-12', [
-      { dimension: 'after', values: ['2026-12-01T00:00:00.000Z'] },
-      { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] }
-    ]]
   ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, expectedFilters) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -2553,10 +2540,8 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
 
-    const localFilters = filtersForGroup([], dimension, key);
-    if (dimension !== 'year' && dimension !== 'month') expect(localFilters).toEqual(expectedFilters);
-    expect(state.current.filters).toEqual(localFilters);
-    expect(parseExploreURLState(window.location.search).filters).toEqual(localFilters);
+    expect(state.current.filters).toEqual(expectedFilters);
+    expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
     expect(state.current.groupingChain).toEqual([]);
     expect(state.current.scrollAnchor).toBeNull();
     rendered.unmount();

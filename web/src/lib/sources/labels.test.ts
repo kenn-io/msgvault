@@ -1,5 +1,4 @@
-import Mic from '@lucide/svelte/icons/mic';
-import { sourceDisplayName, sourceIcon } from './labels';
+import { sourceDisplayName } from './labels';
 import { describe, expect, it } from 'vitest';
 import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
@@ -75,5 +74,3 @@ it.each([
 ])('formats a %s source', (type, identifier, name) => {
  expect(sourceDisplayName(type, identifier!)).toBe(name);
 });
-
-it('uses the meeting icon for Granola', () => { expect(sourceIcon('granola')).toBe(Mic); });

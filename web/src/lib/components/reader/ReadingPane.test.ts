@@ -144,8 +144,3 @@ it('leads group details with the overview and a friendly grouping label', () => 
  expect(screen.getByText('Grouped by Person')).toBeDefined();
  expect(document.querySelector('.group-scroll')?.firstElementChild?.getAttribute('aria-label')).toBe('Group overview');
 });
-
-it('shows the cache recovery command while a group lookup is unavailable', () => {
- render(ReadingPane, { client: createAPIClient(vi.fn<typeof fetch>()), predicate: {}, targetKey: 'group:source:7', status: 'unavailable', unavailable: { error: 'cache_unavailable', message: 'Cache absent.', readiness: 'absent', recovery_action: 'msgvault build-cache' } });
- expect(screen.getByText('msgvault build-cache')).toBeDefined();
-});

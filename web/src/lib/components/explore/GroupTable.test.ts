@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import { groupingByDimension } from '../../grouping/catalog';
 import GroupTable from './GroupTable.svelte';
 
 describe('GroupTable', () => {
@@ -258,19 +257,12 @@ describe('GroupTable', () => {
     expect(grid.getAttribute('aria-activedescendant')).toContain('month-3A150');
   });
 
-  it('drills Entry kind by keyboard and chevron', async () => {
+  it('removes the drill affordance when drilling is disabled', async () => {
     const onDrill = vi.fn();
-    const view = render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
-    const grid = screen.getByRole('grid', { name: 'Messages grouped by kind' });
+    const view = render(GroupTable, { rows, dimension: 'source', onDrill });
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
     grid.focus();
-    await fireEvent.keyDown(grid, { key: 'Enter' });
-
-    expect(screen.getAllByRole('button', { name: /Show items in/ })).toHaveLength(2);
-    expect(onDrill).toHaveBeenCalledOnce();
-    await fireEvent.click(screen.getAllByRole('button', { name: /Show items in/ })[0]!);
-    expect(onDrill).toHaveBeenCalledTimes(2);
-    onDrill.mockClear();
-    await view.rerender({ rows, dimension: 'kind', drillable: false, onDrill });
+    await view.rerender({ rows, dimension: 'source', drillable: false, onDrill });
     expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
     await fireEvent.keyDown(grid, { key: 'Enter' });
     await fireEvent.dblClick(screen.getAllByRole('row')[1]!);

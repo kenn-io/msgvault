@@ -1,3 +1,4 @@
+import Mic from '@lucide/svelte/icons/mic';
 import { groupRowName } from './labels';
 import { describe, expect, it } from 'vitest';
 
@@ -117,4 +118,8 @@ it.each([
  ['kind', 'meeting', 'meeting', 'Meeting']
 ] as const)('formats %s group names', (dimension, key, label, name) => {
  expect(groupRowName(dimension, key, label).name).toBe(name);
+});
+
+it('uses the meeting icon for a Granola source group', () => {
+  expect(groupRowName('source', '7', 'fixture-granola', 'granola').icon).toBe(Mic);
 });

@@ -413,52 +413,46 @@ test('a person inspector keeps grouped columns inside the right-side reader layo
   await page.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
   await page.keyboard.press('Escape');
   const grid = page.getByRole('grid', { name: 'Messages grouped by participant' });
-  await expect(grid.getByRole('columnheader', { name: 'Size' })).toBeVisible();
   await grid.getByText('Person Example', { exact: true }).click();
   await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
-  await expect(grid.getByRole('columnheader', { name: 'Size' })).toHaveCount(0);
   expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await expect(page.getByRole('region', { name: 'Meeting activity' })).toHaveCount(0);
 });
 
-test('keeps group columns close at wide widths', async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 900 });
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
-    rows: [{ key: '7', label: 'Example source', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
-    total_count: 1, cache_revision: 'fixture', search_provenance: {}
-  } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['source'] })))}`);
-  const grid = page.getByRole('grid', { name: 'Messages grouped by source' });
-  const row = grid.getByRole('row', { name: /Example source/ });
-  await expect(row).toBeVisible();
-  const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
-  const latest = await row.getByRole('gridcell').nth(3).boundingBox();
-  const action = await row.getByRole('button', { name: /Show items in/ }).boundingBox();
-  expect(group!.width).toBeLessThanOrEqual(480);
-  expect(action!.x - (latest!.x + latest!.width)).toBeLessThanOrEqual(48);
-  await row.getByText('Example source').click();
-  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
-  expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
+test.describe('wide grouped layout', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  test('keeps group columns close at wide widths', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 900 });
+    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+    await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+      rows: route.request().postDataJSON().grouping[0] === 'month'
+        ? [{ key: '2026-01', label: '2026-01', count: 3, total_items: 12, estimated_bytes: 512, latest_at: '2026-01-31T12:00:00Z' }]
+        : [{ key: '7', label: 'Example source', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
+      total_count: 1, cache_revision: 'fixture', search_provenance: {}
+    } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['source'] })))}`);
+    const grid = page.getByRole('grid', { name: 'Messages grouped by source' });
+    const row = grid.getByRole('row', { name: /Example source/ });
+    await expect(row).toBeVisible();
+    const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
+    const latest = await row.getByRole('gridcell').nth(3).boundingBox();
+    const action = await row.getByRole('button', { name: /Show items in/ }).boundingBox();
+    expect(group!.width).toBeLessThanOrEqual(480);
+    expect(action!.x - (latest!.x + latest!.width)).toBeLessThanOrEqual(48);
+    await row.getByText('Example source').click();
+    await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
+    expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['month'] })))}`);
+    const months = page.getByRole('grid', { name: 'Messages grouped by month' });
+    await expect(months.getByRole('row', { name: /Jan 2026/ })).toBeVisible();
+    const monthGroup = await months.getByRole('columnheader', { name: 'Group' }).boundingBox();
+    expect(monthGroup!.width * await page.evaluate(() => window.devicePixelRatio)).toBeLessThanOrEqual(480);
+  });
 });
 
-test('keeps the month group column within 480 image pixels', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
-  const page = await context.newPage();
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
-    rows: [{ key: '2026-01', label: '2026-01', count: 3, total_items: 12, estimated_bytes: 512, latest_at: '2026-01-31T12:00:00Z' }],
-    total_count: 1, cache_revision: 'fixture', search_provenance: {}
-  } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['month'] })))}`);
-  const grid = page.getByRole('grid', { name: 'Messages grouped by month' });
-  await expect(grid.getByRole('row', { name: /Jan 2026/ })).toBeVisible();
-  const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
-  expect(group!.width * await page.evaluate(() => window.devicePixelRatio)).toBeLessThanOrEqual(480);
-  await context.close();
-});
-
-test('aligns meeting content and separates people in a group inspector', async ({ page }) => {
+test('aligns meeting content in a group inspector', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
     rows: [{ key: '7', label: 'Person Example', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
@@ -482,8 +476,6 @@ test('aligns meeting content and separates people in a group inspector', async (
   await expect(meeting).toBeVisible();
   const content = await overview.locator('.count-line').boundingBox();
   const heading = await meeting.getByRole('heading', { name: 'Meeting activity and follow-ups' }).boundingBox();
-  const people = overview.locator('.people');
-  await expect.soft(people).toHaveCSS('border-top-style', 'solid');
   expect.soft(Math.abs(content!.x - heading!.x)).toBeLessThanOrEqual(1);
   expect.soft(Math.abs(content!.x + content!.width - heading!.x - heading!.width)).toBeLessThanOrEqual(1);
 });

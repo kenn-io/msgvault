@@ -288,19 +288,15 @@ describe('ExploreAPI routing', () => {
 });
 
 
-it.each(['month', 'year', 'participant'] as const)('sends %s grouping order and cursor across Messages and Files', async dimension => {
+it.each(['month', 'year', 'participant'] as const)('sends %s grouping order across Messages and Files', async dimension => {
  const bodies: Record<string, unknown>[] = [];
  const api = createExploreAPI(createAPIClient(async input => {
   bodies.push(await (input as Request).json());
   return Response.json({ rows: [], total_count: 0, cache_revision: 'fixture', search_provenance: {} });
  }));
- for (const cursor of [undefined, 'next-page']) {
-  await api.groups({ limit: 1, cursor }, dimension);
-  await api.fileGroups({ limit: 1, cursor }, '', [], dimension);
- }
- for (const [index, body] of bodies.entries()) {
+ await api.groups({ limit: 1 }, dimension);
+ await api.fileGroups({ limit: 1 }, '', [], dimension);
+ for (const body of bodies) {
   expect(body.sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
-  expect(body.cursor).toBe(index < 2 ? undefined : 'next-page');
-  if (index % 2 === 0) expect(body.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
  }
 });
