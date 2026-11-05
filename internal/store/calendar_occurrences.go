@@ -78,12 +78,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			continue
 		}
 		if tombstones[calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}] {
-			row.Event.Status = "cancelled"
+			row.Event.Status = SyncStatusCancelled
 			byID[row.MessageID] = *row
 			key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
 			for j := range exceptions[key] {
 				if exceptions[key][j].MessageID == row.MessageID {
-					exceptions[key][j].Event.Status = "cancelled"
+					exceptions[key][j].Event.Status = SyncStatusCancelled
 				}
 			}
 		}
@@ -215,7 +215,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == "cancelled" && row.rawFormat != rawFormatICS {
+	if row.Event.Kind == "single" || row.Event.Status == SyncStatusCancelled && row.rawFormat != rawFormatICS {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"

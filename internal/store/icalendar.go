@@ -463,7 +463,7 @@ func icsExceptionSuperseded(ctx context.Context, tx *loggedTx, sourceID int64, i
 	if err != nil {
 		return false, fmt.Errorf("read ICS master revision: %w", err)
 	}
-	if !icsRevisionOrderNewer(master.Sequence, master.Stamp, c.Sequence, c.Stamp) {
+	if !icsRevisionOrderNewer(master.Sequence, master.Stamp, item.meta.Sequence, item.meta.Stamp) {
 		return false, nil
 	}
 	for _, candidate := range incoming {
