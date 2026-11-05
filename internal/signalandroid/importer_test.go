@@ -66,7 +66,7 @@ func expectedMessages() map[string]importedMessage {
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply): {
 			conversation: direct, body: "Replying", fromMe: true, replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1),
 		},
-		"signal:group-v1:AP8:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10):                          {conversation: "signal:group-v1:AP8", body: "Old group text"},
+		"signal:group-v1:ABEiM0RVZneImaq7zN3u_w:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10):       {conversation: "signal:group-v1:ABEiM0RVZneImaq7zN3u_w", body: "Old group text"},
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TQuoteDraft): {
 			conversation: direct, body: "Nice draft", replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),

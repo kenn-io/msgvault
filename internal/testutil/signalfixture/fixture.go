@@ -127,10 +127,10 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 	exec(recipientSQL, id(3), nil, BobACI, nil, nil, "Bob Example")
 	exec(recipientSQL, id(4), CarolPhone, CarolACI, nil, "Carol Example", nil)
 	exec(recipientSQL, id(5), nil, nil, "__signal_group__v2__!"+GroupHex, nil, nil)
-	exec(recipientSQL, id(6), nil, nil, "__textsecure_group__!00ff", nil, nil)
+	exec(recipientSQL, id(6), nil, nil, "__textsecure_group__!00112233445566778899aabbccddeeff", nil, nil)
 
 	exec(`INSERT INTO groups (group_id, recipient_id, title) VALUES (?, ?, ?), (?, ?, ?)`,
-		"__signal_group__v2__!"+GroupHex, id(5), "Example Group", "__textsecure_group__!00ff", id(6), "Old Group")
+		"__signal_group__v2__!"+GroupHex, id(5), "Example Group", "__textsecure_group__!00112233445566778899aabbccddeeff", id(6), "Old Group")
 	exec(`INSERT INTO group_membership (group_id, recipient_id) VALUES (?, ?), (?, ?), (?, ?)`,
 		"__signal_group__v2__!"+GroupHex, id(1), "__signal_group__v2__!"+GroupHex, id(2), "__signal_group__v2__!"+GroupHex, id(3))
 
