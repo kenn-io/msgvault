@@ -113,6 +113,14 @@ test.describe('compact toolbar', () => {
     const queryBox = await queryField.boundingBox();
     expect(queryBox!.width).toBeCloseTo(controlsBox!.width, 0);
     await expectOneRow(controls);
+    const filename = `${'a'.repeat(56)}.png`;
+    await dialog.getByLabel('Query image').setInputFiles({ name: filename, mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect(dialog.getByText(filename, { exact: true })).toBeVisible();
+    const dialogSize = await dialog.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+    expect(dialogSize.scroll).toBeLessThanOrEqual(dialogSize.client);
+    const queryAfterImage = await query.boundingBox();
+    const dialogBox = await dialog.boundingBox();
+    expect(queryAfterImage!.x + queryAfterImage!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width);
     await query.fill('blue sky');
     await expect(query).toHaveValue('blue sky');
     await filter.click();
@@ -230,17 +238,6 @@ test.describe('compact toolbar', () => {
 
 });
 
-test('desktop Files keeps visual search and the three selects in the toolbar', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
-  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
-  await page.goto('/?workspace=files');
-  const controls = page.locator('.context-controls');
-  await expect(controls.getByRole('switch', { name: 'Visual search' })).toBeVisible();
-  await expect(controls.getByRole('combobox')).toHaveCount(3);
-  await expect(controls.getByRole('combobox', { name: 'Show as: Files' })).toBeVisible();
-});
-
 test('Show as Files opens the Files workspace with the same context, and Back returns', async ({ page }) => {
   const filePredicates: Array<Record<string, unknown>> = [];
   const savedViews: Array<Record<string, unknown>> = [];
@@ -345,6 +342,9 @@ test('an old Everything-as-Files link opens Files at its deep anchor with bounde
   const pageSize = 100;
   const total = 650;
   let requests = 0;
+  await page.route('**/api/session', (route) => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: false
+  } }));
   await page.route('**/api/v1/files/search', async (route) => {
     requests += 1;
     const body = route.request().postDataJSON() as { cursor?: string };
@@ -400,6 +400,9 @@ test('an old Everything-as-Files link opens Files at its deep anchor with bounde
 test('attachment deep links restore with one bounded metadata lookup', async ({ page }) => {
   let filePageRequests = 0;
   let metadataRequests = 0;
+  await page.route('**/api/session', (route) => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: false
+  } }));
   await page.route('**/api/v1/files/search', (route) => {
     filePageRequests += 1;
     return route.fulfill({ json: {

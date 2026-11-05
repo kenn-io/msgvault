@@ -260,6 +260,9 @@
   }
 
   .popover-extra {
+    min-width: 0;
+    overflow-wrap: anywhere;
+
     :global(.file-controls > label:has(.kit-search-input, input[type="file"])) {
       display: grid;
       width: 100%;
