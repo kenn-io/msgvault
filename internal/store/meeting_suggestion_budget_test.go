@@ -23,3 +23,18 @@ func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions.Equal(30, page.Suggestions[0].OverlapMinutes)
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
 }
+
+func TestIndependentReviewReadableSuggestionsWithOverBudgetEvidence(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 201 {
+		raw := fmt.Sprintf(`{"id":"old-%d","iCalUID":"crowded@example.org","start":{"dateTime":"2020-01-01T10:00:00Z"},"end":{"dateTime":"2020-01-01T11:00:00Z"}}`, i)
+		calendarFixture(t, st, fmt.Sprintf("old-%d", i), raw)
+	}
+	_, event := calendarFixture(t, st, "readable", singleLinkRaw("readable", "readable@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	requirements.NoError(err)
+	requirements.Len(page.Suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), page.Suggestions[0].Ref)
+}

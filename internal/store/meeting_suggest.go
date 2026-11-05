@@ -272,7 +272,7 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		refs := map[string]bool{}
 		matched := map[meetingIdentity]bool{}
 		occurrences, err := s.meetingMemberOccurrences(ctx, r, suggestion.MemberMessageID, budget)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrQueryTooBroad) && !errors.Is(err, calrecur.ErrBudgetExceeded) {
 			return nil, err
 		}
 		for _, o := range occurrences {
