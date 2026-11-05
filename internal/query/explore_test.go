@@ -1380,6 +1380,28 @@ func entryKinds(rows []EntryRow) []EntryKind {
 	return kinds
 }
 
+func TestExploreCounterpartExcludesRoom(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.com")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	b.AddOwnerParticipant(source, owner)
+	message := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+	b.AddFrom(message, owner, "Owner")
+	b.AddTo(message, room, "Room")
+	b.AddTo(message, alice, "Alice")
+	fast, legacy := runExploreBothPaths(t, b.BuildEngine(), ExploreRequest{})
+	for _, response := range []*ExploreResponse{fast, legacy} {
+		requirements.Len(response.Rows, 1)
+		requirements.NotNil(response.Rows[0].CounterpartParticipantID)
+		assertions.Equal(alice, *response.Rows[0].CounterpartParticipantID)
+		assertions.Contains(response.Rows[0].ParticipantIDs, room)
+	}
+}
+
 // TestExploreCounterpartParticipantIDExcludesOwner verifies
 // counterpart_participant_id is the smallest NON-owner participant on the
 // entry, not simply participant_ids[0]: the owner is added first (so it has

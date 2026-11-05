@@ -161,6 +161,31 @@ func TestLinkedRoomActivityStaysWithPerson(t *testing.T) {
 	assertions.Equal(alice, canonical)
 }
 
+func TestRoomOnlyClusterIsAbsent(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room A")
+	otherRoom := b.AddParticipant("room@floor.resource.calendar.google.com", "floor.resource.calendar.google.com", "Room B")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	b.LinkCluster(room, otherRoom)
+	message := b.AddMessage(MessageOpt{SourceID: source})
+	b.AddFrom(message, alice, "Alice")
+	b.AddTo(message, room, "Room A")
+	b.AddTo(message, otherRoom, "Room B")
+	engine := b.BuildEngine()
+	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
+		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: filter}, Page: PageSpec{Limit: 10}})
+		requirements.NoError(err)
+		requirements.Len(people.Rows, 1)
+		assertions.Equal(alice, people.Rows[0].ID)
+	}
+	completion, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "Room", Limit: 10})
+	requirements.NoError(err)
+	assertions.Empty(completion.Rows)
+}
+
 func TestRoomPersonDetailIsAbsent(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
