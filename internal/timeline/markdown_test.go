@@ -8,7 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMarkdownDayGolden(t *testing.T) { golden(t, "day.md", []byte(Markdown(sampleTimeline()))) }
+func TestMarkdownDayGolden(t *testing.T) {
+	v := sampleTimeline()
+	v.Omitted.Budget["entry_fields"] = 1
+	golden(t, "day.md", []byte(Markdown(v)))
+}
 func TestMarkdownRelationshipGolden(t *testing.T) {
 	v := sampleTimeline()
 	v.Mode = ModeRelationship

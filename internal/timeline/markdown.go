@@ -162,6 +162,9 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	}
 	var omitted []string
 	for section, n := range t.Omitted.Budget {
+		if section == "entry_fields" || section == "open_loops" {
+			continue
+		}
 		omitted = append(omitted, fmt.Sprintf("%s %v", section, n))
 	}
 	sort.Strings(omitted)

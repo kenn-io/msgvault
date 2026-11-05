@@ -18,7 +18,7 @@ func (s *Store) ListColdActivityMessagesContext(ctx context.Context, q MessageQu
 	if window.After == nil && window.Before == nil {
 		window.After = new(time.Time)
 	}
-	groups, _, err := s.coldActivityGroupsContext(ctx, window)
+	groups, err := s.coldActivityGroupsContext(ctx, window)
 	if err != nil {
 		return nil, err
 	}
