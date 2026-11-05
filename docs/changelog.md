@@ -6,6 +6,15 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+### Other changes
+
+- Resumed Gmail full syncs preserve their starting History point so the next
+  incremental sync catches mail that arrived meanwhile. A full sync interrupted
+  under an earlier release starts from the first page once; previously archived
+  messages aren't downloaded again.
+
 ## 0.23.0
 <small>2026-11-04</small>
 

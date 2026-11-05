@@ -13,14 +13,19 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func gmailTransportClient(t *testing.T, transport http.RoundTripper) *gmail.Client {
+	t.Helper()
+	old := http.DefaultClient
+	http.DefaultClient = &http.Client{Transport: transport}
+	t.Cleanup(func() { http.DefaultClient = old })
+	return gmail.NewClient(nil, gmail.WithConcurrency(1))
+}
+
 func gmailCoverageTransportEnv(t *testing.T) (*TestEnv, *gmailCoverageTransport) {
 	t.Helper()
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	return e, f
 }
 
@@ -102,21 +107,23 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 }
 
 func TestGmailCoverageRejectsOldCheckpoint(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fingerprinted", true: "untyped"}[legacy], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		fingerprint any
+	}{
+		{name: "fingerprinted", fingerprint: "full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+		{name: "untyped"},
+		{name: "previous_release", fingerprint: "full:v2-spam-trash:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			require := require.New(t)
 
 			e, f := gmailCoverageTransportEnv(t)
 			f.failPage = true
 			_, err := e.Syncer.Full(e.Context, testEmail)
 			require.Error(err)
-			// Model an interrupted pre-coverage traversal whose next-page token is unsafe.
-			// This is the pre-coverage fingerprint for an unfiltered, unlimited Gmail full.
-			fingerprint := any("full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18")
-			if legacy {
-				fingerprint = nil
-			}
-			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?", fingerprint)
+			// Model an older unfiltered, unlimited Gmail full request.
+			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?, cursor_after=NULL", scenario.fingerprint)
 			require.NoError(err)
 			f.requests = nil
 			gmailCoverageReopen(t, e)
