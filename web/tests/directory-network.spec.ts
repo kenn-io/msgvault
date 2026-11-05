@@ -50,12 +50,13 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(list).not.toContainText('Message-only Contact');
   await expect(page.locator('.person-network svg')).toHaveAttribute('aria-hidden', 'true');
 
-  await page.getByRole('button', { name: 'Shared Organization' }).click();
+  const network = page.getByRole('region', { name: 'Directory network', exact: true });
+  await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Edit Shared Organization' });
   await expect(organizationEditor).toBeVisible();
   await organizationEditor.getByRole('button', { name: 'Close organization editor' }).click();
 
-  await page.getByRole('button', { name: 'Curated Peer' }).first().click();
+  await network.getByRole('button', { name: 'Curated Peer' }).click();
   await expect(page).toHaveURL(/directoryPersonID%22%3A43/);
   await expect(page.getByRole('heading', { name: 'Curated Peer' })).toBeVisible();
 });

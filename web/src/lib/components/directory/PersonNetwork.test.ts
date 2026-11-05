@@ -58,7 +58,7 @@ function deferredResponse() {
 }
 
 describe('PersonNetwork', () => {
-  it('centers relation chips on cross-column and same-column lines and opens records', async () => {
+  it('centers cross-column chips, lists same-column relations, and opens records', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(connected())));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
@@ -73,15 +73,17 @@ describe('PersonNetwork', () => {
     ]);
     const lines = container.querySelectorAll('line');
     const chips = container.querySelectorAll<HTMLElement>('.edge-label');
-    expect(chips).toHaveLength(3);
+    expect(chips).toHaveLength(2);
+    expect(lines).toHaveLength(2);
+    expect(container.querySelector('.same-column')?.textContent).toBe('Curated Peer · Engineer · Shared Organization');
     for (const index of [0, 1]) {
       const line = lines[index]!;
       expect(parseFloat(chips[index]!.style.left)).toBe((Number(line.getAttribute('x1')) + Number(line.getAttribute('x2'))) / 2);
       expect(parseFloat(chips[index]!.style.top)).toBe((Number(line.getAttribute('y1')) + Number(line.getAttribute('y2'))) / 2);
     }
     expect(lines[0]!.getAttribute('x1')).not.toBe(lines[0]!.getAttribute('x2'));
-    expect(lines[1]!.getAttribute('x1')).toBe(lines[1]!.getAttribute('x2'));
-    expect(Math.abs(Number(lines[1]!.getAttribute('y1')) - Number(lines[1]!.getAttribute('y2')))).toBe(112);
+    expect(parseFloat(chips[0]!.style.maxWidth)).toBe(Number(lines[0]!.getAttribute('x2')) - Number(lines[0]!.getAttribute('x1')) - 8);
+    expect(chips[0]!.title).toBe('works with');
     await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
@@ -96,7 +98,7 @@ describe('PersonNetwork', () => {
     const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async () => Response.json(network))), 7);
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByText('works with · mentored by');
-    expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
+    expect(container.querySelectorAll('.edge-label')).toHaveLength(2);
     expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(4);
   });
 
