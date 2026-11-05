@@ -21,7 +21,7 @@ function loadingTask(pages: Array<{ width: number; height: number }>) {
   const document = {
     numPages: pages.length,
     getPage: vi.fn(async (number: number) => ({
-      getViewport: (_options: { scale: number }) => pages[number - 1]!,
+      getViewport: ({ scale }: { scale: number }) => ({ ...pages[number - 1]!, scale, userUnit: 1 }),
       render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
       getTextContent: async () => ({ items: [] }),
       cleanup
@@ -42,7 +42,7 @@ describe('PDF preview resource bounds', () => {
       const task = loadingTask(Array.from({ length: count }, () => ({ width: 612, height: 792 })));
       const document = await task.promise;
       document.getPage.mockImplementation(async () => ({
-        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale, scale, userUnit: 1 }),
         render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
         getTextContent: async () => ({ items: [] }),
         cleanup: task.cleanup
@@ -125,7 +125,7 @@ describe('PDF preview resource bounds', () => {
 
 function pageFixture() {
   return {
-    getViewport: () => ({ width: 10, height: 10 }),
+    getViewport: ({ scale }: { scale: number }) => ({ width: 10, height: 10, scale, userUnit: 1 }),
     render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
     getTextContent: async () => ({ items: [] }),
     cleanup: vi.fn()

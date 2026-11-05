@@ -1,5 +1,5 @@
 import { GlobalWorkerOptions, TextLayer, getDocument, version } from 'pdfjs-dist';
-import 'pdfjs-dist/web/pdf_viewer.css';
+import './pdf-viewer.css';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 export const PDFJS_PINNED_VERSION = '5.4.296';
@@ -47,7 +47,7 @@ export async function renderPDF(
       const viewport = page.getViewport({ scale });
       section.style.width = `${viewport.width}px`;
       section.style.height = `${viewport.height}px`;
-      section.style.setProperty('--total-scale-factor', String(scale));
+      section.style.setProperty('--total-scale-factor', String(viewport.scale * viewport.userUnit));
       layer.update({ viewport });
     }
   };
@@ -126,8 +126,9 @@ export async function renderPDF(
       const textLayer = host.ownerDocument.createElement('div');
       textLayer.className = 'textLayer';
       textLayer.setAttribute('aria-label', `Text from PDF page ${pageNumber}`);
-      const layer = new TextLayer({ textContentSource: text, container: textLayer, viewport: page.getViewport({ scale: 1.25 }) });
-      section.style.setProperty('--total-scale-factor', '1.25');
+      const textViewport = page.getViewport({ scale: 1.25 });
+      const layer = new TextLayer({ textContentSource: text, container: textLayer, viewport: textViewport });
+      section.style.setProperty('--total-scale-factor', String(textViewport.scale * textViewport.userUnit));
       section.append(textLayer);
       layers.push({ section, layer, page });
       resize();
