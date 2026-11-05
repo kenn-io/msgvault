@@ -159,9 +159,13 @@ describe('AppShell', () => {
     rendered.unmount(); state.destroy();
   });
 
-  it('finds people using the palette query', async () => {
-    window.history.replaceState(null, '', '/?workspace=everything');
+  it.each([
+    { relationshipFacet: 'domains' as const, peopleDuplicates: false },
+    { relationshipFacet: 'people' as const, peopleDuplicates: true },
+  ])('finds people using the palette query from $relationshipFacet with duplicates=$peopleDuplicates', async startingPoint => {
+    window.history.replaceState(null, '', '/?workspace=relationships');
     const state = new ExploreState(window);
+    state.commitNavigation(startingPoint);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
@@ -169,8 +173,77 @@ describe('AppShell', () => {
     await fireEvent.click(within(palette).getByRole('option', { name: 'Find person…' }));
     expect(state.current.workspace).toBe('relationships');
     expect(state.current.identityQuery).toBe('Example');
+    expect(state.current.relationshipFacet).toBe('people');
+    expect(state.current.peopleDuplicates).toBe(false);
     expect(screen.getByRole('searchbox', { name: 'Filter people' })).toHaveProperty('value', 'Example');
     rendered.unmount(); state.destroy();
+  });
+
+  it('retries the same failed archive search from the palette', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    let searchRequests = 0;
+    const client = createAPIClient(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname.endsWith('/explore') && (await (input as Request).json()).query === 'zzzxxyy') {
+        searchRequests += 1;
+        return searchRequests === 1
+          ? Response.json({ message: 'Search temporarily failed' }, { status: 500 })
+          : Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      }
+      return Response.json(exploreResponse());
+    });
+    const rendered = render(AppShell, { client, state });
+    try {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'zzzxxyy' } });
+      await fireEvent.click(within(palette).getByRole('option', { name: /Search archive/ }));
+      await screen.findByText('Search temporarily failed');
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'zzzxxyy' } });
+      await fireEvent.click(within(palette).getByRole('option', { name: /Search archive/ }));
+      await screen.findByText('Synthetic subject 1');
+      expect(searchRequests).toBe(2);
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('keeps a recent saved view across reloads while views load late and another command runs', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    let delayViews = false;
+    let finishViews!: (response: Response) => void;
+    const pendingViews = new Promise<Response>(resolve => { finishViews = resolve; });
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/saved-views')) return delayViews ? pendingViews : Response.json({ saved_views: [view(3, 'Project notes')] });
+      return Response.json(exploreResponse());
+    });
+    let rendered = render(AppShell, { client, state });
+    try {
+      await screen.findByRole('button', { name: 'Project notes actions' });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Project notes' }));
+      rendered.unmount();
+      delayViews = true;
+      rendered = render(AppShell, { client, state });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'People' }));
+      finishViews(Response.json({ saved_views: [view(3, 'Project notes')] }));
+      await screen.findByRole('button', { name: 'Project notes actions' });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      const options = within(palette).getAllByRole('option');
+      expect(options[0].textContent?.trim()).toBe('People');
+      expect(options[1].textContent?.trim()).toBe('Project notes');
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:relationships', 'view:3']);
+    } finally {
+      finishViews(Response.json({ saved_views: [] }));
+      rendered.unmount(); state.destroy();
+    }
   });
 
   it('opens the palette on Messages and remembers People across remounts', async () => {

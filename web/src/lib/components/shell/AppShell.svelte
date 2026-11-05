@@ -543,12 +543,11 @@
   const everythingSession = new EverythingSessionState();
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => loader.errorKind ?? (exploreState.current.query.trim() ? 'search' : 'other')); });
-  function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
+  function submitGlobalSearch(query: string, mode: ExploreSearchMode, workspace: ExploreWorkspace = exploreState.current.workspace): void {
     loader.submitted = true;
     loader.retry();
-    const workspace = exploreState.current.workspace;
     if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
-    if (workspace === 'everything' || workspace === 'files') {
+    if (workspace === exploreState.current.workspace && (workspace === 'everything' || workspace === 'files')) {
       commitSearch(query, mode);
       focusGrid();
       return;
@@ -1050,7 +1049,7 @@
   )).slice(0, 5));
   $effect(() => {
     try {
-      localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(recentIds));
+      localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(paletteRecent));
     } catch {
       // Keep recents for this page when storage is disabled.
     }
@@ -1063,12 +1062,11 @@
   }
   function runPalette(command: PaletteCommand, query: string): void {
     if (command.id === 'search:archive') {
-      beforeCommit();
-      exploreState.commitSearchIn('everything', query, exploreState.current.searchMode);
+      submitGlobalSearch(query, exploreState.current.searchMode, 'everything');
     } else if (command.id === 'search:person') {
-      commitNavigation({ workspace: 'relationships', identityQuery: query });
+      commitNavigation({ workspace: 'relationships', identityQuery: query, relationshipFacet: 'people', peopleDuplicates: false, relationshipTarget: null, directoryPersonID: null, relationshipFiles: false });
     } else {
-      paletteRecent = [command.id, ...recentIds.filter(id => id !== command.id)].slice(0, 5);
+      paletteRecent = [command.id, ...paletteRecent.filter(id => id !== command.id)];
       [...commandRegistry, ...groupingCommands, ...shellCommands].find(({ id }) => id === command.id)?.run();
     }
   }
