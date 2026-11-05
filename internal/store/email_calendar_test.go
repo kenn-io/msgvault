@@ -147,19 +147,26 @@ func emailEvents(t *testing.T, st *Store, source int64) []int64 {
 	return ids
 }
 
-func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
+func TestEmailCalendarSourceCountsIncludeDerivedEvents(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, source := persistInviteEmail(t, st, "count-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
 	requirements.Len(emailEvents(t, st, source), 1)
+	stats, err := st.GetStats()
+	requirements.NoError(err)
+	assertions.Equal(int64(2), stats.MessageCount)
+	counts, err := st.CountMessagesBySourceContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(stats.MessageCount, counts[source].Live)
+
 	gcalData, _ := calendarFixture(t, st, "count-gcal", calendarRaw)
-	_, err := st.PersistMessageContext(t.Context(), gcalData)
+	_, err = st.PersistMessageContext(t.Context(), gcalData)
 	requirements.NoError(err)
 	icsSourceID := icsSource(t, st)
 	_, err = st.PersistICalendarContext(t.Context(), icsSourceID, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
 	requirements.NoError(err)
-	counts, err := st.CountMessagesBySourceContext(t.Context())
+	counts, err = st.CountMessagesBySourceContext(t.Context())
 	requirements.NoError(err)
 	for _, sourceID := range []int64{source, gcalData.Message.SourceID, icsSourceID} {
 		live, err := st.CountMessagesForSourceContext(t.Context(), sourceID)
@@ -168,7 +175,11 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 		raw, err := st.CountMessagesWithRaw(sourceID)
 		requirements.NoError(err)
 		assertions.Equal(int64(1), raw)
-		assertions.Equal(int64(1), counts[sourceID].Live)
+		wantListingCount := int64(1)
+		if sourceID == source {
+			wantListingCount = 2
+		}
+		assertions.Equal(wantListingCount, counts[sourceID].Live)
 	}
 }
 
