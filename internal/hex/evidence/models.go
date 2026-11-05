@@ -175,6 +175,8 @@ func (m Meeting) Validate() error {
 		return invalid
 	}
 	switch m.TranscriptState {
+	// Earlier recorder versions archived unreadable snapshots. Keep accepting
+	// this state so existing version-1 evidence can be queried and replaced.
 	case "final", "rolling", "missing", "unreadable":
 	default:
 		return invalid
