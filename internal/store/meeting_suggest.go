@@ -284,7 +284,13 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 			if err == nil {
 				refs[formatMeetingOccurrence(o.Ref)] = true
 				matched[o.Identity] = true
-			} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			} else if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				identity, err := storedMeetingIdentity(ctx, r, d.Ref, budget)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				matched[identity] = true
+			} else {
 				return nil, err
 			}
 		}

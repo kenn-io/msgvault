@@ -66,14 +66,13 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 			return err
 		}
 		for _, d := range decisions {
-			rows, err := meetingEventRowsByID(ctx, r, d.Ref.MessageID, &budget)
+			identity, err := storedMeetingIdentity(ctx, r, d.Ref, &budget)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
-			if len(rows) == 0 {
-				continue
-			}
-			identity := occurrenceFromRow(rows[0], d.Ref.Key).Identity
 			if identity != target.Identity {
 				previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
 				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
@@ -93,6 +92,17 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		_, err = tx.ExecContext(ctx, meetingDecisionUpsert, memberID, target.Ref.MessageID, target.Ref.Key, decision)
 		return err
 	})
+}
+
+func storedMeetingIdentity(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (meetingIdentity, error) {
+	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
+	if err != nil {
+		return meetingIdentity{}, err
+	}
+	if len(rows) != 1 {
+		return meetingIdentity{}, sql.ErrNoRows
+	}
+	return occurrenceFromRow(rows[0], ref.Key).Identity, nil
 }
 
 // Retain the original decisions for undo; purge removes only that hidden copy.
