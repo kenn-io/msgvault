@@ -124,15 +124,11 @@ func messageID(chatID, authorToken string, dateSent int64) string {
 }
 
 // conversationIdentity maps a chat recipient to its source conversation ID
-// and type. ok is false for chats the importer does not read: legacy (v1)
-// and MMS groups, story distribution lists and call links.
+// and type. ok is false for chats the importer does not read: MMS groups,
+// story distribution lists and call links.
 func conversationIdentity(r sigRecipient, archived map[string]bool) (sourceConvID, convType string, ok bool) {
 	if r.GroupID != "" {
-		id, isV2 := groupV2Identifier(r.GroupID)
-		if !isV2 {
-			return "", "", false
-		}
-		return groupPrefix + id, "group_chat", true
+		return groupIdentity(r.GroupID)
 	}
 	if r.ACI != "" && archived[directACIPrefix+r.ACI] {
 		return directACIPrefix + r.ACI, "direct_chat", true
@@ -147,6 +143,21 @@ func conversationIdentity(r sigRecipient, archived map[string]bool) (sourceConvI
 		return directPNIPrefix + r.PNI, "direct_chat", true
 	}
 	return "", "", false
+}
+
+func groupIdentity(stored string) (string, string, bool) {
+	if id, ok := groupV2Identifier(stored); ok {
+		return groupPrefix + id, "group_chat", true
+	}
+	hexID, found := strings.CutPrefix(stored, "__textsecure_group__!")
+	if !found || hexID == "" {
+		return "", "", false
+	}
+	raw, err := hex.DecodeString(hexID)
+	if err != nil {
+		return "", "", false
+	}
+	return "signal:group-v1:" + base64.RawURLEncoding.EncodeToString(raw), "group_chat", true
 }
 
 // groupV2Identifier converts Signal's stored group ID

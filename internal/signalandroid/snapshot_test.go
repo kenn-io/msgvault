@@ -19,8 +19,8 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body) VALUES (202, `+ms(signalfixture.TReply)+`, `+ms(signalfixture.TReply+1)+`, 11, 1, 5, `+ms(signalfixture.TypeOutgoing)+`, 'Same time, another chat')`)
 	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(7), summary.MessagesAdded)
-	assert.Len(t, importedMessages(t, st), 7)
+	assert.Equal(t, int64(8), summary.MessagesAdded)
+	assert.Len(t, importedMessages(t, st), 8)
 }
 
 func TestLongTextAttachment(t *testing.T) {
@@ -118,7 +118,7 @@ func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
 			require.NoError(err)
 			summary := runImport(t, st, dir, attachmentsDir)
 			assert.Equal(int64(1), summary.Errors)
-			assert.Equal(int64(5), summary.MessagesUpdated)
+			assert.Equal(int64(6), summary.MessagesUpdated)
 			assert.Equal(before, importedMessages(t, st))
 			if tc.name == "body" {
 				var snippet string

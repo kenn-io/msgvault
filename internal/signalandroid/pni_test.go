@@ -9,6 +9,32 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
+func TestReimportPNIChatSurvivesNumberChange(t *testing.T) {
+	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			signalfixture.WritePNIOnly(t, dir, layout)
+			st := testutil.NewTestStore(t)
+			attachments := t.TempDir()
+			runImport(t, st, dir, attachments)
+			before := importedMessages(t, st)
+
+			aciColumn, phoneColumn := "aci", "e164"
+			if name == "v185" {
+				aciColumn, phoneColumn = "uuid", "phone"
+			}
+			changeFixture(t, dir, `UPDATE recipient SET `+aciColumn+` = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
+			runImport(t, st, dir, attachments)
+			changeFixture(t, dir, `UPDATE recipient SET `+phoneColumn+` = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`)
+			summary := runImport(t, st, dir, attachments)
+
+			assert.Zero(t, summary.MessagesAdded)
+			assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+			assert.Equal(t, before, importedMessages(t, st))
+		})
+	}
+}
+
 func TestImportPNIOnlyChat(t *testing.T) {
 	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
 		t.Run(name, func(t *testing.T) {

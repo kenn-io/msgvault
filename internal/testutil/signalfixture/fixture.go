@@ -155,7 +155,7 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 	exec(msgSQL, id(201), TGroup+5, TGroup+6, id(11), id(1), id(5), TypeGroupUpdate, nil, 0, 0, nil, nil, 0)
 	// Another direct chat.
 	exec(msgSQL, id(300), TCarol, TCarol+1, id(12), id(4), id(1), TypeIncoming, "Carol here", 0, 0, nil, nil, 0)
-	// Legacy group, not imported.
+	// Legacy group.
 	exec(msgSQL, id(400), TCarol+10, TCarol+11, id(13), id(4), id(6), TypeIncoming, "Old group text", 0, 0, nil, nil, 0)
 
 	exec(`INSERT INTO mention (thread_id, message_id, recipient_id, range_start, range_length) VALUES (?, ?, ?, 3, 1)`,

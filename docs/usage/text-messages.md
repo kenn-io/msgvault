@@ -222,7 +222,7 @@ These are left out:
 - Group and safety-number updates, timer changes, payments, and other events.
 - Stories and story replies, messages deleted for everyone, scheduled messages
   that were not sent yet, and earlier versions of edited messages.
-- Legacy groups that were never migrated to new groups, and MMS groups.
+- MMS groups, story distribution lists, and call links.
 - Signal Desktop and iOS databases.
 
 ## import-imessage

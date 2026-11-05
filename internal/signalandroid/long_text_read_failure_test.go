@@ -38,7 +38,7 @@ func TestUnreadableSignalLongTextKeepsMessage(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), summary.Errors)
 			assert.Equal(int64(2), summary.AttachmentsMissing)
-			assert.Equal(int64(6), summary.MessagesAdded+summary.MessagesUpdated)
+			assert.Equal(int64(7), summary.MessagesAdded+summary.MessagesUpdated)
 			assert.Equal(want, importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
 		})
 	}

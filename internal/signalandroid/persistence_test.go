@@ -69,7 +69,7 @@ func TestMigratedIncomingOnly(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.V185, 0)
 	changeFixture(t, dir, `DELETE FROM message WHERE (type & 31) IN (21, 22, 23, 24)`, `UPDATE message SET to_recipient_id = from_recipient_id WHERE thread_id IN (10, 12)`)
 	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(4), summary.MessagesAdded)
+	assert.Equal(t, int64(5), summary.MessagesAdded)
 }
 
 func TestInterruptedHistoricalSender(t *testing.T) {
@@ -104,7 +104,7 @@ func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `UPDATE message SET deleted_by = from_recipient_id, remote_deleted = 0 WHERE _id = 300`)
 	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(5), summary.MessagesAdded)
+	assert.Equal(t, int64(6), summary.MessagesAdded)
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE snippet = 'Carol here'`))
 }
 

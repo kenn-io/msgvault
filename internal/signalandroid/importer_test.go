@@ -66,7 +66,7 @@ func expectedMessages() map[string]importedMessage {
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply): {
 			conversation: direct, body: "Replying", fromMe: true, replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1),
 		},
-		// The edit keeps the original's identity and carries the newest text.
+		"signal:group-v1:AP8:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10):                          {conversation: "signal:group-v1:AP8", body: "Old group text"},
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
 		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TQuoteDraft): {
 			conversation: direct, body: "Nice draft", replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),
@@ -90,11 +90,11 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 
 			assert.Equal(expectedMessages(), importedMessages(t, st))
 			assert.Equal(int64(10), summary.MessagesProcessed)
-			assert.Equal(int64(6), summary.MessagesAdded)
+			assert.Equal(int64(7), summary.MessagesAdded)
 			assert.Equal(int64(0), summary.MessagesUpdated)
-			assert.Equal(int64(4), summary.MessagesSkipped, "SMS, call, group update, and legacy group message")
-			assert.Equal(int64(3), summary.ChatsProcessed)
-			assert.Equal(int64(1), summary.ChatsSkipped)
+			assert.Equal(int64(3), summary.MessagesSkipped, "SMS, call, and group update")
+			assert.Equal(int64(4), summary.ChatsProcessed)
+			assert.Zero(summary.ChatsSkipped)
 			assert.Equal(int64(1), summary.MessagesEdited)
 			assert.Equal(int64(2), summary.RepliesLinked)
 			assert.Equal(int64(2), summary.ReactionsAdded)
@@ -203,7 +203,7 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 	summary := runImport(t, st, restored, attachmentsDir)
 
 	assert.Equal(int64(0), summary.MessagesAdded)
-	assert.Equal(int64(6), summary.MessagesUpdated)
+	assert.Equal(int64(7), summary.MessagesUpdated)
 	assert.Equal(expectedMessages(), importedMessages(t, st))
 
 	var reactions, attachments, conversations int
@@ -213,7 +213,7 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 		`SELECT COUNT(*) FROM conversations WHERE source_id = ?`), summary.SourceID).Scan(&conversations))
 	assert.Equal(2, reactions)
 	assert.Equal(1, attachments)
-	assert.Equal(3, conversations)
+	assert.Equal(4, conversations)
 }
 
 func TestImportRejectsUnsupportedDatabases(t *testing.T) {

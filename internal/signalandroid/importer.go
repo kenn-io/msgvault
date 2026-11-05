@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/export"
@@ -329,17 +330,13 @@ func (r *run) limitReached() bool {
 }
 
 func (r *run) importThread(ctx context.Context, thread sigThread, archived map[string]bool) error {
-	chat := r.recipients[thread.RecipientID]
+	chat, err := r.renumberedChat(ctx, r.recipients[thread.RecipientID], archived)
+	if err != nil {
+		return err
+	}
 	sourceConvID, convType, ok := conversationIdentity(chat, archived)
 	if !ok {
-		var count int64
-		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message WHERE thread_id = ? AND latest_revision_id IS NULL`, thread.ID).Scan(&count); err != nil {
-			return fmt.Errorf("count skipped chat messages: %w", err)
-		}
-		r.summary.ChatsSkipped++
-		r.summary.MessagesProcessed += count
-		r.summary.MessagesSkipped += count
-		return nil
+		return r.skipThread(ctx, thread)
 	}
 	title := ""
 	if convType == "group_chat" {
@@ -407,6 +404,36 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 		}
 	}
 	r.imp.progress.OnChatComplete(sourceConvID, chatAdded)
+	return nil
+}
+
+// renumberedChat retains an archived PNI chat after its contact changes number.
+func (r *run) renumberedChat(ctx context.Context, chat sigRecipient, archived map[string]bool) (sigRecipient, error) {
+	if chat.GroupID != "" || chat.ACI == "" || archived[directACIPrefix+chat.ACI] || archived[directPNIPrefix+chat.PNI] {
+		return chat, nil
+	}
+	pid, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, chat.ACI)
+	if err != nil {
+		return chat, fmt.Errorf("look up Signal chat participant: %w", err)
+	}
+	shared, err := r.imp.store.SharedConversationsContext(ctx, r.participants[r.selfRecipientID], pid)
+	for _, conversation := range shared {
+		if pni, ok := strings.CutPrefix(conversation.SourceConversationID, directPNIPrefix); ok && conversation.SourceID == r.sourceID && archived[conversation.SourceConversationID] {
+			chat.PNI = pni
+			break
+		}
+	}
+	return chat, err
+}
+
+func (r *run) skipThread(ctx context.Context, thread sigThread) error {
+	var count int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message WHERE thread_id = ? AND latest_revision_id IS NULL`, thread.ID).Scan(&count); err != nil {
+		return fmt.Errorf("count skipped chat messages: %w", err)
+	}
+	r.summary.ChatsSkipped++
+	r.summary.MessagesProcessed += count
+	r.summary.MessagesSkipped += count
 	return nil
 }
 

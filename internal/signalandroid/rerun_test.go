@@ -96,7 +96,7 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 	}{
 		{name: "full backup of another number", phone: "+15555550199", wantError: "--phone does not match"},
 		{name: "incoming-only backup of another number", phone: "+15555550199", changes: []string{dropOutgoing}, wantError: "--phone does not match", checkNoSource: true},
-		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 4},
+		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 5},
 		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
 		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
 	} {
