@@ -29,7 +29,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: 'true'
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
       - name: Install Bubblewrap
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y bubblewrap
       - name: Download pinned Codex artifact
