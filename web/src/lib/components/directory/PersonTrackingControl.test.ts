@@ -22,7 +22,7 @@ function catalog(sensitive: boolean) {
     fingerprint: forbidden.fingerprint,
     targets: [{
       kind: 'attribute', key: forbidden.key, revision: forbidden.revision,
-      slug: sensitive ? 'private-note' : 'time-zone', universal_id: forbidden.universal_id,
+      slug: sensitive ? 'private_note' : 'time_zone', universal_id: forbidden.universal_id,
       description: sensitive ? 'Private note' : 'Time zone', value_type: 'text',
       cardinality: 'single', sensitive, choices: null, fields: null,
       href: forbidden.href, credential: forbidden.credential
@@ -62,7 +62,7 @@ describe('PersonTrackingControl', () => {
       const target = catalog(false).targets[0]!;
       return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, kind: 'employment', slug: 'employment' }] });
     });
-    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time-zone', label: 'Local time zone' })] });
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time_zone', label: 'Local time zone' })] });
     expect(await screen.findByText('Local time zone')).toBeDefined();
     expect(screen.getByText('Favorite foods')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();

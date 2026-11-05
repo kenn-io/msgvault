@@ -9,6 +9,7 @@
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
   import { Modal } from '@kenn-io/kit-ui';
   import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
+  import { joinDefinitions } from './attribute-value';
 
   interface Props {
     client: APIClient;
@@ -27,6 +28,7 @@
   let renaming = $state(false);
   let renameValue = $state('');
   let confirmingDelete = $state(false);
+  const trackingDefinitions = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).map(field => field.definition));
 
   function beginRename(): void {
     renameValue = controller.person?.display_name ?? '';
@@ -62,7 +64,7 @@
     <MenuItem disabled={!controller.canWritePerson} textValue="Rename" onselect={beginRename}>
       Rename
     </MenuItem>
-    <MenuItem textValue="Keep this profile updated" onselect={async () => { await controller.reloadDefinitions(); await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
+    <MenuItem textValue="Keep this profile updated" onselect={async () => { await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
     <MenuItem textValue="Publish to address book" onselect={async () => { await tick(); maintenance = 'publication'; }}>Publish to address book</MenuItem>
     <MenuItem textValue="History" onselect={() => void openHistory()}>History</MenuItem>
     <MenuItem disabled={!controller.canWritePerson} tone="danger" textValue="Delete" onselect={beginDelete}>
@@ -152,7 +154,7 @@
     maxHeight="min(720px, calc(100svh - 64px))"
     onclose={() => maintenance = undefined}
   >
-    <PersonTrackingControl {client} {personID} definitions={controller.definitions} {onAnnounce} />
+    <PersonTrackingControl {client} {personID} definitions={trackingDefinitions} {onAnnounce} />
     {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
   </Modal>
 {:else if maintenance === 'publication'}

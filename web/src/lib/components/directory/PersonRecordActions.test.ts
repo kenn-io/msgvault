@@ -14,10 +14,10 @@ function person() {
   return { id: 7, revision: 3, display_name: 'Test User', participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
 }
 
-function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"') {
+function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"', initial: Partial<DirectoryReadBundle> = {}) {
   const bundle = {
     person: person(),
-    etags: { person: personETag ?? undefined }, errors: {}
+    etags: { person: personETag ?? undefined }, errors: {}, ...initial
   } satisfies DirectoryReadBundle;
   const client = createAPIClient(fetchFn);
   const controller = new DirectoryProfileController(client, 7, bundle);
@@ -46,21 +46,67 @@ describe('PersonRecordActions', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('loads definition labels when opening updates from a profile without definitions', async () => {
+  it('opens immediately with embedded labels while the definition endpoint is unresolved', async () => {
+    let resolveDefinitions!: (response: Response) => void;
+    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const url = new URL(request.url);
       if (url.pathname.endsWith('/attribute-definitions')) {
-        expect(url.searchParams.get('object_type')).toBe('person');
-        return Response.json({ definitions: [definition({ slug: 'favorites_food', label: 'Favorite food' })] });
+        return pendingDefinitions;
       }
       if (url.pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', description: 'Food preferences from conversations', value_type: 'text', cardinality: 'multi', sensitive: false }] });
-    }));
+    }), '"person-7-r3"', {
+      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food' }), current: [], history: [] }] }
+    });
 
+    try {
+      await choose('Keep this profile updated');
+      const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+      expect(await within(dialog).findByText('Favorite food')).toBeDefined();
+    } finally {
+      resolveDefinitions(Response.json({ definitions: [] }));
+    }
+  });
+
+  it('keeps publication selected when an earlier definition request completes', async () => {
+    let resolveDefinitions!: (response: Response) => void;
+    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
+    const controller = renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/attribute-definitions')) return pendingDefinitions;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [] });
+    }));
+    const reload = controller.reloadDefinitions();
+    try {
+      await choose('Keep this profile updated');
+      const tracking = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+      await fireEvent.click(within(tracking).getByRole('button', { name: 'Close' }));
+      await choose('Publish to address book');
+      expect(await screen.findByRole('dialog', { name: 'Publish to address book' })).toBeDefined();
+    } finally {
+      resolveDefinitions(Response.json({ definitions: [] }));
+      await reload;
+    }
+    expect(screen.getByRole('dialog', { name: 'Publish to address book' })).toBeDefined();
+    expect(screen.queryByRole('dialog', { name: "Keep Test User's profile updated" })).toBeNull();
+  });
+
+  it('prefers registry labels over embedded labels for the same definition', async () => {
+    renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
+    }), '"person-7-r3"', {
+      definitions: { definitions: [definition({ slug: 'favorites_food', label: 'Preferred food' })] },
+      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food' }), current: [], history: [] }] }
+    });
     await choose('Keep this profile updated');
-    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
+    expect(await screen.findByText('Preferred food')).toBeDefined();
+    expect(screen.queryByText('Favorite food')).toBeNull();
   });
 
   it('renames the selected person with the current strong ETag', async () => {
