@@ -1,18 +1,16 @@
 <script lang="ts">
   import { appShortcuts, autoReposition, Button, dismissable, floatingPopoverStyle, IconButton, localDateStr, TextInput } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
 
-  let { controller, employment }: { controller: DirectoryEntityController; employment: Employment } = $props();
-  let open = $state(false);
-  let trigger = $state<HTMLSpanElement>();
+  let { controller, employment, trigger, onClose }: { controller: DirectoryEntityController; employment: Employment; trigger: HTMLElement; onClose: () => void } = $props();
   let panel = $state<HTMLDivElement>();
   let style = $state('');
-  let endDate = $state('');
+  let endDate = $state(localDateStr(new Date()));
   let submitting = $state(false);
   let message = $state('');
   let current = $state<Employment>();
@@ -25,19 +23,13 @@
   }
   function close(): void {
     if (submitting) return;
-    open = false;
-    trigger?.querySelector('button')?.focus();
+    trigger.focus();
+    onClose();
   }
-  async function show(): Promise<void> {
-    if (open) { close(); return; }
-    endDate = localDateStr(new Date());
-    current = undefined;
-    message = '';
-    open = true;
-    await tick();
+  onMount(() => { void tick().then(() => {
     position();
     panel?.querySelector<HTMLInputElement>('input')?.focus();
-  }
+  }); });
   async function submit(): Promise<void> {
     if (submitting || !endDate.trim() || dateError) return;
     submitting = true;
@@ -56,7 +48,6 @@
     } finally { submitting = false; }
   }
   $effect(() => {
-    if (!open) return;
     const release = appShortcuts.pushScope('directory-employment-end');
     const reposition = autoReposition(() => [panel, trigger], position);
     const dismiss = dismissable({ owners: () => [panel, trigger], dismiss: close });
@@ -64,8 +55,6 @@
   });
 </script>
 
-<span bind:this={trigger}><Button size="sm" label="End employment" shortLabel="End" ariaExpanded={open} onclick={() => void show()} /></span>
-{#if open}
   <div class="end-panel kit-popover-card" role="dialog" aria-label="End employment" bind:this={panel} {style}>
     <header><h3>End employment</h3><IconButton ariaLabel="Close end employment" disabled={submitting} onclick={close}><X size={16} /></IconButton></header>
     <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -75,7 +64,6 @@
       <div class="actions"><Button label="End" type="submit" tone="info" surface="solid" busy={submitting} disabled={!endDate.trim() || !!dateError} /></div>
     </form>
   </div>
-{/if}
 
 <style>
   .end-panel { position: fixed; z-index: var(--z-popover); width: 320px; box-sizing: border-box; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); padding: var(--space-4); overflow: auto; }

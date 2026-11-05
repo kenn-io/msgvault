@@ -20,6 +20,7 @@
   let { controller, personID, organizationRequest = undefined }: Props = $props();
   let organizationEditor = $state<(Pick<Organization, 'id'> & Partial<Organization>) | null | undefined>(undefined);
   let employmentEditor = $state<Employment | null | undefined>(undefined);
+  let endingEmployment = $state<{ employment: Employment; trigger: HTMLElement }>();
   let deletingEmployment = $state<Employment>();
   let deleteConflictCurrent = $state<Employment>();
   let deleteMessage = $state('');
@@ -144,7 +145,7 @@
             {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
             {#snippet actions()}
               {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
-              {#if employment.is_current}<EmploymentEndPopover {controller} {employment} />{/if}
+              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" ariaExpanded={endingEmployment?.employment.id === employment.id} onclick={(event) => { endingEmployment = { employment, trigger: event.currentTarget as HTMLButtonElement }; }} />{/if}
               <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentEditor = employment; }}><Pencil size={14} /></IconButton>
               <IconButton size="sm" ariaLabel="Delete employment" onclick={() => openDelete(employment)}><X size={14} /></IconButton>
             {/snippet}
@@ -165,6 +166,9 @@
 
 </section>
 
+{#if endingEmployment}
+  <EmploymentEndPopover {controller} employment={endingEmployment.employment} trigger={endingEmployment.trigger} onClose={() => { endingEmployment = undefined; }} />
+{/if}
 {#if organizationEditor !== undefined}
   <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined}
     onDone={() => { organizationEditor = undefined; }} onClose={() => { organizationEditor = undefined; }} />

@@ -18,7 +18,6 @@
 
   let { controller, personID, employment = undefined, onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialEmployment = untrack(() => employment);
-  let formElement = $state<HTMLFormElement>();
   let creatingOrganization = $state(false);
   let organizationName = $state('');
   let organizationDomain = $state('');
@@ -35,7 +34,7 @@
   let isPrimary = $state(initialEmployment?.is_primary ?? false);
   const uid = $props.id();
   const startDateError = $derived(intervalDateError(startDate));
-  const endDateError = $derived(intervalDateError(endDate));
+  const endDateError = $derived(isCurrent ? null : intervalDateError(endDate));
   let loading = $state(!!initialEmployment);
   let submitting = $state(false);
   let message = $state('');
@@ -105,7 +104,7 @@
       ...(location.trim() ? { location: location.trim() } : { location: null }),
       ...(description.trim() ? { description: description.trim() } : { description: null }),
       ...(startDate.trim() ? { start_date: startDate.trim() } : { start_date: null }),
-      ...(endDate.trim() ? { end_date: endDate.trim() } : { end_date: null }),
+      ...(isCurrent ? {} : { end_date: endDate.trim() || null }),
       is_current: isCurrent,
       is_primary: isPrimary,
       ...(current?.address_id !== undefined ? { address_id: current.address_id } : {}),
@@ -114,7 +113,11 @@
   }
 
   async function submit(): Promise<void> {
-    if (submitting || (!organizationID && !(creatingOrganization && organizationName.trim())) || startDateError || endDateError || controller.createBlocked.employments || (creatingOrganization && controller.createBlocked.organizations)) return;
+    if (loading || submitting || (!organizationID && !(creatingOrganization && organizationName.trim())) || startDateError || endDateError || controller.createBlocked.employments) return;
+    const start = startDate.trim().replaceAll('-', '');
+    const end = endDate.trim().replaceAll('-', '');
+    const precision = Math.min(start.length, end.length);
+    if (!isCurrent && end.slice(0, precision) < start.slice(0, precision)) { message = 'End date must be on or after start date.'; return; }
     submitting = true;
     message = '';
     conflictCurrent = undefined;
@@ -182,6 +185,7 @@
   }
 </script>
 
+<form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
 <Modal
   title={initialEmployment ? 'Edit employment' : 'Add employment'}
   ariaLabel={initialEmployment ? 'Edit employment' : 'Add employment'}
@@ -191,8 +195,7 @@
   maxWidth="min(560px, calc(100vw - 32px))"
   onclose={requestClose}
 >
-  <form bind:this={formElement} class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
-    <button type="submit" hidden disabled={loading || submitting}>Save employment</button>
+  <div class="editor" aria-busy={loading || submitting}>
     {#if loading}
       <p role="status">Loading current employment…</p>
     {:else}
@@ -214,7 +217,7 @@
       <label>Location<TextInput ariaLabel="Employment location" bind:value={location} block disabled={submitting} /></label></div>
       <div class="pair">
         <div class="field"><label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} /></label>{#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}</div>
-        <div class="field"><label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>{#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}</div>
+        <div class="field"><label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting || isCurrent} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>{#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}</div>
       </div>
       <label>Description<textarea aria-label="Employment description" bind:value={description} disabled={submitting}></textarea></label>
       <div class="checks"><Checkbox checked={isCurrent} label="Current employment" onchange={(checked) => { isCurrent = checked; }} disabled={submitting} /><Checkbox checked={isPrimary} label="Primary employment" onchange={(checked) => { isPrimary = checked; }} disabled={submitting} /></div>
@@ -229,15 +232,15 @@
     {/if}
     {#if controller.createBlocked.employments}<Button label="Refresh employment records" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
     {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void controller.refreshOrganizations()} />{/if}
-  </form>
+  </div>
   {#snippet footer()}
     <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-    <Button tone="info" surface="solid" busy={submitting}
+    <Button type="submit" tone="info" surface="solid" busy={submitting}
       label={initialEmployment ? 'Save employment' : 'Create employment'}
-      disabled={loading || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments}
-      onclick={() => formElement?.requestSubmit()} />
+      disabled={loading || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments} />
   {/snippet}
 </Modal>
+</form>
 
 
 <style>

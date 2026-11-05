@@ -17,7 +17,6 @@
 
   let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialOrganization = untrack(() => organization);
-  let formElement = $state<HTMLFormElement>();
   let name = $state(initialOrganization?.name ?? '');
   let kind = $state(initialOrganization?.kind ?? 'company');
   let primaryDomain = $state(initialOrganization?.primary_domain ?? '');
@@ -66,7 +65,7 @@
   }
 
   async function saveOrganization(): Promise<void> {
-    if (submitting || !name.trim() || controller.createBlocked.organizations) return;
+    if (loading || confirmDelete || submitting || !name.trim() || controller.createBlocked.organizations) return;
     submitting = true;
     message = '';
     conflictCurrent = undefined;
@@ -284,6 +283,7 @@
   }
 </script>
 
+<form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
 <Modal
   title={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
   ariaLabel={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
@@ -305,8 +305,6 @@
         {:else}<p>This permanently removes the organization.</p>{/if}
       </section>
     {:else if loading}<p role="status">Loading current organization…</p>{:else}
-      <form bind:this={formElement} onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
-        <button type="submit" hidden disabled={loading || submitting}>Save organization</button>
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block disabled={submitting} /></label>
         <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
         <label>Primary domain<TextInput ariaLabel="Organization primary domain" bind:value={primaryDomain} block disabled={submitting} /></label>
@@ -315,7 +313,6 @@
           <label>Categories<TextInput ariaLabel="Organization categories" bind:value={categories} block disabled={submitting} /></label>
         {/if}
         <label>Description<textarea aria-label="Organization description" bind:value={description} disabled={submitting}></textarea></label>
-      </form>
     {/if}
     {#if message}
       <div role="alert">
@@ -355,13 +352,14 @@
     {:else}
       {#if initialOrganization && currentProfile}<Button class="delete-organization" tone="danger" label="Delete organization" disabled={submitting} onclick={() => void checkDeletion()} />{/if}
       <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button tone="info" surface="solid" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || !name.trim() || controller.createBlocked.organizations} onclick={() => formElement?.requestSubmit()} />
+      <Button tone="info" surface="solid" type="submit" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || !name.trim() || controller.createBlocked.organizations} />
     {/if}
   {/snippet}
 </Modal>
+</form>
 
 <style>
-  .editor, form { display: grid; gap: var(--field-gap); }
+  .editor { display: grid; gap: var(--field-gap); }
   .deletion { display: grid; gap: var(--space-2); }
   :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; border-color: transparent; background: transparent; color: var(--text-danger); }
   label { display: grid; gap: var(--label-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
