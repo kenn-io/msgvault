@@ -184,7 +184,7 @@ func (s *Store) calendarOccurrenceRows(ctx context.Context, from, to time.Time) 
 	if remaining < 0 {
 		return nil, 0, calendarRecurrenceBudgetError()
 	}
-	if err := loadCalendarICSRecurrenceErrors(ctx, s.db, rows, &remaining); err != nil {
+	if err := loadCalendarICSRecurrenceErrors(ctx, s.db, rows); err != nil {
 		return nil, 0, err
 	}
 	return rows, remaining, nil
