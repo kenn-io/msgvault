@@ -101,6 +101,9 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return fmt.Errorf("write calendar cursor: %w", err)
 			}
 		}
+		if err := printCalendarCoverageWarning(cmd, page.Coverage); err != nil {
+			return err
+		}
 
 		if len(page.Unexpandable) > 0 {
 			noun := "events"
@@ -167,6 +170,28 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 		return calendarEventDeletedStatus
 	}
 	return o.Status
+}
+
+func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCoverage) error {
+	if coverage.Complete || coverage.Notice == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Coverage: %s\n", textutil.SanitizeTerminal(coverage.Notice)); err != nil {
+		return fmt.Errorf("write calendar coverage warning: %w", err)
+	}
+	for _, source := range coverage.Sources {
+		status := source.Status
+		switch status {
+		case "no_baseline":
+			status = "not fully synced"
+		case "sync_failed":
+			status = "sync failed"
+		}
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Source %d: %s\n", source.SourceID, textutil.SanitizeTerminal(status)); err != nil {
+			return fmt.Errorf("write calendar coverage source: %w", err)
+		}
+	}
+	return nil
 }
 
 func archiveCalendarRun(open calendarEventsOpen, prepare func(*cobra.Command) error, run func(*cobra.Command, []string, calendarEventsClient) error) func(*cobra.Command, []string) error {

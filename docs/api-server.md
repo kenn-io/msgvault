@@ -86,7 +86,7 @@ and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
 ### Archived calendar occurrences, unreleased
 
-`GET /api/v1/calendar/events` lists archived occurrences in a positive, half-open RFC3339 `from`/`to` window. Omit `limit` and `cursor` for the whole window; either enables paging, default 100, range 1–500. Responses carry `occurrences`, `unexpandable`, and optional `next_cursor`.
+`GET /api/v1/calendar/events` lists archived occurrences in a positive, half-open RFC3339 `from`/`to` window. Omit `limit` and `cursor` for the whole window; either enables paging, default 100, range 1–500. Responses carry `occurrences`, `unexpandable`, `coverage`, and optional `next_cursor`. Coverage includes `complete`, a safety `notice`, and per-source freshness and status evidence.
 
 Pass `next_cursor` as `cursor` with the same window, including offsets, and authorized sources. Cursors belong to one archive and format version. `GET /api/v1/calendar/events/{ref}` opens one returned occurrence with `location`, `description`, and `join_url` decoded from its archived raw message. Empty content fields are omitted. Repeating occurrences use `evt:<masterID>@<original-key>`; standalone events use `evt:<messageID>`.
 
@@ -173,7 +173,7 @@ opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **3.46.0**.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
-Schema 3.46.0 adds archive calendar paging, detail, and source-scoped agent reads.
+Schema 3.46.0 adds archive calendar paging, detail, source-scoped agent reads, and coverage and freshness metadata.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 

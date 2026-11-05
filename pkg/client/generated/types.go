@@ -1147,6 +1147,33 @@ func (c CalendarConflict) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CalendarCoverage struct {
+	Complete bool                     `json:"complete"`
+	Notice   string                   `json:"notice" validate:"required"`
+	Sources  []CalendarSourceCoverage `json:"sources" validate:"required"`
+}
+
+func (c CalendarCoverage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Notice, "required"); err != nil {
+		errors = errors.Append("Notice", err)
+	}
+	if err := typesValidator.Var(c.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
+	for i, item := range c.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CalendarEventTarget struct {
 	Start   GCalEventDateTime `json:"start"`
 	Summary *string           `json:"summary,omitzero"`
@@ -1261,6 +1288,7 @@ func (c CalendarOccurrenceDetail) Validate() error {
 }
 
 type CalendarOccurrencePage struct {
+	Coverage     CalendarCoverage       `json:"coverage"`
 	NextCursor   *string                `json:"next_cursor,omitzero"`
 	Occurrences  []CalendarOccurrence   `json:"occurrences" validate:"required"`
 	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
@@ -1268,6 +1296,11 @@ type CalendarOccurrencePage struct {
 
 func (c CalendarOccurrencePage) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(c.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
 	if err := typesValidator.Var(c.Occurrences, "required"); err != nil {
 		errors = errors.Append("Occurrences", err)
 	}
@@ -1524,6 +1557,34 @@ func (c CalendarResult) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Writes[%d]", i), err)
 			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarSourceCoverage struct {
+	AsOf       *time.Time                   `json:"as_of" validate:"required"`
+	SourceID   int64                        `json:"source_id"`
+	SourceType string                       `json:"source_type" validate:"required"`
+	Status     CalendarSourceCoverageStatus `json:"status" validate:"required"`
+}
+
+func (c CalendarSourceCoverage) Validate() error {
+	var errors runtime.ValidationErrors
+	if c.AsOf != nil {
+		if err := typesValidator.Var(c.AsOf, "required"); err != nil {
+			errors = errors.Append("AsOf", err)
+		}
+	}
+	if err := typesValidator.Var(c.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if v, ok := any(c.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
 		}
 	}
 	if len(errors) == 0 {
@@ -6178,31 +6239,60 @@ func (g GCalCalendarError) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GCalConferenceData struct {
+	EntryPoints []GCalConferenceEntryPoint `json:"entryPoints,omitempty"`
+}
+
+func (g GCalConferenceData) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range g.EntryPoints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("EntryPoints[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GCalConferenceEntryPoint struct {
+	EntryPointType string `json:"entryPointType" validate:"required"`
+	URI            string `json:"uri" validate:"required"`
+}
+
+func (g GCalConferenceEntryPoint) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GCalEvent struct {
-	Attendees         []GCalAttendee     `json:"attendees,omitempty"`
-	Created           *time.Time         `json:"created,omitempty"`
-	Creator           *GCalPerson        `json:"creator,omitempty"`
-	Description       *string            `json:"description,omitzero"`
-	End               *GCalEventDateTime `json:"end,omitempty"`
-	Etag              *string            `json:"etag,omitzero"`
-	EventType         *string            `json:"eventType,omitzero"`
-	HangoutLink       *string            `json:"hangoutLink,omitzero"`
-	HTMLLink          *string            `json:"htmlLink,omitzero"`
-	ICalUID           *string            `json:"iCalUID,omitzero"`
-	ID                *string            `json:"id,omitzero"`
-	Location          *string            `json:"location,omitzero"`
-	Organizer         *GCalPerson        `json:"organizer,omitempty"`
-	OriginalStartTime *GCalEventDateTime `json:"originalStartTime,omitempty"`
-	Recurrence        []string           `json:"recurrence,omitempty"`
-	RecurringEventID  *string            `json:"recurringEventId,omitzero"`
-	Reminders         *GCalReminders     `json:"reminders,omitempty"`
-	Sequence          *int64             `json:"sequence,omitempty"`
-	Start             *GCalEventDateTime `json:"start,omitempty"`
-	Status            *string            `json:"status,omitzero"`
-	Summary           *string            `json:"summary,omitzero"`
-	Transparency      *string            `json:"transparency,omitzero"`
-	Updated           *time.Time         `json:"updated,omitempty"`
-	Visibility        *string            `json:"visibility,omitzero"`
+	Attendees         []GCalAttendee      `json:"attendees,omitempty"`
+	ConferenceData    *GCalConferenceData `json:"conferenceData,omitempty"`
+	Created           *time.Time          `json:"created,omitempty"`
+	Creator           *GCalPerson         `json:"creator,omitempty"`
+	Description       *string             `json:"description,omitzero"`
+	End               *GCalEventDateTime  `json:"end,omitempty"`
+	Etag              *string             `json:"etag,omitzero"`
+	EventType         *string             `json:"eventType,omitzero"`
+	HangoutLink       *string             `json:"hangoutLink,omitzero"`
+	HTMLLink          *string             `json:"htmlLink,omitzero"`
+	ICalUID           *string             `json:"iCalUID,omitzero"`
+	ID                *string             `json:"id,omitzero"`
+	Location          *string             `json:"location,omitzero"`
+	Organizer         *GCalPerson         `json:"organizer,omitempty"`
+	OriginalStartTime *GCalEventDateTime  `json:"originalStartTime,omitempty"`
+	Recurrence        []string            `json:"recurrence,omitempty"`
+	RecurringEventID  *string             `json:"recurringEventId,omitzero"`
+	Reminders         *GCalReminders      `json:"reminders,omitempty"`
+	Sequence          *int64              `json:"sequence,omitempty"`
+	Start             *GCalEventDateTime  `json:"start,omitempty"`
+	Status            *string             `json:"status,omitzero"`
+	Summary           *string             `json:"summary,omitzero"`
+	Transparency      *string             `json:"transparency,omitzero"`
+	Updated           *time.Time          `json:"updated,omitempty"`
+	Visibility        *string             `json:"visibility,omitzero"`
 }
 
 func (g GCalEvent) Validate() error {
@@ -6211,6 +6301,13 @@ func (g GCalEvent) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
+			}
+		}
+	}
+	if g.ConferenceData != nil {
+		if v, ok := any(g.ConferenceData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ConferenceData", err)
 			}
 		}
 	}

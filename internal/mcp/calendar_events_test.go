@@ -13,25 +13,37 @@ import (
 )
 
 type calendarEventsTestBackend struct {
+	calls int
 	query store.CalendarOccurrenceQuery
 	ref   string
+	page  store.CalendarOccurrencePage
 }
 
 func (s *calendarEventsTestBackend) ListCalendarOccurrencesContext(_ context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
+	s.calls++
 	s.query = query
-	return store.CalendarOccurrencePage{}, nil
+	return s.page, nil
 }
 
 func (s *calendarEventsTestBackend) GetCalendarOccurrenceContext(_ context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
+	s.calls++
 	s.ref = ref
 	return store.CalendarOccurrenceDetail{}, nil
 }
 
 func TestCalendarArchiveToolsPermissionGatedReads(t *testing.T) {
+	asOf := time.Date(2027, time.March, 1, 12, 0, 0, 0, time.UTC)
+	coverage := store.CalendarCoverage{
+		Complete: false,
+		Notice:   "Archived calendar data, not live availability.",
+		Sources: []store.CalendarSourceCoverage{{
+			SourceID: 42, SourceType: "gcal", Status: "stale", AsOf: &asOf,
+		}},
+	}
 	for _, permission := range []string{"calendar.event.read", "message.read", "calendar.read"} {
 		t.Run(permission, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			st := &calendarEventsTestBackend{}
+			st := &calendarEventsTestBackend{page: store.CalendarOccurrencePage{Coverage: coverage}}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, CalEvents: st, DelegatedOnly: true, GrantPermissions: []string{permission}}
 			tools := map[string]bool{}
 			for _, d := range operationCatalog(opts, nil) {
@@ -49,6 +61,10 @@ func TestCalendarArchiveToolsPermissionGatedReads(t *testing.T) {
 			assertions.Contains(tools, ToolGetCalendarEvent)
 			listed := rawCallTool(t, opts, ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-02T00:00:00Z", "limit": float64(1)})
 			requirements.NotEqual(true, listed["isError"], fmt.Sprint(listed["content"]))
+			gotCoverage, ok := toolStructuredContent(t, listed)["coverage"].(map[string]any)
+			requirements.True(ok, "calendar list response must include coverage")
+			assertions.Equal(coverage.Complete, gotCoverage["complete"])
+			assertions.Equal(coverage.Notice, gotCoverage["notice"])
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), st.query.From)
 			assertions.Equal(time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), st.query.To)
 			assertions.Equal(new(1), st.query.Limit)
@@ -78,6 +94,7 @@ func TestCalendarArchiveRejectsInvalidArguments(t *testing.T) {
 			assertions := assert.New(t)
 			st := &calendarEventsTestBackend{}
 			result := rawCallTool(t, ServeOptions{CalEvents: st}, ToolListCalendarEvents, tt.args)
+			assertions.Zero(st.calls)
 			assertions.Equal(true, result["isError"], fmt.Sprint(result["content"]))
 			assertions.NotEmpty(result["content"])
 			assertions.Contains(fmt.Sprint(result["content"]), tt.want)

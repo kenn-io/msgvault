@@ -67,6 +67,7 @@ type wireEvent struct {
 	Status            string             `json:"status"`
 	HTMLLink          string             `json:"htmlLink"`
 	HangoutLink       string             `json:"hangoutLink"`
+	ConferenceData    ConferenceData     `json:"conferenceData"`
 	Created           string             `json:"created"`
 	Updated           string             `json:"updated"`
 	Summary           string             `json:"summary"`
@@ -105,6 +106,7 @@ func (w wireEvent) toEvent() Event {
 		Status:            w.Status,
 		HTMLLink:          w.HTMLLink,
 		HangoutLink:       w.HangoutLink,
+		ConferenceData:    w.ConferenceData,
 		Created:           parseRFC3339(w.Created),
 		Updated:           parseRFC3339(w.Updated),
 		Summary:           w.Summary,

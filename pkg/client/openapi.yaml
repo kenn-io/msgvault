@@ -1315,6 +1315,21 @@ components:
         - start
         - end
       type: object
+    CalendarCoverage:
+      properties:
+        complete:
+          type: boolean
+        notice:
+          type: string
+        sources:
+          items:
+            $ref: "#/components/schemas/CalendarSourceCoverage"
+          type: array
+      required:
+        - complete
+        - notice
+        - sources
+      type: object
     CalendarEventTarget:
       properties:
         start:
@@ -1441,6 +1456,8 @@ components:
       type: object
     CalendarOccurrencePage:
       properties:
+        coverage:
+          $ref: "#/components/schemas/CalendarCoverage"
         next_cursor:
           type: string
         occurrences:
@@ -1452,6 +1469,7 @@ components:
             $ref: "#/components/schemas/CalendarUnexpandable"
           type: array
       required:
+        - coverage
         - occurrences
         - unexpandable
       type: object
@@ -1672,6 +1690,35 @@ components:
         - dry_run
         - plan
         - writes
+      type: object
+    CalendarSourceCoverage:
+      properties:
+        as_of:
+          format: date-time
+          nullable: true
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+        status:
+          enum:
+            - complete
+            - stale
+            - sync_failed
+            - no_baseline
+          type: string
+          x-enum-names:
+            - CalendarSourceCoverageStatusComplete
+            - CalendarSourceCoverageStatusStale
+            - CalendarSourceCoverageStatusSyncFailed
+            - CalendarSourceCoverageStatusNoBaseline
+      required:
+        - source_id
+        - source_type
+        - status
+        - as_of
       type: object
     CalendarUnexpandable:
       properties:
@@ -6563,12 +6610,31 @@ components:
       required:
         - reason
       type: object
+    GCalConferenceData:
+      properties:
+        entryPoints:
+          items:
+            $ref: "#/components/schemas/GCalConferenceEntryPoint"
+          type: array
+      type: object
+    GCalConferenceEntryPoint:
+      properties:
+        entryPointType:
+          type: string
+        uri:
+          type: string
+      required:
+        - entryPointType
+        - uri
+      type: object
     GCalEvent:
       properties:
         attendees:
           items:
             $ref: "#/components/schemas/GCalAttendee"
           type: array
+        conferenceData:
+          $ref: "#/components/schemas/GCalConferenceData"
         created:
           format: date-time
           type: string

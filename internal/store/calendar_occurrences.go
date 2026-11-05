@@ -53,6 +53,7 @@ type CalendarUnexpandable struct {
 	Reason    string `json:"reason"`
 }
 type CalendarOccurrencePage struct {
+	Coverage     CalendarCoverage       `json:"coverage"`
 	NextCursor   string                 `json:"next_cursor,omitempty"`
 	Occurrences  []CalendarOccurrence   `json:"occurrences"`
 	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
@@ -120,6 +121,10 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 		return page, calendarRecurrenceBudgetError()
 	}
 	page.Occurrences, page.Unexpandable, err = collectCalendarOccurrences(ctx, s, rows, masters, exceptions, from, to, cursor, remaining)
+	if err != nil {
+		return page, err
+	}
+	page.Coverage, err = calendarCoverageContext(ctx, s, ReadDBContext(ctx, s.db.DB), len(page.Unexpandable) > 0, time.Now())
 	if err != nil {
 		return page, err
 	}

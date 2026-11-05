@@ -1,10 +1,6 @@
 package calevent
 
-import (
-	"encoding/json/v2"
-
-	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
-)
+import "go.kenn.io/msgvault/internal/gcal/gcalmodel"
 
 // Content is decoded only when opening an archived event. It is excluded from
 // the event projection and its content hash.
@@ -18,18 +14,8 @@ func DecodeContent(format string, raw []byte) (Content, error) {
 	if format != gcalmodel.RawFormat {
 		return Content{}, nil
 	}
-	var event struct {
-		Location       string `json:"location"`
-		Description    string `json:"description"`
-		HangoutLink    string `json:"hangoutLink"`
-		ConferenceData struct {
-			EntryPoints []struct {
-				EntryPointType string `json:"entryPointType"`
-				URI            string `json:"uri"`
-			} `json:"entryPoints"`
-		} `json:"conferenceData"`
-	}
-	if err := json.Unmarshal(raw, &event); err != nil {
+	event, err := gcalmodel.DecodeEvent(raw)
+	if err != nil {
 		return Content{}, err
 	}
 	joinURL := event.HangoutLink

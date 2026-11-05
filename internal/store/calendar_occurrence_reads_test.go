@@ -45,6 +45,33 @@ func TestCalendarOccurrenceOptionalPaging(t *testing.T) {
 	assertions.Empty(full.NextCursor)
 }
 
+func TestCalendarOccurrencePageCoverage(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-01T10:00:00Z"},"end":{"dateTime":"2027-03-01T11:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY;COUNT=3"]}`)
+	calendarFixture(t, st, "daily", `{"id":"daily","start":{"dateTime":"2027-03-01T10:00:00Z"},"end":{"dateTime":"2027-03-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
+	now := time.Now().UTC()
+	_, err := st.db.Exec(`UPDATE sources SET sync_cursor = 'token' WHERE id = ?`, data.Message.SourceID)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`INSERT INTO sync_runs (source_id,sync_type,started_at,completed_at,status,cursor_after) VALUES (?,'full',?,?,'completed','token')`, data.Message.SourceID, now.Add(-time.Minute), now)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0), Limit: new(1)}
+	first, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	assertions.False(first.Coverage.Complete)
+	assertions.Equal([]CalendarUnexpandable{{MessageID: unsupported, Reason: "unsupported recurrence"}}, first.Unexpandable)
+	requirements.NotEmpty(first.NextCursor)
+	query.Cursor = first.NextCursor
+	second, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(second.Occurrences, 1)
+	requirements.Len(second.Coverage.Sources, 1)
+	assertions.Equal("complete", second.Coverage.Sources[0].Status)
+	assertions.Empty(second.Unexpandable)
+	assertions.False(second.Coverage.Complete)
+}
+
 func TestCalendarOccurrencePagesMatchFullRead(t *testing.T) {
 	for _, budget := range []bool{false, true} {
 		t.Run(fmt.Sprintf("budget=%t", budget), func(t *testing.T) {
@@ -292,6 +319,7 @@ func calendarOccurrenceReadCases() []calendarOccurrenceReadCase {
 		{count: 2, name: "cancelled empty content", fields: `"status":"cancelled","location":"","description":"","hangoutLink":"","conferenceData":{}`, content: masterContent},
 		{count: 2, name: "cancelled own content", fields: `"status":"cancelled","location":"Other room","description":"Updated agenda","conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550100"},{"entryPointType":"video","uri":"https://video.example.com/exception"}]}`, content: calevent.Content{Location: "Other room", Description: "Updated agenda", JoinURL: "https://video.example.com/exception"}},
 		{count: 2, name: "preferred hangout link", fields: `"status":"cancelled","hangoutLink":"https://meet.example.com/event","conferenceData":{"entryPoints":[{"entryPointType":"video","uri":"https://video.example.com/other"}]}`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/event"}},
+		{count: 2, name: "first video entry", fields: `"status":"cancelled","conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550100"},{"entryPointType":"video","uri":"https://video.example.com/first"},{"entryPointType":"video","uri":"https://video.example.com/second"}]}`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://video.example.com/first"}},
 		{count: 1, name: "orphan", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, orphan: true},
 	}
 }
