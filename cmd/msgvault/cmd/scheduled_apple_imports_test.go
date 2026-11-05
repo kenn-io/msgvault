@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
-	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -237,34 +236,6 @@ func TestImportImessageRecordedCompletesWithAttachmentErrors(t *testing.T) {
 	run, err = st.GetLatestSync(src.ID)
 	require.NoError(err)
 	assert.Equal("failed", run.Status)
-}
-
-func TestScheduledAppleOpenFailureReportsTelemetry(t *testing.T) {
-	for _, provider := range []string{"apple_messages", "whatsapp"} {
-		t.Run(provider, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			cfg := config.NewDefaultConfig()
-			cfg.Data.DataDir = t.TempDir()
-			cfg.Analytics.AutoBuildCache = false
-			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-			var failures []any
-			invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-				assert.Equal(telemetry.EventSyncFailed, event)
-				failures = append(failures, props["sync_source"])
-				return nil
-			}}
-			missing := filepath.Join(t.TempDir(), "missing.db")
-			if provider == "apple_messages" {
-				cfg.IMessage.DBPath = missing
-				require.Error(runScheduledIMessage(ctx, st, cfg.IMessage))
-			} else {
-				require.Error(runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: missing}))
-			}
-			assert.Equal([]any{provider}, failures)
-		})
-	}
 }
 
 func TestScheduledIMessageRetitleHonorsCachePolicy(t *testing.T) {

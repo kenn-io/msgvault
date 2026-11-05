@@ -22,7 +22,6 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	state := invocationFromContext(ctx)
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
-		retErr = recordSyncAttempt(ctx, "whatsapp", src.Phone, retErr)
 	}()
 	path := src.Path
 	if path == "" {
@@ -49,16 +48,13 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 
 func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessageConfig) (retErr error) {
 	state := invocationFromContext(ctx)
-	identifier := "local"
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.IMessageJobName))
-		retErr = recordSyncAttempt(ctx, "apple_messages", identifier, retErr)
 	}()
 	src, err := resolveImessageSource(s)
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
-	identifier = src.Identifier
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
