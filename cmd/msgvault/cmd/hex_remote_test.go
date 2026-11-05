@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,4 +80,33 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 	packet, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: &ids, IncludeTranscript: &include, Format: &format})
 	must.NoError(err)
 	check.Contains(packet.Content, "HTTP fixture transcript")
+	raw, err := st.GetMessageRaw(id)
+	must.NoError(err)
+	postEntry := func(entry string) int {
+		t.Helper()
+		body := `{"action":"upsert","source":{"identifier":"recorder","account_email":"you@example.com"},"meeting":{"manifest":{"schema_version":1,"id":"synthetic","title":"HTTP fixture","status":"complete","created_at_ms":1790000000123},"entries":[` + entry + `],"transcript_state":"final"}}`
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/import/hex", strings.NewReader(body))
+		must.NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+		response, err := server.Client().Do(request)
+		must.NoError(err)
+		must.NoError(response.Body.Close())
+		return response.StatusCode
+	}
+	for _, entry := range []string{
+		`{"source":"system","text":"Missing timestamps"}`,
+		`{"source":"system","end_ms":0,"text":"Missing start"}`,
+		`{"source":"system","start_ms":0,"text":"Missing end"}`,
+		`{"source":"system","start_ms":null,"end_ms":null,"text":"Null timestamps"}`,
+	} {
+		check.Equal(http.StatusBadRequest, postEntry(entry), "malformed transcript timestamps must be rejected at the HTTP boundary")
+		after, err := st.GetMessageRaw(id)
+		must.NoError(err)
+		check.Equal(string(raw), string(after), "invalid transfers must preserve archived evidence")
+	}
+	check.Equal(http.StatusOK, postEntry(`{"source":"system","start_ms":0,"end_ms":0,"text":"Explicit zero timestamp replacement"}`))
+	updated, err := st.GetMessage(id)
+	must.NoError(err)
+	check.Contains(updated.Body, "Explicit zero timestamp replacement")
 }
