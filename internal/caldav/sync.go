@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -335,33 +334,27 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err != nil {
 		return result, err
 	}
-	resources := map[string]batch{}
-	for _, p := range b.items {
-		r := resources[p.member.Href]
-		r.items = append(r.items, p)
-		resources[p.member.Href] = r
-	}
-	for _, href := range slices.Sorted(maps.Keys(resources)) {
-		r := resources[href]
-		for _, p := range r.items {
-			if err := persistEvent(ctx, st, src.ID, ownerEmail, p.event, p.member); err != nil {
-				checkpoint.ErrorsCount++
-				return result, err
-			}
-			result.Events++
-			checkpoint.MessagesProcessed++
-			if _, exists := existing[p.event.Event.ProviderEventID]; exists {
-				checkpoint.MessagesUpdated++
-			} else {
-				checkpoint.MessagesAdded++
-			}
-			if err := st.ClearMessageDeletedFromSourceContext(ctx, src.ID, p.event.Event.ProviderEventID); err != nil {
-				checkpoint.ErrorsCount++
-				return result, err
-			}
+	// prepare keeps components of each resource contiguous in href order.
+	for i, p := range b.items {
+		if err := persistEvent(ctx, st, src.ID, ownerEmail, p.event, p.member); err != nil {
+			checkpoint.ErrorsCount++
+			return result, err
 		}
-		if err := st.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
-			return result, fmt.Errorf("checkpoint CalDAV sync progress: %w", err)
+		result.Events++
+		checkpoint.MessagesProcessed++
+		if _, exists := existing[p.event.Event.ProviderEventID]; exists {
+			checkpoint.MessagesUpdated++
+		} else {
+			checkpoint.MessagesAdded++
+		}
+		if err := st.ClearMessageDeletedFromSourceContext(ctx, src.ID, p.event.Event.ProviderEventID); err != nil {
+			checkpoint.ErrorsCount++
+			return result, err
+		}
+		if i+1 == len(b.items) || b.items[i+1].member.Href != p.member.Href {
+			if err := st.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
+				return result, fmt.Errorf("checkpoint CalDAV sync progress: %w", err)
+			}
 		}
 	}
 	result.Removed, err = st.ReconcileSourceMessageSnapshot(ctx, src.ID, b.live)

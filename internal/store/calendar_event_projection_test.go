@@ -114,6 +114,8 @@ func TestCalDAVProjectionWindowsTimeZone(t *testing.T) {
 	require.NoError(err)
 	for _, tc := range []struct{ raw, start, body string }{
 		{raw, "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "tzone://Microsoft/Eastern Standard Time"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "/freeassociation.sourceforge.net/America/New_York"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
 		{strings.ReplaceAll(raw, "20270307", "20270314"), "2027-03-14T13:00:00Z", "2027-03-14 09:00 - 2027-03-14 10:00"},
 	} {
 		require.NoError(st.UpsertMessageRawWithFormat(id, []byte(tc.raw), calevent.CalDAVRawFormat))

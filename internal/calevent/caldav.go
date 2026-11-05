@@ -166,11 +166,19 @@ func calDAVCivilDate(p *ical.Prop) (string, error) {
 	return date.Format(time.DateOnly), nil
 }
 
+var calDAVParameterEscapes = strings.NewReplacer("^^", "^", "^n", "\n", "^N", "\n", "^'", "\"")
+
 func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Location) (CalDAVEvent, error) {
 	p := c.Props
 	// RFC 5545 enumerated parameter values are case-insensitive.
 	for _, values := range p {
 		for i := range values {
+			// go-ical unquotes parameters but leaves RFC 6868 escapes intact.
+			for _, params := range values[i].Params {
+				for j, value := range params {
+					params[j] = calDAVParameterEscapes.Replace(value)
+				}
+			}
 			if value := values[i].Params.Get("VALUE"); value != "" {
 				values[i].Params.Set("VALUE", strings.ToUpper(value))
 			}
@@ -309,21 +317,6 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	for _, name := range []string{"RRULE", "RDATE", "EXDATE", "EXRULE"} {
 		for _, v := range p[name] {
 			v.Value = strings.ToUpper(v.Value)
-			if (name == "RDATE" || name == "EXDATE") && v.Params.Get("TZID") != "" {
-				if strings.EqualFold(v.Params.Get("VALUE"), "PERIOD") {
-					if _, err := calrecur.LoadZone(v.Params.Get("TZID")); err != nil {
-						return item, fmt.Errorf("CalDAV time zone: %w", err)
-					}
-				} else {
-					for value := range strings.SplitSeq(v.Value, ",") {
-						date := v
-						date.Value = value
-						if _, err := calDAVDateTime(&date, zone); err != nil {
-							return item, err
-						}
-					}
-				}
-			}
 			var line strings.Builder
 			line.WriteString(name)
 			for _, param := range []string{"TZID", "VALUE"} {

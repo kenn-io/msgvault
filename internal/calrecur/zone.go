@@ -2,17 +2,23 @@ package calrecur
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
-// LoadZone resolves an IANA or Windows time zone name.
+// LoadZone resolves IANA and Windows time zone names, including vendor prefixes.
 func LoadZone(name string) (*time.Location, error) {
-	zone, err := time.LoadLocation(name)
+	lookup := strings.TrimPrefix(name, "tzone://Microsoft/")
+	zone, err := time.LoadLocation(lookup)
 	if err == nil {
 		return zone, nil
 	}
-	if mapped, ok := windowsZones[name]; ok {
+	if mapped, ok := windowsZones[lookup]; ok {
 		zone, err = time.LoadLocation(mapped)
+	} else if vendor, prefixed := strings.CutPrefix(lookup, "/"); prefixed {
+		if _, iana, ok := strings.Cut(vendor, "/"); ok && strings.Contains(iana, "/") {
+			zone, err = time.LoadLocation(iana)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load time zone %q: %w", name, err)
