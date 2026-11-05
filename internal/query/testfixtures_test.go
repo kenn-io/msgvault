@@ -162,6 +162,7 @@ type ParticipantClusterFixture struct {
 
 // TestDataBuilder accumulates typed fixture data and generates Parquet files.
 type TestDataBuilder struct {
+	mailboxStates      []string
 	personDisplayNames []string
 	t                  testing.TB
 	nextMsgID          int64
@@ -785,6 +786,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		name, subdir, file, cols, dummy, sql string
 		empty                                bool
 	}{
+		{"mailbox_state", "mailbox_state", "state.parquet", "message_id, inbox_state, read_state", "(0::BIGINT, 'unknown', 'unknown')", strings.Join(b.mailboxStates, ","), len(b.mailboxStates) == 0},
 		{"sources", "sources", "sources.parquet", sourcesCols, "(0::BIGINT, '', 'gmail')", b.sourcesSQL(), len(b.sources) == 0},
 		{datasetPersonDisplayNames, datasetPersonDisplayNames, "person_display_names.parquet", "participant_id, person_id, display_name", "(0::BIGINT, 0::BIGINT, NULL::VARCHAR)", strings.Join(b.personDisplayNames, ","), len(b.personDisplayNames) == 0},
 		{"participants", "participants", "participants.parquet", participantsCols, "(0::BIGINT, '', '', '', '')", b.participantsSQL(), len(b.participants) == 0},
@@ -912,6 +914,7 @@ func (b *parquetBuilder) addEmptyTable(name, subdir, file, columns, dummyValues 
 func (b *parquetBuilder) build() (string, func()) {
 	b.t.Helper()
 	b.ensureConversationParticipantsTable()
+	b.ensureMailboxStateTable()
 	b.ensureParticipantIdentifiersTable()
 	b.ensureOwnerParticipantsTable()
 	b.ensureParticipantClustersTable()
@@ -1167,4 +1170,13 @@ func assertDescendingOrder(tb testing.TB, got []AggregateRow) {
 // makeDate creates a time.Time for the given month, day in 2024, UTC, zero time.
 func makeDate(month, day int) time.Time {
 	return time.Date(2024, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+}
+
+func (b *parquetBuilder) ensureMailboxStateTable() {
+	for _, table := range b.tables {
+		if table.name == "mailbox_state" {
+			return
+		}
+	}
+	b.addEmptyTable("mailbox_state", "mailbox_state", "state.parquet", "message_id, inbox_state, read_state", "(0::BIGINT, 'unknown', 'unknown')")
 }

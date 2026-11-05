@@ -1839,3 +1839,12 @@ it('keeps embedded person navigation detached from shell history', () => {
   expect(window.history.state).toEqual({ marker: 'outer' });
   state.destroy();
 });
+
+it('round-trips provider Inbox Unread filters through the URL', () => {
+  const filters = [
+    { dimension: 'inbox_state' as const, values: ['inbox', 'unknown'] },
+    { dimension: 'read_state' as const, values: ['unread'] },
+  ];
+  const url = serializeExploreURLState({ ...defaultExploreURLState, filters });
+  expect(parseExploreURLState(url).filters).toEqual(filters);
+});

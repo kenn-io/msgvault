@@ -1,9 +1,14 @@
 package explorecatalog
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+)
 
 // Explore filter dimensions accepted by the analytical server contract.
 const (
+	FilterInboxState  = "inbox_state"
+	FilterReadState   = "read_state"
 	FilterAccount     = "account"
 	FilterSource      = "source"
 	FilterIdentity    = "identity"
@@ -18,6 +23,7 @@ const (
 )
 
 var filterDimensions = [...]string{
+	FilterInboxState, FilterReadState,
 	FilterSource,
 	FilterIdentity,
 	FilterParticipant,
@@ -88,4 +94,26 @@ func Presentations() []string {
 // IsPresentation reports whether value is a canonical server presentation.
 func IsPresentation(value string) bool {
 	return slices.Contains(presentations[:], value)
+}
+
+// ValidateMailboxStates enforces the provider-state vocabulary shared by
+// Explore and persisted Saved Views. Other dimensions validate elsewhere.
+func ValidateMailboxStates(dimension string, values []string) error {
+	var allowed []string
+	switch dimension {
+	case FilterInboxState:
+		allowed = []string{"inbox", "outside", "unknown"}
+	case FilterReadState:
+		allowed = []string{"unread", "read", "unknown"}
+	default:
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, v := range values {
+		if !slices.Contains(allowed, v) || seen[v] {
+			return fmt.Errorf("invalid or repeated %s value %q", dimension, v)
+		}
+		seen[v] = true
+	}
+	return nil
 }

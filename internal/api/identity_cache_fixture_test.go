@@ -29,6 +29,11 @@ func ensureIdentityCacheFixtureDatasets(
 	options identityCacheFixtureOptions,
 ) {
 	tb.Helper()
+	mailboxDir := filepath.Join(analyticsDir, "mailbox_state")
+	require.NoError(tb, os.MkdirAll(mailboxDir, 0o755))
+	_, mailboxErr := db.Exec("COPY (SELECT 0::BIGINT AS message_id,'unknown' AS inbox_state,'unknown' AS read_state WHERE FALSE) TO '" + filepath.ToSlash(filepath.Join(mailboxDir, "state.parquet")) + "' (FORMAT PARQUET)")
+	require.NoError(tb, mailboxErr)
+
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
 	require.NoError(tb, os.MkdirAll(personDisplayNamesDir, 0o755), "create person_display_names fixture directory")
 	personDisplayNamesPath := filepath.ToSlash(filepath.Join(personDisplayNamesDir, "person_display_names.parquet"))

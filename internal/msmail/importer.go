@@ -28,10 +28,10 @@ const SourceType = "msmail"
 // an interrupted walk starts over. Known messages are not downloaded again.
 const walkPrefix = "walk:"
 
-// categoryDeltaPrefix identifies cursors created with categories in $select.
+// categoryDeltaPrefix identifies cursors created with categories and isRead in $select.
 // Old opaque cursors cannot gain fields, so their folders rewalk once. The old
 // cursor covers content changes until the replacement walk finishes.
-const categoryDeltaPrefix = "categories-v1:"
+const categoryDeltaPrefix = "mailbox-state-v1:"
 
 // retryPrefix marks a saved-state key that names a message to download again.
 const retryPrefix = "retry:"
@@ -152,7 +152,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		case strings.HasPrefix(link, categoryDeltaPrefix):
 			link = strings.TrimPrefix(link, categoryDeltaPrefix)
 		default:
-			oldCursor = link
+			oldCursor = strings.TrimPrefix(link, "categories-v1:")
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
 		for {
@@ -260,6 +260,7 @@ type syncer struct {
 	// drafts is the Drafts folder. A draft keeps its ID while it is edited,
 	// so a known draft is downloaded again when delta reports it.
 	drafts string
+	inbox  string
 
 	// trash is the Deleted Items folder. delete-staged moves a message there
 	// and marks it deleted, and a sync keeps that mark.
@@ -290,6 +291,8 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 		}
 		system[id] = role
 		switch name {
+		case "inbox":
+			s.inbox = id
 		case "drafts":
 			s.drafts = id
 		case "deleteditems":
@@ -356,6 +359,9 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 		if err := s.setFolder(ctx, id, folderLabel, m.Categories); err != nil {
 			return err
 		}
+		if err := s.observeMailbox(ctx, m, folderID); err != nil {
+			return err
+		}
 		if seen == nil || (s.drafts != "" && folderID == s.drafts) {
 			m.archiveID = id
 			todo = append(todo, m)
@@ -391,6 +397,9 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
 			return fmt.Errorf("save Microsoft categories: %w", err)
 		}
+	}
+	if err := s.observeMailbox(ctx, m, m.folderID); err != nil {
+		return err
 	}
 	if s.opts.AttachmentsDir == "" {
 		return nil // no attachment rows are written
@@ -481,7 +490,7 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			}
 		}
 		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, IsRead: info.IsRead, archiveID: known[id]}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -534,6 +543,9 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		if err != nil {
 			return fmt.Errorf("look up removed message: %w", err)
 		}
+		if err := s.observeMailbox(ctx, DeltaMessage{ID: id, IsRead: info.IsRead}, parent); err != nil {
+			return err
+		}
 		// A folder this run did not list is picked up on the next sync.
 		if label, ok := s.labels[parent]; ok {
 			if err := s.setFolder(ctx, msgID, label, info.Categories); err != nil {
@@ -580,6 +592,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	g.Go(func() error {
 		defer close(jobs)
 		for _, m := range msgs {
+			m.folderID = folderID
 			select {
 			case jobs <- m:
 			case <-gctx.Done():
@@ -675,4 +688,13 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	// A known message that delta reported but $value no longer finds moved or
 	// is gone since the page was read.
 	return s.relocate(ctx, vanished)
+}
+
+func (s *syncer) observeMailbox(ctx context.Context, m DeltaMessage, folderID string) error {
+	var inbox *bool
+	if s.inbox != "" && folderID != "" {
+		value := folderID == s.inbox
+		inbox = &value
+	}
+	return s.st.ObserveMicrosoftMailboxContext(ctx, s.sourceID, m.ID, inbox, m.IsRead)
 }

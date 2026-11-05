@@ -11,10 +11,11 @@ import (
 )
 
 type relatedChangeKinds struct {
-	recipients  bool
-	labels      bool
-	attachments bool
-	other       bool
+	mailboxState bool
+	recipients   bool
+	labels       bool
+	attachments  bool
+	other        bool
 }
 
 func inspectRelatedChangeKinds(snapshot *cacheSourceSnapshot, after, through, lastMessageID int64) (relatedChangeKinds, error) {
@@ -23,10 +24,11 @@ func inspectRelatedChangeKinds(snapshot *cacheSourceSnapshot, after, through, la
 		count(*) FILTER (WHERE dataset = 'message_recipients') > 0,
 		count(*) FILTER (WHERE dataset IN ('message_labels', 'labels')) > 0,
 		count(*) FILTER (WHERE dataset = 'attachments') > 0,
+        count(*) FILTER (WHERE dataset = 'mailbox_state') > 0,
 		count(*) FILTER (WHERE dataset NOT IN
-			('message_recipients', 'message_labels', 'labels', 'attachments')) > 0
+			('message_recipients', 'message_labels', 'labels', 'attachments','mailbox_state')) > 0
 		FROM cache_related_change_journal WHERE seq > ? AND seq <= ? AND message_id <= ?`,
-		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.other)
+		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.mailboxState, &kinds.other)
 	if err != nil {
 		return relatedChangeKinds{}, fmt.Errorf("inspect related change kinds: %w", err)
 	}
@@ -113,6 +115,7 @@ func inspectRelatedSnapshotColumns(snapshot *cacheSourceSnapshot) error {
 // datasets lists replacements needed for edits to already-cached messages.
 func (k relatedChangeKinds) datasets() map[string]bool {
 	return map[string]bool{
+		"mailbox_state":      k.mailboxState,
 		"message_recipients": k.recipients,
 		tableLabels:          k.labels,
 		"message_labels":     k.labels,
@@ -168,6 +171,7 @@ func exportRelatedDatasets(
 		dataset   string
 		selectSQL string
 	}{
+		{"mailbox_state", snapshot.mailboxStateExportSQL(lastMessageID)},
 		{tableLabels, `SELECT id, COALESCE(` + snapshot.textSQL("name") + `, '') AS name
 			FROM sqlite_db.labels`},
 		{"message_recipients", fmt.Sprintf(`SELECT mr.message_id, mr.participant_id,

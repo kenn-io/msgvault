@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -108,9 +109,64 @@ func (c *Client) searchCommand(ctx context.Context, criteria *imap.SearchCriteri
 }
 
 func (c *Client) fetchCommand(ctx context.Context, uids imap.UIDSet, options *imap.FetchOptions) ([]*imapclient.FetchMessageBuffer, error) {
-	return runCommand(ctx, c, func() ([]*imapclient.FetchMessageBuffer, error) { return c.conn.Fetch(uids, options).Collect() })
+	return runCommand(ctx, c, func() ([]*imapclient.FetchMessageBuffer, error) { return collectSyncFetch(c.conn.Fetch(uids, options)) })
 }
 
 func (c *Client) enableCommand(ctx context.Context) (*imapclient.EnableData, error) {
 	return runCommand(ctx, c, func() (*imapclient.EnableData, error) { return c.conn.Enable(imap.CapQResync).Wait() })
+}
+
+// collectSyncFetch preserves FLAGS item presence, which the upstream buffer
+// collector loses for FLAGS (). Body literals are drained before advancing.
+func collectSyncFetch(cmd *imapclient.FetchCommand) ([]*imapclient.FetchMessageBuffer, error) {
+	defer func() { _ = cmd.Close() }()
+	var rows []*imapclient.FetchMessageBuffer
+	for message := cmd.Next(); message != nil; message = cmd.Next() {
+		row := &imapclient.FetchMessageBuffer{SeqNum: message.SeqNum}
+		for item := message.Next(); item != nil; item = message.Next() {
+			switch data := item.(type) {
+			case imapclient.FetchItemDataUID:
+				row.UID = data.UID
+			case imapclient.FetchItemDataFlags:
+				row.Flags = append([]imap.Flag{}, data.Flags...)
+			case imapclient.FetchItemDataEnvelope:
+				row.Envelope = data.Envelope
+			case imapclient.FetchItemDataInternalDate:
+				row.InternalDate = data.Time
+			case imapclient.FetchItemDataRFC822Size:
+				row.RFC822Size = data.Size
+			case imapclient.FetchItemDataBodyStructure:
+				row.BodyStructure = data.BodyStructure
+			case imapclient.FetchItemDataModSeq:
+				row.ModSeq = data.ModSeq
+			case imapclient.FetchItemDataBodySection:
+				var body []byte
+				if data.Literal != nil {
+					var err error
+					body, err = io.ReadAll(data.Literal)
+					if err != nil {
+						return nil, fmt.Errorf("read IMAP body section: %w", err)
+					}
+				}
+				row.BodySection = append(row.BodySection, imapclient.FetchBodySectionBuffer{Section: data.Section, Bytes: body})
+			case imapclient.FetchItemDataBinarySection:
+				var body []byte
+				if data.Literal != nil {
+					var err error
+					body, err = io.ReadAll(data.Literal)
+					if err != nil {
+						return nil, fmt.Errorf("read IMAP binary section: %w", err)
+					}
+				}
+				row.BinarySection = append(row.BinarySection, imapclient.FetchBinarySectionBuffer{Section: data.Section, Bytes: body})
+			case imapclient.FetchItemDataBinarySectionSize:
+				row.BinarySectionSize = append(row.BinarySectionSize, data)
+			}
+		}
+		rows = append(rows, row)
+	}
+	if err := cmd.Close(); err != nil {
+		return nil, fmt.Errorf("collect IMAP fetch: %w", err)
+	}
+	return rows, nil
 }

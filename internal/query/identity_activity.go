@@ -21,6 +21,7 @@ func identityRequestIsUnfiltered(request ExploreRequest) bool {
 		len(context.AdditionalDomainGroups) == 0 &&
 		len(context.MessageTypes) == 0 &&
 		len(context.Kinds) == 0 &&
+		len(context.InboxStates) == 0 && len(context.ReadStates) == 0 &&
 		context.After == nil &&
 		context.Before == nil &&
 		context.Deletion == DeletionAny &&
@@ -321,6 +322,9 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntGroup(request.Context.SourceIDs, "f.source_id = ?")
+	mailboxConditions, mailboxArgs := mailboxStateConditions(request.Context, "f.message_id")
+	conditions = append(conditions, mailboxConditions...)
+	args = append(args, mailboxArgs...)
 	if scopeConditions, scopeArgs := search.AccountScopeConditions(request.Context.AccountScopes, "account_m"); len(scopeConditions) > 0 {
 		conditions = append(conditions, "f.message_id IN (SELECT account_m.id FROM messages account_m WHERE "+
 			strings.Join(scopeConditions, " AND ")+")")

@@ -59,6 +59,8 @@ type IdentityPredicate struct {
 
 // Context narrows the archive before logical chat rows are aggregated.
 type Context struct {
+	InboxStates   []string              `json:"inbox_states,omitempty"`
+	ReadStates    []string              `json:"read_states,omitempty"`
 	AccountScopes []search.AccountScope `json:"account_scopes,omitempty"`
 
 	SourceIDs      []int64            `json:"source_ids,omitempty"`
@@ -175,6 +177,8 @@ type SearchProvenance struct {
 // EntryRow is one logical archive row. Chat/text rows aggregate messages only
 // after Context has been applied; other modalities retain durable item units.
 type EntryRow struct {
+	InboxState                 string       `json:"inbox_state,omitempty" enum:"inbox,outside,unknown" doc:"Provider Inbox membership last observed by sync; missing observations are unknown."`
+	ReadState                  string       `json:"read_state,omitempty" enum:"unread,read,unknown" doc:"Provider read status last observed by sync; separate from msgvault local read state."`
 	Key                        string       `json:"key"`
 	Kind                       EntryKind    `json:"kind"`
 	AnchorMessageID            *int64       `json:"anchor_message_id,omitzero" nullable:"false"`

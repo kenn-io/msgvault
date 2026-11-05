@@ -4371,3 +4371,17 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
 CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
+
+-- Last provider observation, separate from msgvault's local read state.
+-- IMAP observations name exact copies; other providers use the empty mailbox.
+CREATE TABLE IF NOT EXISTS provider_mailbox_observations (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL,
+    mailbox TEXT NOT NULL DEFAULT '',
+    uidvalidity BIGINT NOT NULL DEFAULT 0,
+    uid BIGINT NOT NULL DEFAULT 0,
+    is_inbox BOOLEAN,
+    provider_read BOOLEAN,
+    PRIMARY KEY (message_id, mailbox, uidvalidity, uid)
+);

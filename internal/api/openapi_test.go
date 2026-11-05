@@ -1407,7 +1407,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
 	assertions.Equal(
-		[]any{"source", "participant", "domain", "message_type", "kind", "mailing_list", "after", "before", "deletion", "identity", "account"},
+		[]any{"source", "participant", "domain", "message_type", "kind", "mailing_list", "after", "before", "deletion", "identity", "account", "inbox_state", "read_state"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
@@ -1417,6 +1417,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
 		"ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
 		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount",
+		"ExploreFilterDimensionInboxState", "ExploreFilterDimensionReadState",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
 		"DirectoryPeopleResponse":    {"people"},

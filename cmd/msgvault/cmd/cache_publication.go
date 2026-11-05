@@ -129,6 +129,7 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		plan.Append[dataset] = true
 	}
 	for _, dataset := range []string{
+		"mailbox_state",
 		tableParticipants,
 		tableParticipantIdentifiers,
 		tableLabels,

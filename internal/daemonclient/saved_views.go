@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/savedview"
 	"go.kenn.io/msgvault/internal/store"
@@ -53,6 +54,9 @@ func (c *Client) CreateSavedView(
 	if err != nil {
 		return nil, err
 	}
+	if err := c.requireMailboxViewSchema(ctx, state); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.CreateSavedViewResp, error) {
 		return client.CreateSavedViewWithResponse(ctx, &generated.CreateSavedViewRequestOptions{
 			Body: &generated.CreateSavedViewRequest{
@@ -78,6 +82,9 @@ func (c *Client) UpdateSavedView(
 	if patch.CanonicalState != nil {
 		state, err := savedViewStateFromEnvelope(*patch.CanonicalState)
 		if err != nil {
+			return nil, err
+		}
+		if err := c.requireMailboxViewSchema(ctx, state); err != nil {
 			return nil, err
 		}
 		body.CanonicalState = &state
@@ -245,4 +252,21 @@ func savedViewAPIError(err error) error {
 	default:
 		return err
 	}
+}
+
+func (c *Client) requireMailboxViewSchema(ctx context.Context, state generated.SavedViewStateEnvelope) error {
+	for _, filter := range state.Filters {
+		if string(filter.Field) != explorecatalog.FilterInboxState && string(filter.Field) != explorecatalog.FilterReadState {
+			continue
+		}
+		version, err := c.APISchemaVersion(ctx)
+		if err != nil {
+			return err
+		}
+		if !apiSchemaVersionAtLeast(version, "3.44.0") {
+			return fmt.Errorf("provider mailbox filters require daemon API schema 3.44.0 or newer; daemon reports %q", version)
+		}
+		break
+	}
+	return nil
 }

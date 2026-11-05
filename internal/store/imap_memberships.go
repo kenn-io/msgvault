@@ -273,6 +273,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if err != nil {
 					return err
 				}
+				if err := observeIMAPMailboxTx(boundQuerier{ctx: ctx, q: tx}, sourceID, messageID, observation); err != nil {
+					return fmt.Errorf("observe IMAP mailbox: %w", err)
+				}
 				flags := observation.Flags
 				if flags == nil {
 					flags = []string{}

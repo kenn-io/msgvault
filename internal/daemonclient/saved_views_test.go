@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -307,4 +308,44 @@ func newSavedViewTestClient(t *testing.T, server *httptest.Server) *Client {
 	})
 	require.NoError(t, err)
 	return client
+}
+
+func TestRunSavedViewPreservesProviderMailboxState(t *testing.T) {
+	for _, tc := range []struct{ name, extra, inbox, read string }{
+		{"observed", `"inbox_state":"inbox","read_state":"unread",`, "inbox", "unread"},
+		{"older daemon", "", "unknown", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
+			wire := strings.Replace(savedViewRunFixtureJSON, `"deleted_from_source":false`, tc.extra+`"deleted_from_source":false`, 1)
+			var response generated.RunSavedViewResponse
+			requirements.NoError(json.Unmarshal([]byte(wire), &response))
+			page, err := runPageFromGenerated(response)
+			requirements.NoError(err)
+			requirements.Len(page.Rows, 1)
+			assertions.Equal(tc.inbox, page.Rows[0].InboxState)
+			assertions.Equal(tc.read, page.Rows[0].ReadState)
+		})
+	}
+}
+
+func TestMailboxSavedViewRequiresCapableDaemon(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.43.0"}`))
+			return
+		}
+		assertions.Fail("old daemon must not receive a mailbox view write")
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := newSavedViewTestClient(t, server)
+	_, err := client.CreateSavedView(t.Context(), store.SavedViewInput{Name: "Inbox", SchemaVersion: 2, CanonicalState: json.RawMessage(`{"filters":[{"field":"inbox_state","operator":"eq","values":["inbox"]}]}`)})
+	requirements.Error(err)
+	assertions.Contains(err.Error(), "3.44.0")
 }

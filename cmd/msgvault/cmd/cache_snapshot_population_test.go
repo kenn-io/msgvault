@@ -150,12 +150,13 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			_, err = st.LinkParticipants(bob, alias)
 			require.NoError(err)
-			label, err := st.EnsureLabel(sourceID, "inbox", "Inbox", "system")
+			label, err := st.EnsureLabel(sourceID, "INBOX", "Inbox", "system")
 			require.NoError(err)
 			addMessage := func(i int) {
 				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i)
 				require.Equal(int64(i), id)
-				require.NoError(st.AddMessageLabels(id, []int64{label}))
+				_, err := st.ReconcileMessageLabels(id, []int64{label}, true)
+				require.NoError(err)
 				require.NoError(st.UpsertAttachment(id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
 			}
 			addMessage(1)

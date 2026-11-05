@@ -827,7 +827,15 @@ func fileRowFromGenerated(row generated.PersonFileSearchRow) query.FileRow {
 }
 
 func entryRowFromGenerated(row generated.EntryRow) query.EntryRow {
+	inboxState, readState := "unknown", "unknown"
+	if row.InboxState != nil && *row.InboxState != "" {
+		inboxState = string(*row.InboxState)
+	}
+	if row.ReadState != nil && *row.ReadState != "" {
+		readState = string(*row.ReadState)
+	}
 	return query.EntryRow{
+		InboxState: inboxState, ReadState: readState,
 		Key: row.Key, Kind: query.EntryKind(row.Kind), AnchorMessageID: copyInt64(row.AnchorMessageID),
 		ConversationID: copyInt64(row.ConversationID), OccurredAt: row.OccurredAt,
 		Match: query.MatchSummary{

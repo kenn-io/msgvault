@@ -476,3 +476,13 @@ describe('EverythingTable', () => {
     expect(screen.getByRole('grid', { name: 'Messages results' }).getAttribute('aria-rowcount')).toBeNull();
   });
 });
+
+it('shows provider state beneath email subjects and hides it on other sources', () => {
+  render(EverythingTable, {
+    rows: [row(1, { kind: 'email', inbox_state: 'inbox', read_state: 'unread' }),
+      row(2, { kind: 'email', source_type: 'mbox' })],
+    selection: new ExploreSelectionState(),
+  });
+  expect(screen.getByText('In Inbox · Unread at provider')).toBeTruthy();
+  expect(screen.queryByText('Inbox unknown · Read status unknown')).toBeNull();
+});

@@ -8,6 +8,7 @@
   import { filterDimensionLabel, filterValueLabel, groupedByLabel, searchModeLabel } from '../../explore/labels';
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
   import AccountFilter from './AccountFilter.svelte';
+  import MailboxStateFilter from './MailboxStateFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
   import FilterMenu from './FilterMenu.svelte';
 
@@ -155,7 +156,7 @@
       {/if}
       {#each filters as filter, index (`${filter.dimension}:${filter.values.join('\u0000')}`)}
         <Chip size="sm" uppercase={false} class="chip chip--filter" title={`${filterDimensionLabel(filter.dimension)}: ${filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}`}>
-          {filterDimensionLabel(filter.dimension)}: {filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}
+          <span class="chip-label">{filterDimensionLabel(filter.dimension)}: {filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}</span>
           {#snippet trailing()}
             <IconButton
               size="sm"
@@ -199,6 +200,7 @@
           <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
         {/if}
       </div>
+      <MailboxStateFilter {filters} onChange={onFiltersChange} />
       <AccountFilter {client} {filters} onChange={onFiltersChange} />
       <IdentityFilter {client} {filters} onChange={onFiltersChange} />
     </div>
@@ -246,6 +248,10 @@
     border: 1px solid color-mix(in srgb, var(--accent-teal) 35%, var(--border-muted));
     background: color-mix(in srgb, var(--accent-teal) 8%, var(--bg-surface));
   }
+
+  .chip-label { min-width: 0; overflow-wrap: anywhere; }
+  .context-chips :global(.chip) { max-width: 100%; white-space: normal; }
+  .context-chips :global(button) { flex-shrink: 0; }
 
   .context-count {
     margin-left: auto;

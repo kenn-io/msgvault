@@ -144,3 +144,17 @@ describe('ContextBar grouping picker', () => {
     expect(screen.queryByRole('option', { name: /analytical API/ })).toBeNull();
   });
 });
+
+it('keeps provider chips named and removable', async () => {
+  const onRemoveFilter = vi.fn();
+  render(ContextBar, {
+    client: createAPIClient(vi.fn<typeof fetch>()), query: '', searchMode: 'full_text',
+    filters: [{ dimension: 'inbox_state', values: ['inbox'] }, { dimension: 'read_state', values: ['unread'] }],
+    groupingChain: [], countLabel: '3 items', onRemoveFilter,
+    onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn(),
+  });
+  expect(screen.getByText('Provider Inbox: In Inbox')).toBeTruthy();
+  expect(screen.getByText('Provider read status: Unread at provider')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Remove Provider Inbox filter' }));
+  expect(onRemoveFilter).toHaveBeenCalledWith(0);
+});

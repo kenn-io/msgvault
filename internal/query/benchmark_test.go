@@ -219,6 +219,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 	}
 
 	tables := []tableSpec{
+		{"SELECT 0::BIGINT AS message_id, 'unknown' AS inbox_state, 'unknown' AS read_state WHERE false", "mailbox_state", "state.parquet"},
 		{"SELECT id, account_email, source_type FROM bench_sources",
 			"sources", "sources.parquet"},
 		{"SELECT id, email_address, domain, display_name, phone_number FROM bench_participants",
