@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json/jsontext"
+	"errors"
 	"strconv"
 	"time"
 
@@ -61,14 +62,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			}
 			return m, nil
 		}
-		if n := len(m.timelineState.history); n > 0 {
-			prev := m.timelineState.history[n-1]
-			m.timelineState.history = m.timelineState.history[:n-1]
-			m.timelineState.request, m.timelineState.result = prev.request, prev.result
-			m.timelineState.cursor, m.timelineState.scroll = prev.cursor, prev.scroll
-			m.timelineState.needsLoad = false
-			m.rebuildTimelineRows()
-		}
+		m.popTimelineHistory()
 		return m, nil
 	}
 	if msg.String() == "r" && m.timelineState.reader != timelineReaderNone && m.timelineState.err != nil {
@@ -355,4 +349,24 @@ func (m Model) requestTimeline(req timeline.Request, remember bool) (tea.Model, 
 func (m Model) openTimelineReader(reader timelineReader, id int64) (tea.Model, tea.Cmd) {
 	cmd := m.loadTimelineReader(reader, id)
 	return m, cmd
+}
+
+var errTimelineLoadCancelled = errors.New("timeline load cancelled · r to retry")
+
+// popTimelineHistory restores the previous request. Without one, a cancelled
+// load says so instead of leaving an empty list.
+func (m *Model) popTimelineHistory() {
+	n := len(m.timelineState.history)
+	if n == 0 {
+		if m.timelineState.result == nil {
+			m.timelineState.err = errTimelineLoadCancelled
+		}
+		return
+	}
+	prev := m.timelineState.history[n-1]
+	m.timelineState.history = m.timelineState.history[:n-1]
+	m.timelineState.request, m.timelineState.result = prev.request, prev.result
+	m.timelineState.cursor, m.timelineState.scroll = prev.cursor, prev.scroll
+	m.timelineState.needsLoad = false
+	m.rebuildTimelineRows()
 }
