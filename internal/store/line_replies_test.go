@@ -288,7 +288,8 @@ func TestLineReplyBindingChangesFailClosed(t *testing.T) {
 				err = st.SetLineBotContext(t.Context(), draft.SourceID, "U00000000000000000000000000000009")
 			}
 			require.NoError(err)
-			require.ErrorIs(st.ValidateLineReplyContext(t.Context(), draft.DraftID), store.ErrChatDraftInvalidDestination)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+			require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
 		})
 	}
 }
@@ -395,10 +396,6 @@ func TestLineReplyExpiredDraftDeletion(t *testing.T) {
 			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
 			require.ErrorIs(err, store.ErrChatDraftFrozen)
 			err = st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
-			if accepted {
-				assert.ErrorIs(err, store.ErrChatDraftFrozen)
-				return
-			}
 			require.NoError(err)
 			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 			require.ErrorIs(err, store.ErrChatDraftNotFound)
@@ -444,6 +441,31 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 			durable, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			assert.Equal(parent, durable.ReplyToMessageID, "the admitted snapshot stays frozen")
+		})
+	}
+}
+
+func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
+	for _, state := range []string{store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
+		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), allowLineReply)
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE line_reply_attempts SET state=? WHERE draft_id=?`), state, draft.DraftID)
+			require.NoError(err)
+			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+			require.ErrorIs(err, store.ErrChatDraftFrozen)
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			target, err := st.GetOrCreateSource("line", "2000000002")
+			require.NoError(err)
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
+			require.NoError(err)
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(state, receipt.State)
+			assert.Equal(attempt.RetryKey, receipt.RetryKey)
 		})
 	}
 }

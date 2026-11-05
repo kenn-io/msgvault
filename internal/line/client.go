@@ -28,6 +28,9 @@ const (
 	maxJSONBytes   = 1 << 20
 )
 
+// ErrCredentialsUnavailable identifies token acquisition and authentication failures.
+var ErrCredentialsUnavailable = errors.New("line: credentials unavailable")
+
 // APIError deliberately excludes provider bodies and credentials.
 // RetryAfter is a deadline for 429 responses and 5xx with Retry-After.
 type APIError struct {
@@ -184,7 +187,7 @@ func (c *Client) authorized(ctx context.Context, method, base, path string, body
 func (c *Client) authorizedWithHTTPClient(ctx context.Context, method, base, path string, body []byte, client *http.Client, retryKey string) (*http.Response, error) {
 	token, err := c.accessToken(ctx, "")
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(ErrCredentialsUnavailable, err)
 	}
 	for attempt := range 2 {
 		response, err := c.sendWithHTTPClient(ctx, method, base, path, body, "application/json", token, client, retryKey)
@@ -192,12 +195,16 @@ func (c *Client) authorizedWithHTTPClient(ctx context.Context, method, base, pat
 			return nil, err
 		}
 		if response.StatusCode != http.StatusUnauthorized || attempt == 1 {
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				defer func() { _ = response.Body.Close() }()
+				return nil, errors.Join(ErrCredentialsUnavailable, c.statusError(response))
+			}
 			return response, nil
 		}
 		_ = response.Body.Close()
 		token, err = c.accessToken(ctx, token)
 		if err != nil {
-			return nil, err
+			return nil, errors.Join(ErrCredentialsUnavailable, err)
 		}
 	}
 	panic("unreachable")

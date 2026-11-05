@@ -256,12 +256,16 @@ func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, rev
 	if draft.SourceType != lineSourceType {
 		return nil
 	}
-	var frozen bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts WHERE draft_id=? AND NOT (? AND state IN ('provider_rejected','remote_unknown_expired')))`, id, deleting).Scan(&frozen); err != nil {
+	var state string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM line_reply_attempts WHERE draft_id=?`, id).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	if frozen {
-		return ErrChatDraftFrozen
+	if deleting && (lineReplyTerminal(state) || lineReplyExpired(state)) {
+		return nil
 	}
-	return nil
+	return ErrChatDraftFrozen
 }

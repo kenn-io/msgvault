@@ -206,6 +206,9 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	result, pushErr := client.PushText(requestCtx, a.RetryKey, input)
 	cancel()
+	if errors.Is(pushErr, ErrCredentialsUnavailable) {
+		return replyReceipt(a), pushErr
+	}
 	status, retryAfter := result.StatusCode, result.RetryAfter
 	if apiErr, ok := errors.AsType[*APIError](pushErr); ok {
 		if status == 0 {
@@ -223,7 +226,7 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	defer cleanup()
 	beforeOutcome := a
 	a, err = s.Store.RecordLineReplyOutcomeContext(evidenceCtx, id, store.LineReplyOutcome{
-		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict && status != http.StatusUnauthorized && status != http.StatusForbidden,
+		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict,
 		StatusCode: status, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID, NextRetryAt: deadline})
 	if err != nil {
 		// Preserve the admitted identity even if the Store could not read at all.
@@ -239,9 +242,6 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	}
 	if a.RemoteMessageID != "" {
 		return s.complete(evidenceCtx, a)
-	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return replyReceipt(a), pushErr
 	}
 	return replyReceipt(a), nil
 }

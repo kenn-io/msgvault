@@ -733,23 +733,39 @@ func TestReplyRecoveryAfterParentGC(t *testing.T) {
 }
 
 func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint string
+		response       lineapi.Response
+	}{
+		{"token 400", "/oauth2/v3/token", lineapi.Response{Status: 400}},
+		{"token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}},
+		{"token 403", "/oauth2/v3/token", lineapi.Response{Status: 403}},
+		{"token 500", "/oauth2/v3/token", lineapi.Response{Status: 500}},
+		{"invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}},
+		{"token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}},
+		{"push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}},
+		{"push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newReplyFixture(t, "user", nil)
-			f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status}, lineapi.Response{Status: status})
-			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			var apiErr *line.APIError
-			require.ErrorAs(err, &apiErr)
-			assert.Equal(status, apiErr.StatusCode)
-			assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-			// A 401 consumes both responses during token refresh; a 403 uses one.
-			if status == http.StatusForbidden {
-				f.now = f.now.Add(31 * time.Second)
-				_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				require.ErrorAs(err, &apiErr)
+			f.resetClient()
+			responses := []lineapi.Response{tc.response}
+			if tc.endpoint == "/v2/bot/message/push" && tc.response.Status == http.StatusUnauthorized {
+				responses = append(responses, tc.response)
 			}
+			f.fake.Enqueue("POST", tc.endpoint, responses...)
+			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.ErrorIs(err, line.ErrCredentialsUnavailable)
+			pushes := f.fake.Count("POST", "/v2/bot/message/push")
+			if tc.endpoint == "/oauth2/v3/token" {
+				assert.Zero(pushes)
+			}
+			attempt, readErr := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+			require.NoError(readErr)
+			assert.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
+			assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
 			f.now = f.now.Add(31 * time.Second)
 			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			require.NoError(err)
@@ -761,9 +777,10 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 					keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
 				}
 			}
-			require.Len(keys, 3)
-			assert.Equal(keys[0], keys[1])
-			assert.Equal(keys[0], keys[2])
+			require.Len(keys, pushes+1)
+			for _, key := range keys {
+				assert.Equal(attempt.RetryKey, key)
+			}
 		})
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -74,7 +73,7 @@ func (a *storeAPIAdapter) runCLISendLineReply(ctx context.Context, req api.CLIRu
 		}()
 	}
 	if sendErr != nil {
-		if apiErr, ok := errors.AsType[*line.APIError](sendErr); ok && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+		if errors.Is(sendErr, line.ErrCredentialsUnavailable) {
 			return draftReplyError("credentials_unavailable", sendErr)
 		}
 		if !receipt.Accepted {

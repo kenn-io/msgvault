@@ -251,12 +251,22 @@ func TestLineReplyUnpersistedAcceptanceEmitsBoundedRecoveryReceipt(t *testing.T)
 }
 
 func TestLineReplyCredentialFailureCode(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		status   int
+	}{
+		{"/oauth2/v3/token", http.StatusBadRequest},
+		{"/oauth2/v3/token", http.StatusUnauthorized},
+		{"/oauth2/v3/token", http.StatusForbidden},
+		{"/oauth2/v3/token", http.StatusInternalServerError},
+		{"/v2/bot/message/push", http.StatusUnauthorized},
+		{"/v2/bot/message/push", http.StatusForbidden},
+	} {
+		t.Run(tc.endpoint+http.StatusText(tc.status), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			a, draft, fake := lineReplyAdapterFixture(t)
-			fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status}, lineapi.Response{Status: status})
+			fake.Enqueue("POST", tc.endpoint, lineapi.Response{Status: tc.status}, lineapi.Response{Status: tc.status})
 			err := a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1"}}, func(api.CLIRunEvent) error { return nil })
 			require.Error(err)
 			assert.Equal("credentials_unavailable", err.Error())

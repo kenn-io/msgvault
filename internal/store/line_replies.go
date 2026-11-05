@@ -225,13 +225,10 @@ func readLineReplyBinding(ctx context.Context, q contextRowQuerier, sourceID, co
 		return b, ErrChatDraftInvalidDestination
 	}
 	if checkBot {
-		var settings struct {
-			BotUserID string `json:"line_bot_user_id"`
-		}
-		if !raw.Valid || json.Unmarshal([]byte(raw.String), &settings) != nil || settings.BotUserID == "" {
+		b.botID, err = lineBotUserIDFromConfig(raw)
+		if err != nil || b.botID == "" {
 			return b, ErrChatDraftInvalidDestination
 		}
-		b.botID = settings.BotUserID
 	}
 	err = q.QueryRowContext(ctx, `SELECT source_conversation_id,conversation_type FROM conversations WHERE id=? AND source_id=?`, conversationID, sourceID).Scan(&b.nativeID, &b.kind)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -270,23 +267,4 @@ func validateLineReplyBinding(ctx context.Context, q contextStatementQuerier, a 
 		return 0, ErrChatDraftInvalidDestination
 	}
 	return b.parentID, nil
-}
-
-// ValidateLineReplyContext rechecks destination/identity before provider I/O.
-// Parent quote metadata may change; the admitted request keeps its old token.
-func (s *Store) ValidateLineReplyContext(ctx context.Context, id string) error {
-	a, err := s.GetLineReplyAttemptContext(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := s.requireSyncSource(a.SourceID); err != nil {
-		return err
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockSyncSourceTx(ctx, tx, a.SourceID); err != nil {
-			return err
-		}
-		_, err := validateLineReplyBinding(ctx, tx, a, true)
-		return err
-	})
 }
