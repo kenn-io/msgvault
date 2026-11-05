@@ -339,11 +339,26 @@ func TestCalendarOccurrenceSparseCancellationDetail(t *testing.T) {
 }
 
 func TestCalendarOccurrenceUnresolvableRefs(t *testing.T) {
-	cases := append(calendarOccurrenceReadCases(),
-		calendarOccurrenceReadCase{state: "series budget", name: "series budget"},
-		calendarOccurrenceReadCase{state: "request budget", name: "request budget"},
-	)
-	for _, tc := range cases {
+	for _, tc := range []calendarOccurrenceReadCase{
+		{name: "missing bounds", state: "missing bounds"},
+		{name: "plain generated"},
+		{name: "cancelled master", state: "cancelled master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{name: "plain single", state: "single"},
+		{name: "single overridden at own start", state: "single overridden", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{name: "cleared timed recurrence", state: "cleared timed", fields: `"status":"cancelled"`},
+		{name: "cleared all-day recurrence", state: "cleared all-day", fields: `"status":"cancelled"`},
+		{name: "single with undecodable event", state: "single damaged"},
+		{name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
+		{name: "unresolvable exception", state: "unresolvable", fields: `"status":"cancelled"`},
+		{name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
+		{name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
+		{name: "retyped original", state: "retyped original", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
+		{name: "orphan", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, orphan: true},
+		{state: "series budget", name: "series budget"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st, master, exception, _ := calendarOccurrenceReadFixture(t, tc)
@@ -405,7 +420,6 @@ func TestCalendarOccurrenceExpansionReasons(t *testing.T) {
 	for _, tc := range []calendarOccurrenceReadCase{
 		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/master"}},
-		{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
 		{count: 1, name: "series budget", state: "series budget", fields: `"status":"cancelled","start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "request budget", state: "request budget", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 	} {
@@ -540,21 +554,6 @@ func TestCalendarOccurrenceDamagedNeighborKeepsStandalone(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Zero(listed.SeriesMessageID)
 	assertions.Zero(detail.SeriesMessageID)
-}
-
-func TestCalendarOccurrenceBoundedCancellationUnderUnsupportedMaster(t *testing.T) {
-	tc := calendarOccurrenceReadCase{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`}
-	assertions, requirements := assert.New(t), require.New(t)
-	st, master, _, _ := calendarOccurrenceReadFixture(t, tc)
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	listed := page.Occurrences[0]
-	assertions.Equal(master, listed.SeriesMessageID)
-	assertions.Equal("cancelled", listed.Status)
-	assertions.Equal("2027-03-04T19:00:00Z", listed.Start.Format(time.RFC3339))
-	assertions.Equal("2027-03-04T20:00:00Z", listed.End.Format(time.RFC3339))
 }
 
 func TestCalendarOccurrenceRefLookupErrors(t *testing.T) {
