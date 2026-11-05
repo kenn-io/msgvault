@@ -12,13 +12,8 @@ the archive through the browser, terminal, CLI, or an agent.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="/docs/setup/">Get started</a>
-  <a class="md-button" href="/docs/changelog/#0210">Changelog</a>
+  <a class="md-button" href="/docs/changelog/#0230">Changelog</a>
 </p>
-
-!!! note "Upgrading to 0.21?"
-    The [0.21.0 changelog](changelog.md#0210) lists the new capabilities.
-    Read the [upgrade notes](changelog.md#before-upgrading) before
-    opening an existing archive with the new version.
 
 ## Start an archive
 

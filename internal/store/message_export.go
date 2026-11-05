@@ -321,147 +321,113 @@ func (s *Store) exportMessageRows(
 	sink MessageExportSink,
 	counts *MessageExportCounts,
 ) error {
-	predicate, filterArgs := messageExportPredicate("m", filter, true)
-	var cursor *messageExportMessageRow
-	for {
-		pagePredicate := predicate
-		args := append([]any{}, filterArgs...)
-		if cursor != nil {
-			pagePredicate += `
-				AND (
-					s.source_type, s.identifier, c.source_conversation_id,
-					COALESCE(m.sent_at, m.received_at, m.internal_date),
-					m.source_message_id, m.id
-				) > (?, ?, ?, ?, ?, ?)
-			`
-			args = append(args,
-				cursor.sourceType,
-				cursor.sourceIdentifier,
-				cursor.sourceConversationID,
-				cursor.occurredAt,
-				cursor.sourceMessageID,
-				cursor.id,
-			)
-		}
-		args = append(args, messageExportPageSize)
-		rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-			SELECT m.id, s.source_type, s.identifier, m.source_message_id,
-			       c.source_conversation_id, m.message_type,
-			       COALESCE(m.subject, ''), COALESCE(m.metadata, '{}'),
-			       COALESCE(m.sent_at, m.received_at, m.internal_date),
-			       m.deleted_from_source_at, p_sender.id,
-			       CASE
-			           WHEN m.sender_id IS NULL
-			                OR mr_from.participant_id = m.sender_id
-			           THEN COALESCE(mr_from.display_name, '')
-			           ELSE ''
-			       END,
-			       COALESCE((SELECT NULLIF(TRIM(person_name.display_name), '')
-			                 FROM person_participants person_binding JOIN persons person_name ON person_name.id = person_binding.person_id
-			                 WHERE person_binding.participant_id = p_sender.id), ''),
-			       COALESCE(p_sender.display_name, ''),
-			       COALESCE(p_sender.email_address, p_sender.phone_number, '')
-			FROM messages m
-			JOIN conversations c ON c.id = m.conversation_id
-			JOIN sources s ON s.id = m.source_id
-			LEFT JOIN message_recipients mr_from ON mr_from.id = (
-				SELECT mr.id FROM message_recipients mr
-				WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-				ORDER BY mr.id LIMIT 1
-			)
-			LEFT JOIN participants p_sender
-			       ON p_sender.id = COALESCE(m.sender_id, mr_from.participant_id)
-			WHERE `+pagePredicate+`
-			ORDER BY s.source_type, s.identifier, c.source_conversation_id,
-			         COALESCE(m.sent_at, m.received_at, m.internal_date),
-			         m.source_message_id, m.id
-			LIMIT ?
-		`), args...)
-		if err != nil {
-			return fmt.Errorf("query message export page: %w", err)
-		}
-		page, err := scanMessageExportPage(rows)
+	predicate, args := messageExportPredicate("m", filter, true)
+	// The window makes SQLite sort metadata before evaluating the body subquery.
+	// Match the final order so both backends emit that order without another sort.
+	// The open cursor holds a SQLite read snapshot while a slow sink blocks.
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT metadata.*,
+		       ROW_NUMBER() OVER (
+		           ORDER BY metadata.source_type, metadata.identifier, metadata.source_conversation_id,
+		                    metadata.occurred_at, metadata.source_message_id, metadata.export_message_id
+		       ),
+		       (SELECT body_text FROM message_bodies WHERE message_id = metadata.export_message_id)
+		FROM (
+		SELECT m.id AS export_message_id, s.source_type, s.identifier, m.source_message_id,
+		       c.source_conversation_id, m.message_type,
+		       COALESCE(m.subject, ''), COALESCE(m.metadata, '{}'),
+		       COALESCE(m.sent_at, m.received_at, m.internal_date) AS occurred_at,
+		       m.deleted_from_source_at, p_sender.id,
+		       CASE
+		           WHEN m.sender_id IS NULL
+		                OR mr_from.participant_id = m.sender_id
+		           THEN COALESCE(mr_from.display_name, '')
+		           ELSE ''
+		       END,
+		       COALESCE((SELECT NULLIF(TRIM(person_name.display_name), '')
+		                 FROM person_participants person_binding JOIN persons person_name ON person_name.id = person_binding.person_id
+		                 WHERE person_binding.participant_id = p_sender.id), ''),
+		       COALESCE(p_sender.display_name, ''),
+		       COALESCE(p_sender.email_address, p_sender.phone_number, '')
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN sources s ON s.id = m.source_id
+		LEFT JOIN message_recipients mr_from ON mr_from.id = (
+			SELECT mr.id FROM message_recipients mr
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+			ORDER BY mr.id LIMIT 1
+		)
+		LEFT JOIN participants p_sender
+		       ON p_sender.id = COALESCE(m.sender_id, mr_from.participant_id)
+		WHERE `+predicate+`
+		) metadata
+		ORDER BY metadata.source_type, metadata.identifier, metadata.source_conversation_id,
+		         metadata.occurred_at, metadata.source_message_id, metadata.export_message_id
+	`), args...)
+	if err != nil {
+		return fmt.Errorf("query message export messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var text sql.NullString
+		row, err := scanMessageExportRow(rows, &text)
 		if err != nil {
 			return err
 		}
-		if len(page) == 0 {
-			return nil
+		author, err := normalizeMessageExportAuthor(row)
+		if err != nil {
+			return fmt.Errorf("normalize message export author: %w", err)
 		}
-		for _, row := range page {
-			var text sql.NullString
-			if err := s.db.QueryRowContext(
-				ctx,
-				s.dialect.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`),
-				row.id,
-			).Scan(&text); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("load message export body: %w", err)
-			}
-			author, err := normalizeMessageExportAuthor(row)
-			if err != nil {
-				return fmt.Errorf("normalize message export author: %w", err)
-			}
-			if err := sink.Message(MessageExportMessage{
-				SourceType:        row.sourceType,
-				SourceIdentifier:  row.sourceIdentifier,
-				ID:                row.sourceMessageID,
-				ConversationID:    row.sourceConversationID,
-				MessageType:       row.messageType,
-				Subject:           row.subject,
-				Text:              text.String,
-				Author:            author,
-				OccurredAt:        row.occurredAt.UTC(),
-				DeletedFromSource: row.deletedFromSource,
-			}); err != nil {
-				return fmt.Errorf("emit message export message: %w", err)
-			}
-			counts.Messages++
+		if err := sink.Message(MessageExportMessage{
+			SourceType:        row.sourceType,
+			SourceIdentifier:  row.sourceIdentifier,
+			ID:                row.sourceMessageID,
+			ConversationID:    row.sourceConversationID,
+			MessageType:       row.messageType,
+			Subject:           row.subject,
+			Text:              text.String,
+			Author:            author,
+			OccurredAt:        row.occurredAt.UTC(),
+			DeletedFromSource: row.deletedFromSource,
+		}); err != nil {
+			return fmt.Errorf("emit message export message: %w", err)
 		}
-		if len(page) < messageExportPageSize {
-			return nil
-		}
-		last := page[len(page)-1]
-		cursor = &last
-	}
-}
-
-func scanMessageExportPage(rows *loggedRows) ([]messageExportMessageRow, error) {
-	var page []messageExportMessageRow
-	for rows.Next() {
-		var (
-			row                                   messageExportMessageRow
-			sourceMessageID, sourceConversationID sql.NullString
-			occurredAt                            nullableTimestamp
-			deletedFromSource                     sql.NullTime
-		)
-		if err := rows.Scan(
-			&row.id, &row.sourceType, &row.sourceIdentifier, &sourceMessageID,
-			&sourceConversationID, &row.messageType, &row.subject, &row.metadata,
-			&occurredAt, &deletedFromSource, &row.senderID,
-			&row.recipientDisplayName, &row.personDisplayName, &row.senderDisplayName, &row.senderAddress,
-		); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan message export message: %w", err)
-		}
-		if row.sourceType == "" || row.sourceIdentifier == "" ||
-			!sourceMessageID.Valid || sourceMessageID.String == "" ||
-			!sourceConversationID.Valid || sourceConversationID.String == "" {
-			_ = rows.Close()
-			return nil, errors.New("message export message has an empty stable identity")
-		}
-		row.sourceMessageID = sourceMessageID.String
-		row.sourceConversationID = sourceConversationID.String
-		row.occurredAt = occurredAt.Time
-		row.deletedFromSource = deletedFromSource.Valid
-		page = append(page, row)
+		counts.Messages++
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("iterate message export page: %w", err)
+		return fmt.Errorf("iterate message export messages: %w", err)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close message export page: %w", err)
+	return nil
+}
+
+func scanMessageExportRow(rows *loggedRows, text *sql.NullString) (messageExportMessageRow, error) {
+	var (
+		row                                   messageExportMessageRow
+		sourceMessageID, sourceConversationID sql.NullString
+		occurredAt                            nullableTimestamp
+		deletedFromSource                     sql.NullTime
+		position                              int64
+	)
+	if err := rows.Scan(
+		&row.id, &row.sourceType, &row.sourceIdentifier, &sourceMessageID,
+		&sourceConversationID, &row.messageType, &row.subject, &row.metadata,
+		&occurredAt, &deletedFromSource, &row.senderID,
+		&row.recipientDisplayName, &row.personDisplayName, &row.senderDisplayName, &row.senderAddress,
+		&position, text,
+	); err != nil {
+		return row, fmt.Errorf("scan message export message: %w", err)
 	}
-	return page, nil
+	if row.sourceType == "" || row.sourceIdentifier == "" ||
+		!sourceMessageID.Valid || sourceMessageID.String == "" ||
+		!sourceConversationID.Valid || sourceConversationID.String == "" {
+		return row, errors.New("message export message has an empty stable identity")
+	}
+	row.sourceMessageID = sourceMessageID.String
+	row.sourceConversationID = sourceConversationID.String
+	row.occurredAt = occurredAt.Time
+	row.deletedFromSource = deletedFromSource.Valid
+	return row, nil
 }
 
 func messageExportPredicate(

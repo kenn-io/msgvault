@@ -131,7 +131,7 @@ part of the envelope.
 
 **source_import_items** -- Durable import receipts.
 
-On unreleased `main`, Apple Mail imports keep two kinds of rows here:
+Apple Mail imports keep two kinds of rows here:
 
 - `emlx-target` rows track one archived message, which several `.emlx` files
   can share. The importer marks the row `pending` before it writes the message,
@@ -161,7 +161,7 @@ fingerprint still record completed rows but always read the file.
 
 The rows reuse the existing table and the sync run's ownership check, without a
 schema migration. They are cache hints rather than integrity checks; see
-[repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
+[repeat imports](../usage/importing.md#repeat-apple-mail-imports).
 
 **participants** -- Observed addresses and handles from source data. These are
 separate from the curated `persons` table.

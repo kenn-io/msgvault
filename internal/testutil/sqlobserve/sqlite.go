@@ -54,6 +54,17 @@ func (o *Observer) Statements() []string {
 // Open creates an observed in-memory database with the production functions.
 func Open(tb testing.TB, hook func(*sqlite3.SQLiteConn) error) (*sql.DB, *Observer) {
 	tb.Helper()
+	return open(tb, ":memory:", 1, hook)
+}
+
+// OpenFile observes a file database and allows concurrent reads while rows are open.
+func OpenFile(tb testing.TB, dsn string, hook func(*sqlite3.SQLiteConn) error) (*sql.DB, *Observer) {
+	tb.Helper()
+	return open(tb, dsn, 4, hook)
+}
+
+func open(tb testing.TB, dsn string, maxOpenConns int, hook func(*sqlite3.SQLiteConn) error) (*sql.DB, *Observer) {
+	tb.Helper()
 	observer := &Observer{}
 	name := fmt.Sprintf("observed_sqlite_%d", driverSequence.Add(1))
 	sql.Register(name, &observedDriver{base: &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
@@ -65,9 +76,9 @@ func Open(tb testing.TB, hook func(*sqlite3.SQLiteConn) error) (*sql.DB, *Observ
 		}
 		return nil
 	}}, observer: observer})
-	db, err := sql.Open(name, ":memory:")
+	db, err := sql.Open(name, dsn)
 	require.NoError(tb, err)
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(maxOpenConns)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
 	return db, observer
 }

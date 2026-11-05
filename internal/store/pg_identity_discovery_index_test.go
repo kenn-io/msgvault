@@ -18,6 +18,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_messages_conversation_id", "messages"},
 	{"idx_messages_conversation_timeline", "messages"},
 	{"idx_messages_beeper_conversation", "messages"},
+	{"idx_messages_conversation_content_changed", "messages"},
 	{"idx_messages_reply_to_message_id", "messages"},
 	{"idx_messages_account", "messages"},
 	{"idx_messages_account_pending", "messages"},
