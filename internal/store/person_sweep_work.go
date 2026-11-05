@@ -692,20 +692,19 @@ func scanTrackedPersonIDs(
 func (s *Store) personSweepJournalGapTx(
 	ctx context.Context, tx *loggedTx, personID int64, cursors []peoplesweep.Cursor,
 ) (int64, bool, error) {
+	if len(cursors) == 0 {
+		return 0, false, nil
+	}
 	var dirtyThrough int64
+	err := tx.QueryRowContext(ctx, s.Rebind(`
+		SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes
+		WHERE person_id = ?`), personID).Scan(&dirtyThrough)
+	if err != nil {
+		return 0, false, fmt.Errorf("read person sweep journal high water: %w", err)
+	}
 	gap := false
 	for _, cursor := range cursors {
-		var highWater int64
-		err := tx.QueryRowContext(ctx, s.Rebind(`
-			SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes
-			WHERE person_id = ?`), personID).Scan(&highWater)
-		if err != nil {
-			return 0, false, fmt.Errorf("read person sweep journal high water: %w", err)
-		}
-		if highWater > dirtyThrough {
-			dirtyThrough = highWater
-		}
-		if highWater > cursor.OptimisticSequence {
+		if dirtyThrough > cursor.OptimisticSequence {
 			gap = true
 		}
 	}
