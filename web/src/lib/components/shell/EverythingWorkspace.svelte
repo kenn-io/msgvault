@@ -135,7 +135,7 @@
     if (!untrack(() => readingTargetKey)) return;
     void tick().then(() => {
       const focused = document.activeElement;
-      if (focused instanceof HTMLElement && focused !== document.body && focused.isConnected && focused.checkVisibility({ visibilityProperty: true })) return;
+      if (focused instanceof HTMLElement && focused !== document.body && focused.getClientRects().length > 0 && getComputedStyle(focused).visibility === 'visible') return;
       resultsSplit?.querySelector<HTMLButtonElement>('[aria-label="Back to results"], [aria-label="Close reading pane"]')?.focus();
     });
   });

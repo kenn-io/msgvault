@@ -350,6 +350,7 @@ test('phone reader replaces results and Back restores the focused row', async ({
 });
 
 test('resizing an open reader preserves expanded messages and focus', async ({ page }) => {
+  await page.addInitScript(() => { Object.defineProperty(Element.prototype, 'checkVisibility', { value: undefined, configurable: true }); });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
