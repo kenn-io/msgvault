@@ -211,6 +211,43 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 	assert.True(referenced)
 }
 
+func TestAttachmentBlobReferenced(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, messageID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "blob-references", 2)
+	_, err := st.DB().Exec(st.Rebind(`
+		INSERT INTO attachments (message_id, content_hash, thumbnail_hash, storage_path, thumbnail_path)
+		VALUES (?, 'content-hash', 'thumbnail-hash', 'content/path', 'thumbnail/path'),
+		       (?, '', '', '', ''),
+		       (?, NULL, NULL, 'pending', NULL)
+	`), messageID, messageID, messageID)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name, hash, path string
+		want             bool
+	}{
+		{"content hash", "content-hash", "", true},
+		{"thumbnail hash", "thumbnail-hash", "", true},
+		{"content path", "", "content/path", true},
+		{"thumbnail path", "", "thumbnail/path", true},
+		{"both match", "content-hash", "thumbnail/path", true},
+		{"only content hash matches", "content-hash", "missing/path", true},
+		{"only thumbnail hash matches", "thumbnail-hash", "missing/path", true},
+		{"only content path matches", "missing-hash", "content/path", true},
+		{"only thumbnail path matches", "missing-hash", "thumbnail/path", true},
+		{"missing hash ignores empty paths", "missing-hash", "", false},
+		{"missing path ignores empty hashes", "", "missing/path", false},
+		{"both missing", "missing-hash", "missing/path", false},
+		{"both empty", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := st.AttachmentBlobReferenced(t.Context(), tc.hash, tc.path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
