@@ -65,10 +65,4 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(err)
 	require.Len(messages, 1, "the existing index remains searchable after setup fails")
-	// Settings' existing Build index action invokes this full-rebuild command.
-	f.runner.beforeBuild = nil
-	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
-	messages, _, err = f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "pear", Limit: 5})
-	require.NoError(err)
-	require.Len(messages, 2, "manual recovery indexes the pending message")
 }

@@ -1089,6 +1089,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
+		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
 		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
@@ -1102,7 +1103,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 				return installServeMCP(ctx, cmd, apiServer, active)
 			},
 		})
-		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
