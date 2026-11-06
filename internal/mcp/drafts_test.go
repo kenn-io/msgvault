@@ -58,6 +58,7 @@ func TestDraftRemovalRequiresConfirmation(t *testing.T) {
 	}{
 		{"draft-delete", map[string]any{"draft_id": "d1", "revision": 1}, DraftCommandRequest{Command: "draft-delete", Positional: "d1", Flags: map[string][]string{"revision": {"1"}}}},
 		{"draft-recover", map[string]any{"draft_id": "d1", "revision": 1}, DraftCommandRequest{Command: "draft-recover", Positional: "d1", Flags: map[string][]string{"revision": {"1"}}}},
+		{"send-line-reply", map[string]any{"draft_id": "chat-draft-example", "revision": 1}, DraftCommandRequest{Command: "send-line-reply", Positional: "chat-draft-example", Flags: map[string][]string{"revision": {"1"}}}},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			assert := assert.New(t)
@@ -79,6 +80,11 @@ func TestDraftRemovalRequiresConfirmation(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(prompt.Message, string(encoded))
 			assert.Contains(prompt.Message, "data")
+			if tc.command == "send-line-reply" {
+				assert.Contains(prompt.Message, "LINE")
+				assert.Contains(prompt.Message, `"draft_id":"chat-draft-example"`)
+				assert.Contains(prompt.Message, `"revision":1`)
+			}
 			for _, response := range []*sdkmcp.ElicitResult{{Action: "decline"}, {Action: "accept", Content: map[string]any{"confirm": false}}} {
 				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": response}})
 				require.NoError(err)
@@ -186,28 +192,28 @@ func TestDraftReadsDoNotRequireConfirmation(t *testing.T) {
 func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	commands := []string{"draft-reply", "draft-compose", "draft-forward", "draft-get", "draft-edit", "draft-delete", "draft-recover", "draft-send-as", "unknown"}
+	commands := []string{"draft-reply", "draft-compose", "draft-forward", "draft-get", "draft-edit", "draft-delete", "draft-recover", "draft-send-as", "send-line-reply", "unknown"}
 	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: commands}
 	names := func(tools []map[string]any) []string {
 		var names []string
 		for _, tool := range tools {
 			name, ok := tool["name"].(string)
 			require.True(ok)
-			if strings.HasPrefix(name, "draft_") {
+			if strings.HasPrefix(name, "draft_") || name == ToolSendLineReply {
 				names = append(names, name)
 			}
 		}
 		return names
 	}
 	owner := rawListTools(t, opts, true)
-	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names(owner))
+	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as", "send_line_reply"}, names(owner))
 	assert.Equal([]string{"draft_get", "draft_send_as"}, names(rawListTools(t, opts, false)))
 	for _, name := range names(owner) {
 		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
 		require.True(ok)
 		assert.Equal(true, annotations["openWorldHint"])
 	}
-	for _, name := range []string{ToolDraftDelete, ToolDraftRecover} {
+	for _, name := range []string{ToolDraftDelete, ToolDraftRecover, ToolSendLineReply} {
 		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
 		require.True(ok)
 		assert.Equal(true, annotations["destructiveHint"])

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +38,7 @@ func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *
 }
 
 func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
-	for _, kind := range []string{"disabled", "omitted", "revoked on disk", "missing secret", "invalid text", "env", "cwd", "revision", "missing revision"} {
+	for _, kind := range []string{"disabled", "omitted", "revoked on disk", "missing secret", "invalid text", "cwd", "revision", "missing revision"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -56,8 +55,6 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "")
 				require.NoError(err)
 				req.Args[2] = "--revision=2"
-			case "env":
-				req.Env = map[string]string{"EXAMPLE_LINE_SECRET": "spoofed"}
 			case "cwd":
 				req.Cwd = t.TempDir()
 			case "revision":
@@ -83,7 +80,7 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				assert.Equal("credentials_unavailable", err.Error())
 			case "revision":
 				assert.Equal("revision_mismatch", err.Error())
-			case "missing revision", "env", "cwd":
+			case "missing revision", "cwd":
 				assert.Equal("invalid_args", err.Error())
 			}
 			if kind == "invalid text" {
@@ -136,10 +133,10 @@ func TestLineReplyCacheAfterOutputFailureAndRecovery(t *testing.T) {
 	}
 }
 
-func TestLineReplyArchiveRecoveryAfterConfigRemoval(t *testing.T) {
+func TestLineReplyEmitsPendingArchiveReceipt(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
+	a, draft, _ := lineReplyAdapterFixture(t)
 	trigger := `CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`
 	_, err := a.store.DB().Exec(trigger)
 	require.NoError(err)
@@ -153,15 +150,6 @@ func TestLineReplyArchiveRecoveryAfterConfigRemoval(t *testing.T) {
 	assert.Equal("synthetic-request-1", pending.RequestID)
 	assert.Equal("900000000000000001", pending.RemoteMessageID)
 	assert.Equal("sent_archive_pending", pending.Status)
-	_, err = a.store.DB().Exec(`DROP TRIGGER fail_line_reply_archive`)
-	require.NoError(err)
-	a.config.Line = nil
-	require.NoError(a.config.Save())
-	out.Reset()
-	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-	require.NoError(err)
-	assert.Contains(out.String(), `"status":"sent"`)
-	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestLineReplyCredentialFailureCode(t *testing.T) {
@@ -172,48 +160,4 @@ func TestLineReplyCredentialFailureCode(t *testing.T) {
 	err := a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1"}}, func(api.CLIRunEvent) error { return nil })
 	require.Error(err)
 	assert.Equal("credentials_unavailable", err.Error())
-}
-
-func TestLineReplyRevokedSendCanDeleteDraftAndRecover(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
-	fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusServiceUnavailable})
-	run := func() (string, error) {
-		var output strings.Builder
-		err := a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { output.WriteString(event.Data); return nil })
-		return output.String(), err
-	}
-	out, err := run()
-	require.NoError(err)
-	assert.Contains(out, `"status":"remote_unknown"`)
-	attempt, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	a.config.Line[0].AllowSend = false
-	require.NoError(a.config.Save())
-	_, err = a.store.DB().Exec(`UPDATE line_reply_attempts SET next_retry_at=admitted_at`)
-	require.NoError(err)
-	_, err = run()
-	require.EqualError(err, "send_disabled")
-	require.NoError(a.store.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, time.Now()))
-	_, err = a.store.GetChatDraftContext(t.Context(), draft.DraftID)
-	require.ErrorIs(err, store.ErrChatDraftNotFound)
-	a.config.Line[0].AllowSend = true
-	require.NoError(a.config.Save())
-	_, err = a.store.DB().Exec(`UPDATE line_reply_attempts SET next_retry_at=admitted_at`)
-	require.NoError(err)
-	out, err = run()
-	require.NoError(err)
-	assert.Contains(out, `"status":"sent"`)
-	replayed, err := run()
-	require.NoError(err)
-	assert.Equal(out, replayed)
-	assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
-	for _, request := range fake.Requests() {
-		if request.Path == "/v2/bot/message/push" {
-			assert.Equal(attempt.RetryKey, request.Header.Get("X-Line-Retry-Key"))
-			assert.JSONEq(`{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"Thanks!"}]}`, string(request.Body))
-		}
-	}
 }

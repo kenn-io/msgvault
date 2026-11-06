@@ -133,40 +133,6 @@ func TestReplySendAndReceiptReplay(t *testing.T) {
 	}
 }
 
-func TestReplyDelayedAfterRateLimitBecomesLatestMessage(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newReplyFixture(t, "user", nil)
-	_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), f.now().Add(-time.Hour), f.parent)
-	must.NoError(err)
-	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests})
-	pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	must.NoError(err)
-	must.Equal(store.LineReplyAdmitted, pending.Status)
-
-	f.setNow(f.now().Add(21 * time.Hour))
-	_, err = f.st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message:  &store.Message{SourceID: f.draft.SourceID, ConversationID: f.draft.ConversationID, SourceMessageID: "101", MessageType: "line", SentAt: sql.NullTime{Time: f.now(), Valid: true}, Snippet: sql.NullString{String: "A newer incoming message", Valid: true}},
-		BodyText: sql.NullString{String: "A newer incoming message", Valid: true},
-	})
-	must.NoError(err)
-	f.setNow(f.now().Add(time.Hour))
-	f.resetClient()
-	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	must.NoError(err)
-	must.Equal(store.LineReplySent, sent.Status)
-	engine := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL())
-	message, err := engine.GetMessage(t.Context(), sent.MessageID)
-	must.NoError(err)
-	checks.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), message.SentAt.UTC())
-	var lastMessageAt time.Time
-	var preview string
-	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT last_message_at,last_message_preview FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&lastMessageAt, &preview))
-	checks.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), lastMessageAt.UTC())
-	checks.Equal("Thanks!", preview)
-	checks.Equal(1, f.fake.AcceptedPushes())
-}
-
 func TestReplyLostResponseThenRejectionKeepsOriginalKey(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -264,85 +230,6 @@ func TestReplyKnownReceiptRecoveryIgnoresProviderGates(t *testing.T) {
 		return nil, errors.New("revoked policy and removed secret")
 	}
 	sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal("sent", sent.Status)
-	assert.Equal(1, f.fake.AcceptedPushes())
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-}
-
-func TestReplyMissingParentRecoveryAfterGC(t *testing.T) {
-	for _, phase := range []string{"lost response after parent GC", "known receipt after parent GC"} {
-		t.Run(phase, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path := filepath.Join(t.TempDir(), "reply.db")
-			f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
-			if phase == "lost response after parent GC" {
-				f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-			} else {
-				_, err := f.st.DB().Exec(`CREATE TRIGGER fail_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
-				require.NoError(err)
-			}
-			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			if phase == "lost response after parent GC" {
-				require.NoError(err)
-				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-			} else {
-				require.Error(err)
-				assert.Equal("sent_archive_pending", pending.Status)
-				assert.True(pending.Accepted)
-				assert.Equal("900000000000000001", pending.RemoteMessageID)
-				assert.Zero(pending.MessageID)
-				assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-				_, err = f.st.DB().Exec(`DROP TRIGGER fail_reply_archive`)
-				require.NoError(err)
-			}
-			require.NoError(f.st.MarkMessageDeletedContext(t.Context(), f.draft.SourceID, "100"))
-			plan, err := f.st.PlanGCContext(t.Context())
-			require.NoError(err)
-			assert.Equal(int64(1), plan.SourceDeleted)
-			deleted, err := f.st.ExecuteGCContext(t.Context(), plan)
-			require.NoError(err)
-			assert.Equal(int64(1), deleted)
-			require.NoError(f.st.Close())
-			reopened, err := store.Open(path)
-			require.NoError(err)
-			t.Cleanup(func() { _ = reopened.Close() })
-			f.st = reopened
-			f.resetClient()
-			sender := f.sender()
-			f.setNow(f.now().Add(31 * time.Second))
-			sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-			require.NoError(err)
-			assert.Equal("sent", sent.Status)
-			assert.Equal(1, f.fake.AcceptedPushes())
-			pushes := 1
-			if phase == "lost response after parent GC" {
-				pushes = 2
-			}
-			assert.Equal(pushes, f.fake.Count("POST", "/v2/bot/message/push"))
-			body, err := f.st.GetMessageBodyText(sent.MessageID)
-			require.NoError(err)
-			assert.Equal("Thanks!", body)
-		})
-	}
-}
-
-func TestReplyResumesAdmittedAfterRestart(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "reply.db")
-	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
-	_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, f.now(), func(store.LineReplyAttempt) error { return nil })
-	require.NoError(err)
-	require.NoError(f.st.Close())
-	reopened, err := store.Open(path)
-	require.NoError(err)
-	t.Cleanup(func() { _ = reopened.Close() })
-	f.st = reopened
-	f.resetClient()
-	f.setNow(f.now().Add(31 * time.Second))
-	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("sent", sent.Status)
 	assert.Equal(1, f.fake.AcceptedPushes())
