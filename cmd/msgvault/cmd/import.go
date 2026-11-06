@@ -145,14 +145,17 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
+	// The import committed. A stop request that lands now must not skip
+	// recording the owner or the migration that follows.
+	post := context.WithoutCancel(ctx)
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
 	if !noDefaultIdentityImportWhatsApp && summary.SourceID != 0 {
-		confirmDefaultIdentity(ctx, cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164", state.logger)
+		confirmDefaultIdentity(post, cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164", state.logger)
 	}
 
 	if summary.SourceID != 0 {
-		if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(post, s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 	}

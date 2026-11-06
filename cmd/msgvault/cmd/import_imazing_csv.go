@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -116,7 +117,9 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 			rebuildCacheAfterWrite(cmd.Context(), dbPath, state),
 		)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
+	// The import committed. A stop request that lands now must not skip the
+	// migration that follows.
+	if err := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(cmd.Context()), st, state); err != nil {
 		return errors.Join(
 			fmt.Errorf("post-source-create migrations: %w", err),
 			rebuildCacheAfterWrite(cmd.Context(), dbPath, state),

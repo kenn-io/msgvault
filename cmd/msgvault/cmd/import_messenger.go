@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -102,7 +103,9 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
-	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
+	// The import committed. A stop request that lands now must not skip the
+	// migration that follows.
+	if err := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(ctx), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

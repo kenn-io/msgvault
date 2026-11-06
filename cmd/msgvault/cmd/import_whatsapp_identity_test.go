@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -98,6 +99,18 @@ func runWhatsAppIdentityCommand(
 	noDefaultIdentity bool,
 ) (string, error) {
 	t.Helper()
+	return runWhatsAppIdentityCommandContext(t, func(ctx context.Context) context.Context { return ctx }, home, fixture, noDefaultIdentity)
+}
+
+// runWhatsAppIdentityCommandContext runs the import with the context that
+// wrap derives from the test's invocation context.
+func runWhatsAppIdentityCommandContext(
+	t *testing.T,
+	wrap func(context.Context) context.Context,
+	home, fixture string,
+	noDefaultIdentity bool,
+) (string, error) {
+	t.Helper()
 	cfg := testConfigValue()
 
 	oldCfg := cfg
@@ -136,8 +149,7 @@ func runWhatsAppIdentityCommand(
 
 	var output strings.Builder
 	cmd := &cobra.Command{}
-	cmd.SetContext(testCtx)
-	cmd.SetContext(testCtx)
+	cmd.SetContext(wrap(testCtx))
 	cmd.SetOut(&output)
 	cmd.SetErr(io.Discard)
 	oldStdout := os.Stdout
