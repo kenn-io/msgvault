@@ -209,6 +209,7 @@ archive permission and still uses the session's authentication. See the
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `msgvault.skills` | read | — | none (guidance only) |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |
