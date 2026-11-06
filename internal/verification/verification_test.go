@@ -14,6 +14,11 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		{"security code after as", Content{Text: "Use 482913 as your Dropbox security code"}, true},
+		{"verify login after code", Content{Text: "Use 482913 to verify your login"}, true},
+		{"confirm identity after code", Content{Text: "Enter 482913 on the Uber app to confirm it's you"}, true},
+		{"reference after as", Content{Text: "Use 482913 as your reference"}, false},
+		{"enter on form", Content{Text: "Enter 482913 on the form"}, false},
 		{"uppercase HTTPS reset link", Content{Text: "Reset your password: HTTPS://example.test/reset?token=abcDEF1234567890"}, true},
 		{"hash code", Content{Text: "Your verification code is #482913"}, true},
 		{"quoted code", Content{Text: `Your verification code is "482913"`}, true},
