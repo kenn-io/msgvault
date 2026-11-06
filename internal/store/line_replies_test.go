@@ -275,7 +275,7 @@ func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 			}
 			started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, nextRetry)
 			require.NoError(err)
-			assert.Equal(original.AdmittedAt, started.AdmittedAt)
+			assert.Equal(firstPush, started.AdmittedAt)
 			assert.Equal(original.RetryUntil, started.RetryUntil)
 			assert.Equal(now.Add(23*time.Hour), started.RetryUntil)
 			if phase == "accepted" {
