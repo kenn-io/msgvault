@@ -182,7 +182,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		// Execute the advertised command, including its quoting and connection flags.
 		shell, args := "sh", []string{"-c", strings.Replace(page.Hints[0].Next, "msgvault", executable.POSIX, 1)}
 		if runtime.GOOS == "windows" {
-			shell, args = "pwsh", []string{"-NoProfile", "-NonInteractive", "-Command", strings.Replace(page.Hints[0].Next, "& 'msgvault'", executable.PowerShell, 1)}
+			shell, args = "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", strings.Replace(page.Hints[0].Next, "& 'msgvault'", executable.PowerShell, 1)}
 		}
 		retry := exec.CommandContext(t.Context(), shell, args...)
 		retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
