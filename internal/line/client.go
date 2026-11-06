@@ -43,11 +43,8 @@ type BotInfo struct {
 	DisplayName string `json:"displayName"`
 }
 type Profile struct {
-	UserID        string `json:"userId"`
-	DisplayName   string `json:"displayName"`
-	PictureURL    string `json:"pictureUrl"`
-	Language      string `json:"language"`
-	StatusMessage string `json:"statusMessage"`
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
 }
 type GroupSummary struct {
 	GroupID    string `json:"groupId"`

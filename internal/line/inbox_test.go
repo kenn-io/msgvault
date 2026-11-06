@@ -214,12 +214,6 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending, "an interrupted pass settles and finishes the events it completed")
 
-	f.now = f.now.Add(time.Minute)
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	f.run(t)
-	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
-	must.NoError(err)
-	checks.Zero(status.Pending)
 	var parentID, childID, conversationID int64
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id,conversation_id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-parent").Scan(&parentID, &conversationID))
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-child").Scan(&childID))
@@ -230,6 +224,13 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	var messageCount int64
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), conversationID).Scan(&messageCount))
 	checks.Equal(int64(2), messageCount)
+
+	f.now = f.now.Add(time.Minute)
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+	f.run(t)
+	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	must.NoError(err)
+	checks.Zero(status.Pending)
 }
 
 func TestProcessorRejectsSourceBoundToAnotherChannel(t *testing.T) {
@@ -608,95 +609,91 @@ func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 }
 
 func TestProcessorProfileFailureKeepsText(t *testing.T) {
-	t.Run("profile retry preserves text", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
+	must := require.New(t)
+	checks := assert.New(t)
 
-		f := newInboxFixture(t)
-		path := "/v2/bot/group/" + testGroup + "/member/" + testUser
-		f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 503, Body: `{"message":"synthetic failure"}`})
-		f.enqueue(t, f.message("1", "text survives enrichment failure", f.now.UnixMilli()), time.Time{})
-		f.run(t)
-		body := f.archived(t, "1").body
-		checks.Equal("text survives enrichment failure", body)
-		status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
-		must.NoError(err)
-		checks.Equal(int64(1), status.Pending)
-		f.now = f.now.Add(time.Minute)
-		f.run(t)
-		status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
-		must.NoError(err)
-		checks.Zero(status.Pending)
-		var updated int64
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
-		checks.Equal(int64(1), updated)
-		archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-		must.NoError(err)
-		must.Len(archived.From, 1)
-		checks.Equal("Example User", archived.From[0].Name)
-		count, err := f.st.CountMessagesForSource(f.source.ID)
-		must.NoError(err)
-		checks.Equal(int64(1), count)
-	})
+	f := newInboxFixture(t)
+	path := "/v2/bot/group/" + testGroup + "/member/" + testUser
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 503, Body: `{"message":"synthetic failure"}`})
+	f.enqueue(t, f.message("1", "text survives enrichment failure", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	body := f.archived(t, "1").body
+	checks.Equal("text survives enrichment failure", body)
+	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	must.NoError(err)
+	checks.Equal(int64(1), status.Pending)
+	f.now = f.now.Add(time.Minute)
+	f.run(t)
+	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	must.NoError(err)
+	checks.Zero(status.Pending)
+	var updated int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	checks.Equal(int64(1), updated)
+	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
+	must.NoError(err)
+	must.Len(archived.From, 1)
+	checks.Equal("Example User", archived.From[0].Name)
+	count, err := f.st.CountMessagesForSource(f.source.ID)
+	must.NoError(err)
+	checks.Equal(int64(1), count)
 }
 
 func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
-	t.Run("retry and replay", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newInboxFixture(t)
-		if f.st.IsPostgreSQL() {
-			t.Skip("archive GC is SQLite-only")
-		}
-		ctx := t.Context()
-		f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
-		message := f.message("gc-retry", "text to purge", f.now.UnixMilli())
-		f.enqueue(t, message, time.Time{})
-		f.run(t)
-		checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
-		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
-		must.Equal("retry", state)
-		var retryAt time.Time
-		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	if f.st.IsPostgreSQL() {
+		t.Skip("archive GC is SQLite-only")
+	}
+	ctx := t.Context()
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
+	message := f.message("gc-retry", "text to purge", f.now.UnixMilli())
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	must.Equal("retry", state)
+	var retryAt time.Time
+	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
 
-		edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
-		edit.Type = "messageEdited"
-		edit.WebhookEventID = "gc-edit"
-		f.enqueue(t, edit, time.Time{})
-		f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
-		f.run(t)
-		must.True(f.archived(t, message.Message.ID).deleted)
-		plan, err := f.st.PlanGCContext(ctx)
-		must.NoError(err)
-		deleted, err := f.st.ExecuteGCContext(ctx, plan)
-		must.NoError(err)
-		must.Equal(int64(1), deleted)
+	edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
+	edit.Type = "messageEdited"
+	edit.WebhookEventID = "gc-edit"
+	f.enqueue(t, edit, time.Time{})
+	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
+	f.run(t)
+	must.True(f.archived(t, message.Message.ID).deleted)
+	plan, err := f.st.PlanGCContext(ctx)
+	must.NoError(err)
+	deleted, err := f.st.ExecuteGCContext(ctx, plan)
+	must.NoError(err)
+	must.Equal(int64(1), deleted)
 
-		for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
-			var raw string
-			must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
-			checks.Equal("{}", raw)
-		}
-		f.now = retryAt
-		f.run(t)
-		_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
-		must.ErrorIs(err, sql.ErrNoRows)
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
-		checks.Equal("ignored", state)
-		// Scrubbed edits and unsends must remain harmless when reconciled.
-		must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
-
-		f.enqueue(t, message, time.Time{})
-		f.run(t)
-		_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
-		must.ErrorIs(err, sql.ErrNoRows)
+	for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
 		var raw string
-		var rows int
-		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
-		checks.Equal(1, rows)
+		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
 		checks.Equal("{}", raw)
-	})
+	}
+	f.now = retryAt
+	f.run(t)
+	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+	must.ErrorIs(err, sql.ErrNoRows)
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	checks.Equal("ignored", state)
+	// Scrubbed edits and unsends must remain harmless when reconciled.
+	must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
+
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+	must.ErrorIs(err, sql.ErrNoRows)
+	var raw string
+	var rows int
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
+	checks.Equal(1, rows)
+	checks.Equal("{}", raw)
 }
 
 func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
@@ -1062,7 +1059,7 @@ func TestProcessorProfileCacheSurvivesRestartAndExpires(t *testing.T) {
 	checks.Equal(2, f.api.Count(http.MethodGet, path))
 	raw, _, err := f.st.LineProfileContext(context.Background(), f.source.ID, testUser)
 	require.NoError(t, err)
-	checks.Contains(raw, "pictureUrl")
+	checks.JSONEq(`{"userId":"`+testUser+`","displayName":"Example User"}`, raw)
 }
 
 func TestProcessorAnonymousIdentityIsChannelScoped(t *testing.T) {

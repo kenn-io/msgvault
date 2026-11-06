@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestLineMaxRuntimeHandsGateToSecondChannel(t *testing.T) {
+func TestLineChannelsDrainWithoutCancelingSlowMedia(t *testing.T) {
 	must := require.New(t)
 	cfg, st, fake := lineWiringFixture(t)
 	for _, id := range []string{"2000000001", "2000000002"} {
@@ -88,7 +88,7 @@ func TestLineMaxRuntimeHandsGateToSecondChannel(t *testing.T) {
 		synctest.Wait()
 		var count int
 		must.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='text-b'"), b.ID).Scan(&count))
-		checks.Equal(1, count, "B must acquire the real gate before A finishes its batch or resumes")
+		checks.Equal(1, count, "the second channel must drain while the first still has pending media")
 		row, err := st.LineMessageContext(t.Context(), a.ID, "1")
 		must.NoError(err)
 		refs, err := st.MessageProviderAttachments(row.ID, "line:")
@@ -104,6 +104,7 @@ func TestLineSlowMediaCompletesWithRecurringSync(t *testing.T) {
 	must.NoError(err)
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
+	loaded.Line[0].MaxMediaMB = 1
 	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
 	must.NoError(err)
 	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "slow-media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"slow-media","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`}}))
@@ -120,7 +121,7 @@ func TestLineSlowMediaCompletesWithRecurringSync(t *testing.T) {
 					case started <- struct{}{}:
 					default:
 					}
-					timer := time.NewTimer(2 * time.Minute)
+					timer := time.NewTimer(8 * time.Minute)
 					defer timer.Stop()
 					select {
 					case <-r.Context().Done():
@@ -162,7 +163,7 @@ func TestLineSlowMediaCompletesWithRecurringSync(t *testing.T) {
 		case <-time.After(time.Minute):
 			must.FailNow("LINE did not start downloading")
 		}
-		time.Sleep(6 * time.Minute)
+		time.Sleep(12 * time.Minute)
 		synctest.Wait()
 		row, err := st.LineMessageContext(t.Context(), source.ID, "1")
 		must.NoError(err)

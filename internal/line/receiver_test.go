@@ -360,37 +360,35 @@ func TestReceiverChannelBinding(t *testing.T) {
 }
 
 func TestReceiverStorageFailuresDoNotWakeOrLeavePendingRows(t *testing.T) {
-	t.Run("batch transaction rolls back", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
+	must := require.New(t)
+	checks := assert.New(t)
 
-		st := testutil.NewTestStore(t)
-		source, err := st.GetOrCreateSource("line", "2000000000")
-		must.NoError(err)
-		must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-		wakeCalls := 0
-		receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-		if st.IsPostgreSQL() {
-			_, err = st.DB().Exec(`CREATE OR REPLACE FUNCTION msgvault_test_reject_line_event() RETURNS trigger
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000000")
+	must.NoError(err)
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
+	wakeCalls := 0
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`CREATE OR REPLACE FUNCTION msgvault_test_reject_line_event() RETURNS trigger
 LANGUAGE plpgsql AS $$ BEGIN
 	IF NEW.webhook_event_id = 'reject-second' THEN RAISE EXCEPTION 'synthetic failure'; END IF;
 	RETURN NEW;
 END; $$`)
-			must.NoError(err)
-			_, err = st.DB().Exec(`CREATE TRIGGER line_receiver_fail_second BEFORE INSERT ON line_webhook_events
+		must.NoError(err)
+		_, err = st.DB().Exec(`CREATE TRIGGER line_receiver_fail_second BEFORE INSERT ON line_webhook_events
 FOR EACH ROW EXECUTE FUNCTION msgvault_test_reject_line_event()`)
-		} else {
-			_, err = st.DB().Exec(`CREATE TRIGGER line_receiver_fail_second BEFORE INSERT ON line_webhook_events
+	} else {
+		_, err = st.DB().Exec(`CREATE TRIGGER line_receiver_fail_second BEFORE INSERT ON line_webhook_events
  WHEN NEW.webhook_event_id='reject-second' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
-		}
-		must.NoError(err)
-		first := `{"type":"message","webhookEventId":"accepted-first","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`
-		second := `{"type":"message","webhookEventId":"reject-second","timestamp":124,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"synthetic"}}`
-		response := serveSignedReceiver(receiver, receiverEnvelope("["+first+","+second+"]"))
-		checks.Equal(http.StatusServiceUnavailable, response.Code)
-		rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
-		must.NoError(err)
-		checks.Empty(rows)
-		checks.Zero(wakeCalls)
-	})
+	}
+	must.NoError(err)
+	first := `{"type":"message","webhookEventId":"accepted-first","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`
+	second := `{"type":"message","webhookEventId":"reject-second","timestamp":124,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"synthetic"}}`
+	response := serveSignedReceiver(receiver, receiverEnvelope("["+first+","+second+"]"))
+	checks.Equal(http.StatusServiceUnavailable, response.Code)
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
+	must.NoError(err)
+	checks.Empty(rows)
+	checks.Zero(wakeCalls)
 }
