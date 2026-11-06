@@ -1708,8 +1708,6 @@ components:
         message_id:
           format: int64
           type: integer
-        native_call_id:
-          type: string
         occurred_at:
           format: date-time
           type: string
@@ -17379,7 +17377,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.46.0
+  version: 3.47.0
 openapi: 3.1.0
 paths:
   /api/ping:

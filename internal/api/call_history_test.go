@@ -123,6 +123,17 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	} {
 		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
 	}
+	for _, mediaType := range []string{"", "text/plain", "application/json; invalid"} {
+		t.Run("unsupported media type "+mediaType, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, callImportPath, strings.NewReader(string(body)))
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.Header.Set("Content-Type", mediaType)
+			req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+			out := httptest.NewRecorder()
+			server.Router().ServeHTTP(out, req)
+			assert.Equal(t, http.StatusUnsupportedMediaType, out.Code, out.Body.String())
+		})
+	}
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {

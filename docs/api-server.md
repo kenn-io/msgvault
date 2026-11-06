@@ -159,8 +159,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 
 Call history is owner-only. Delegated agent grants do not authorize these routes.
 Imports use the daemon mutation gate and return stable message/source IDs.
-When `native_call_id` is set, `record_id` must equal it. Reimporting the same
-record for the same provider and account replaces its evidence.
+Reimporting the same `record_id` for the same provider and account replaces its evidence.
 
 | Route | Contract |
 | --- | --- |
@@ -182,11 +181,11 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.46.0**.
+it is separate from the binary release version. The current schema is **3.47.0**.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
-Schema 3.46.0 adds owner-only call evidence import, inspection, and person summaries.
+Schema 3.47.0 adds owner-only call evidence import, inspection, and person summaries.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 

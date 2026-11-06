@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- [Call history](usage/call-history.md) shows how often you call each person. Use `msgvault calls import`, `msgvault calls list`, and `msgvault calls summary` to import, browse, and count calls. Summaries count only calls where you and that person attended; invitations never count as calls.
+- [Call history](usage/call-history.md) shows how often you call each person. Use `msgvault calls import`, `msgvault calls list`, and `msgvault calls summary` to import, browse, and count calls. Summaries count only calls where you and that person attended; invitations never count as calls. These commands require HTTP API schema 3.47.0.
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
