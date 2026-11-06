@@ -1600,7 +1600,7 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		status, err := s.sourceStatus(r.Context(), statusStore, source)
+		status, err := s.sourceStatus(r.Context(), statusStore, source, sources)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
@@ -1620,7 +1620,26 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
 }
 
-func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source) (SourceStatus, error) {
+// sourceScheduling restricts the singleton Messages job to its import target.
+func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourceScheduleClassification {
+	scheduling := classifySourceScheduling(sourceType, identifier)
+	if sourceType != "apple_messages" {
+		return scheduling
+	}
+	var messagesSources []*store.Source
+	for _, source := range sources {
+		if source.SourceType == "apple_messages" {
+			messagesSources = append(messagesSources, source)
+		}
+	}
+	selected := store.SelectImessageSource(messagesSources)
+	if selected != nil && selected.Identifier == identifier || selected == nil && identifier == "local" {
+		return scheduling
+	}
+	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+}
+
+func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source, sources []*store.Source) (SourceStatus, error) {
 	status := SourceStatus{
 		ID:         source.ID,
 		SourceType: source.SourceType,
@@ -1642,7 +1661,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	scheduling := s.sourceScheduling(source.SourceType, source.Identifier, sources)
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1809,7 +1828,22 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	var sources []*store.Source
+	if sourceType == "apple_messages" {
+		statusStore, ok := s.store.(SourceStatusStore)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+		var err error
+		sources, err = statusStore.ListSourcesContext(r.Context(), sourceType)
+		if err != nil {
+			s.logger.Error("failed to select scheduled source", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+	}
+	scheduling := s.sourceScheduling(sourceType, account, sources)
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)

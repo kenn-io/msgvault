@@ -98,7 +98,8 @@ func TestChatDiscoveryHTTPDirtyMembershipCannotWriteDuringBackupFreeze(t *testin
 }
 
 type chatDiscoveryScanStore struct {
-	*store.Store
+	MessageStore
+	ChatDiscoveryStore
 
 	gate *SerialOperationGate
 	t    *testing.T
@@ -107,7 +108,7 @@ type chatDiscoveryScanStore struct {
 func (s *chatDiscoveryScanStore) SearchChatsMetadataContext(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
 	_, _, held := s.gate.Holder()
 	assert.False(s.t, held, "metadata scan must release the mutation gate")
-	return s.Store.SearchChatsMetadataContext(ctx, q)
+	return s.ChatDiscoveryStore.SearchChatsMetadataContext(ctx, q)
 }
 
 func TestChatDiscoveryHTTPReleasesGateBeforeMetadataScan(t *testing.T) {
@@ -116,7 +117,7 @@ func TestChatDiscoveryHTTPReleasesGateBeforeMetadataScan(t *testing.T) {
 	srv.operationGate = gate
 	st, ok := srv.store.(*store.Store)
 	require.True(t, ok)
-	srv.store = &chatDiscoveryScanStore{Store: st, gate: gate, t: t}
+	srv.store = &chatDiscoveryScanStore{MessageStore: st, ChatDiscoveryStore: st, gate: gate, t: t}
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

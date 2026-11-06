@@ -347,6 +347,17 @@ for (const facet of ['person', 'domain'] as const) {
   });
 }
 
+test('person messages keep their kind icon on hover at phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await prepare(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+  const row = page.getByRole('grid', { name: 'Messages results' }).getByRole('row').filter({ hasText: 'Subject line' });
+  const kind = row.locator('.cell--kind');
+  await expect(kind).toBeVisible();
+  await row.hover();
+  await expect(kind).toBeVisible();
+});
+
 for (const facet of ['person', 'domain'] as const) {
   for (const [width, height] of [[1280, 720], [420, 900]]) {
     test(`${facet} Messages stay filled while scrolling and paging at ${width}px`, async ({ page }) => {
@@ -401,8 +412,15 @@ for (const facet of ['person', 'domain'] as const) {
       await page.keyboard.press('Enter');
       const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
       await expect(reader.getByText('Synthetic preview 1200', { exact: true })).toBeVisible();
-      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
-      expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      if (width <= 640) {
+        await expect(grid).toBeHidden();
+        await reader.getByRole('button', { name: 'Back to results' }).click();
+        await expect(grid).toBeVisible();
+        await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      } else {
+        expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+        expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      }
     });
   }
 }
@@ -693,9 +711,10 @@ for (const close of ['Escape', 'Back to People']) {
     await page.keyboard.press('Enter');
     const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
     if (close === 'Escape') {
-      await reading.getByRole('button', { name: 'Close reading pane', exact: true }).focus();
+      await reading.getByRole('button', { name: 'Back to results', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(reading).toBeHidden();
+      await expect(messages).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(list).toBeVisible();
       await expect(list).toBeFocused();

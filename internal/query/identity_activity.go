@@ -551,18 +551,18 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 		`, nil
 	}
 	return `
-		SELECT d.*, d.canonical_id AS person_id, matched.match_rank
-		FROM read_parquet('` + directory + `') d
-		CROSS JOIN LATERAL (
-			SELECT min(CASE
-				WHEN searched.value = lower(?) THEN 0
-				WHEN starts_with(searched.value, lower(?)) THEN 1
-				ELSE 2
-			END)::INTEGER AS match_rank
-			FROM unnest(d.search_values) AS searched(value)
-			WHERE contains(searched.value, lower(?))
+		SELECT * FROM (
+			SELECT d.*, d.canonical_id AS person_id,
+			       list_min(list_transform(
+			           list_filter(d.search_values, lambda value: contains(value, lower(?))),
+			           lambda value: CASE
+			               WHEN value = lower(?) THEN 0
+			               WHEN starts_with(value, lower(?)) THEN 1
+			               ELSE 2
+			           END))::INTEGER AS match_rank
+			FROM read_parquet('` + directory + `') d
 		) matched
-		WHERE matched.match_rank IS NOT NULL
+		WHERE match_rank IS NOT NULL
 	`, []any{searchText, searchText, searchText}
 }
 

@@ -492,6 +492,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.WhatsAppApple {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("whatsapp apple source is enabled without a schedule", "source", source.Name)
+		}
+	}
+	for _, source := range cfg.ScheduledWhatsAppAppleSources() {
+		jobName, _ := api.SchedulerJobNameForSource("whatsapp", source.Phone)
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runScheduledWhatsAppApple(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule whatsapp apple source", "source", source.Name, "error", err)
+		}
+	}
+	if cfg.IMessage.Enabled {
+		if cfg.IMessage.Schedule == "" {
+			logger.Warn("imessage is enabled without a schedule")
+		} else {
+			jobName, _ := api.SchedulerJobNameForSource(sourceTypeAppleMessages, localValue)
+			if err := sched.AddJob(scheduler.Job{
+				Name:     jobName,
+				Schedule: cfg.IMessage.Schedule,
+				Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+					return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+						return runScheduledIMessage(ctx, s, cfg.IMessage)
+					})
+				}),
+			}); err != nil {
+				logger.Error("failed to schedule imessage", "error", err)
+			}
+		}
+	}
+
 	// Warn about enabled calendar sources with no schedule: they are never
 	// daemon-synced, so once a manual sync seeds the source row its freshness
 	// drifts stale and the freshness monitor eventually alarms RED.

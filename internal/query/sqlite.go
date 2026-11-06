@@ -2215,7 +2215,45 @@ func appendSQLiteAddressCondition(
 
 func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, q)
+	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
+		return page, err
+	}
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+}
+
+const (
+	// 128 messages per wanted result fills pages at about 0.8% recent density.
+	// Only try when the full sort would touch at least a window of hits.
+	searchWalkWindow     = 128
+	searchWalkMaxResults = 1000
+)
+
+func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, bool, error) {
+	// Text-only means visibility plus the FTS match.
+	if ftsJoin == "" || len(conditions) != 2 || q.DeletionScope == search.DeletionScopeDeleted || limit <= 0 || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
+		return nil, false, nil
+	}
+	window := searchWalkWindow * (limit + offset)
+	var hits int
+	if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?)`, args[0], window).Scan(&hits); err != nil {
+		return nil, false, fmt.Errorf("count search hits for newest-first page: %w", err)
+	}
+	if hits == 0 {
+		return nil, true, nil
+	}
+	if hits < window {
+		return nil, false, nil
+	}
+	// A full page from this date prefix is also the full archive's page.
+	// Exclude cutoff ties to keep the prefix within the window bound.
+	conditions = []string{
+		conditions[0],
+		"m.sent_at > (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
+		store.SQLiteFTSRowIDCondition(conditions[1]),
+	}
+	args = append([]any{window - 1}, args...)
+	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
+	return page, len(page) == limit, err
 }
 
 // SearchMessageBodies performs exact body-only full-text search and uses the
@@ -2427,10 +2465,9 @@ func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
-// executeSearchQuery runs a search query built from conditions and the
-// optional FTS join, returning paginated MessageSummary results. Shared
-// by Search and SearchFast.
-func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, error) {
+// executeSearchQuery returns paginated MessageSummary results from conditions
+// and joins or an index hint that follow messages m. Shared by Search and SearchFast.
+func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, pageSource string, limit, offset int) ([]MessageSummary, error) {
 	if limit == 0 {
 		limit = 100
 	}
@@ -2442,7 +2479,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 
 	// Choose the page before joining display details. The sender join selects
 	// one row per message, preserving the page's size and order.
-	query := searchResultsSQL(ftsJoin, whereClause)
+	query := searchResultsSQL(pageSource, whereClause)
 	args = append(args, limit, offset)
 
 	rows, err := e.queryContext(ctx, query, args...)
@@ -2503,7 +2540,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 
 // searchResultsSQL selects the result page before loading sender and
 // conversation details. Tests EXPLAIN it to pin the plan.
-func searchResultsSQL(ftsJoin, whereClause string) string {
+func searchResultsSQL(pageSource, whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -2535,7 +2572,7 @@ func searchResultsSQL(ftsJoin, whereClause string) string {
 		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		ORDER BY m.sent_at DESC, m.id DESC
-	`, sqliteSenderNameExpr, ftsJoin, whereClause, sqliteSenderJoin)
+	`, sqliteSenderNameExpr, pageSource, whereClause, sqliteSenderJoin)
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.

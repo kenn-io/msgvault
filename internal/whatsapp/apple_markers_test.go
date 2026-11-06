@@ -29,6 +29,30 @@ const appleMarkerSchema = `
 	CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
 `
 
+func TestImportAppleCompletesAndUpdatesSourceFreshness(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	opts := appleTestOptions()
+	source, err := st.GetOrCreateSource("whatsapp", opts.Phone)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`), source.ID)
+	require.NoError(err)
+	before, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	require.True(before.LastSyncAt.Valid)
+
+	_, err = NewImporter(st, nil).Import(context.Background(), createAppleChatFixture(t), opts)
+	require.NoError(err)
+	after, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	require.True(after.LastSyncAt.Valid)
+	assert.True(after.LastSyncAt.Time.After(before.LastSyncAt.Time))
+	run, err := st.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal("completed", run.Status)
+}
+
 func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -56,7 +80,8 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	full.Full = true
 	forced, err := importer.Import(context.Background(), chatDBPath, full)
 	require.NoError(err)
-	assert.Equal(int64(1), forced.MessagesAdded)
+	assert.Equal(int64(1), forced.MessagesUpdated)
+	assert.Zero(forced.MessagesAdded)
 	assert.Equal([]string{"direct-in"}, rewrittenAppleMessages(t, st))
 	assert.Equal("unseen edit", appleBodyText(t, st, "direct-in"))
 
@@ -89,7 +114,8 @@ func TestImportAppleRerunReadsChangedChats(t *testing.T) {
 	`)
 	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(3), second.MessagesAdded)
+	assert.Equal(int64(1), second.MessagesAdded)
+	assert.Equal(int64(2), second.MessagesUpdated)
 	assert.Equal([]string{"direct-in", "group-in", "lid-new"}, rewrittenAppleMessages(t, st))
 	assert.Equal("edited direct text", appleBodyText(t, st, "direct-in"))
 	assert.Equal("new lid text", appleBodyText(t, st, "lid-new"))
@@ -120,7 +146,8 @@ func TestImportAppleRerunReadsChatsWithGroupMemberChange(t *testing.T) {
 	`)
 	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Equal(int64(1), summary.MessagesUpdated)
+	assert.Zero(summary.MessagesAdded)
 	assert.Equal([]string{"group-in"}, rewrittenAppleMessages(t, st))
 }
 
@@ -401,7 +428,8 @@ func TestImportAppleRerunReadsChatsWithoutMarkers(t *testing.T) {
 			execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = 'edit without marker' WHERE Z_PK = 1`)
 			summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 			require.NoError(err)
-			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Equal(int64(1), summary.MessagesUpdated)
+			assert.Zero(summary.MessagesAdded)
 			assert.Equal([]string{"direct-in"}, rewrittenAppleMessages(t, st))
 		})
 	}

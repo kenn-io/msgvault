@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1379,11 +1380,10 @@ func entryKinds(rows []EntryRow) []EntryKind {
 	return kinds
 }
 
-// TestExploreCounterpartParticipantIDExcludesOwner verifies
-// counterpart_participant_id is the smallest NON-owner participant on the
-// entry, not simply participant_ids[0]: the owner is added first (so it has
-// the smallest raw ID) and would be picked by that naive heuristic.
-func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
+// TestExploreCounterpartParticipantIDExcludesOwnerAndRooms verifies
+// counterpart_participant_id is the smallest eligible non-owner participant.
+// The owner and room have lower IDs than either person and remain in the entry.
+func TestExploreCounterpartParticipantIDExcludesOwnerAndRooms(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1391,19 +1391,23 @@ func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
 	srcID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
 	b.AddOwnerParticipant(srcID, ownerID)
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
 	counterpartA := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	counterpartB := b.AddParticipant("bob@example.com", "example.com", "Bob")
 
 	msgID := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true})
 	b.AddFrom(msgID, ownerID, "Owner")
+	b.AddTo(msgID, room, "Room")
 	b.AddTo(msgID, counterpartA, "Alice")
 	b.AddTo(msgID, counterpartB, "Bob")
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
-	require.NoError(err)
-	require.Len(response.Rows, 1)
-	require.NotNil(response.Rows[0].CounterpartParticipantID)
-	assert.Equal(min(counterpartA, counterpartB), *response.Rows[0].CounterpartParticipantID)
+	fast, legacy := runExploreBothPaths(t, b.BuildEngine(), ExploreRequest{})
+	for _, response := range []*ExploreResponse{fast, legacy} {
+		require.Len(response.Rows, 1)
+		require.NotNil(response.Rows[0].CounterpartParticipantID)
+		assert.Equal(min(counterpartA, counterpartB), *response.Rows[0].CounterpartParticipantID)
+		assert.Contains(response.Rows[0].ParticipantIDs, room)
+	}
 }
 
 // TestExploreCounterpartParticipantIDNilWhenOwnerOnly verifies an entry whose
@@ -1667,4 +1671,93 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	require.Len(response.Rows, 1, "the additional group must widen the alias to its whole identity cluster")
 	require.NotNil(response.Rows[0].AnchorMessageID)
 	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
+}
+
+func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	first := b.AddMessage(MessageOpt{})
+	b.AddFrom(first, alice, "Personal Alias")
+	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
+	b.AddFrom(preferred, alice, "Alice")
+	direct := b.AddMessage(MessageOpt{SenderID: &alice})
+	phoneSender := b.AddPhoneParticipant("+12025550123", "")
+	phone := b.AddMessage(MessageOpt{SenderID: &phoneSender})
+	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
+	email := b.AddMessage(MessageOpt{SenderID: &emailSender})
+	deletedAt := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	deleted := b.AddMessage(MessageOpt{SenderID: &alice, DeletedFromSourceAt: &deletedAt})
+	unknown := b.AddMessage(MessageOpt{})
+	chatSource := b.AddSourceWithType("+12025550100", "imessage")
+	chat := b.AddMessage(MessageOpt{SourceID: chatSource, SenderID: &alice, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
+	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: ""}
+	engine := b.BuildEngine()
+	assert := assert.New(t)
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{Deletion: DeletionAny}, Page: PageSpec{Limit: 20}})
+	assert.Equal(legacy, fast)
+	actual := make(map[int64]string)
+	for _, row := range fast.Rows {
+		actual[*row.AnchorMessageID] = row.SenderLabel
+	}
+	assert.Equal(labels, actual)
+}
+
+func TestPageSenderLabelsAggregationIsBounded(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	recipient := b.AddParticipant("recipient@example.com", "example.com", "Recipient")
+	for range 1000 {
+		id := b.AddMessage(MessageOpt{})
+		b.AddFrom(id, sender, "Sender")
+		b.AddTo(id, recipient, "Recipient")
+		b.AddAttachment(id, 10, "example.pdf")
+	}
+	e := b.BuildEngine()
+	for _, variant := range []struct {
+		name   string
+		legacy bool
+		person bool
+	}{
+		{name: "explore/fast"},
+		{name: "explore/legacy", legacy: true},
+		{name: "files/fast"},
+		{name: "files/legacy", legacy: true},
+		{name: "files/person/fast", person: true},
+		{name: "files/person/legacy", legacy: true, person: true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			e.exploreFastPathDisabled = variant.legacy
+			profile, err := profileQuery(t, e, func() error {
+				if strings.HasPrefix(variant.name, "explore/") {
+					_, err := e.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 500}})
+					return err
+				}
+				request := FileSearchRequest{Page: PageSpec{Limit: 1, Offset: 500}}
+				if variant.person {
+					request.Person = &PersonFileScope{ParticipantIDs: []int64{recipient}, Directions: []PersonFileDirection{PersonFileToPerson}}
+				}
+				_, err := e.SearchFiles(t.Context(), request)
+				return err
+			})
+			require.NoError(err)
+			matched := 0
+			var inspect func(domainPopulationProfile)
+			inspect = func(operator domainPopulationProfile) {
+				if strings.Contains(strings.ToLower(strings.ReplaceAll(fmt.Sprint(operator.ExtraInfo["Aggregates"]), `"`, "")), "first(") {
+					matched++
+					assert.LessOrEqual(operator.IntermediateRows, int64(1), "sender aggregation must be limited to the requested page")
+				}
+				for _, child := range operator.Children {
+					inspect(child)
+				}
+			}
+			inspect(profile)
+			require.Positive(matched, "profile must include sender aggregation")
+		})
+	}
 }

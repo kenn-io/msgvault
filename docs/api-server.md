@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.44.0**.
+it is separate from the binary release version. The current schema is **3.45.0**.
+
+Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
@@ -1853,6 +1855,7 @@ the daemon.
 that exact question. It returns `anchor_message_id` and `state: "open"`, or
 404 `loop_decision_not_found` when the message has no decision. Responses are
 not cacheable. These routes are owner-only: delegated agent tokens receive 401.
+See [Open loops](usage/open-loops.md) for the rules.
 
 ---
 

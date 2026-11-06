@@ -8,8 +8,14 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-### Other changes
-
+- [Open loops](usage/open-loops.md) list conversations waiting on your reply
+  and replies you are waiting on, with separate results for each person and
+  decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
+  `reopen` manage them, and the HTTP API has matching routes. Each request
+  computes evidence for up to 1,000 uncached messages; repeated requests
+  continue using retained evidence. They need HTTP API schema 3.44.0.
+- Keep Apple WhatsApp and iMessage archives current with daemon schedules,
+  run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 - Resumed Gmail full syncs preserve their starting History point so the next
   incremental sync catches mail that arrived meanwhile. A full sync interrupted
   under an earlier release starts from the first page once; previously archived

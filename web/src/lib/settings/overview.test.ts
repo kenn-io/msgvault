@@ -16,7 +16,7 @@ describe('overviewRows', () => {
 
     expect(rows.map((candidate) => candidate.name)).toEqual([
       'Source sync',
-      'Message search',
+      'Search by meaning',
       'People search',
       'Visual search',
       'People lookups',
