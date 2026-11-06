@@ -58,17 +58,6 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 		}
 		statements = append(statements,
 			"DELETE FROM attachment_change_consumers WHERE consumer_key = 'document-index/v1'",
-			`UPDATE person_sweep_cursors SET optimistic_sequence = (
-    SELECT d.optimistic_sequence FROM person_sweep_cursors d
-    WHERE d.source_lane = 'document_text' AND d.person_id = person_sweep_cursors.person_id
-      AND d.program_fingerprint = person_sweep_cursors.program_fingerprint
-      AND d.catalog_fingerprint = person_sweep_cursors.catalog_fingerprint)
-  WHERE source_lane <> 'document_text' AND EXISTS (
-    SELECT 1 FROM person_sweep_cursors d
-    WHERE d.source_lane = 'document_text' AND d.person_id = person_sweep_cursors.person_id
-      AND d.program_fingerprint = person_sweep_cursors.program_fingerprint
-      AND d.catalog_fingerprint = person_sweep_cursors.catalog_fingerprint
-      AND d.optimistic_sequence < person_sweep_cursors.optimistic_sequence)`,
 			"DELETE FROM person_sweep_cursors WHERE source_lane = 'document_text'",
 		)
 		for _, statement := range statements {

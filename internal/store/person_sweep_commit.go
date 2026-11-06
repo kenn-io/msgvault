@@ -419,13 +419,8 @@ func (s *Store) applyPersonSweepWithAligner(
 		if err := s.refreshPersonSweepAttemptAndRunUsage(ctx, tx, request.AttemptID, request.RunID); err != nil {
 			return err
 		}
-		sourceLanes := make([]string, len(request.SourceLanes))
-		for i, lane := range request.SourceLanes {
-			sourceLanes[i] = string(lane)
-		}
 		workCount, err := s.finishPersonSweepWorkTx(ctx, tx, personSweepWorkCompletion{
-			SourceLanes: sourceLanes,
-			Lease:       request.Lease, ProgramFingerprint: request.Generation.ProgramFingerprint,
+			Lease: request.Lease, ProgramFingerprint: request.Generation.ProgramFingerprint,
 			CatalogFingerprint: request.Generation.CatalogFingerprint,
 			DeferredCursorWork: request.DeferredCursorWork, BriefFailureClass: request.BriefFailureClass,
 			BriefRetryAt: request.BriefRetryAt,
@@ -899,7 +894,6 @@ func personSweepCursorApplyOrder(mode peoplesweep.GenerationCursorMode) int {
 // produced an inference generation.
 type personSweepWorkCompletion struct {
 	Lease              peoplesweep.Lease
-	SourceLanes        []string
 	ProgramFingerprint string
 	CatalogFingerprint string
 	DeferredCursorWork bool
@@ -912,20 +906,16 @@ func (s *Store) finishPersonSweepWorkTx(
 ) (int, error) {
 	remaining := request.DeferredCursorWork
 	var err error
-	if !remaining && len(request.SourceLanes) > 0 {
-		// Active cursors consume withdrawals from every lane, including retired lanes.
-		args := []any{request.Lease.PersonID, request.ProgramFingerprint, request.CatalogFingerprint}
-		for _, lane := range request.SourceLanes {
-			args = append(args, lane)
-		}
+	if !remaining {
 		err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_sweep_cursors c WHERE c.person_id = ?
 		AND c.program_fingerprint = ? AND c.catalog_fingerprint = ?
-		AND c.source_lane IN (`+strings.TrimSuffix(strings.Repeat("?,", len(request.SourceLanes)), ",")+`)
 		AND (c.backstop_upper_key <> '' OR
 		(c.reconciliation_complete = FALSE AND c.reconcile_after_key <> c.reconcile_upper_key) OR EXISTS (
 			SELECT 1 FROM person_sweep_changes ch WHERE ch.person_id = c.person_id
-			AND ch.sequence > c.optimistic_sequence)))`, args...).Scan(&remaining)
+			AND ch.source_lane = c.source_lane AND ch.sequence > c.optimistic_sequence)))`,
+			request.Lease.PersonID, request.ProgramFingerprint,
+			request.CatalogFingerprint).Scan(&remaining)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("check remaining person sweep work: %w", err)

@@ -217,7 +217,7 @@ func (s *workerFailureStore) MarkPersonSweepBudgetStarted(_ context.Context, res
 	s.markedLeases = append(s.markedLeases, lease)
 	return nil
 }
-func (s *workerFailureStore) CompleteIdlePersonSweep(_ context.Context, lease Lease, _, _ string, _ []SourceClass) error {
+func (s *workerFailureStore) CompleteIdlePersonSweep(_ context.Context, lease Lease, _, _ string) error {
 	s.idleCompleted = append(s.idleCompleted, lease)
 	return nil
 }

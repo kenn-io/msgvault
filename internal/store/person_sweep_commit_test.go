@@ -99,8 +99,7 @@ func newPersonSweepApplyFixtureWithBudget(
 	generation.Policy = personfacts.PolicyContext{ProviderPolicyFingerprint: profile}
 	generation.ResolvedAt = personFactLedgerNow
 	request := peoplesweep.ApplyRequest{Lease: lease, RunID: runID, AttemptID: attemptID,
-		SourceLanes: []peoplesweep.SourceClass{key.SourceLane},
-		Generation:  generation, CursorEnvelope: envelope,
+		Generation: generation, CursorEnvelope: envelope,
 		CursorAdvances: []peoplesweep.CursorAdvance{{Key: key,
 			Mode: peoplesweep.GenerationCursorOptimistic, ExpectedSequence: 0,
 			NextSequence: 1, EnvelopeHash: sourceHash}}, CompletedAt: personFactLedgerNow.Add(time.Minute)}

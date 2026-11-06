@@ -105,11 +105,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				requirements.NoError(err)
 				persistSweepEvidence(t, f.Store, key, input)
 				before = latestPersonSweepSequence(t, f.Store)
-				// The retired lane's saved cursor predates the pending deletion.
-				exec(`INSERT INTO person_sweep_cursors (person_id,source_lane,program_fingerprint,catalog_fingerprint,optimistic_sequence,reconcile_upper_key,reconcile_after_key,reconciliation_complete) VALUES (?,'document_text','program','catalog',?,'','',TRUE)`, personID, before)
-				cursorKey := peoplesweep.CursorKey{PersonID: personID, SourceLane: peoplesweep.SourceConversationText, ProgramFingerprint: "program", CatalogFingerprint: "catalog"}
-				cursors, err := f.Store.EnsurePersonSweepCursors(ctx, []peoplesweep.CursorKey{cursorKey})
-				requirements.NoError(err)
 				exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, messageID)
 				exec(`DELETE FROM document_occurrences WHERE occurrence_key='occurrence'`)
 				for _, change := range personSweepChangesAfter(t, f.Store, personID, before) {
@@ -121,12 +116,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				checks.Equal(attachmentID, queued[0].AttachmentID)
 				checks.Equal("occurrence", queued[0].OccurrenceKey)
 				checks.Equal(peoplesweep.EvidenceEffectSourceDeleted, queued[0].EvidenceEffect)
-				// The surviving lane completed a pass before the upgrade.
-				lease := claimPersonSweepFixture(t, f.Store, "before-upgrade")
-				requirements.NoError(f.Store.AdvancePersonSweepReconciliation(ctx, *lease, peoplesweep.GenerationCursor{
-					Key: cursorKey, Mode: peoplesweep.GenerationCursorOptimistic,
-					CursorFrom: cursors[0].OptimisticSequence, CursorThrough: latestPersonSweepSequence(t, f.Store),
-				}))
 			}
 
 			var logs bytes.Buffer
@@ -157,26 +146,16 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration"`)
 
 			if tc.queuedDeletion {
-				cursor := loadPersonSweepCursor(t, f.Store, peoplesweep.CursorKey{
-					PersonID: personID, SourceLane: peoplesweep.SourceConversationText,
-					ProgramFingerprint: "program", CatalogFingerprint: "catalog",
-				})
-				checks.Equal(before, cursor.OptimisticSequence, "the surviving lane resumes from the retired cursor")
-				window, err := f.Store.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{
-					PersonID: personID, Lane: peoplesweep.SourceConversationText,
-					Mode: peoplesweep.GenerationCursorOptimistic, AfterSequence: cursor.OptimisticSequence,
-					ThroughSequence: latestPersonSweepSequence(t, f.Store), Limit: 100,
-				})
-				requirements.NoError(err)
-				var documentChanges []peoplesweep.ArchiveChange
-				for _, change := range window.Changes {
+				var pending []peoplesweep.ArchiveChange
+				for _, change := range personSweepChangesAfter(t, f.Store, personID, before) {
 					if change.SourceLane == peoplesweep.SourceDocumentText {
-						documentChanges = append(documentChanges, change)
+						pending = append(pending, change)
 					}
 				}
-				changes, err := f.Store.BuildPersonSweepEvidenceStatusChanges(ctx, personID, documentChanges)
+				requirements.Equal(queued, pending)
+				changes, err := f.Store.BuildPersonSweepEvidenceStatusChanges(ctx, personID, pending)
 				requirements.NoError(err)
-				checks.Contains(changes, personfacts.EvidenceStatusChange{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted})
+				checks.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}}, changes)
 			}
 
 			// The next open re-applies the schema; the dropped hook must stay dropped.

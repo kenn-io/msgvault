@@ -268,7 +268,6 @@ func (s *Store) RenewPersonSweep(
 // extraction work remains queued instead of being discarded with the old brief.
 func (s *Store) CompleteIdlePersonSweep(
 	ctx context.Context, lease peoplesweep.Lease, programFingerprint, catalogFingerprint string,
-	sourceLanes []peoplesweep.SourceClass,
 ) error {
 	if programFingerprint == "" || catalogFingerprint == "" {
 		return errors.New("complete idle person sweep: fingerprints are required")
@@ -281,13 +280,8 @@ func (s *Store) CompleteIdlePersonSweep(
 		if !current {
 			return peoplesweep.ErrLeaseLost
 		}
-		lanes := make([]string, len(sourceLanes))
-		for i, lane := range sourceLanes {
-			lanes[i] = string(lane)
-		}
 		_, err = s.finishPersonSweepWorkTx(ctx, tx, personSweepWorkCompletion{
-			SourceLanes: lanes,
-			Lease:       lease, ProgramFingerprint: programFingerprint, CatalogFingerprint: catalogFingerprint,
+			Lease: lease, ProgramFingerprint: programFingerprint, CatalogFingerprint: catalogFingerprint,
 		})
 		return err
 	})
@@ -692,19 +686,20 @@ func scanTrackedPersonIDs(
 func (s *Store) personSweepJournalGapTx(
 	ctx context.Context, tx *loggedTx, personID int64, cursors []peoplesweep.Cursor,
 ) (int64, bool, error) {
-	if len(cursors) == 0 {
-		return 0, false, nil
-	}
 	var dirtyThrough int64
-	err := tx.QueryRowContext(ctx, s.Rebind(`
-		SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes
-		WHERE person_id = ?`), personID).Scan(&dirtyThrough)
-	if err != nil {
-		return 0, false, fmt.Errorf("read person sweep journal high water: %w", err)
-	}
 	gap := false
 	for _, cursor := range cursors {
-		if dirtyThrough > cursor.OptimisticSequence {
+		var laneHighWater int64
+		err := tx.QueryRowContext(ctx, s.Rebind(`
+			SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes
+			WHERE person_id = ? AND source_lane = ?`), personID, cursor.Key.SourceLane).Scan(&laneHighWater)
+		if err != nil {
+			return 0, false, fmt.Errorf("read person sweep lane high water: %w", err)
+		}
+		if laneHighWater > dirtyThrough {
+			dirtyThrough = laneHighWater
+		}
+		if laneHighWater > cursor.OptimisticSequence {
 			gap = true
 		}
 	}
