@@ -29,7 +29,7 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 	return o, src.ID
 }
 
-func TestImportedCallReadableAndSearchable(t *testing.T) {
+func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 	t.Run("normalized timezone offsets", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -259,7 +259,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	requirements.ErrorIs(err, callhistory.ErrInvalid)
 	var outcome string
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT outcome FROM call_details WHERE message_id = ?`), id).Scan(&outcome))
-	assertions.Equal("unknown", outcome, "invalid participant rolls back scalar changes")
+	assertions.Equal("unknown", outcome, "participant validation rejects the update before scalar writes")
 	unchangedRaw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.JSONEq(string(raw), string(unchangedRaw))
@@ -284,8 +284,7 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	assertions.Equal(store.ChannelChat, got.Channel)
 }
 
-func TestCallObservationSubsetAndParticipantMerge(t *testing.T) {
-	assertions := assert.New(t)
+func TestCallObservationParticipantMergeSubsetCopyAndDeletion(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource(callhistory.SourceType, (callhistory.Evidence{Provider: "signal", Account: "example"}).SourceIdentifier())
@@ -306,24 +305,37 @@ func TestCallObservationSubsetAndParticipantMerge(t *testing.T) {
 	}
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
-	requirements.NoError(st.MergeParticipants(old, survivor))
-	var participant int64
-	requirements.NoError(st.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
-	assertions.Equal(survivor, participant)
+	t.Run("participant merge", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		requirements.NoError(st.MergeParticipants(old, survivor))
+		var participant int64
+		requirements.NoError(st.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
+		assertions.Equal(survivor, participant)
+	})
 	dstDir := t.TempDir()
 	_, err = store.CopySubset(store.DBPathForTest(st), dstDir, 10, true)
 	requirements.NoError(err)
 	dst, err := store.Open(filepath.Join(dstDir, "msgvault.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(dst.Close()) })
-	var outcome string
-	requirements.NoError(dst.DB().QueryRow(`SELECT outcome FROM call_details WHERE message_id = ?`, id).Scan(&outcome))
-	assertions.Equal("unknown", outcome)
-	requirements.NoError(dst.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
-	assertions.Equal(survivor, participant)
-	_, err = dst.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
-	requirements.NoError(err)
-	var count int
-	requirements.NoError(dst.DB().QueryRow(`SELECT COUNT(*) FROM call_details`).Scan(&count))
-	assertions.Zero(count, "archive deletion removes the projection through its foreign key")
+	t.Run("subset copy", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var participant int64
+		var outcome string
+		requirements.NoError(dst.DB().QueryRow(`SELECT outcome FROM call_details WHERE message_id = ?`, id).Scan(&outcome))
+		assertions.Equal("unknown", outcome)
+		requirements.NoError(dst.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
+		assertions.Equal(survivor, participant)
+	})
+	t.Run("message deletion cascades to call projection", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		_, err = dst.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
+		requirements.NoError(err)
+		var count int
+		requirements.NoError(dst.DB().QueryRow(`SELECT COUNT(*) FROM call_details`).Scan(&count))
+		assertions.Zero(count, "archive deletion removes the projection through its foreign key")
+	})
 }

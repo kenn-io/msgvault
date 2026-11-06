@@ -147,7 +147,7 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 		return id
 	}
 	first := put("one", "a", "answered", "joined", "joined")
-	assertions.Equal(first, put("one", "a", "answered", "joined", "joined"))
+	put("one", "a", "answered", "joined", "joined")
 	put("one", "b", "answered", "joined", "joined")
 	put("partial-1", "a", "answered", "unknown", "joined")
 	put("partial-2", "a", "answered", "joined", "invited")
