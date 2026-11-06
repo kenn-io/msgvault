@@ -6134,6 +6134,7 @@ func TestFastSearchPreservesCompleteMessageFilter(t *testing.T) {
 	assertions.Equal("Alice", gotFilter.SenderName)
 	assertions.Equal("Bob", gotFilter.RecipientName)
 	assertions.Equal("email", gotFilter.MessageType)
+	assertions.False(gotFilter.IncludeHints)
 	assertions.True(gotFilter.MatchesEmpty(query.ViewLabels))
 }
 
