@@ -72,7 +72,8 @@ func TestMeetingLinkCommands(t *testing.T) {
 		{"suggest note", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", false, false},
 		{"suggest warning", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", true, true},
 		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]`, true, false},
-		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.46.0", "upgrade the daemon", "", false, false},
+		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.46.0", "upgrade the daemon", "", false, false},
 		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", "", false, false},
 		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", "", false, false},
 	} {
@@ -81,7 +82,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 			requirements := require.New(t)
 			fake := &meetingLinkFakeClient{version: tc.version, unexpandable: tc.unexpandable}
 			if fake.version == "" {
-				fake.version = meetingLinksMinAPISchemaVersion
+				fake.version = "3.47.0"
 			}
 			cleaned := false
 			open := func(context.Context) (meetingLinkClient, func(), error) { return fake, func() { cleaned = true }, nil }
