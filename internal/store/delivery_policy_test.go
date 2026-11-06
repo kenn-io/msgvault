@@ -389,16 +389,17 @@ func TestDeliveryPolicyReadRejectsUnknownOrMalformedPersonUID(t *testing.T) {
 func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 	for _, test := range []struct {
 		name     string
-		endpoint bool
+		endpoint string
 		onSurv   bool
 		keeps    bool
 		policy   store.DeliveryPolicy
 	}{
 		{name: "survivor default", onSurv: true, policy: store.DeliverySendAllowed},
-		{name: "absorbed default"},
-		{name: "survivor override", onSurv: true, endpoint: true, keeps: true, policy: store.DeliverySendAllowed},
-		{name: "survivor draft_only default", onSurv: true, keeps: true},
-		{name: "absorbed override", endpoint: true},
+		{name: "absorbed default", policy: store.DeliveryDraftOnly},
+		{name: "survivor override", onSurv: true, endpoint: "first@example.test", keeps: true, policy: store.DeliverySendAllowed},
+		{name: "survivor draft_only default", onSurv: true, keeps: true, policy: store.DeliveryDraftOnly},
+		{name: "survivor draft_only override", onSurv: true, endpoint: "first@example.test", keeps: true, policy: store.DeliveryDraftOnly},
+		{name: "absorbed override", endpoint: "absorbed-address@example.test", keeps: true, policy: store.DeliveryDraftOnly},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -411,17 +412,7 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 			if test.onSurv {
 				owner = survivor
 			}
-			endpoint := ""
-			if test.endpoint {
-				endpoint = "absorbed-address@example.test"
-				if test.onSurv {
-					endpoint = "first@example.test"
-				}
-			}
-			policy := test.policy
-			if policy == "" {
-				policy = store.DeliveryDraftOnly
-			}
+			endpoint, policy := test.endpoint, test.policy
 			setDelivery(t, f.Store, owner.VCardUID, endpoint, policy)
 			survivor, err = f.Store.GetPersonContext(t.Context(), survivor.ID)
 			require.NoError(err)
@@ -440,10 +431,17 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policies WHERE person_id IN (?, ?)`), survivor.ID, absorbed.ID).Scan(&rows))
 			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND reason='person_merged' AND actor='merger' AND after_policy IS NULL`), owner.VCardUID).Scan(&audits))
 			if test.keeps {
-				// The survivor's exact approval stays bound to its unchanged contact point.
 				assert.Equal(1, rows)
-				assert.Zero(audits)
+				if test.onSurv {
+					assert.Zero(audits)
+				} else {
+					assert.Equal(1, audits, "the absorbed policy ends on its retired owner")
+				}
 				assert.Equal(policy, readDelivery(t, f.Store, survivor.VCardUID, endpoint).EffectivePolicy)
+				if endpoint != "" && policy == store.DeliveryDraftOnly {
+					setDelivery(t, f.Store, survivor.VCardUID, "", store.DeliverySendAllowed)
+					assert.Equal(store.DeliveryDraftOnly, readDelivery(t, f.Store, survivor.VCardUID, endpoint).EffectivePolicy)
+				}
 				return
 			}
 			assert.Zero(rows)
@@ -499,8 +497,8 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		assert.Zero(calls)
 
 		var audits int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy IS NULL`), survivor.VCardUID, address).Scan(&audits))
-		assert.Equal(1, audits, "the survivor's ended approval has a merge audit row")
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy='draft_only'`), survivor.VCardUID, address).Scan(&audits))
+		assert.Equal(1, audits, "the survivor's replaced approval has a merge audit row")
 	})
 
 	t.Run("person delete", func(t *testing.T) {

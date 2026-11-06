@@ -3343,9 +3343,9 @@ A new restriction on an address needs a saved address of the person and returns
 stays possible after the address goes away.
 
 An address policy wins, then the person default, then `draft_only`. Merging two
-people ends every delivery policy of the absorbed person and the survivor's
-person-wide `send_allowed` and exact approvals restricted by the absorbed person,
-each audited as `person_merged`. Other survivor policies stay.
+people carries both people's exact `draft_only` restrictions onto the survivor,
+ends its conflicting exact approvals and person-wide `send_allowed`, and retires
+the absorbed person's policies, auditing changes as `person_merged`.
 Those ended policies need the owner's approval again on the survivor, and a
 split does not bring the policies back. An approval of one
 address lasts only while the saved address it was granted on stays active. If

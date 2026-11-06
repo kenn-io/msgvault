@@ -475,12 +475,7 @@ func (s *Store) mergePersonsOnce(
 		if err := s.bumpPersonRevisionsTx(ctx, tx, survivor.ID); err != nil {
 			return err
 		}
-		// The survivor audits under the revision this merge just committed.
-		var survivorRevision int64
-		if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id=?`, survivor.ID).Scan(&survivorRevision); err != nil {
-			return err
-		}
-		if err := s.endDeliveryPoliciesTx(ctx, tx, survivor, survivorRevision, request.Actor, "person_merged", true, restrictedMailboxes...); err != nil {
+		if err := s.mergeSurvivorDeliveryPoliciesTx(ctx, tx, survivor, request.Actor, restrictedMailboxes); err != nil {
 			return err
 		}
 		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
@@ -521,6 +516,33 @@ func (s *Store) mergePersonsOnce(
 		return nil, err
 	}
 	return result, nil
+}
+
+// mergeSurvivorDeliveryPoliciesTx ends the default approval and carries exact
+// restrictions through the same policy write and audit path as owner edits.
+func (s *Store) mergeSurvivorDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, survivor *Person, actor string, restrictedMailboxes []string) error {
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id=?`, survivor.ID).Scan(&revision); err != nil {
+		return err
+	}
+	if err := s.endDeliveryPoliciesTx(ctx, tx, survivor, revision, actor, "person_merged", true); err != nil {
+		return err
+	}
+	for _, mailbox := range restrictedMailboxes {
+		before, _, err := s.deliveryStateTx(ctx, tx, DeliveryPolicyQuery{PersonUID: survivor.VCardUID, Endpoint: mailbox}, false, false, nil)
+		if err != nil {
+			return err
+		}
+		if before.StoredPolicy != nil && *before.StoredPolicy == DeliveryDraftOnly {
+			continue
+		}
+		if _, err := s.applyDeliveryPolicyTx(ctx, tx, DeliveryPolicyWrite{
+			PersonUID: survivor.VCardUID, Policy: DeliveryDraftOnly, Actor: actor, Reason: "person_merged",
+		}, false, before, sql.NullInt64{}, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) markAbsorbedPersonFactPinEventsDeletedTx(

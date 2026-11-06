@@ -3655,7 +3655,7 @@ msgvault person clear-delivery-policy <person-uid> --endpoint alice@example.test
 
 Omit `--endpoint` to manage the person default. Setting that default to `send_allowed` requires `--person-all-routes`, which sends `scope_acknowledgement: "person_all_routes"`. Set accepts `draft_only` or `send_allowed`. Both writes require `--expected-revision` from the latest read and `--reason`; clear also accepts `--person-all-routes`.
 
-Read prints the stored and effective policies, inheritance source, reason, and revision. Writes print the resulting state. `--json` returns the state for read and the before/after receipt with any audit entry for writes. See [contact delivery policies](api-server.md#contact-delivery-policies) for approval binding and inheritance rules.
+Read prints stored and effective policies, source, revision, and any extra reason. Writes print the resulting state. `--json` returns the state for read and the before/after receipt with any audit entry for writes. See [contact delivery policies](api-server.md#contact-delivery-policies) for approval binding and inheritance rules.
 
 ## person agenda
 
