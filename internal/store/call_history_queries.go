@@ -259,11 +259,6 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	return out, nil
 }
 
-// Each imported record is its own call identity.
-func callIdentitySQL(alias string) string {
-	return "'m:' || CAST(" + alias + ".message_id AS TEXT)"
-}
-
 func (s *Store) callActiveSQL(extra string) string {
 	// Direction and duration remain in normalized evidence, outside the scalar
 	// projection used by the summary. Extract only those fields for this reader.
@@ -275,22 +270,9 @@ func (s *Store) callActiveSQL(extra string) string {
 	}
 	return `SELECT c.message_id, c.outcome, c.owner_participation,
  c.occurred_at, CASE WHEN m.message_type = 'call_record' THEN ` + direction + ` ELSE c.direction END AS direction,
- CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds,
- ` + callIdentitySQL("c") + ` AS identity_key
+ CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds
  FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
  WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
-}
-
-func callIdentityCTEs(active string) string {
-	return `active AS (` + active + `), identities AS (
- SELECT identity_key, occurred_at, message_id, duration_seconds, outcome
- FROM active)`
-}
-
-func callCategorySQL(confirmed string) string {
-	return fmt.Sprintf(`CASE WHEN %s = 1 THEN 'answered'
- WHEN i.outcome IN ('missed','declined','cancelled') THEN i.outcome
- ELSE 'unknown' END`, confirmed)
 }
 
 func callConfirmedSQL() string {

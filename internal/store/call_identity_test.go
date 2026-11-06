@@ -87,7 +87,7 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 				require.NoError(err)
 				require.Len(calls, 1)
 				assert.Empty(next)
-				assert.Equal(fmt.Sprintf("m:%d", id), calls[0].IdentityKey)
+				assert.Equal(id, calls[0].MessageID)
 				assert.Equal("answered", calls[0].Outcome)
 				assert.Equal([]store.CallParticipant{{ParticipantID: peer, PersonID: person.ID, Participation: "joined", Credited: true}}, calls[0].Participants)
 				aggregate, err := f.Store.CallContactAggregateContext(t.Context(), store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: at})
@@ -253,24 +253,32 @@ func TestLogicalCallsPaginationAndValidation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
-	for range 3 {
-		f.put(t, "", nil)
+	var wantIDs []int64
+	for range 12 {
+		wantIDs = append(wantIDs, f.put(t, "", nil))
 	}
 	q := f.query()
 	q.Limit = 1
-	var keys []string
-	for range 3 {
+	var ids []int64
+	for i := range wantIDs {
 		calls, next, err := f.st.ListLogicalCallsContext(t.Context(), q)
 		requirements.NoError(err)
 		requirements.Len(calls, 1)
-		keys = append(keys, calls[0].IdentityKey)
+		ids = append(ids, calls[0].MessageID)
+		if i < len(wantIDs)-1 {
+			assertions.Equal(f.at.Format(time.RFC3339Nano)+"|"+strconv.FormatInt(wantIDs[i], 10), next)
+		}
 		q.AfterKey = next
 	}
 	assertions.Empty(q.AfterKey)
-	assertions.Len(map[string]bool{keys[0]: true, keys[1]: true, keys[2]: true}, 3)
+	assertions.Equal(wantIDs, ids)
 	for _, change := range []func(*store.LogicalCallQuery){
 		func(q *store.LogicalCallQuery) { q.Limit = 501 }, func(q *store.LogicalCallQuery) { q.Limit = 0 },
 		func(q *store.LogicalCallQuery) { q.Before = q.After }, func(q *store.LogicalCallQuery) { q.AfterKey = "invalid" },
+		func(q *store.LogicalCallQuery) { q.AfterKey = "2026-10-01T23:30:00Z|0" },
+		func(q *store.LogicalCallQuery) { q.AfterKey = "2026-10-01T23:30:00Z|-1" },
+		func(q *store.LogicalCallQuery) { q.AfterKey = "2026-10-01T23:30:00Z|invalid" },
+		func(q *store.LogicalCallQuery) { q.AfterKey = "2026-10-01T23:30:00Z|9223372036854775808" },
 		func(q *store.LogicalCallQuery) { q.ParticipantIDs = []int64{-1} },
 	} {
 		q := f.query()

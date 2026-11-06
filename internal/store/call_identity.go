@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +35,6 @@ type CallParticipant struct {
 
 // LogicalCall reports one call record and all its participants.
 type LogicalCall struct {
-	IdentityKey     string
 	MessageID       int64
 	OccurredAt      time.Time
 	Outcome         string
@@ -42,7 +42,7 @@ type LogicalCall struct {
 	Participants    []CallParticipant
 }
 
-// ListLogicalCallsContext pages call records, ordered by time then key.
+// ListLogicalCallsContext pages call records, ordered by time then message ID.
 func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery) ([]LogicalCall, string, error) {
 	if q.Limit < 1 || q.Limit > 500 || !validLogicalCallTime(q.After) || !validLogicalCallTime(q.Before) || !q.After.Before(q.Before) {
 		return nil, "", fmt.Errorf("%w: logical call bounds", callhistory.ErrInvalid)
@@ -56,17 +56,18 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 	bounds := []any{q.After.UTC(), q.Before.UTC()}
 	if len(q.ParticipantIDs) != 0 {
 		clause, args := messageExportInClause("p.participant_id", q.ParticipantIDs)
-		where += " AND EXISTS (SELECT 1 FROM call_participants p WHERE p.identity_key = i.identity_key AND " + clause + ")"
+		where += " AND EXISTS (SELECT 1 FROM call_participants p WHERE p.message_id = i.message_id AND " + clause + ")"
 		bounds = append(bounds, args...)
 	}
 	if q.AfterKey != "" {
 		at, key, ok := strings.Cut(q.AfterKey, "|")
-		timestamp, err := time.Parse(time.RFC3339Nano, at)
-		if !ok || err != nil || !validLogicalCallTime(timestamp) || !strings.HasPrefix(key, "m:") || len(key) <= 2 {
+		timestamp, timeErr := time.Parse(time.RFC3339Nano, at)
+		messageID, idErr := strconv.ParseInt(key, 10, 64)
+		if !ok || timeErr != nil || idErr != nil || !validLogicalCallTime(timestamp) || messageID <= 0 {
 			return nil, "", fmt.Errorf("%w: logical call cursor", callhistory.ErrInvalid)
 		}
-		where += " AND (i.occurred_at > ? OR (i.occurred_at = ? AND i.identity_key > ?))"
-		bounds = append(bounds, timestamp.UTC(), timestamp.UTC(), key)
+		where += " AND (i.occurred_at > ? OR (i.occurred_at = ? AND i.message_id > ?))"
+		bounds = append(bounds, timestamp.UTC(), timestamp.UTC(), messageID)
 	}
 	ctes, args := s.callScopedIdentityCTEs(ctx, "c.occurred_at >= ? AND c.occurred_at < ?", q.After.UTC(), q.Before.UTC())
 	args = append(args, bounds...)
@@ -75,13 +76,15 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 	next := ""
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `WITH `+ctes+`, selected AS (
- SELECT i.*, `+callCategorySQL("CASE WHEN EXISTS (SELECT 1 FROM active a WHERE a.identity_key = i.identity_key AND a.outcome = 'answered' AND a.owner_participation = 'joined') THEN 1 ELSE 0 END")+` AS category
- FROM identities i WHERE `+where+`
- ORDER BY i.occurred_at, i.identity_key LIMIT ?)
- SELECT i.identity_key, i.message_id, i.occurred_at, i.category, i.duration_seconds,
- p.participant_id, p.person_id, p.participation, `+callCategorySQL("p.confirmed")+` = 'answered'
- FROM selected i LEFT JOIN call_participants p ON p.identity_key = i.identity_key
- ORDER BY i.occurred_at, i.identity_key, p.participant_id`, args...)
+ SELECT i.*, CASE WHEN i.outcome = 'answered' AND i.owner_participation = 'joined' THEN 'answered'
+ WHEN i.outcome IN ('missed','declined','cancelled') THEN i.outcome
+ ELSE 'unknown' END AS category
+ FROM active i WHERE `+where+`
+ ORDER BY i.occurred_at, i.message_id LIMIT ?)
+ SELECT i.message_id, i.occurred_at, i.category, i.duration_seconds,
+ p.participant_id, p.person_id, p.participation, p.confirmed = 1
+ FROM selected i LEFT JOIN call_participants p ON p.message_id = i.message_id
+ ORDER BY i.occurred_at, i.message_id, p.participant_id`, args...)
 		if err != nil {
 			return fmt.Errorf("list logical calls: %w", err)
 		}
@@ -93,11 +96,11 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 			var participantID, personID sql.NullInt64
 			var participation sql.NullString
 			var credited sql.NullBool
-			if err := rows.Scan(&c.IdentityKey, &c.MessageID, &at, &c.Outcome, &duration, &participantID, &personID, &participation, &credited); err != nil {
+			if err := rows.Scan(&c.MessageID, &at, &c.Outcome, &duration, &participantID, &personID, &participation, &credited); err != nil {
 				return fmt.Errorf("scan logical call: %w", err)
 			}
 			c.OccurredAt = at.Time.UTC()
-			if len(calls) == 0 || calls[len(calls)-1].IdentityKey != c.IdentityKey {
+			if len(calls) == 0 || calls[len(calls)-1].MessageID != c.MessageID {
 				c.Participants = []CallParticipant{}
 				if duration.Valid {
 					c.DurationSeconds = &duration.Float64
@@ -115,7 +118,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 		if len(calls) > q.Limit {
 			calls = calls[:q.Limit]
 			last := calls[len(calls)-1]
-			next = last.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + last.IdentityKey
+			next = last.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + strconv.FormatInt(last.MessageID, 10)
 		}
 		return nil
 	})
@@ -131,7 +134,7 @@ func validLogicalCallTime(at time.Time) bool {
 
 func (s *Store) callParticipantsCTE() string {
 	return `call_participants AS (
- SELECT a.identity_key, r.participant_id, COALESCE(MAX(pp.person_id),0) AS person_id,
+ SELECT a.message_id, r.participant_id, COALESCE(MAX(pp.person_id),0) AS person_id,
  CASE WHEN MAX(CASE WHEN r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) = 1 THEN 'joined'
  WHEN MAX(CASE WHEN r.recipient_type = 'call_invited' THEN 1 ELSE 0 END) = 1 THEN 'invited'
  ELSE 'unknown' END AS participation,
@@ -141,7 +144,7 @@ func (s *Store) callParticipantsCTE() string {
  FROM active a JOIN (` + s.callRolesSQL() + `) r ON r.message_id = a.message_id
  LEFT JOIN person_participants pp ON pp.participant_id = r.participant_id
  WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
- GROUP BY a.identity_key, r.participant_id)`
+ GROUP BY a.message_id, r.participant_id)`
 }
 
 // CallContactAggregateContext summarizes credited logical calls for one subject.
@@ -177,10 +180,10 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q CallContactQu
 	args = append(args, q.Now.UTC())
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `WITH `+ctes+`
- SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing)
- FROM identities i JOIN call_participants p ON p.identity_key = i.identity_key
- WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered' AND i.occurred_at <= ?
- GROUP BY i.identity_key, i.occurred_at ORDER BY i.occurred_at, i.identity_key`, args...)
+ SELECT i.message_id, i.occurred_at, MAX(p.incoming), MAX(p.outgoing)
+ FROM active i JOIN call_participants p ON p.message_id = i.message_id
+ WHERE `+subject+` AND p.confirmed = 1 AND i.occurred_at <= ?
+ GROUP BY i.message_id, i.occurred_at ORDER BY i.occurred_at, i.message_id`, args...)
 		if err != nil {
 			return fmt.Errorf("aggregate call contact: %w", err)
 		}
@@ -191,10 +194,10 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q CallContactQu
 		}
 		now := q.Now.In(loc)
 		for rows.Next() {
-			var identity string
+			var messageID int64
 			var timestamp requiredTimestamp
 			var incoming, outgoing int
-			if err := rows.Scan(&identity, &timestamp, &incoming, &outgoing); err != nil {
+			if err := rows.Scan(&messageID, &timestamp, &incoming, &outgoing); err != nil {
 				return fmt.Errorf("scan call contact: %w", err)
 			}
 			at := timestamp.Time.UTC()
@@ -235,5 +238,5 @@ func (s *Store) callScopedIdentityCTEs(ctx context.Context, candidateWhere strin
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	active := s.callActiveSQL(scope + " AND (" + candidateWhere + ")")
 	args = append(args, candidateArgs...)
-	return callIdentityCTEs(active) + ", " + s.callParticipantsCTE(), args
+	return "active AS (" + active + "), " + s.callParticipantsCTE(), args
 }
