@@ -510,7 +510,7 @@ func TestDiscoverRejectsCrossOriginDiscoveryResponseHrefWithoutFallback(t *testi
 
 	_, err := Discover(t.Context(), newFixtureClient(t, server.URL, "alice", "secret"), server.URL+"/entered")
 	require.ErrorIs(t, err, ErrUnsafeHref)
-	assert.ErrorContains(t, err, "set url to https://elsewhere.example")
+	require.ErrorContains(t, err, "set url to https://elsewhere.example")
 	assert.Equal(t, 1, requests, "an unsafe direct response must not be retried through well-known discovery")
 }
 
