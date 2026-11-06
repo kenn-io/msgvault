@@ -20,6 +20,17 @@ import (
 	"go.kenn.io/msgvault/internal/daemonauth"
 )
 
+func TestListLiveDaemonRuntimeRecordsEmptyDoesNotProbeOwnership(t *testing.T) {
+	dataDir := t.TempDir()
+	// A directory makes an ownership probe fail, so an empty runtime listing
+	// must succeed without opening the lock that startup may be claiming.
+	require.NoError(t, os.Mkdir(daemonOwnerLockPath(dataDir), 0o700))
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
 func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
