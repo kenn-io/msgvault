@@ -18,7 +18,7 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: time.Date(2026, 8, 1, 10+i, 0, 0, 0, time.UTC)})
 		b.AddTo(id, person, "Example Person")
 		if i < 2 {
-			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/', TIMESTAMP '2026-08-01 10:00:00')", id))
+			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 		}
 	}
 	engine := b.BuildEngine()
@@ -61,7 +61,7 @@ func TestMeetingCountsOneTranscriptTwoOccurrences(t *testing.T) {
 	b.AddTo(id, owner, "Owner")
 	b.AddTo(id, person, "Person")
 	b.AddAttachment(id, 100, "notes.txt")
-	b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:series/first', TIMESTAMP '2026-08-01 10:00:00'),(%d, 'uid:series/second', TIMESTAMP '2026-08-01 10:00:00')", id, id))
+	b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:series/first'),(%d, 'uid:series/second')", id, id))
 	engine := b.BuildEngine()
 	for _, scope := range []Context{{}, {SourceIDs: []int64{source}, ParticipantIDs: []int64{person}}} {
 		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: scope}})
@@ -98,7 +98,7 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: at})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
-		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/', TIMESTAMP '2026-08-01 10:00:00')", id))
+		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 	}
 	engine := b.BuildEngine()
 	want := int64(1)
@@ -129,7 +129,7 @@ func TestRelationshipCalendarLinkedTranscriptsAcrossYears(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: at})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
-		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/', TIMESTAMP '2024-12-31 23:59:00')", id))
+		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {

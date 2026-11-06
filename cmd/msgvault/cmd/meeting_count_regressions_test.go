@@ -119,20 +119,56 @@ func TestIndependentSeparateOccurrencesKeepTheirDays(t *testing.T) {
 			meetings[day.Date] = day.Meetings
 		}
 	}
-	assertions.Equal(map[string]int64{"2026-03-14": 1, "2026-03-21": 1}, meetings)
+	assertions.Equal(map[string]int64{"2026-03-28": 2}, meetings)
 	for _, scope := range []query.Context{{}, {SourceIDs: []int64{f.source}}} {
 		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: scope, Now: time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC)})
 		requirements.NoError(err)
 		requirements.Len(relationships.Rows, 1)
 		assertions.Equal(int64(2), relationships.Rows[0].Signals.MeetingCount)
-		assertions.Equal(time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC), relationships.Rows[0].LastAt)
+		assertions.Equal(time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), relationships.Rows[0].LastAt)
 	}
 	db, err := sql.Open("duckdb", "")
 	requirements.NoError(err)
 	defer func() { requirements.NoError(db.Close()) }()
 	var first, second, transcript int64
 	requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_count) FILTER (WHERE event_date = DATE '2026-03-14'),0), coalesce(sum(meeting_count) FILTER (WHERE event_date = DATE '2026-03-21'),0), coalesce(sum(meeting_count) FILTER (WHERE event_date = DATE '2026-03-28'),0) FROM read_parquet(?) WHERE canonical_id=?`, filepath.Join(f.cache, "relationship_temperature_contributions", "*.parquet"), f.person).Scan(&first, &second, &transcript))
-	assertions.Equal(int64(1), first)
-	assertions.Equal(int64(1), second)
-	assertions.Zero(transcript)
+	assertions.Zero(first)
+	assertions.Zero(second)
+	assertions.Equal(int64(2), transcript)
+}
+
+func TestReviewLinkedOccurrenceDateFilter(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newMeetingCountSeriesFixture(t, 1)
+	for _, key := range []string{"20260314T100000Z", "20260321T100000Z"} {
+		requirements.NoError(f.st.LinkMeetingContext(t.Context(), f.notes[0], store.OccurrenceRef{MessageID: f.event, Key: key}))
+	}
+	_, err := buildCache(f.path, f.cache, true)
+	requirements.NoError(err)
+	engine, err := query.NewDuckDBEngine(f.cache, "", nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "UTC"})
+	requirements.NoError(err)
+	requirements.NotEmpty(calendar.Days)
+	var meetingCount int64
+	for _, day := range calendar.Days {
+		meetingCount += day.Meetings
+		if day.Meetings == 0 {
+			continue
+		}
+		start, err := time.Parse(time.DateOnly, day.Date)
+		requirements.NoError(err)
+		scope := query.Context{ParticipantIDs: []int64{f.person}, After: &start, Before: new(start.AddDate(0, 0, 1))}
+		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: scope, Now: time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC)})
+		requirements.NoError(err)
+		assertions.Len(relationships.Rows, 1, "calendar day %s must have a relationship", day.Date)
+		if len(relationships.Rows) == 1 {
+			assertions.Equal(day.Meetings, relationships.Rows[0].Signals.MeetingCount)
+		}
+		timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: f.person, Context: scope, Timezone: "UTC"})
+		requirements.NoError(err)
+		assertions.Len(timeline.Rows, 1, "calendar day %s must open its transcript", day.Date)
+	}
+	assertions.Equal(int64(2), meetingCount)
 }

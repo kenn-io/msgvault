@@ -797,7 +797,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		{"conversation_participants", "conversation_participants", "conversation_participants.parquet", conversationParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.conversationParticipantsSQL(), len(b.conversationParticipants) == 0},
 		{datasetOwnerParticipants, datasetOwnerParticipants, datasetOwnerParticipants + ".parquet", ownerParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.ownerParticipantsSQL(), len(b.ownerParticipants) == 0},
 		{datasetParticipantClusters, datasetParticipantClusters, datasetParticipantClusters + ".parquet", participantClustersCols, "(0::BIGINT, 0::BIGINT)", b.participantClustersSQL(), len(b.participantClusters) == 0},
-		{datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key, occurrence_start", "(0::BIGINT, NULL::VARCHAR, NULL::TIMESTAMP)", strings.Join(b.meetingKeys, ","), len(b.meetingKeys) == 0},
+		{datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key", "(0::BIGINT, NULL::VARCHAR)", strings.Join(b.meetingKeys, ","), len(b.meetingKeys) == 0},
 	}
 	for _, a := range auxTables {
 		if a.empty {
@@ -1178,5 +1178,5 @@ func (b *parquetBuilder) ensureMeetingKeysTable() {
 			return
 		}
 	}
-	b.addEmptyTable(datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key, occurrence_start", "(0::BIGINT, NULL::VARCHAR, NULL::TIMESTAMP)")
+	b.addEmptyTable(datasetMeetingKeys, datasetMeetingKeys, "meeting_keys.parquet", "message_id, meeting_key", "(0::BIGINT, NULL::VARCHAR)")
 }

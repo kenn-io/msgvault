@@ -182,9 +182,9 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 func TestStageMeetingKeysHonorsBoundary(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	recorder := newParticipantClusterInsertRecorder(t)
-	keys := make(map[int64][]store.MeetingCountKey)
+	keys := make(map[int64][]string)
 	for id := int64(1); id <= 1026; id++ {
-		keys[id] = []store.MeetingCountKey{{Key: "uid:example'o@example.test/", Start: time.Date(2026, 3, 14, 10, 0, 0, 0, time.UTC)}}
+		keys[id] = []string{"uid:example'o@example.test/"}
 	}
 	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1025))
 	var count int

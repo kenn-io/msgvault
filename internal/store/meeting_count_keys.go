@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -21,14 +20,8 @@ func (i meetingIdentity) countKey() string {
 	return fmt.Sprintf("evt:%d/%s", i.EventMessageID, i.OccurrenceKey)
 }
 
-// MeetingCountKey carries an occurrence's identity and resolved start time into analytics.
-type MeetingCountKey struct {
-	Key   string
-	Start time.Time
-}
-
-// MeetingCountKeysContext maps linked meeting messages to their occurrences in one read snapshot.
-func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]MeetingCountKey, error) {
+// MeetingCountKeysContext maps linked meeting messages to their occurrence keys in one read snapshot.
+func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return nil, err
@@ -59,7 +52,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]Meetin
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	keys := make(map[int64][]MeetingCountKey)
+	keys := make(map[int64][]string)
 	for _, id := range members {
 		budget := calrecur.RequestReadBudget
 		occurrences, err := s.meetingMemberOccurrences(ctx, r, id, &budget)
@@ -70,7 +63,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]Meetin
 			return nil, fmt.Errorf("resolve meeting count member %d: %w", id, err)
 		}
 		for _, occurrence := range occurrences {
-			keys[id] = append(keys[id], MeetingCountKey{Key: occurrence.Identity.countKey(), Start: occurrence.Start})
+			keys[id] = append(keys[id], occurrence.Identity.countKey())
 		}
 	}
 	return keys, nil
