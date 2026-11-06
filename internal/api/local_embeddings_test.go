@@ -15,14 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 type localSetupTestController struct {
-	calls   atomic.Int32
-	builtin atomic.Bool
-	started chan context.Context
-	release chan struct{}
+	calls        atomic.Int32
+	builtin      atomic.Bool
+	started      chan context.Context
+	release      chan struct{}
+	failurePhase string
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
@@ -35,7 +37,11 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 	report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
 	select {
 	case <-c.release:
-		report(LocalEmbeddingsStatus{Phase: "indexing"})
+		phase := c.failurePhase
+		if phase == "" {
+			phase = "indexing"
+		}
+		report(LocalEmbeddingsStatus{Phase: phase})
 		return errors.New("build interrupted")
 	case <-ctx.Done():
 		return ctx.Err()
@@ -43,12 +49,13 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 }
 
 func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
-	for _, behavior := range []string{"request lifetime", "admission", "later successful build", "retry after failure", "shutdown join"} {
+	for _, behavior := range []string{"request lifetime", "admission", "later successful build", "retry after failure", "shutdown join", "installation failure", "publication failure"} {
 		t.Run(behavior, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
-				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+				history := &operationHistoryStub{status: make(map[operations.Kind]operations.LaneHistoryStatus)}
+				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, OperationHistoryReader: history, Logger: testLogger()})
 				defer func() { _ = srv.Shutdown(context.Background()) }()
 				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
 				srv.SetLocalEmbeddings(controller)
@@ -68,6 +75,20 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					require.NoError(json.Unmarshal(response.Body.Bytes(), &value))
 					return value
 				}
+				recordSuccessfulBuild := func() {
+					run := operationRunForKindFixture(t, operations.KindMessageEmbedding, operations.StateSucceeded)
+					run.StartedAt = time.Now()
+					time.Sleep(time.Second)
+					finished := time.Now()
+					run.FinishedAt = &finished
+					history.status[operations.KindMessageEmbedding] = operations.LaneHistoryStatus{Kind: operations.KindMessageEmbedding, Lane: operations.LaneMessages, HistoryAvailability: operations.HistoryAvailable, Latest: &run}
+					srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
+						return vector.EmbeddingStatus{
+							Generation: vector.EmbeddingGenerationStatus{ID: 1}, ActiveGeneration: &vector.EmbeddingGenerationStatus{ID: 1}, Current: 1,
+						}, nil
+					}, 10)
+				}
+
 				requestCtx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				require.Equal(http.StatusAccepted, post(requestCtx, `{"use_builtin":false}`).Code)
@@ -90,13 +111,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					close(controller.release)
 					synctest.Wait()
 					assert.Equal("build interrupted", status().Error)
-					finished := time.Now().Add(time.Minute)
-					srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
-						return vector.EmbeddingStatus{
-							Generation: vector.EmbeddingGenerationStatus{ID: 1}, ActiveGeneration: &vector.EmbeddingGenerationStatus{ID: 1}, Current: 1,
-							Diagnostics: &vector.EmbeddingDiagnostics{StartedAt: finished.Add(-time.Second), FinishedAt: &finished},
-						}, nil
-					}, 10)
+					recordSuccessfulBuild()
 					assert.Empty(status().Error, "a later successful build resolves the setup build error")
 				case "retry after failure":
 					close(controller.release)
@@ -106,6 +121,16 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					<-controller.started
 					assert.True(controller.builtin.Load())
 					assert.Equal(int32(2), controller.calls.Load())
+				case "installation failure", "publication failure":
+					controller.failurePhase = "downloading"
+					if behavior == "publication failure" {
+						controller.failurePhase = "idle"
+					}
+					close(controller.release)
+					synctest.Wait()
+					recordSuccessfulBuild()
+					assert.Equal("build interrupted", status().Error)
+
 				case "shutdown join":
 					require.NoError(srv.Shutdown(t.Context()))
 					require.ErrorIs(jobCtx.Err(), context.Canceled)

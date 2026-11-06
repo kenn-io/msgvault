@@ -132,7 +132,7 @@ Run `msgvault setup providers --local-embeddings` to switch to the shared local 
 
 The CLI switch also changes the separate document-vector generation: renew its consents, restart the daemon, and build the matching generation to restore document semantic search.
 
-In Settings, Use built-in instead retains existing document-vector and semantic-person consents for the selected local provider, refreshes the running search consumers, and rebuilds document search automatically.
+In Settings, Use built-in instead activates message search without a restart. Renew document-vector and semantic-person consents for the selected provider when their identities change, as with the CLI switch. Existing exact document consent allows its index to rebuild automatically.
 
 For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.

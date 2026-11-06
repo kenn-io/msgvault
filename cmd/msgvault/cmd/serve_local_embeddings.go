@@ -181,9 +181,6 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		runtimeConfig.Vector = c.handle.vf.Cfg
 	}
 	c.handle.mu.Unlock()
-	previousConfig := runtimeConfig
-	previousState := *c.state
-	previousState.cfg = &previousConfig
 	runtimeConfig.Vector.Enabled = true
 	runtimeConfig.Vector.Backend = nextConfig.Vector.Backend
 	runtimeConfig.Vector.Embeddings = nextConfig.Vector.Embeddings
@@ -202,7 +199,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
 		return err
 	}
-	rebuildDocuments, err := c.retainLocalSearchConsents(workCtx, &previousState, &state)
+	rebuildDocuments, err := c.localDocumentRebuildConsented(workCtx, &state)
 	if err != nil {
 		return err
 	}
@@ -287,65 +284,22 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	return nil
 }
 
-// Keep authorized search consumers on the explicitly selected local provider.
-func (c *localEmbeddingsController) retainLocalSearchConsents(ctx context.Context, before, after *invocation) (bool, error) {
-	if before.cfg.Vector.Enabled && before.cfg.Vector.People.Enabled {
-		profile, err := before.cfg.Vector.SemanticPersonEmbeddingProfile()
-		if err != nil {
-			return false, err
-		}
-		active, err := c.store.HasActivePersonSemanticEmbeddingConsent(ctx, profile.Fingerprint)
-		if err != nil {
-			return false, err
-		}
-		if active {
-			next, err := after.cfg.Vector.SemanticPersonEmbeddingProfile()
-			if err != nil {
-				return false, err
-			}
-			if _, err := c.store.EnsurePersonSemanticEmbeddingProfile(ctx, next); err != nil {
-				return false, err
-			}
-			if _, _, err := c.store.GrantPersonSemanticEmbeddingConsent(ctx, next.Fingerprint, personProviderConsentActor); err != nil {
-				return false, err
-			}
-		}
-	}
-	if !before.cfg.Attachments.Documents.Index.Embeddings.Enabled {
+// Rebuild documents only when their selected destination already has exact consent.
+func (c *localEmbeddingsController) localDocumentRebuildConsented(ctx context.Context, state *invocation) (bool, error) {
+	if !state.cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return false, nil
 	}
-	oldSpec, err := configuredDocumentVectorSpec(withInvocation(ctx, before), c.store)
+	spec, err := configuredDocumentVectorSpec(ctx, c.store)
 	if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	newSpec, err := configuredDocumentVectorSpec(ctx, c.store)
+	expected, err := configuredDocumentVectorConsentSpec(spec, state, "document_embedding")
 	if err != nil {
 		return false, err
 	}
-	rebuild := false
-	for _, purpose := range []string{"document_embedding", "query_embedding"} {
-		oldConsent, err := configuredDocumentVectorConsentSpec(oldSpec, before, purpose)
-		if err != nil {
-			return false, err
-		}
-		consent, err := c.store.GetDocumentVectorConsent(ctx, oldConsent.EgressFingerprint)
-		if err != nil {
-			return false, err
-		}
-		if consent == nil || consent.DocumentVectorConsentSpec != oldConsent {
-			continue
-		}
-		next, err := configuredDocumentVectorConsentSpec(newSpec, after, purpose)
-		if err != nil {
-			return false, err
-		}
-		if _, _, err := c.store.RecordDocumentVectorConsent(ctx, next, time.Now()); err != nil {
-			return false, err
-		}
-		rebuild = rebuild || purpose == "document_embedding"
-	}
-	return rebuild, nil
+	consent, err := c.store.GetDocumentVectorConsent(ctx, expected.EgressFingerprint)
+	return consent != nil && consent.DocumentVectorConsentSpec == expected, err
 }

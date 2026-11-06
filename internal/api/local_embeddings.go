@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/operations"
 )
 
 const localEmbeddingsEndpointPath = "/api/v1/embeddings/local"
@@ -72,9 +73,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 	if !running && progress.Error != "" && !failedAt.IsZero() {
 		// A separate Build index action can resolve a failed setup build. Provider
 		// installation and publication errors must still remain visible.
-		index, _, err := s.loadEmbeddingStatus(r.Context(), 0)
-		d := index.Diagnostics
-		if err == nil && d != nil && d.StartedAt.After(failedAt) && d.FinishedAt != nil && d.LastError == nil && index.Pending == 0 && index.Failed == 0 && index.Current > 0 && index.ActiveGeneration != nil && index.ActiveGeneration.ID == index.Generation.ID {
+		if s.localSetupBuildRecovered(r.Context(), failedAt) {
 			s.importMu.Lock()
 			if !s.localSetup.Running && s.localSetupBuildFailedAt.Equal(failedAt) {
 				s.localSetup.Error = ""
@@ -90,6 +89,18 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		status.Phase, status.DoneBytes, status.TotalBytes = progress.Phase, progress.DoneBytes, progress.TotalBytes
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) localSetupBuildRecovered(ctx context.Context, failedAt time.Time) bool {
+	if s.operationHistoryReader == nil {
+		return false
+	}
+	lane, err := s.operationHistoryReader.LaneStatus(ctx, operations.KindMessageEmbedding)
+	if err != nil || lane.Latest == nil || lane.Latest.State != operations.StateSucceeded || lane.Latest.FinishedAt == nil || !lane.Latest.FinishedAt.After(failedAt) {
+		return false
+	}
+	index, _, err := s.loadEmbeddingStatus(ctx, 0)
+	return err == nil && index.Pending == 0 && index.Failed == 0 && index.ActiveGeneration != nil && index.ActiveGeneration.ID == index.Generation.ID
 }
 
 func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Request) {

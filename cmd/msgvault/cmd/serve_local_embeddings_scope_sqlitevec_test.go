@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,8 +40,7 @@ func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syn
 			return
 		}
 		assert.Equal(t, "my-model", body.Model)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
+		_ = writeFakeEmbeddingResponse(w, len(body.Input), 4)
 	}))
 	t.Cleanup(endpoint.Close)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`

@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 type localBuildTestRunner struct {
@@ -105,6 +106,17 @@ type localActivationFixture struct {
 	ollamaTags bool
 }
 
+func writeFakeEmbeddingResponse(w http.ResponseWriter, inputs, dimension int) error {
+	data := make([]map[string]any, inputs)
+	for i := range data {
+		values := make([]float32, dimension)
+		values[0] = 1
+		data[i] = map[string]any{"index": i, "embedding": values}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	return json.MarshalWrite(w, map[string]any{"data": data, "model": "test-model"})
+}
+
 func newLocalActivationFixture(t *testing.T, model, extra string) *localActivationFixture {
 	t.Helper()
 	f := &localActivationFixture{}
@@ -127,13 +139,7 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 			return
 		}
 		f.inputs.Add(int32(len(body.Input)))
-		data := make([]map[string]any, len(body.Input))
-		for i := range data {
-			vec := make([]float32, 768)
-			vec[0] = 1
-			data[i] = map[string]any{"index": i, "embedding": vec}
-		}
-		assert.NoError(t, json.MarshalWrite(w, map[string]any{"data": data}))
+		assert.NoError(t, writeFakeEmbeddingResponse(w, len(body.Input), 768))
 	}))
 	t.Cleanup(endpoint.Close)
 	oldEndpoint, oldDir := localEmbeddingEndpoint, localEmbeddingsDir
@@ -163,7 +169,7 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 	f.runner = &localBuildTestRunner{t: t, home: dir}
 	f.scheduler = scheduler.New(nil)
 	gate := api.NewSerialOperationGate()
-	f.server = api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: f.cfg, Store: &storeAPIAdapter{store: f.store, config: f.cfg}, Logger: f.state.logger, VectorCfg: f.cfg.Vector})
+	f.server = api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: f.cfg, Store: &storeAPIAdapter{store: f.store, config: f.cfg}, OperationHistoryReader: &storeAPIAdapter{store: f.store, config: f.cfg}, Logger: f.state.logger, VectorCfg: f.cfg.Vector})
 	t.Cleanup(func() {
 		<-f.scheduler.Stop().Done()
 		_ = f.server.Shutdown(context.Background())
@@ -310,7 +316,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 	}
 }
 
-func TestLocalEmbeddingsRetainsPeopleConsent(t *testing.T) {
+func TestLocalEmbeddingsRequiresPeopleConsentForSelectedProvider(t *testing.T) {
 	for _, consented := range []bool{true, false} {
 		t.Run(strconv.FormatBool(consented), func(t *testing.T) {
 			f := newLocalActivationFixture(t, "different-model", "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n")
@@ -327,19 +333,22 @@ func TestLocalEmbeddingsRetainsPeopleConsent(t *testing.T) {
 				require.NoError(t, err)
 			}
 			f.start(t)
-			require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-			results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
 			if consented {
+				results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
 				require.NoError(t, err)
 				require.Len(t, results, 1)
-			} else {
-				require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 			}
+			require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			_, err = f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+			require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
 		})
 	}
 }
 
-func TestLocalEmbeddingsRetainsDocumentConsentAfterConfigWrite(t *testing.T) {
+func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T) {
 	for _, conflict := range []bool{false, true} {
 		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
 			f := newLocalActivationFixture(t, "different-model", "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n")
@@ -384,17 +393,21 @@ func TestLocalEmbeddingsRetainsDocumentConsentAfterConfigWrite(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Eventually(t, func() bool {
-				generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
-				return err == nil && generation != nil && generation.ID != old.ID
-			}, 10*time.Second, 50*time.Millisecond)
+			var consents int
+			require.NoError(t, f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
+			assert.Equal(t, 2, consents)
+			generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
+			require.NoError(t, err)
+			assert.Equal(t, old.ID, generation.ID)
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
 			request.Header.Set("Authorization", "Bearer owner")
 			f.server.Router().ServeHTTP(response, request)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), "orchard.pdf")
-			assert.Contains(t, response.Body.String(), "orchard document evidence")
+			require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "semantic_search_unavailable")
+			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
 		})
 	}
 }
@@ -415,6 +428,52 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
 	require.NoError(t, err)
 	assert.True(t, saved.Vector.Enabled)
+}
+
+func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%t", empty), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newLocalActivationFixture(t, "", "")
+			f.start(t)
+			require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			f.server.SetLocalEmbeddings(f.controller)
+			f.runner.failBuild = true
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer owner")
+			response := httptest.NewRecorder()
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusAccepted, response.Code)
+			readStatus := func() api.LocalEmbeddingsStatus {
+				t.Helper()
+				request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+				request.Header.Set("Authorization", "Bearer owner")
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				var status api.LocalEmbeddingsStatus
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+				return status
+			}
+			require.Eventually(func() bool { return !readStatus().Running }, 5*time.Second, 10*time.Millisecond)
+			require.Contains(readStatus().Error, "embedding build interrupted")
+			args := []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}
+			if empty {
+				var sourceID int64
+				require.NoError(f.store.DB().QueryRow("SELECT source_id FROM messages").Scan(&sourceID))
+				require.NoError(f.store.MarkMessageDeleted(sourceID, "first"))
+				args = append(args, "--full-rebuild")
+			}
+			f.runner.beforeBuild = nil
+			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: args}, nil))
+			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(err)
+			assert.Equal(vector.GenerationActive, active.State)
+			assert.Empty(readStatus().Error)
+		})
+	}
 }
 
 func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
