@@ -48,7 +48,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 					o.Participants = append(o.Participants, callhistory.Participant{ID: b, Participation: role})
 				}
 			}
-			o.Withdrawn = random.IntN(5) == 0
 			return o
 		}
 		put := func(index int, o callhistory.Observation) {
@@ -56,10 +55,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 			src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
 			require.NoError(t, err)
 			id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-			if records[index].Withdrawn && !o.Withdrawn {
-				require.ErrorIs(t, err, store.ErrCallObservationWithdrawn)
-				return
-			}
 			require.NoError(t, err)
 			if records[index].messageID != 0 {
 				assert.Equal(t, records[index].messageID, id)
@@ -94,19 +89,8 @@ func FuzzCallStoreSequences(f *testing.F) {
 				Raw: []byte(`{}`),
 			}
 			o = change(o)
-			if index == 0 {
-				o.Outcome, o.Withdrawn = "unknown", false
-			}
 			put(index, o)
 		}
-		check()
-		stale := records[0].Observation
-		withdrawn := stale
-		withdrawn.Outcome, withdrawn.Withdrawn = "cancelled", true
-		withdrawn.Participants = []callhistory.Participant{{ID: a, Participation: "invited"}}
-		put(0, withdrawn)
-		check()
-		put(0, stale)
 		check()
 		for _, index := range random.Perm(len(records)) {
 			put(index, records[index].Observation)

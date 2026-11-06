@@ -64,13 +64,13 @@ type PersonCallSummary struct {
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
 	return `SELECT message_id, 'call' AS kind, '' AS direction,
-		outcome, owner_participation, occurred_at, NULL AS duration_seconds, withdrawn FROM call_details
+		outcome, owner_participation, occurred_at, NULL AS duration_seconds FROM call_details
 		UNION ALL
 		SELECT m.id, 'call',
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
-			m.sent_at, NULLIF(` + seconds + `, 0), FALSE
+			m.sent_at, NULLIF(` + seconds + `, 0)
 		FROM messages m WHERE m.sent_at IS NOT NULL
 		AND m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')`
 }
@@ -89,9 +89,8 @@ func (s *Store) callRolesSQL() string {
 			WHERE pp.participant_id = r.participant_id AND pp.person_id IN (` + fmt.Sprintf(personIDsForParticipantsSQL, ownerParticipantIDsSQL) + `))`
 }
 
-// ListCallObservationsContext includes withdrawn evidence for inspection but
-// respects archive deletion and source deletion of other calls. It never reads
-// raw payloads or bodies.
+// ListCallObservationsContext excludes archive-deleted and source-deleted calls.
+// It never reads raw payloads or bodies.
 func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([]CallObservationView, error) {
 	if q.Offset != 0 {
 		return nil, fmt.Errorf("%w: evidence pages require after_id", callhistory.ErrInvalid)
@@ -100,7 +99,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	if err != nil {
 		return nil, err
 	}
-	where := []string{"m.deleted_at IS NULL", "(m.deleted_from_source_at IS NULL OR c.withdrawn)", "m.id > ?"}
+	where := []string{"m.deleted_at IS NULL", "m.deleted_from_source_at IS NULL", "m.id > ?"}
 	args := []any{q.AfterID}
 	if q.PersonID != 0 {
 		where = append(where, `EXISTS (SELECT 1 FROM (`+s.callRolesSQL()+`) r
@@ -119,7 +118,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT m.id, m.source_id, m.source_message_id, m.metadata, m.message_type,
 			src.source_type, src.identifier, c.kind, c.direction, c.outcome,
-			c.owner_participation, c.occurred_at, c.duration_seconds, c.withdrawn
+			c.owner_participation, c.occurred_at, c.duration_seconds
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			JOIN sources src ON src.id = m.source_id
 			WHERE `+strings.Join(where, " AND ")+` ORDER BY m.id LIMIT ?`, args...)
@@ -132,7 +131,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 			var messageType string
 			if err := rows.Scan(&view.MessageID, &view.SourceID, &view.RecordID, &metadata, &messageType,
 				&view.Provider, &view.Account, &view.Kind, &view.Direction, &view.Outcome,
-				&view.OwnerParticipation, &view.OccurredAt, &view.DurationSeconds, &view.Withdrawn); err != nil {
+				&view.OwnerParticipation, &view.OccurredAt, &view.DurationSeconds); err != nil {
 				_ = rows.Close()
 				return err
 			}
@@ -224,7 +223,7 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		var unsupported sql.NullInt64
 		err := tx.QueryRowContext(ctx, `SELECT MIN(c.evidence_version)
 			FROM call_details c JOIN messages m ON m.id = c.message_id
-			WHERE c.evidence_version <> 1 AND NOT c.withdrawn
+			WHERE c.evidence_version <> 1
 			AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`).Scan(&unsupported)
 		if err != nil {
 			return err
@@ -236,7 +235,7 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		WITH active AS (
 			SELECT c.*
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
-			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		), per_person AS (
 			SELECT a.message_id, pp.person_id,
 				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'

@@ -194,10 +194,10 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 		Participants: []callhistory.Participant{{ID: a, Participation: "joined"}, {ID: b, Participation: "joined"}},
 		Raw:          []byte(`{}`),
 	}
-	first, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
 	o.RecordID, o.OccurredAt = "two", at.Add(time.Hour)
-	second, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
 	got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
@@ -231,23 +231,6 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(rebound.ID, got[0].PersonID)
-	o.Withdrawn = true
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	requirements.NoError(err)
-	requirements.Len(got, 1)
-	assertions.Equal(1, got[0].Answered, "one withdrawn observation does not erase other evidence")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), at, first)
-	requirements.NoError(err)
-	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	requirements.NoError(err)
-	assertions.Empty(got)
-	list, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	requirements.NoError(err)
-	requirements.Len(list, 1, "withdrawn evidence remains inspectable")
-	assertions.Equal(second, list[0].MessageID)
-	assertions.True(list[0].Withdrawn)
 }
 
 func TestCallQueriesRejectInvalidBounds(t *testing.T) {

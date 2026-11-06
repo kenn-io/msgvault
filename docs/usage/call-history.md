@@ -43,7 +43,7 @@ Supported formats:
 
 | Format | Record and binding contract |
 | --- | --- |
-| `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
+| `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
@@ -53,14 +53,12 @@ changes connected account bindings, or requests additional platform permissions.
 ## Read the evidence and counts
 
 All commands return JSON. `calls list` includes source/message/record IDs,
-typed participant attendance and preserved scalar claims. It includes
-withdrawn observations for inspection, even though withdrawal marks them deleted
-at the source. It excludes other source-deleted messages and all archive-deleted
-messages. Original provider JSON remains in the archive's original-message
+typed participant attendance and preserved scalar claims. It excludes source-deleted
+and archive-deleted messages. Original provider JSON remains in the archive's original-message
 storage, outside the list response.
 
 Undated Google Voice calls are left out of `calls list` and `calls summary`.
-Imported calls are searchable by their call text. Withdrawn calls aren't searchable.
+Imported calls are searchable by their call text.
 
 `calls summary` ranks current durable people by answered count, then person ID.
 Unbound participants remain visible in evidence but have no guessed person.
@@ -76,12 +74,6 @@ Multiple identities currently bound to one person count once per call.
 Reimporting the same source record replaces its evidence. Time proximity,
 phone numbers and similar titles never merge calls. `--after` is inclusive and
 `--before` exclusive.
-
-Native withdrawal prevents a stale active reimport of that observation.
-Other observations of the call remain usable. Explicit archive deletion or
-garbage collection removes the tombstone too; importing an old export afterward
-can recreate it. A complete record replaces the time, participants, raw JSON,
-and withdrawal state together. Cancellation alone allows later updates; an explicit withdrawal blocks stale active imports.
 
 ## Coverage and limitations
 
