@@ -142,7 +142,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 				return c.src.Calls.CallContactAggregateContext(ctx, store.CallContactQuery{Subject: q.Subject, Now: q.Now, Location: q.Location})
 			})
 			logicalCalls = readWithin(c.ctx, func(ctx context.Context) ([]store.LogicalCall, error) {
-				return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
+				return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Millisecond), ParticipantIDs: c.participants, Limit: 500})
 			})
 		},
 		func() {

@@ -66,7 +66,7 @@ type dayRead struct {
 
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
-	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, Descending: true}
+	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Filters: c.filters(), Limit: maxBursts, Descending: true}
 	var r dayRead
 	c.parallel(
 		func() {
@@ -102,13 +102,13 @@ func (c *composer) collectDay() dayRead {
 		func() {
 			if c.req.Scope.Owner {
 				r.calls = readWithin(c.ctx, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
+					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, Limit: 500})
 				})
 			}
 		},
 		func() {
 			if c.req.Scope.Owner {
-				r.loops = c.collectLoops(c.subject.PersonID)
+				r.loops = c.collectLoops(0)
 			}
 		},
 		func() {
@@ -188,15 +188,12 @@ func (c *composer) buildDay() {
 	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
 	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value)
-	c.t.Upcoming = c.filterSubject(upcoming)
+	c.t.Upcoming = upcoming
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
-	c.groupDays(c.filterSubject(entries))
+	c.groupDays(entries)
 	if c.req.Scope.Owner {
 		c.addLoops(r.loops)
-		if c.t.OpenLoops != nil {
-			c.t.OpenLoops.Items = c.filterSubject(c.t.OpenLoops.Items)
-		}
 	}
 }
 func (c *composer) calendarGaps(r readResult[store.CalendarOccurrencePage], section string) {

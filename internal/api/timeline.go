@@ -253,7 +253,7 @@ func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline
 func timelineSyncCommand(item *store.Source) string {
 	arg := shellArgument(item.Identifier)
 	switch item.SourceType {
-	case "gmail", "imap", "msmail", "o365":
+	case "gmail", "imap", "msmail":
 		return "msgvault sync-incremental " + arg
 	case "teams", "discord":
 		return "msgvault sync-" + item.SourceType + " " + arg

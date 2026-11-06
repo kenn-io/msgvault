@@ -691,3 +691,27 @@ func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestTimelineCallLinkedIdentitiesKeepJoinedParticipation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	person := f.savePerson()
+	alias := f.EnsureParticipant("alice.work@example.com", "Alice work", "example.com")
+	_, err := f.Store.LinkParticipants(f.peer, alias)
+	requirements.NoError(err)
+	o := callhistory.Observation{RecordID: "participation", Version: 1, Provider: "signal", Account: "example", NativeCallID: "participation", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.now.Add(-time.Hour), Participants: []callhistory.Participant{{ID: f.peer, Participation: "invited"}, {ID: alias, Participation: "joined"}}, Raw: []byte(`{}`)}
+	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	requirements.NoError(err)
+	_, err = f.Store.PutCallObservationContext(t.Context(), src.ID, o)
+	requirements.NoError(err)
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	requirements.NotNil(entries[0].Call)
+	requirements.Len(entries[0].Call.People, 1)
+	p := entries[0].Call.People[0]
+	assertions.Equal(person, p.PersonID)
+	assertions.Equal("joined", p.Participation)
+	assertions.True(p.Credited)
+}

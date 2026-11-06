@@ -12,45 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
-
-func TestDayWithFiltersEverySection(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	person := f.savePerson()
-	f.add(f.now.Add(-time.Hour), false)
-	f.call(f.now.Add(-time.Hour))
-	peer := f.peer
-	f.peer = f.EnsureParticipant("other@example.com", "Other", "example.com")
-	conv, err := f.Store.EnsureConversationWithType(f.Source.ID, "unrelated", "email_thread", "Unrelated")
-	requirements.NoError(err)
-	f.add(f.now.Add(-time.Hour), false, func(m *store.Message) { m.ConversationID = conv })
-	f.call(f.now.Add(-time.Hour))
-	f.peer = peer
-	f.PersistEmail(storetest.EmailSpec{Thread: "related-loop", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
-	f.PersistEmail(storetest.EmailSpec{Thread: "unrelated-loop", From: "other@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the invoice?", SentAt: f.now.Add(-48 * time.Hour)})
-	f.calendar("related", singleDayEvent)
-	f.calendar("unrelated", strings.NewReplacer("planning", "unrelated", "alice@example.com", "other@example.com").Replace(singleDayEvent))
-	f.calendar("related-future", strings.NewReplacer("planning", "related-future", "T10:00", "T15:00", "T11:00", "T16:00").Replace(singleDayEvent))
-	f.calendar("unrelated-future", strings.NewReplacer("planning", "unrelated-future", "alice@example.com", "other@example.com", "T10:00", "T15:00", "T11:00", "T16:00").Replace(singleDayEvent))
-	f.project()
-	req := dayRequest()
-	req.Mode, req.With = ModeDay, fmt.Sprintf("person:%d", person)
-	got, err := Build(t.Context(), f.src, req)
-	requirements.NoError(err)
-	requirements.Len(got.Days, 1)
-	assertions.Len(got.Days[0].Meetings, 2)
-	assertions.Len(got.Days[0].Bursts, 1)
-	assertions.Len(got.Days[0].Calls, 1)
-	requirements.Len(got.Upcoming, 1)
-	assertions.Equal("Planning", got.Upcoming[0].Meeting.Title.Text)
-	requirements.NotNil(got.OpenLoops)
-	requirements.NotEmpty(got.OpenLoops.Items)
-	for _, loop := range got.OpenLoops.Items {
-		assertions.Equal(person, loop.Loop.Person.PersonID)
-	}
-}
 
 func TestIncludeColdCollapsesEmailCopiesBeforeGrouping(t *testing.T) {
 	requirements := require.New(t)

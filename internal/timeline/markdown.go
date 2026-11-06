@@ -212,14 +212,14 @@ func renderMarkdown(t *Timeline, openers bool) (string, []RenderedEntry) {
 	}
 	var missing, retry []string
 	for _, g := range t.Gaps {
-		if g.Retryable {
-			retry = appendUnique(retry, g.Section)
-		} else {
-			section := g.Section
-			if g.Section == "days" && g.Code == "partial" && len(g.Items) > 0 {
-				section += " through " + singleLine(g.Items[0], 10)
-			}
-			missing = appendUnique(missing, section)
+		section := g.Section
+		if !g.Retryable && g.Section == "days" && g.Code == "partial" && len(g.Items) > 0 {
+			section += " through " + singleLine(g.Items[0], 10)
+		}
+		if g.Retryable && !slices.Contains(retry, section) {
+			retry = append(retry, section)
+		} else if !g.Retryable && !slices.Contains(missing, section) {
+			missing = append(missing, section)
 		}
 	}
 	if len(missing) > 0 || len(retry) > 0 {
@@ -387,12 +387,6 @@ func peopleNames(ps []Person, total int) string {
 		names = append(names, fmt.Sprintf("+%d", total-displayed))
 	}
 	return strings.Join(names, ", ")
-}
-func appendUnique(ss []string, s string) []string {
-	if slices.Contains(ss, s) {
-		return ss
-	}
-	return append(ss, s)
 }
 func dateText(t *time.Time, loc *time.Location) string {
 	if t == nil {

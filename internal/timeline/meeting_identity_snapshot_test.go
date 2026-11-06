@@ -32,7 +32,6 @@ func TestCanonicalMeetingCopySuppliesDisplayAndSelectedAlias(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Equal(ref, identity.ByOccurrence[alias].OccurrenceRef)
 	req := dayRequest()
-	req.Mode, req.With = ModeDay, "email:alice@example.com"
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	entries := allDayEntries(got)

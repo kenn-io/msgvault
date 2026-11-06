@@ -80,7 +80,6 @@ func TestTimelineLinkedMeetingPeopleOutsideNoteDay(t *testing.T) {
 	f.tier(person, 1)
 	f.project()
 	req := dayRequest()
-	req.Mode, req.With = ModeDay, "email:alice@example.com"
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	entries := allDayEntries(got)

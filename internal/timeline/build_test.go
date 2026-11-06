@@ -29,6 +29,7 @@ func TestBuildRejectsInvalidRequests(t *testing.T) {
 		{"anchor date", Request{Around: "2026-10-22", Date: "2026-10-22"}, []string{"around", "date"}, ErrInvalidRequest},
 		{"anchor malformed date", Request{Around: "2026-10-22", Date: "bad"}, []string{"around", "date"}, ErrInvalidRequest},
 		{"day anchor", Request{Mode: ModeDay, Around: "msg:999999"}, []string{"mode=day", "around"}, ErrInvalidRequest},
+		{"day with", Request{Mode: ModeDay, With: "email:alice@example.com"}, nil, ErrInvalidRequest},
 		{"conversation without anchor", Request{Conversation: true}, []string{"conversation", "around"}, ErrInvalidRequest},
 		{"anchor mode conversation without anchor", Request{Mode: ModeAnchor, Conversation: true}, []string{"conversation", "around"}, ErrInvalidRequest},
 		{"relationship range", Request{With: "email:alice@example.com", From: "2026-10-21", To: "2026-10-22"}, nil, ErrInvalidRequest},

@@ -72,6 +72,28 @@ func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
 func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
+
+func TestTimelineRelationshipCallExactlyNow(t *testing.T) {
+	for _, at := range []time.Time{
+		time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 10, 22, 12, 0, 0, 123000000, time.UTC),
+	} {
+		t.Run(at.Format(time.RFC3339Nano), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			f.src.Clock = func() time.Time { return at }
+			id := f.call(at)
+			f.call(at.Add(time.Millisecond))
+			got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+			requirements.NoError(err)
+			requirements.NotNil(got.Person)
+			assertions.Equal(1, got.Person.InteractionCount)
+			requirements.Len(got.History, 1)
+			assertions.Equal(messageRef(id), got.History[0].Ref)
+			assertions.Equal(at, got.History[0].Time)
+		})
+	}
+}
 func TestRelationshipLinkedTranscriptRetainsPeople(t *testing.T) {
 	for _, tc := range []struct {
 		name, attendees string
