@@ -15,28 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-type relationshipMeetingReads struct {
-	MeetingsSource
-
-	resolutions int
-}
-
-func (r *relationshipMeetingReads) ResolveMeetingIdentitiesContext(ctx context.Context, req store.MeetingIdentityRequest) (store.MeetingIdentityResult, error) {
-	r.resolutions++
-	return r.MeetingsSource.ResolveMeetingIdentitiesContext(ctx, req)
-}
-
-type relationshipCalendarReads struct {
-	CalendarSource
-
-	details int
-}
-
-func (r *relationshipCalendarReads) GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
-	r.details++
-	return r.CalendarSource.GetCalendarOccurrenceContext(ctx, ref)
-}
-
 func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
 	for _, pending := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
