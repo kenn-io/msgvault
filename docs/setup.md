@@ -438,10 +438,10 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Find the running daemon's URL:
+Start the daemon, or find the one already running:
 
 ```bash
-msgvault daemon status
+msgvault daemon start
 ```
 
 Open the URL it prints in your browser. The daemon builds a missing or stale
