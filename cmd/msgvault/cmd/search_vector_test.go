@@ -248,6 +248,35 @@ func TestSearchCmd_VectorModeUnknownAccountUsesDaemonError(t *testing.T) {
 	assert.ErrorContains(t, err, "no account found")
 }
 
+func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := &atomic.Int32{}
+	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal("hybrid", r.URL.Query().Get("mode"), "mode")
+		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
+	})
+
+	testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
+	defer restore()
+
+	done := captureStdout(t)
+	root := newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--mode", "hybrid", "--explain", "--json", "lunch"})
+
+	err := root.Execute()
+	out := done()
+	require.NoError(err, "hybrid remote search command")
+
+	assert.Equal(1, int(requests.Load()), "search endpoint calls")
+	assert.Contains(out, `"bm25_score": 1.25`, "bm25_score")
+	assert.Contains(out, `"vector_score": 0.9`, "vector_score")
+	assert.Contains(out, `"accelerator": "vec1_ivf_opq"`, "accelerator path")
+}
+
 func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode      string

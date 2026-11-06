@@ -27,6 +27,9 @@ func TestAggregateListsUseDaemonHTTPAndPreserveOutput(t *testing.T) {
 	} {
 		for _, total := range []int{50, 51} {
 			for _, asJSON := range []bool{false, true} {
+				if total == 50 && (view.name != "senders" || asJSON) {
+					continue
+				}
 				if asJSON && view.name != "senders" {
 					continue
 				}

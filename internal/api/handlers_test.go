@@ -2295,37 +2295,25 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	})
 }
 
-func TestHandleCLISearchScopeAndPagination(t *testing.T) {
+func TestHandleCLISearchDeletionScope(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                            string
-		rawScope                        string
-		wantScope                       search.DeletionScope
-		limit, matches, wantRows, probe int
-		wantMore                        bool
+		name      string
+		rawScope  string
+		wantScope search.DeletionScope
 	}{
 		{name: "default_active", wantScope: search.DeletionScopeActive},
 		{name: "explicit_active", rawScope: "active", wantScope: search.DeletionScopeActive},
 		{name: "deleted", rawScope: "deleted", wantScope: search.DeletionScopeDeleted},
 		{name: "any", rawScope: "any", wantScope: search.DeletionScopeAny},
-		{name: "exact_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 50, wantRows: 50, probe: 51},
-		{name: "overflow_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 51, wantRows: 50, probe: 51, wantMore: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
 			var gotScope search.DeletionScope
 			engine := &querytest.MockEngine{
-				SearchFunc: func(_ context.Context, q *search.Query, limit, _ int) ([]query.MessageSummary, error) {
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
 					gotScope = q.DeletionScope
-					if tt.probe > 0 {
-						assert.Equal(tt.probe, limit, "probe one row past the page")
-					}
-					rows := make([]query.MessageSummary, tt.matches)
-					for i := range rows {
-						rows[i].ID = int64(i + 1)
-					}
-					return rows, nil
+					return nil, nil
 				},
 			}
 			srv := NewServerWithOptions(ServerOptions{
@@ -2337,20 +2325,54 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 			if tt.rawScope != "" {
 				target += "&deletion_scope=" + tt.rawScope
 			}
-			if tt.limit > 0 {
-				target += "&limit=" + strconv.Itoa(tt.limit)
-			}
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
+			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+			assert.Equal(t, tt.wantScope, gotScope)
+		})
+	}
+}
+
+func TestHandleCLISearchHasMore(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		matches  int
+		wantMore bool
+	}{
+		{name: "exact_50", matches: 50},
+		{name: "overflow_50", matches: 51, wantMore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			var gotScope search.DeletionScope
+			engine := &querytest.MockEngine{
+				SearchFunc: func(_ context.Context, q *search.Query, limit, _ int) ([]query.MessageSummary, error) {
+					gotScope = q.DeletionScope
+					assert.Equal(51, limit, "probe one row past the page")
+					rows := make([]query.MessageSummary, tc.matches)
+					for i := range rows {
+						rows[i].ID = int64(i + 1)
+					}
+					return rows, nil
+				},
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
+			})
+			srv.ftsIndexComplete.Store(true)
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=scope&limit=50", nil))
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
-			assert.Equal(tt.wantScope, gotScope)
+			assert.Equal(search.DeletionScopeActive, gotScope)
 			var page struct {
 				Results []json.RawMessage `json:"results"`
 				HasMore bool              `json:"has_more"`
 			}
 			require.NoError(json.Unmarshal(resp.Body.Bytes(), &page))
-			assert.Len(page.Results, tt.wantRows)
-			assert.Equal(tt.wantMore, page.HasMore)
+			assert.Len(page.Results, 50)
+			assert.Equal(tc.wantMore, page.HasMore)
 		})
 	}
 }
