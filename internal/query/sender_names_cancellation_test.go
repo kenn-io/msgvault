@@ -15,41 +15,44 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
-func TestSenderNameHintTimeout(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		engine, observer := observedSearchEngine(t)
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-		defer cancel()
-		blocked := false
-		observer.BeforeQuery = func(queryCtx context.Context, sql string) {
-			if strings.Contains(sql, "WITH candidates AS") {
-				blocked = true
-				<-queryCtx.Done()
-			}
+func TestSenderNameHintInterruption(t *testing.T) {
+	for _, callerCanceled := range []bool{false, true} {
+		name := "timeout"
+		if callerCanceled {
+			name = "caller cancellation"
 		}
-		var diagnostic bytes.Buffer
-		previous := log.Writer()
-		log.SetOutput(&diagnostic)
-		t.Cleanup(func() { log.SetOutput(previous) })
-		result, err := engine.SearchFastWithStats(ctx, search.Parse("from:alex"), "", MessageFilter{}, ViewNoStats, 10, 0)
-		require.NoError(err)
-		require.True(blocked)
-		require.Empty(result.Hints)
-		require.NoError(ctx.Err())
-		require.NotContains(diagnostic.String(), "sender hint query failed")
-	})
-}
-
-func TestSenderNameHintCancellation(t *testing.T) {
-	engine, observer := observedSearchEngine(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	observer.BeforeQuery = func(_ context.Context, statement string) {
-		if strings.Contains(statement, "WITH candidates AS") {
-			cancel()
-		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				engine, observer := observedSearchEngine(t)
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				blocked := false
+				observer.BeforeQuery = func(queryCtx context.Context, sql string) {
+					if strings.Contains(sql, "WITH candidates AS") {
+						blocked = true
+						if callerCanceled {
+							cancel()
+						} else {
+							<-queryCtx.Done()
+						}
+					}
+				}
+				var diagnostic bytes.Buffer
+				previous := log.Writer()
+				log.SetOutput(&diagnostic)
+				t.Cleanup(func() { log.SetOutput(previous) })
+				result, err := engine.SearchFastWithStats(ctx, search.Parse("from:alex"), "", MessageFilter{}, ViewNoStats, 10, 0)
+				if callerCanceled {
+					require.ErrorIs(err, context.Canceled)
+					return
+				}
+				require.NoError(err)
+				require.True(blocked)
+				require.Empty(result.Hints)
+				require.NoError(ctx.Err())
+				require.NotContains(diagnostic.String(), "sender hint query failed")
+			})
+		})
 	}
-	_, err := engine.SearchFastWithStats(ctx, search.Parse("from:alex"), "", MessageFilter{}, ViewNoStats, 10, 0)
-	require.ErrorIs(t, err, context.Canceled)
 }
