@@ -310,19 +310,6 @@ func (s fixtureLoops) List(context.Context, loops.Options, time.Time) (loops.Res
 	return s.result, nil
 }
 
-type fixtureBursts struct {
-	ActivitySource
-
-	page store.BurstPage
-}
-
-func (s fixtureBursts) ListActivityBurstsContext(ctx context.Context, q store.BurstQuery) (store.BurstPage, error) {
-	if q.FromDate == "2026-10-22" && q.ToDate == "2026-10-22" && q.After == nil && q.Before == nil && q.AfterKey == nil {
-		return s.page, nil
-	}
-	return s.ActivitySource.ListActivityBurstsContext(ctx, q)
-}
-
 // Unequal entry sizes and tied ranks must never cause an entry to repeat or
 // disappear when fitting actual pages. One logical burst contains 6,000 received messages.
 func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
@@ -381,10 +368,7 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	// every other activity method still uses the real store adapter.
 	realActivity := f.src.Activity
 	burstQuery := store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts}
-	burstPage, err := realActivity.ListActivityBurstsContext(t.Context(), burstQuery)
-	requirements.NoError(err)
-	requirements.Nil(burstPage.NextKey)
-	f.src.Activity = fixtureBursts{ActivitySource: realActivity, page: burstPage}
+	f.src = snapshotActivityBurstReads(t.Context(), t, f.src, burstQuery)
 	req := dayRequest()
 	req.Format = "markdown"
 	full, err := Build(t.Context(), f.src, req)
@@ -442,7 +426,7 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 		insertedFound = insertedFound || burst.ConversationID == insertedConv
 	}
 	requirements.True(insertedFound, "later source input must include the concurrent insert")
-	f.src.Activity = fixtureBursts{ActivitySource: realActivity, page: updatedPage}
+	f.src.Activity = anchorBurstSnapshot{ActivitySource: realActivity, reads: []anchorBurstRead{{query: burstQuery, page: updatedPage}}}
 	seen = map[string]bool{}
 	for _, entry := range allDayEntries(first) {
 		seen[entry.Key] = true

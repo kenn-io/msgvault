@@ -10,15 +10,19 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
+	"go.kenn.io/msgvault/internal/imazingcsv"
+	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/telegram"
 )
 
@@ -60,9 +64,9 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 				continue
 			}
 			switch row.SourceType {
-			case "gmail", "imap", "msmail", "teams":
+			case store.SourceTypeGmail, store.SourceTypeIMAP, store.SourceTypeMSMail, store.SourceTypeTeams:
 				matched[i] = true
-			case "discord":
+			case store.SourceTypeDiscord:
 				matched[i] = matched[i] || row.Identifier == entry.identifier
 			}
 		}
@@ -134,7 +138,7 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		}
 		kind := entry.kind
 		if kind == "account" {
-			kind = "gmail"
+			kind = store.SourceTypeGmail
 		} // Same token-first fallback as runScheduledSync.
 		key := kind + "\x00" + entry.identifier
 		if seen[key] {
@@ -281,8 +285,8 @@ func configuration(cfg *config.Config) []configuredSource {
 func staticSource(kind string) bool {
 	return slices.Contains([]string{
 		"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "google_voice",
-		"facebook_messenger", "imazing_csv", "slackdump", "synctech-sms",
-		"call_history", "ics", "whatsapp", "apple_messages", "google_messages", "imessage", "meeting_import", telegram.SourceType,
+		"facebook_messenger", imazingcsv.SourceType, "slackdump", synctechsms.SourceType,
+		callhistory.SourceType, "ics", "whatsapp", "apple_messages", "google_messages", "imessage", meetingimport.SourceType, telegram.SourceType,
 	}, kind)
 }
 
@@ -292,9 +296,9 @@ func syncCommand(item Item) string {
 	}
 	arg := shellArgument(item.Identifier)
 	switch item.SourceType {
-	case "gmail", "imap", "msmail", "o365":
+	case store.SourceTypeGmail, store.SourceTypeIMAP, store.SourceTypeMSMail, "o365":
 		return "msgvault sync-incremental " + arg
-	case "teams", "discord":
+	case store.SourceTypeTeams, store.SourceTypeDiscord:
 		return "msgvault sync-" + item.SourceType + " " + arg
 	case "beeper", "matrix":
 		command := "msgvault sync-" + item.SourceType

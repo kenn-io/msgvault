@@ -21,6 +21,27 @@ func anchorRequest(ref string) Request {
 	return Request{Around: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
 
+func TestAnchorComposesOwnerGapsOnce(t *testing.T) {
+	f := newTimelineFixture(t)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+	req := anchorRequest("2026-10-22T12:00:00Z")
+	req.Scope.Owner = false
+	view := &Timeline{Now: f.now}
+	c := composer{ctx: ctx, src: f.src, req: req, t: view, loc: time.UTC, keys: map[string]string{}, positions: map[string]string{}, entryDates: map[string]string{}, more: map[string]bool{}}
+	target, err := c.resolveAnchor()
+	require.NoError(t, err)
+	c.buildAnchor(target)
+	for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence", "notes"} {
+		count := 0
+		for _, gap := range view.Gaps {
+			if gap.Section == section && gap.Code == "owner-only" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, section)
+	}
+}
+
 type anchorBurstRead struct {
 	query store.BurstQuery
 	page  store.BurstPage

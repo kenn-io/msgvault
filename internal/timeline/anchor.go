@@ -332,9 +332,6 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	entries = slices.Concat(before[max(0, len(before)-c.req.Before):], anchors, after[:min(len(after), c.req.After)])
 	c.sortAndContinue("history", entries, false)
 	c.t.History = c.afterPosition("history", entries)
-	if !c.req.Scope.Owner {
-		c.ownerGaps()
-	}
 }
 
 func (c *composer) conversationEntries(conversation int64, from, to time.Time) ([]Entry, error) {
