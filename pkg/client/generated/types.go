@@ -13,15 +13,6 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
-type AccessPoint struct {
-	Kind  string `json:"kind" validate:"required"`
-	Value string `json:"value" validate:"required"`
-}
-
-func (a AccessPoint) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
-}
-
 type AccountInfo struct {
 	DisplayName *string `json:"display_name,omitzero"`
 	Email       string  `json:"email" validate:"required"`

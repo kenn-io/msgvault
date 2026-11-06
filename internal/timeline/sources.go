@@ -61,7 +61,7 @@ type MeetingsSource interface {
 }
 type CallsSource interface {
 	ListLogicalCallsContext(ctx context.Context, q store.LogicalCallQuery) ([]store.LogicalCall, string, error)
-	CallContactAggregateContext(ctx context.Context, q store.ContactQuery) (store.ContactAggregate, error)
+	CallContactAggregateContext(ctx context.Context, q store.CallContactQuery) (store.ContactAggregate, error)
 }
 type LoopsSource interface {
 	List(ctx context.Context, opts loops.Options, now time.Time) (loops.Result, error)

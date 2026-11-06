@@ -1,16 +1,5 @@
 components:
   schemas:
-    AccessPoint:
-      additionalProperties: true
-      properties:
-        kind:
-          type: string
-        value:
-          type: string
-      required:
-        - kind
-        - value
-      type: object
     AccountInfo:
       additionalProperties: true
       properties:

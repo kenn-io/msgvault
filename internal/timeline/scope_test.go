@@ -122,7 +122,7 @@ func (s deniedCalls) ListLogicalCallsContext(context.Context, store.LogicalCallQ
 	s.hits.Add(1)
 	return nil, "", errors.New("owner-only calls queried")
 }
-func (s deniedCalls) CallContactAggregateContext(context.Context, store.ContactQuery) (store.ContactAggregate, error) {
+func (s deniedCalls) CallContactAggregateContext(context.Context, store.CallContactQuery) (store.ContactAggregate, error) {
 	s.hits.Add(1)
 	return store.ContactAggregate{}, errors.New("owner-only calls queried")
 }

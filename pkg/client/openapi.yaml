@@ -1,15 +1,5 @@
 components:
   schemas:
-    AccessPoint:
-      properties:
-        kind:
-          type: string
-        value:
-          type: string
-      required:
-        - kind
-        - value
-      type: object
     AccountInfo:
       properties:
         display_name:
