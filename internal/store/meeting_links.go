@@ -411,7 +411,7 @@ candidatesLoop:
 			if key.Kind == "google_event_id" && len(out) > 0 && o.Identity != out[0].Identity {
 				return nil, nil
 			}
-			if key.Kind == "google_event_id" || key.Kind == "ical_uid" && row.Event.Kind != "single" {
+			if key.Kind == "ical_uid" && row.Event.Kind != "single" {
 				starts, _, err := meetingCopyStarts(ctx, r, o, nil, budget)
 				if err != nil {
 					return nil, err

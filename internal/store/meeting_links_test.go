@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -174,19 +175,25 @@ func TestMeetingLinksGranolaConflictingCalendarIdentities(t *testing.T) {
 	assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", own), fmt.Sprintf("evt:%d", shared)}, refs)
 }
 
-func TestMeetingGranolaOwnerIsNotCalendar(t *testing.T) {
-	for _, tc := range []struct{ name, scheduled string }{
-		{"different scheduled start", `,"scheduled_start_time":"2027-03-15T10:00:00Z"`},
-		{"missing scheduled start", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestMeetingGranolaSingleEventLinkSurvivesReschedule(t *testing.T) {
+	for _, scheduled := range []string{`,"scheduled_start_time":"2027-03-14T10:00:00Z"`, ""} {
+		t.Run("scheduled="+strconv.FormatBool(scheduled != ""), func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			calendarFixture(t, st, "primary", singleLinkRaw("event", "primary@example.org"))
-			// The note's shared calendar is unarchived; its owner also has a primary calendar.
-			_, note := projectionFixture(t, st, "shared-note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"`+tc.scheduled+`}}`)
+			raw := singleLinkRaw("event", "event@example.org")
+			_, event := calendarFixture(t, st, "event", raw)
+			_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"`+scheduled+`}}`)
+			want := fmt.Sprintf("evt:%d", event)
+			require.Equal(want, linkedMeetingRefs(t, st, note)[note])
+			calendarFixture(t, st, "event", strings.ReplaceAll(raw, "2027-03-14", "2027-03-15"))
 			links, err := meetingLinksForTest(t, st, note)
-			require.NoError(t, err)
-			assert.Empty(t, links)
+			require.NoError(err)
+			require.Len(links, 1)
+			assert.Equal(want, links[0].Ref)
+			assert.Equal("2027-03-15T10:00:00Z", links[0].Start.UTC().Format(time.RFC3339))
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+			require.NoError(err)
+			assert.Equal([]int64{note}, record.MessageIDs)
 		})
 	}
 }
