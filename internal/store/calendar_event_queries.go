@@ -37,12 +37,11 @@ var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject,
  `
 
 func calendarEventFromContext(ctx context.Context, event, message string) (string, []any) {
-	competingScope, args := sourceScopeClause(ctx, "om.source_id")
 	scope, scopeArgs := sourceScopeClause(ctx, message+".source_id")
 	return fmt.Sprintf(`FROM calendar_events %[1]s JOIN messages %[2]s ON %[2]s.id = %[1]s.message_id
  WHERE %[2]s.deleted_at IS NULL
- AND `, event, message) + calendarEventVisibility(event, message, competingScope) + scope + `
- AND `, append(args, scopeArgs...)
+ AND `, event, message) + calendarEventVisibility(event, message) + scope + `
+ AND `, scopeArgs
 }
 
 func calendarUIDExpression(d Dialect, column string) string {
@@ -54,15 +53,15 @@ func calendarUIDExpression(d Dialect, column string) string {
 
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
-func calendarEventVisibility(event, message, competingScope string) string {
+func calendarEventVisibility(event, message string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
  WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
-  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL %[3]s
+  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
   AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
-   OR other.message_id < %[1]s.message_id)))`, event, message, competingScope)
+   OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
 func queryCalendarEventRowsWithinBudget(ctx context.Context, r reboundReader, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
