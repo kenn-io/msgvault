@@ -362,7 +362,7 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 	const identifier = "private-timeout@example.test"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  &identityResolveErrorStore{Store: st, err: context.DeadlineExceeded},
+		Store:  &identityResolveErrorStore{MessageStore: st, MessageIdentityStore: st, err: context.DeadlineExceeded},
 		Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
 	})
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{
@@ -380,7 +380,8 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 }
 
 type identityResolveErrorStore struct {
-	*store.Store
+	MessageStore
+	MessageIdentityStore
 
 	err error
 }
