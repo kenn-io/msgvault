@@ -305,9 +305,12 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if searchJSON {
 		result = outputSearchResultsJSON(resp.Results)
 	} else if len(resp.Results) == 0 {
-		fmt.Println("No messages found.")
+		_, result = fmt.Println("No messages found.")
 	} else {
 		result = outputSearchResultsTable(resp.Results)
+	}
+	if result != nil {
+		return result
 	}
 	for _, hint := range resp.Hints {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+hint.Message)
