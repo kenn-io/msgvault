@@ -153,7 +153,9 @@ func TestEmailPollOrdinaryGraphRetriesKeepExistingBounds(t *testing.T) {
 			// regression does not actually wait through the ordinary 15m cap.
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			var profile struct{ Mail string }
+			var profile struct {
+				Mail string `json:"mail"`
+			}
 			err := client.GetJSON(ctx, "/throttle", &profile)
 			require.Error(t, err)
 			assert.NotErrorIs(t, err, context.DeadlineExceeded)
