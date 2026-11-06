@@ -339,17 +339,13 @@ func memberLinkKey(ctx context.Context, r loggedReader, id int64) (meetingLinkKe
 	}
 	var key meetingLinkKey
 	var at sql.NullTime
-	var kind, value, calendar sql.NullString
-	scope, args := sourceScopeClause(ctx, "m.source_id")
-	args = append([]any{id}, args...)
-	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at FROM messages m LEFT JOIN meeting_link_key k ON k.message_id=m.id WHERE m.id = ? AND m.deleted_at IS NULL`+scope, args...).Scan(&kind, &value, &calendar, &at)
+	err := r.QueryRowContext(ctx, `SELECT kind,value,calendar_id,scheduled_at FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, nil
 	}
 	if err != nil {
 		return key, err
 	}
-	key.Kind, key.Value, key.CalendarID = kind.String, value.String, calendar.String
 	if at.Valid {
 		key.ScheduledAt = &at.Time
 	}
@@ -396,8 +392,7 @@ func meetingCalendarSources(ctx context.Context, r reboundReader) (map[string][]
 	if r.batch != nil && r.batch.calendarSources != nil {
 		return r.batch.calendarSources, nil
 	}
-	scope, args := sourceScopeClause(ctx, "m.source_id")
-	rows, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal' AND EXISTS (SELECT 1 FROM messages m WHERE m.deleted_at IS NULL AND COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id=m.id),m.source_id)=sources.id`+scope+`)`, args...)
+	rows, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal'`)
 	if err != nil {
 		return nil, err
 	}
