@@ -107,7 +107,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Body = string(body)
 	case strings.HasSuffix(path, "/summary"):
-		response.Body = `{"groupId":"C00000000000000000000000000000003","groupName":"Example Group"}`
+		groupPath := strings.TrimSuffix(path, "/summary")
+		groupID, _ := url.PathUnescape(groupPath[strings.LastIndex(groupPath, "/")+1:])
+		body, err := json.Marshal(map[string]string{"groupId": groupID, "groupName": "Example Group"})
+		if err != nil {
+			http.Error(w, "cannot encode summary", http.StatusInternalServerError)
+			return
+		}
+		response.Body = string(body)
 	case strings.HasSuffix(path, "/content"):
 		response.Body = "synthetic-content"
 	}

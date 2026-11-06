@@ -59,9 +59,12 @@ func TestClientTokenAndProfiles(t *testing.T) {
 		checks.Equal("Example User", profile.DisplayName)
 		checks.Equal(1, api.Count("GET", tc.path))
 	}
-	group, err := client.GroupSummary(ctx, "C00000000000000000000000000000003")
-	must.NoError(err)
-	checks.Equal("Example Group", group.GroupName)
+	for _, groupID := range []string{"C00000000000000000000000000000001", "C00000000000000000000000000000003"} {
+		group, err := client.GroupSummary(ctx, groupID)
+		must.NoError(err)
+		checks.Equal(groupID, group.GroupID)
+		checks.Equal("Example Group", group.GroupName)
+	}
 	bot, err := client.BotInfo(ctx)
 	must.NoError(err)
 	checks.Equal("U00000000000000000000000000000001", bot.UserID)
