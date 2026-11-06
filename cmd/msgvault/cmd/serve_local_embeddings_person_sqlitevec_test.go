@@ -85,9 +85,9 @@ func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
 				must.NoError(err)
 				checks.Len(results, 2)
 			case "revoke consent":
-				checks.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+				must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 			default:
-				checks.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
+				must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
 			}
 			if change != "allow" {
 				checks.Equal(beforeQuery, personRequests.Load(), "denied queries must not reach the provider")

@@ -128,7 +128,7 @@ func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 func discoverOllamaEmbeddingEndpoint(ctx context.Context, dir string) (string, error) {
 	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
 	if err == nil && !isOllamaEmbeddingEndpoint(ctx, endpoint) {
-		return "", errors.New("Ollama stopped during setup. Turn on to retry.")
+		return "", errors.New("Ollama stopped during setup. Turn on to retry.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
 	return endpoint, err
 }
@@ -340,7 +340,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 // Log the full command output, then surface only its final error line.
 func localEmbeddingsCommandError(ctx context.Context, build bool, err error, stderr string) error {
 	detail := strings.TrimSpace(stderr)
-	if err == nil || detail == "" && !(build && errors.Is(err, context.Canceled)) {
+	if err == nil || detail == "" && (!build || !errors.Is(err, context.Canceled)) {
 		return err
 	}
 	loggerFromContext(ctx).Warn("Local search index command failed", "error", err, "stderr", detail)

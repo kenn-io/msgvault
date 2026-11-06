@@ -216,7 +216,9 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 		refreshMCP: func(ctx context.Context, state *invocation) error {
 			f.refreshes++
 			f.runtimeCtx = ctx
-			assert.NoError(t, ctx.Err())
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("refresh MCP context: %w", err)
+			}
 			assert.True(t, state.cfg.Vector.Enabled)
 			return nil
 		},
@@ -234,7 +236,7 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 			release()
 			yes, err := opts.Confirm(ctx, 290000000)
 			if err != nil {
-				return embedlocal.Installation{}, err
+				return embedlocal.Installation{}, fmt.Errorf("confirm local model download: %w", err)
 			}
 			assert.True(t, yes)
 			opts.Progress(5, 10)
@@ -415,7 +417,7 @@ func TestLocalEmbeddingsRejectsSharedEndpointAfterOllamaStops(t *testing.T) {
 	// Endpoint discovery falls back to the shared server if inspected Ollama stops.
 	// The fixture endpoint serves embeddings but has no Ollama catalog.
 	err = f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {})
-	assert.EqualError(err, "Ollama stopped during setup. Turn on to retry.")
+	require.EqualError(err, "Ollama stopped during setup. Turn on to retry.")
 	after, err := os.ReadFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	assert.Equal(string(before), string(after), "retry must retain the saved provider choice")

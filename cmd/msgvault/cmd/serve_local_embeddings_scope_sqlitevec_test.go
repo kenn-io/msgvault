@@ -38,9 +38,16 @@ func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syn
 			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": []map[string]string{{"name": "my-model"}}}))
 			return
 		}
-		if key := f.embeddingKey.Load(); key != nil && r.Header.Get("Authorization") != "Bearer "+key.(string) {
-			http.Error(w, "embedding key was replaced", http.StatusUnauthorized)
-			return
+		if raw := f.embeddingKey.Load(); raw != nil {
+			key, ok := raw.(string)
+			if !assert.True(t, ok, "test credential must be a string") {
+				http.Error(w, "invalid test credential", http.StatusInternalServerError)
+				return
+			}
+			if r.Header.Get("Authorization") != "Bearer "+key {
+				http.Error(w, "embedding key was replaced", http.StatusUnauthorized)
+				return
+			}
 		}
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
 		var body struct {
