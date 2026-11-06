@@ -36,7 +36,7 @@ var (
 
 	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\u202f", "", "\u2009", "", "\n", "")
 	codeToken   = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}\x{202f}\x{2009}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
-	codeGap     = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|:|：|は|是|为|-|your|the|verification|security|to verify|this|below|[#*_\x60"'“”‘’\[\](){}<>])[\s\x{00a0}]*)*$`)
+	codeGap     = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|lautet|war|was|:|：|は|是|为|-|your|the|verification|security|to verify|this|below|[#*_\x60"'“”‘’\[\](){}<>])[\s\x{00a0}]*)*$`)
 	introGap    = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?(?:\pL[\pL'’-]*[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?){0,6}(?:is[\s\x{00a0}]*:?|:|=)[\s\x{00a0}]*$`)
 	reverseGap  = regexp.MustCompile(`(?i)^\s+(?:is|as) (?:your |the )?(?:[a-z]+ ){0,3}$`)
 	signInAfter = regexp.MustCompile(`(?i)^\s+(?:to (?:sign[ -]in|log in|verify your (?:account|identity|email|login))|(?:on the [a-z]+ app )?to confirm it's you)\b`)
