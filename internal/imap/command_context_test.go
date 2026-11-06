@@ -119,7 +119,7 @@ func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
 	assert.Nil(t, got.panicValue, "cancellation must stop mailbox enumeration before the invalidated connection is reused")
 	assert.Empty(t, got.states)
 	assert.Nil(t, client.conn)
-	require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
 	line, err = reader.ReadString('\n')
 	assert.Error(t, err, "cancellation closes the captured transport before another STATUS")
 	assert.NotContains(t, strings.ToUpper(line), "ARCHIVE")

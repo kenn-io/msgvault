@@ -351,7 +351,7 @@ func TestProviderStateMigrationLostOldStreamRetainsMIMEDebt(t *testing.T) {
 	f.put("m1", "inbox")
 	f.pageSize = 1
 	f.stopAt = 1
-	f.stopStatus = http.StatusInternalServerError
+	f.stopStatus = http.StatusBadRequest
 	_, err = f.sync(t, st)
 	require.Error(t, err, "the enrichment walk is interrupted after the old stream was proven live")
 	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)

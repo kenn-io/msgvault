@@ -141,6 +141,38 @@ func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *t
 	})
 }
 
+func TestAccountPollingOffDoesNotRetainProviderFloor(t *testing.T) {
+	for _, enabledBeforeFailure := range []bool{false, true} {
+		name := "cron-only"
+		if enabledBeforeFailure {
+			name = "disabled-after-floor"
+		}
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			floor := time.Now().Add(time.Hour)
+			s := New(func(context.Context, string) error {
+				if calls.Add(1) == 1 {
+					return &AcquisitionError{Outcome: AcquisitionIncomplete, NotBefore: floor}
+				}
+				return nil
+			})
+			defer func() { <-s.Stop().Done() }()
+			require.NoError(t, s.AddAccount("sample@example.test", "0 0 1 1 *"))
+			if enabledBeforeFailure {
+				require.NoError(t, s.SetAccountPollInterval("sample@example.test", 30*time.Second))
+			}
+			require.NoError(t, s.TriggerSync("sample@example.test", false))
+			s.wg.Wait()
+			if enabledBeforeFailure {
+				require.NoError(t, s.SetAccountPollInterval("sample@example.test", 0))
+			}
+			require.NoError(t, s.TriggerSync("sample@example.test", false))
+			s.wg.Wait()
+			assert.EqualValues(t, 2, calls.Load(), "polling-off manual sync keeps cron-only retry behavior")
+		})
+	}
+}
+
 func TestAccountPollingOrdinaryNonSuccessPreservesAdaptiveDeadline(t *testing.T) {
 	for _, outcome := range []error{ErrDeferUntilNextTrigger, &AcquisitionError{Outcome: AcquisitionDeferred}, &AcquisitionError{Outcome: AcquisitionCancelled}} {
 		t.Run(outcome.Error(), func(t *testing.T) {
