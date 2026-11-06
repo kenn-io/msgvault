@@ -180,7 +180,7 @@ The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol
 
 ### Tools available for your archive
 
-MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Failed discovery hides the affected families; other families remain available.
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Failed discovery hides the affected families; other families remain available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
 
