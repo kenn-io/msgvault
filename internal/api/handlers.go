@@ -1184,7 +1184,7 @@ func (s *Server) handleHybridSearch(
 	if maxPage > 0 && pageEnd >= maxPage && (pageEnd < len(hits) || mode == exploreSearchModeHybrid && meta.PoolSaturated) {
 		rankingLimitReached = maxPage
 	}
-	hasMore := pageEnd < len(hits) && rankingLimitReached == 0
+	hasMore := pageEnd < len(hits)
 	pageHits := hits[pageStart:pageEnd]
 
 	// Bulk-hydrate to avoid the per-hit GetMessage N+1: a single

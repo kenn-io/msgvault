@@ -257,6 +257,11 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(st.UpsertFTS(id, "poolfixture", "", "sender@example.com", "", ""))
 		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
 	}
+	// A capped page with an extra ranked hit still names both server limits.
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "50", "--json"), &page)
+	require.Len(page.Hints, 2)
+	assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
+	assert.Equal("candidate_pool_saturated", page.Hints[1]["code"])
 	raised := vectorCfg
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)

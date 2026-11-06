@@ -253,7 +253,7 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 }
 
 func semanticMoreResultsHints(resp *daemonclient.CLIHybridSearch) []map[string]string {
-	if resp.HasMore {
+	if resp.HasMore && resp.RankingLimitReached == 0 {
 		return []map[string]string{{"code": "more_available", "message": "more messages match; raise --limit"}}
 	}
 	var hints []map[string]string

@@ -7959,12 +7959,13 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 		Search: vector.SearchConfig{MaxPageSizeHybrid: new(2)},
 	})
 	for _, tc := range []struct {
-		name    string
-		hits    []vector.Hit
-		wantCap int
+		name     string
+		hits     []vector.Hit
+		wantCap  int
+		wantMore bool
 	}{
 		{name: "complete", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
-		{name: "overflow", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2},
+		{name: "overflow", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2, wantMore: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -7975,7 +7976,7 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var page hybridSearchResponse
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
-			assert.False(page.HasMore, "offset 2 would be rejected at the configured cap")
+			assert.Equal(tc.wantMore, page.HasMore, "report the measured extra hit even at the configured cap")
 			require.Len(page.Results, 1)
 			assert.Equal(int64(2), page.Results[0].ID)
 			assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
