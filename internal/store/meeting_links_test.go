@@ -371,7 +371,7 @@ func TestMeetingLinksProjectionEnvelopeAndRepair(t *testing.T) {
 	assertions.Zero(count)
 }
 
-func TestMeetingLinksUpgradeFromSchema31(t *testing.T) {
+func TestMeetingLinksUpgradeFromSchema32(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -380,7 +380,7 @@ func TestMeetingLinksUpgradeFromSchema31(t *testing.T) {
 	note := granolaLinkFixture(t, st, "event")
 	_, err := st.db.Exec(`DROP TABLE meeting_link_decisions; DROP TABLE meeting_link_key; DROP INDEX idx_messages_calendar_ical_uid`)
 	requirements.NoError(err)
-	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1; UPDATE archive_metadata SET value = '31' WHERE key = 'schema_version'`)
+	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1; UPDATE archive_metadata SET value = '32' WHERE key = 'schema_version'`)
 	requirements.NoError(err)
 	_, err = st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, migrationMeetingProjectionV1)
 	requirements.NoError(err)
