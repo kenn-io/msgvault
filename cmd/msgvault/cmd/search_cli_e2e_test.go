@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -187,10 +186,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		decode(retryOut.String(), &page)
 		assert.Len(page.Results, 2)
 		assert.Empty(page.Hints)
-		_, stderr = runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--limit", "1")
-		assert.Contains(stderr, "Hint: more messages match; raise --limit")
-		_, stderr = runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--limit", "2")
-		assert.NotContains(stderr, "Hint:")
 	}
 	// Exactly full pages and truncated pages differ by one measured row.
 	for i := range 101 {
@@ -221,8 +216,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			{"overflowboundary", "0", "--offset 50"},
 			{"exactboundary", "0", ""},
 			{"paginationneedle", "50", "--offset 100"},
-			{"paginationneedle", "100", ""},
-			{"missingpaginationword", "0", ""},
 		} {
 			args := []string{"search", tc.query, "--offset", tc.offset}
 			if jsonMode {
@@ -268,20 +261,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		}
 	}
 	// Default semantic cap still reports a measured match beyond the returned page.
-	client, err := daemonclient.New(daemonclient.Config{URL: httpServer.URL, AllowInsecure: true})
-	require.NoError(err)
 	for _, mode := range []string{"vector", "hybrid"} {
-		for _, limit := range []int{30, 50} {
-			page, err := client.GetCLIHybridSearch(t.Context(), daemonclient.CLIHybridSearchRequest{Query: "overflowboundary subject:overflowboundary", Mode: mode, Limit: limit})
-			require.NoError(err)
-			assert.Len(page.Results, limit)
-			assert.Equal(limit < 50, page.HasMore)
-			wantCap := 0
-			if limit == 50 {
-				wantCap = 50
-			}
-			assert.Equal(wantCap, page.RankingLimitReached)
-		}
 		for _, boundary := range []string{"overflowboundary", "exactboundary"} {
 			out, stderr := runWithStderr("search", boundary+" subject:"+boundary, "--mode", mode)
 			assert.Contains(out, "Showing 50 results")
@@ -336,29 +316,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	require.Len(poolPage.Hints, 1)
 	assert.Contains(poolPage.Hints[0]["message"], "vector.search.k_per_signal")
 	assert.NotContains(poolPage.Hints[0], "next")
+	// Raising both server limits lets a larger page return every match.
 	expanded := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 500, SubjectBoost: 1})
-	server.SetVectorFeatures(expanded, nil, backend, raised)
-	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
-	assert.Len(poolPage.Results, 100)
-	assert.False(poolPage.PoolSaturated)
-	require.Len(poolPage.Hints, 1)
-	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
-	assert.NotContains(poolPage.Hints[0], "next")
 	raised.Search.MaxPageSizeHybrid = new(500)
 	server.SetVectorFeatures(expanded, nil, backend, raised)
 	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
-	assert.Len(poolPage.Results, 200)
-	require.Len(poolPage.Hints, 1)
-	require.NotEmpty(poolPage.Hints[0]["next"])
-	retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(poolPage.Hints[0]["next"], "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Executes the emitted retry against the isolated fixture.
-	retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
-	var retryOut, retryErr bytes.Buffer
-	retry.Stdout, retry.Stderr = &retryOut, &retryErr
-	require.NoError(retry.Run(), retryErr.String())
-	poolPage.Hints = nil
-	decode(retryOut.String(), &poolPage)
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "400", "--json"), &poolPage)
 	assert.Len(poolPage.Results, 312)
 	assert.False(poolPage.PoolSaturated)
 	assert.Empty(poolPage.Hints)

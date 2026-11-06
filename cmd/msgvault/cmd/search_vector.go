@@ -96,7 +96,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	}
 	if searchJSON {
 		next := ""
-		if resp.HasMore && resp.RankingLimitReached == 0 {
+		if resp.HasMore {
 			next, err = semanticMoreResultsCommand(cmd, queryStr)
 			if err != nil {
 				return err
@@ -104,8 +104,8 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		}
 		return outputHybridResultsJSON(resp, explain, next)
 	}
-	if resp.HasMore || resp.RankingLimitReached > 0 || mode == "hybrid" && resp.PoolSaturated {
-		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+semanticMoreResultsMessage(resp)) }()
+	if message := semanticMoreResultsMessage(resp); message != "" {
+		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+message) }()
 	}
 	return outputHybridResultsTable(resp, explain)
 }
@@ -232,8 +232,8 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, n
 	if resp.Accelerator != "" {
 		output["accelerator"] = resp.Accelerator
 	}
-	if resp.HasMore || resp.RankingLimitReached > 0 || resp.Mode == "hybrid" && resp.PoolSaturated {
-		hint := map[string]string{"code": "more_available", "message": semanticMoreResultsMessage(resp)}
+	if message := semanticMoreResultsMessage(resp); message != "" {
+		hint := map[string]string{"code": "more_available", "message": message}
 		if next != "" {
 			hint["next"] = next
 		}
@@ -283,15 +283,17 @@ func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) (string, er
 }
 
 func semanticMoreResultsMessage(resp *daemonclient.CLIHybridSearch) string {
-	if resp.Mode == "hybrid" && resp.PoolSaturated {
+	switch {
+	case resp.Mode == "hybrid" && resp.PoolSaturated:
 		capSetting := ""
 		if resp.RankingLimitReached > 0 {
 			capSetting = fmt.Sprintf("vector.search.max_page_size_hybrid above %d and ", resp.RankingLimitReached)
 		}
 		return "hybrid candidate pool may omit matches; raise " + capSetting + "vector.search.k_per_signal on the server and restart it, then raise --limit, or narrow the query"
-	}
-	if resp.RankingLimitReached > 0 {
+	case resp.RankingLimitReached > 0:
 		return fmt.Sprintf("more messages match; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached)
+	case resp.HasMore:
+		return "more messages match; raise --limit"
 	}
-	return "more messages match; raise --limit"
+	return ""
 }

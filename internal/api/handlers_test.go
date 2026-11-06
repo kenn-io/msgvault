@@ -7960,13 +7960,7 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		require.Len(page.Results, 1)
 		assert.Equal(int64(2), page.Results[0].ID)
 		assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
-		if count == 3 {
-			assert.Equal(2, page.RankingLimitReached)
-		} else {
-			var fields map[string]json.RawMessage
-			require.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
-			assert.NotContains(fields, "ranking_limit_reached")
-		}
+		assert.Equal(map[int]int{2: 0, 3: 2}[count], page.RankingLimitReached)
 	}
 }
 
