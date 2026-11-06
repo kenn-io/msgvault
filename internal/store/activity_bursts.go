@@ -19,9 +19,11 @@ type BurstQuery struct {
 	AfterKey             *BurstKey
 	Limit                int
 }
+
+// BurstKey is a burst's position: first activity ascending, latest activity descending.
 type BurstKey struct {
-	FirstAt time.Time
-	Key     string
+	At  time.Time
+	Key string
 }
 type ActivityMessageCounterpart struct {
 	ParticipantID, PersonID int64
@@ -43,6 +45,14 @@ type ActivityBurst struct {
 	CopyCounts               map[int64]int
 	Counterparts             []ActivityMessageCounterpart
 }
+
+func (b ActivityBurst) position(descending bool) BurstKey {
+	if descending {
+		return BurstKey{At: b.LastAt, Key: b.Key}
+	}
+	return BurstKey{At: b.FirstAt, Key: b.Key}
+}
+
 type BurstPage struct {
 	Bursts       []ActivityBurst
 	NoiseOmitted int
@@ -82,27 +92,27 @@ func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	if err != nil {
 		return page, err
 	}
-	order, compare := "ASC", ">"
+	at, order, compare := "first_at", "ASC", ">"
 	if q.Descending {
-		order, compare = "DESC", "<"
+		at, order, compare = "last_at", "DESC", "<"
 	}
 	where := "TRUE"
 	if !filters.IncludeNoise {
 		where = "noise=0"
 	}
 	if q.AfterKey != nil {
-		where += ` AND (first_at ` + compare + ` ? OR (first_at=? AND key ` + compare + ` ?))`
-		args = append(args, q.AfterKey.FirstAt.UTC(), q.AfterKey.FirstAt.UTC(), q.AfterKey.Key)
+		where += ` AND (` + at + ` ` + compare + ` ? OR (` + at + `=? AND key ` + compare + ` ?))`
+		args = append(args, q.AfterKey.At.UTC(), q.AfterKey.At.UTC(), q.AfterKey.Key)
 	}
 	args = append(args, q.Limit+1)
 	query := cte + activityBurstGroupsCTE(filters) + `, selected AS (
- SELECT *,ROW_NUMBER() OVER(ORDER BY first_at ` + order + `,key ` + order + `) AS page_number FROM burst_groups WHERE ` + where + ` ORDER BY first_at ` + order + `,key ` + order + ` LIMIT ?
+ SELECT *,ROW_NUMBER() OVER(ORDER BY ` + at + ` ` + order + `,key ` + order + `) AS page_number FROM burst_groups WHERE ` + where + ` ORDER BY ` + at + ` ` + order + `,key ` + order + ` LIMIT ?
  ), omitted AS (SELECT COALESCE(SUM(message_count),0) + (SELECT COUNT(*) FROM representatives) - (SELECT COUNT(*) FROM displayed) AS n FROM burst_groups WHERE noise=1)
  SELECT omitted.n,b.key,b.source_id,b.conversation_id,b.channel,b.local_date,b.first_at,b.last_at,b.inbound,b.outbound,b.page_number,
  r.message_id,r.copy_count
  FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN displayed r
  ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.source_id=b.source_id AND r.conversation_id=b.conversation_id AND r.local_date=b.local_date
- ORDER BY b.first_at ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
+ ORDER BY b.` + at + ` ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return page, fmt.Errorf("read activity bursts: %w", err)
@@ -187,8 +197,7 @@ func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		})
 	}
 	if hasMore && len(page.Bursts) > 0 {
-		last := page.Bursts[len(page.Bursts)-1]
-		page.NextKey = &BurstKey{FirstAt: last.FirstAt, Key: last.Key}
+		page.NextKey = new(page.Bursts[len(page.Bursts)-1].position(q.Descending))
 	}
 	return page, nil
 }

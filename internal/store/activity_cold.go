@@ -46,7 +46,7 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 		}
 		b := g.burst
 		if q.AfterKey != nil {
-			comparison := compareColdBurstKey(BurstKey{FirstAt: b.FirstAt, Key: b.Key}, *q.AfterKey)
+			comparison := compareColdBurstKey(b.position(q.Descending), *q.AfterKey)
 			if (!q.Descending && comparison <= 0) || (q.Descending && comparison >= 0) {
 				continue
 			}
@@ -54,15 +54,14 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 		admitted = append(admitted, b)
 	}
 	slices.SortFunc(admitted, func(a, b ActivityBurst) int {
-		n := compareColdBurstKey(BurstKey{FirstAt: a.FirstAt, Key: a.Key}, BurstKey{FirstAt: b.FirstAt, Key: b.Key})
+		n := compareColdBurstKey(a.position(q.Descending), b.position(q.Descending))
 		if q.Descending {
 			return -n
 		}
 		return n
 	})
 	if len(admitted) > q.Limit {
-		last := admitted[q.Limit-1]
-		page.NextKey = &BurstKey{FirstAt: last.FirstAt, Key: last.Key}
+		page.NextKey = new(admitted[q.Limit-1].position(q.Descending))
 		admitted = admitted[:q.Limit]
 	}
 	page.Bursts = admitted
@@ -85,7 +84,7 @@ func (s *Store) CountColdActivityMessagesContext(ctx context.Context, q BurstQue
 }
 
 func compareColdBurstKey(a, b BurstKey) int {
-	if n := a.FirstAt.Compare(b.FirstAt); n != 0 {
+	if n := a.At.Compare(b.At); n != 0 {
 		return n
 	}
 	return cmp.Compare(a.Key, b.Key)

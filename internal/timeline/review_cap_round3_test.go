@@ -13,7 +13,6 @@ import (
 )
 
 func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
-	t.Skip("Sol P1: select capped relationship history by latest activity")
 	require := require.New(t)
 	f := newTimelineFixture(t)
 	old := f.now.Add(-10 * time.Hour)
