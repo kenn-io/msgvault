@@ -126,11 +126,12 @@ func rapidRefreshCache(ctx context.Context, identifier string, state *invocation
 	}
 }
 
-func runRapidEmailSync(ctx context.Context, identifier string, st *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) error {
+func runRapidEmailSync(ctx context.Context, identifier string, st *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) (err error) {
 	src, err := rapidEmailSource(st, identifier)
 	if err != nil {
 		return rapidAcquisitionResult(ctx, err, false, time.Time{})
 	}
+	defer func() { state.syncFailures.Record(ctx, src.SourceType, src.Identifier, err) }()
 	switch src.SourceType {
 	case sourceTypeGmail:
 		if getOAuthMgr == nil && state.cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) == "" {
