@@ -66,6 +66,7 @@ func TestDocbankAttachmentQueryAliasReceipts(t *testing.T) {
 	att, err := engine.GetAttachment(t.Context(), msg.Attachments[0].ID)
 	require.NoError(err)
 	require.NotNil(att)
+	assert.Equal(mid, att.MessageID)
 	assert.Equal(hash, att.ContentHash)
 	assert.Len(att.Docbank, 1)
 	for _, provider := range []string{"discord:alias", "beeper:pending"} {

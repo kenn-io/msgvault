@@ -3544,6 +3544,13 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	withheld, ok := s.attachmentWithheld(w, r, []query.AttachmentInfo{*att})
+	if !ok {
+		return
+	}
+	if withheld {
+		att.URL = ""
+	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,

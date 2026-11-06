@@ -1301,9 +1301,9 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	var att AttachmentInfo
 	var sourceAttachmentID string
 	err := e.queryRowContext(ctx, `
-		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
+		SELECT a.id, COALESCE(a.message_id, 0), COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
-		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
+		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.MessageID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
