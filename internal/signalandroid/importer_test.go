@@ -115,78 +115,70 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 				"signal:group:"+signalfixture.GroupB64).Scan(&groupTitle, &groupType))
 			assert.Equal("Example Group", groupTitle)
 			assert.Equal("group_chat", groupType)
+
+			type reaction struct{ message, emoji, phone string }
+			reactions := func() []reaction {
+				rows, err := st.DB().Query(st.Rebind(`
+				SELECT m.source_message_id, r.reaction_value, COALESCE(p.phone_number, '')
+				FROM reactions r
+				JOIN messages m ON m.id = r.message_id
+				JOIN participants p ON p.id = r.participant_id
+				ORDER BY m.source_message_id`))
+				require.NoError(err)
+				defer func() { require.NoError(rows.Close()) }()
+				var got []reaction
+				for rows.Next() {
+					var r reaction
+					require.NoError(rows.Scan(&r.message, &r.emoji, &r.phone))
+					got = append(got, r)
+				}
+				require.NoError(rows.Err())
+				return got
+			}()
+			assert.Equal([]reaction{
+				{"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld), "\u2764", signalfixture.AlicePhone},
+				{"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup), "\U0001F44D", signalfixture.AlicePhone},
+			}, reactions)
+
+			// Bob has no visible number: his participant carries his ACI.
+			var bobName string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(p.display_name, '') FROM participants p
+				JOIN participant_identifiers pi ON pi.participant_id = p.id
+				WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.BobACI).Scan(&bobName))
+			assert.Equal("Bob Example", bobName)
+
+			// Alice is matched by number and also carries her ACI.
+			var aliceByACI string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(p.phone_number, '') FROM participants p
+				JOIN participant_identifiers pi ON pi.participant_id = p.id
+				WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.AliceACI).Scan(&aliceByACI))
+			assert.Equal(signalfixture.AlicePhone, aliceByACI)
+
+			var groupMembers int
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COUNT(*) FROM conversation_participants cp
+				JOIN conversations c ON c.id = cp.conversation_id
+				WHERE c.source_conversation_id = ?`), "signal:group:"+signalfixture.GroupB64).Scan(&groupMembers))
+			assert.Equal(3, groupMembers)
+
+			var mime, mediaType, partKey string
+			var size, width int64
+			var hasAttachments bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT a.mime_type, COALESCE(a.media_type, ''), a.size, COALESCE(a.width, 0),
+				       COALESCE(a.source_part_key, ''), m.has_attachments
+				FROM attachments a JOIN messages m ON m.id = a.message_id
+				WHERE m.source_message_id = ?`), "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&mime, &mediaType, &size, &width, &partKey, &hasAttachments))
+			assert.Equal("image/jpeg", mime)
+			assert.Equal("image", mediaType)
+			assert.Equal(int64(len("photo bytes")), size)
+			assert.Equal(int64(640), width)
+			assert.Equal("signal:attachment:2a6927613ddc903379f3e02145f22074ccf048c7753cfa1ed8ee26c746682997:0", partKey)
+			assert.True(hasAttachments)
 		})
 	}
-}
-
-func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	dbDir := t.TempDir()
-	signalfixture.Write(t, dbDir, signalfixture.Current, 0)
-	st := testutil.NewTestStore(t)
-	runImport(t, st, dbDir, t.TempDir())
-
-	type reaction struct{ message, emoji, phone string }
-	reactions := func() []reaction {
-		rows, err := st.DB().Query(st.Rebind(`
-		SELECT m.source_message_id, r.reaction_value, COALESCE(p.phone_number, '')
-		FROM reactions r
-		JOIN messages m ON m.id = r.message_id
-		JOIN participants p ON p.id = r.participant_id
-		ORDER BY m.source_message_id`))
-		require.NoError(err)
-		defer func() { require.NoError(rows.Close()) }()
-		var got []reaction
-		for rows.Next() {
-			var r reaction
-			require.NoError(rows.Scan(&r.message, &r.emoji, &r.phone))
-			got = append(got, r)
-		}
-		require.NoError(rows.Err())
-		return got
-	}()
-	assert.Equal([]reaction{
-		{"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld), "\u2764", signalfixture.AlicePhone},
-		{"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup), "\U0001F44D", signalfixture.AlicePhone},
-	}, reactions)
-
-	// Bob has no visible number: his participant carries his ACI.
-	var bobName string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COALESCE(p.display_name, '') FROM participants p
-		JOIN participant_identifiers pi ON pi.participant_id = p.id
-		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.BobACI).Scan(&bobName))
-	assert.Equal("Bob Example", bobName)
-
-	// Alice is matched by number and also carries her ACI.
-	var aliceByACI string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COALESCE(p.phone_number, '') FROM participants p
-		JOIN participant_identifiers pi ON pi.participant_id = p.id
-		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.AliceACI).Scan(&aliceByACI))
-	assert.Equal(signalfixture.AlicePhone, aliceByACI)
-
-	var groupMembers int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM conversation_participants cp
-		JOIN conversations c ON c.id = cp.conversation_id
-		WHERE c.source_conversation_id = ?`), "signal:group:"+signalfixture.GroupB64).Scan(&groupMembers))
-	assert.Equal(3, groupMembers)
-
-	var mime, mediaType, partKey string
-	var size, width int64
-	var hasAttachments bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT a.mime_type, COALESCE(a.media_type, ''), a.size, COALESCE(a.width, 0),
-		       COALESCE(a.source_part_key, ''), m.has_attachments
-		FROM attachments a JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = ?`), "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&mime, &mediaType, &size, &width, &partKey, &hasAttachments))
-	assert.Equal("image/jpeg", mime)
-	assert.Equal("image", mediaType)
-	assert.Equal(int64(len("photo bytes")), size)
-	assert.Equal(int64(640), width)
-	assert.Equal("signal:attachment:2a6927613ddc903379f3e02145f22074ccf048c7753cfa1ed8ee26c746682997:0", partKey)
-	assert.True(hasAttachments)
 }
 
 func TestReimportAddsNothingAfterRestore(t *testing.T) {

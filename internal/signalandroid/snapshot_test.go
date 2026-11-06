@@ -22,35 +22,6 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 	assert.Len(t, importedMessages(t, st), 8)
 }
 
-func TestLongTextAttachment(t *testing.T) {
-	for _, tc := range []struct {
-		name, full, body, messageID, search string
-		changes                             []string
-	}{
-		{
-			name: "short edit", full: "Original long text", body: "Short replacement",
-			messageID: "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TEditOld),
-			search:    "replacement",
-			changes:   []string{`INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 102, 'text/x-signal-plain')`, `UPDATE message SET body = 'Short replacement' WHERE _id = 106`},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
-			signalfixture.Write(t, dir, signalfixture.Current, 0)
-			changeFixture(t, dir, tc.changes...)
-			require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte(tc.full), 0o600))
-			runImport(t, st, dir, t.TempDir())
-			want := tc.body
-			if want == "" {
-				want = tc.full
-			}
-			assert.Equal(want, importedMessages(t, st)[tc.messageID].body)
-			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, tc.search))
-		})
-	}
-}
-
 func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 	for _, tc := range []struct{ name, change, wantError string }{
 		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
@@ -100,21 +71,41 @@ type cancelProgress struct {
 func (p cancelProgress) OnProgress(_, _, _ int64) { p.cancel() }
 
 func TestInterruptedImportKeepsConversationCount(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	opts := DefaultOptions()
-	opts.Phone, opts.BatchSize = signalfixture.OwnPhone, 2
-	_, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
-	require.ErrorIs(err, context.Canceled)
-	var count int
-	require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
-	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(2, count)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`))
+	for _, tc := range []struct {
+		name      string
+		changes   []string
+		batchSize int
+	}{
+		{name: "conversation count", batchSize: 2},
+		{name: "historical sender", batchSize: 1, changes: []string{
+			`DELETE FROM message WHERE thread_id <> 11`,
+			`DELETE FROM group_membership WHERE recipient_id = 3`,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, tc.changes...)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			opts := DefaultOptions()
+			opts.Phone, opts.BatchSize = signalfixture.OwnPhone, tc.batchSize
+			summary, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
+			require.ErrorIs(err, context.Canceled)
+			require.NotNil(summary)
+			assert.Equal(int64(tc.batchSize), summary.MessagesAdded)
+			assert.Equal(tc.batchSize, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+			if tc.name == "historical sender" {
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
+			} else {
+				var count int
+				require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
+				assert.Equal(2, count)
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`))
+			}
+		})
+	}
 }
 
 func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {

@@ -112,12 +112,15 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			presentSearch: "searchablesuffix",
 		},
 		{
-			name: "restored revision with same preview", portableStore: true, full: "Carol here archivedsuffix", body: "Carol here",
+			name: "restored rows", portableStore: true, full: "Carol here archivedsuffix",
 			revision: []string{
-				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
-				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
-				`UPDATE attachment SET message_id = 301 WHERE _id = 503`,
+				`UPDATE message SET _id = 900 WHERE _id = 300`,
+				`UPDATE attachment SET message_id = 900 WHERE _id = 503`,
 			},
+		},
+		{
+			name: "changed raw preview", portableStore: true, full: "Carol here archivedsuffix", body: "Carol changed",
+			revision: []string{`UPDATE message SET body = 'Carol changed' WHERE _id = 300`},
 		},
 		{
 			name: "empty on first import", firstOnly: true, emptyFile: true,

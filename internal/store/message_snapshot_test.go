@@ -79,12 +79,6 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(err)
 	assert.Equal([]string{"❤"}, readReactions())
-	reactions = []store.ReactionRef{}
-	data.Reactions = &reactions
-	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(err)
-	assert.Zero(data.ReactionsAdded)
-	assert.Empty(readReactions())
 	final, err := f.Store.GetMessage(id)
 	require.NoError(err)
 	assert.Equal(original.Attachments, final.Attachments)

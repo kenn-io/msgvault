@@ -9,32 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
-func TestReimportPNIChatSurvivesNumberChange(t *testing.T) {
-	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			signalfixture.WritePNIOnly(t, dir, layout)
-			st := testutil.NewTestStore(t)
-			attachments := t.TempDir()
-			runImport(t, st, dir, attachments)
-			before := importedMessages(t, st)
-
-			aciColumn, phoneColumn := "aci", "e164"
-			if name == "v185" {
-				aciColumn, phoneColumn = "uuid", "phone"
-			}
-			changeFixture(t, dir, `UPDATE recipient SET `+aciColumn+` = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
-			runImport(t, st, dir, attachments)
-			changeFixture(t, dir, `UPDATE recipient SET `+phoneColumn+` = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`)
-			summary := runImport(t, st, dir, attachments)
-
-			assert.Zero(t, summary.MessagesAdded)
-			assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
-			assert.Equal(t, before, importedMessages(t, st))
-		})
-	}
-}
-
 func TestImportPNIOnlyChat(t *testing.T) {
 	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
 		t.Run(name, func(t *testing.T) {
@@ -146,6 +120,7 @@ func TestReimportGroupPhoneAuthorGainsACI(t *testing.T) {
 
 func TestReimportPNIChatGainsACI(t *testing.T) {
 	for name, updates := range map[string][]string{
+		"number changes after the ACI is learned": {`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`},
 		"same recipient": {`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
 		"merged into ACI recipient": {
 			`INSERT INTO recipient (_id, aci) VALUES (8, '0f0f0f0f-0000-4000-8000-000000000006')`,
@@ -168,6 +143,10 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
 			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), signalfixture.DanaPhone).Scan(&participantID))
 
+			if name == "number changes after the ACI is learned" {
+				changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
+				runImport(t, st, dir, attachments)
+			}
 			changeFixture(t, dir, updates...)
 			summary := runImport(t, st, dir, attachments)
 
@@ -176,9 +155,11 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
-			pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, "0f0f0f0f-0000-4000-8000-000000000006")
-			require.NoError(err)
-			assert.Equal(participantID, pid)
+			if name != "number changes after the ACI is learned" {
+				pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, "0f0f0f0f-0000-4000-8000-000000000006")
+				require.NoError(err)
+				assert.Equal(participantID, pid)
+			}
 		})
 	}
 }

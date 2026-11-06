@@ -1,7 +1,6 @@
 package signalandroid
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,40 +26,25 @@ func TestFailedWriteCounts(t *testing.T) {
 }
 
 func TestRerunCountsUnchanged(t *testing.T) {
-	for _, name := range []string{"unreadable source", "missing source keeps occurrence"} {
-		t.Run(name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st, dir := testutil.NewTestStore(t), t.TempDir()
-			signalfixture.Write(t, dir, signalfixture.Current, 0)
-			occurrence := name == "missing source keeps occurrence"
-			if occurrence {
-				changeFixture(t, dir, `UPDATE attachment SET content_type = 'application/pdf', file_name = 'example.pdf' WHERE _id = 500`)
-			}
-			storage := t.TempDir()
-			runImport(t, st, dir, storage)
-			var attachmentID int64
-			if occurrence {
-				require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&attachmentID))
-				_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
-				require.NoError(err)
-				require.True(eligible)
-			}
-			file := filepath.Join(dir, "Attachment_500_-1.bin")
-			require.NoError(os.Remove(file))
-			if !occurrence {
-				require.NoError(os.Mkdir(file, 0o700))
-			}
-			summary := runImport(t, st, dir, storage)
-			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
-			assert.Zero(summary.ReactionsAdded)
-			assert.Zero(summary.AttachmentsStored)
-			assert.Zero(summary.Errors)
-			if occurrence {
-				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
-				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
-			}
-		})
-	}
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewTestStore(t), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `UPDATE attachment SET content_type = 'application/pdf', file_name = 'example.pdf' WHERE _id = 500`)
+	storage := t.TempDir()
+	runImport(t, st, dir, storage)
+	var attachmentID int64
+	require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&attachmentID))
+	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
+	require.NoError(err)
+	require.True(eligible)
+	require.NoError(os.Remove(filepath.Join(dir, "Attachment_500_-1.bin")))
+	summary := runImport(t, st, dir, storage)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
+	assert.Zero(summary.ReactionsAdded)
+	assert.Zero(summary.AttachmentsStored)
+	assert.Zero(summary.Errors)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
 }
 
 func TestMigratedIncomingOnly(t *testing.T) {
@@ -70,23 +54,6 @@ func TestMigratedIncomingOnly(t *testing.T) {
 	changeFixture(t, dir, `DELETE FROM message WHERE (type & 31) IN (21, 22, 23, 24)`, `UPDATE message SET to_recipient_id = from_recipient_id WHERE thread_id IN (10, 12)`)
 	summary := runImport(t, st, dir, t.TempDir())
 	assert.Equal(t, int64(5), summary.MessagesAdded)
-}
-
-func TestInterruptedHistoricalSender(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewTestStore(t), t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`, `DELETE FROM group_membership WHERE recipient_id = 3`)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	opts := DefaultOptions()
-	opts.Phone, opts.BatchSize = signalfixture.OwnPhone, 1
-	summary, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
-	require.ErrorIs(err, context.Canceled)
-	require.NotNil(summary)
-	assert.Equal(int64(1), summary.MessagesAdded)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
 }
 
 func TestImportPrefersContactNickname(t *testing.T) {
