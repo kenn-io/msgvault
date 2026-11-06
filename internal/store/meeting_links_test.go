@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -112,7 +113,7 @@ func TestMeetingLinksSplitSurvivesReingest(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	eventData, event := calendarFixture(t, st, "event", singleLinkRaw("event", "same@example.org"))
-	noteData, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+	noteData, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 	for _, tc := range []struct {
@@ -173,6 +174,23 @@ func TestMeetingLinksGranolaConflictingCalendarIdentities(t *testing.T) {
 	assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", own), fmt.Sprintf("evt:%d", shared)}, refs)
 }
 
+func TestMeetingGranolaOwnerIsNotCalendar(t *testing.T) {
+	for _, tc := range []struct{ name, scheduled string }{
+		{"different scheduled start", `,"scheduled_start_time":"2027-03-15T10:00:00Z"`},
+		{"missing scheduled start", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			calendarFixture(t, st, "primary", singleLinkRaw("event", "primary@example.org"))
+			// The note's shared calendar is unarchived; its owner also has a primary calendar.
+			_, note := projectionFixture(t, st, "shared-note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"`+tc.scheduled+`}}`)
+			links, err := meetingLinksForTest(t, st, note)
+			require.NoError(t, err)
+			assert.Empty(t, links)
+		})
+	}
+}
+
 func TestMeetingLinksIdentityHasSeparateFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -190,8 +208,8 @@ func TestMeetingLinksIdentityHasSeparateFields(t *testing.T) {
 
 func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 	for _, tc := range []struct {
-		name, raw, exception, key string
-		want                      bool
+		name, raw, exception, key, scheduled string
+		want                                 bool
 	}{
 		{name: "generated", raw: linkSeriesRaw, want: true},
 		{name: "exdate", raw: strings.Replace(linkSeriesRaw, `"RRULE:FREQ=WEEKLY;COUNT=6"`, `"RRULE:FREQ=WEEKLY;COUNT=6","EXDATE:20270314T100000Z"`, 1)},
@@ -200,7 +218,7 @@ func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 		{name: "non UTC", raw: `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T05:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-07T06:00:00-05:00"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`},
 		{name: "non UTC after DST", raw: `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T06:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-07T07:00:00-05:00"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`, want: true},
 		{name: "all day", raw: `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`},
-		{name: "all day instance", raw: `{"id":"series","iCalUID":"day@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`, key: "20270314", want: true},
+		{name: "all day instance", raw: `{"id":"series","iCalUID":"day@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`, key: "20270314", scheduled: "2027-03-14T00:00:00Z", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
@@ -212,7 +230,7 @@ func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 			if key == "" {
 				key = "20270314T100000Z"
 			}
-			note := granolaLinkFixture(t, st, "series_"+key)
+			_, note := projectionFixture(t, st, "note", "granola_json", fmt.Sprintf(`{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":%q,"scheduled_start_time":%q}}`, "series_"+key, cmp.Or(tc.scheduled, "2027-03-14T10:00:00Z")))
 			want := ""
 			if tc.want {
 				want = fmt.Sprintf("evt:%d@%s", master, key)
