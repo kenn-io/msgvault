@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -68,11 +67,16 @@ func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 		var modes []buildCacheMode
 		executeBuildCacheSubprocessMode = func(_ context.Context, mode buildCacheMode) error {
 			modes = append(modes, mode)
-			if mode != buildCacheModeDerived {
-				return errors.New("unexpected full cache build")
+			switch mode {
+			case buildCacheModeDerived:
+				_, err := buildCacheDerivedOnly(path, cache)
+				return err
+			case buildCacheModeFull:
+				_, err := buildCache(path, cache, true)
+				return err
+			default:
+				return fmt.Errorf("unexpected cache build mode: %v", mode)
 			}
-			_, err := buildCacheDerivedOnly(path, cache)
-			return err
 		}
 		t.Cleanup(func() { executeBuildCacheSubprocessMode = previous })
 		srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st, analyticsDir: cache}, Logger: slog.New(slog.DiscardHandler)})
@@ -88,19 +92,12 @@ func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 		}
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 		assert.Equal("ready", body.CacheState)
-		assert.Equal([]buildCacheMode{buildCacheModeDerived}, modes)
+		assert.Equal([]buildCacheMode{buildCacheModeDerived, buildCacheModeFull}, modes)
 		var pending int
 		require.NoError(st.DB().QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&pending))
-		assert.Positive(pending, "meeting repair remains pending for the append build")
+		assert.Zero(pending, "the full build acknowledges the meeting repair")
+		assert.False(cacheNeedsBuild(path, cache).NeedsBuild)
 		db, err := sql.Open("duckdb", "")
-		require.NoError(err)
-		var count int
-		require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id=?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&count))
-		assert.Zero(count, "the identity refresh must retain the previously published meeting keys")
-		require.NoError(db.Close())
-		_, err = buildCache(path, cache, false)
-		require.NoError(err)
-		db, err = sql.Open("duckdb", "")
 		require.NoError(err)
 		var key string
 		require.NoError(db.QueryRow(`SELECT meeting_key FROM read_parquet(?) WHERE message_id=?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&key))

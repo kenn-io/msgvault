@@ -4189,7 +4189,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	state := syncState{
 		LastMessageID: 10,
 		LastSyncAt:    time.Now(),
-		SchemaVersion: 11,
+		SchemaVersion: 35,
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")
@@ -4202,13 +4202,13 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.Contains(got.Reason, "schema", "cacheNeedsBuild() reason should mention schema")
 
 	result, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err, "upgrade v11 cache through normal build")
+	require.NoError(err, "upgrade v35 cache through normal build")
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read upgraded cache state")
 	require.Equal(cacheSchemaVersion, upgraded.SchemaVersion)
 	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
-		"full rebuild must replace rather than extend the v11 identifier dataset")
+		"full rebuild must replace rather than extend the v35 identifier dataset")
 	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")
 	require.FileExists(identifierParquet)
 	duckdb, err := sql.Open("duckdb", "")
