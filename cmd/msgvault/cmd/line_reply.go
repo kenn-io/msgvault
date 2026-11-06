@@ -26,9 +26,6 @@ func newSendLineReplyCommand() *cobra.Command {
 }
 
 func (a *storeAPIAdapter) runCLISendLineReply(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
-	if req.Grant != nil {
-		return draftReplyNotPermitted(errors.New("LINE sending requires the owner"))
-	}
 	if len(req.Env) != 0 || req.Cwd != "" {
 		return draftReplyError("invalid_args", errors.New("LINE sending does not accept environment or directory overrides"))
 	}

@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
@@ -44,7 +43,7 @@ func lineReplyAdapterFixture(t *testing.T, stores ...*store.Store) (*storeAPIAda
 }
 
 func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
-	for _, kind := range []string{"disabled", "omitted", "revoked on disk", "missing secret", "invalid text", "grant", "env", "cwd", "revision", "missing revision"} {
+	for _, kind := range []string{"disabled", "omitted", "revoked on disk", "missing secret", "invalid text", "env", "cwd", "revision", "missing revision"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -61,9 +60,6 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "")
 				require.NoError(err)
 				req.Args[2] = "--revision=2"
-			case "grant":
-				req.Grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}}
-				req.Args[1] = "missing-draft"
 			case "env":
 				req.Env = map[string]string{"EXAMPLE_LINE_SECRET": "spoofed"}
 			case "cwd":
@@ -89,8 +85,6 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				assert.Equal("send_disabled", err.Error())
 			case "missing secret":
 				assert.Equal("credentials_unavailable", err.Error())
-			case "grant":
-				assert.Equal("not_permitted", err.Error())
 			case "revision":
 				assert.Equal("revision_mismatch", err.Error())
 			case "missing revision", "env", "cwd":
