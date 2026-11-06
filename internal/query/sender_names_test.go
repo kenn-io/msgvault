@@ -54,7 +54,6 @@ func TestSenderNameHints(t *testing.T) {
 		{"from:alex subject:hintfixture", true, 10, 0, true},
 		{"from:alex subject:hintfixture | from:alex subject:absent", true, 10, 0, true},
 		{"from:alex subject:hintfixture | from:kim subject:absent", true, 10, 0, false},
-		{"from:example.co subject:hintfixture", true, 10, 0, true},
 		{"from:alex subject:hintfixture", false, 10, 0, false},
 		{"from:alex subject:hintfixture", true, 0, 0, false},
 		{"from:alex subject:hintfixture", true, 10, 10, false},
@@ -70,6 +69,48 @@ func TestSenderNameHints(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(tc.want, len(result.Hints) > 0)
 			assertions.Equal(original, q)
+		})
+	}
+}
+
+func TestSenderNameHintOR(t *testing.T) {
+	env := newTestEnv(t)
+	source := env.AddSource(dbtest.SourceOpts{Type: "gmail", Identifier: "reader@example.com"})
+	conversation := env.AddConversation(dbtest.ConversationOpts{SourceID: source})
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.com"), DisplayName: new("Alex Kim")})
+	first := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "a", SourceID: source, ConversationID: conversation})
+	second := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "b", SourceID: source, ConversationID: conversation})
+	hidden := env.AddParticipant(dbtest.ParticipantOpts{Email: new("hidden@example.org"), DisplayName: new("Alex Other")})
+	env.AddMessage(dbtest.MessageOpts{FromID: hidden, Subject: "a"})
+	for _, tc := range []struct {
+		input, retry string
+		ids          []int64
+		count        string
+	}{
+		{"from:alex subject:a | from:alex subject:b", "from:alex@example.com subject:a | from:alex@example.com subject:b", []int64{first, second}, "2 messages"},
+		{"from:alex subject:a | subject:zzz", "from:alex@example.com subject:a | subject:zzz", []int64{first}, "1 message"},
+		{"from:alex | subject:zzz", "from:alex@example.com | subject:zzz", []int64{first, second}, "2 messages"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			q := search.ParseOR(tc.input)
+			q.AccountIDs = []int64{source}
+			results, err := env.Engine.Search(env.Ctx, q, 10, 0)
+			requirements.NoError(err)
+			assertions.Empty(results)
+			hints := env.Engine.MatchSenderName(env.Ctx, q)
+			requirements.Len(hints, 1)
+			assertions.Equal(tc.retry, hints[0].RetryWith.Query)
+			assertions.Equal(`from: matches addresses; senders matching "alex": try `+tc.retry+" ("+tc.count+")", hints[0].Message)
+			retry := search.ParseOR(hints[0].RetryWith.Query)
+			retry.AccountIDs = []int64{source}
+			results, err = env.Engine.Search(env.Ctx, retry, 10, 0)
+			requirements.NoError(err)
+			var ids []int64
+			for _, result := range results {
+				ids = append(ids, result.ID)
+			}
+			assertions.ElementsMatch(tc.ids, ids)
 		})
 	}
 }
