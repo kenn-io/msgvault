@@ -126,6 +126,22 @@ func TestMeetingUnlinkReadableCopyAfterSeriesExceedsBudget(t *testing.T) {
 	assert.Empty(t, links)
 }
 
+func TestMeetingUnlinkUnavailableOccurrence(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
+	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
+	require.Error(st.LinkMeetingContext(t.Context(), note, ref), "new links still require an available occurrence")
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+	calendarFixture(t, st, "master", linkSeriesRaw)
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	assert.Empty(t, links)
+}
+
 func TestMeetingRecordNotesAndCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name string

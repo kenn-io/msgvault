@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -57,13 +58,17 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		}
 		r := reboundReader{loggedReader: tx, dialect: s.dialect}
 		budget := calrecur.RequestReadBudget
-		target, err := resolveMeetingOccurrence(ctx, r, occurrence, &budget)
-		if err != nil {
-			return fmt.Errorf("resolve meeting decision target: %w", err)
-		}
 		decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 		if err != nil {
 			return err
+		}
+		target, err := resolveMeetingOccurrence(ctx, r, occurrence, &budget)
+		if decision == "split" && (errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence)) && slices.ContainsFunc(decisions, func(d meetingLinkDecision) bool { return d.Ref == occurrence }) {
+			target.Ref = occurrence
+			target.Identity, err = storedMeetingIdentity(ctx, r, occurrence, &budget)
+		}
+		if err != nil {
+			return fmt.Errorf("resolve meeting decision target: %w", err)
 		}
 		for _, d := range decisions {
 			previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
