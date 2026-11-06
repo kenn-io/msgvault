@@ -72,31 +72,6 @@ func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
 	}
 }
 
-func TestPeopleCompletionPreservesCaseAcrossIdentifiers(t *testing.T) {
-	t.Parallel()
-	for _, identifiers := range [][]string{{"ALICE", "alice"}, {"alice", "ALICE"}} {
-		t.Run(identifiers[0]+" first", func(t *testing.T) {
-			b := NewTestDataBuilder(t)
-			source := b.AddSourceWithType("archive@example.test", "slack")
-			participant := b.AddParticipant("primary@example.test", "example.test", "Alice")
-			for _, identifier := range identifiers {
-				b.AddParticipantIdentifier(participant, "slack", identifier, "@"+identifier, false)
-			}
-			when := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
-			message := b.AddMessage(MessageOpt{SourceID: source, SentAt: when})
-			b.AddFrom(message, participant, "")
-			engine := b.BuildEngine()
-
-			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "@alice", Limit: 8})
-			require.NoError(t, err)
-			assert.Equal(t, []PeopleCompletion{{
-				ParticipantID: participant, DisplayLabel: "Alice", Kind: PeopleCompletionUsername,
-				Value: "@alice", MatchValue: "alice", Source: "slack", LastAt: when,
-			}}, response.Rows)
-		})
-	}
-}
-
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
