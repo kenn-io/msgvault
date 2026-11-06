@@ -32,6 +32,42 @@ func TestMeetingSplitSurvivesStandaloneBecomingRecurring(t *testing.T) {
 	}
 }
 
+func TestMeetingManualLinkSurvivesRecurrence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := singleLinkRaw("event", "manual@example.org")
+	_, event := calendarFixture(t, st, "event", raw)
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+	require.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+	calendarFixture(t, st, "event", strings.TrimSuffix(raw, "}")+`,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, note)[note])
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event, Key: "20270314T100000Z"})
+	require.NoError(err)
+	assert.Equal([]int64{note}, record.MessageIDs)
+	_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+	assert.ErrorContains(err, "series reference needs @<occurrence key>")
+}
+
+func TestMeetingCancelledMasterRetainsGeneratedOccurrenceIdentity(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	_, first := projectionFixture(t, st, "first", "plaud_json", `{}`)
+	_, second := projectionFixture(t, st, "second", "plaud_json", `{}`)
+	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
+	for _, note := range []int64{first, second} {
+		require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	}
+	want := fmt.Sprintf("evt:%d@%s", master, ref.Key)
+	require.Equal(map[int64]string{first: want, second: want}, linkedMeetingRefs(t, st, first, second))
+	calendarFixture(t, st, "master", strings.TrimSuffix(linkSeriesRaw, "}")+`,"status":"cancelled"}`)
+	assert.Equal(map[int64]string{first: want, second: want}, linkedMeetingRefs(t, st, first, second))
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: ref.Key})
+	require.NoError(err)
+	assert.Equal([]int64{first, second}, record.MessageIDs)
+}
+
 func TestMeetingSparseCancelledMasterPreservesExceptionUID(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

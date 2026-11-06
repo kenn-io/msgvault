@@ -219,12 +219,17 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if x.Event.Start != nil {
 		at = *x.Event.Start
 	}
-	occurrences, err := expandMeetingSeries(ctx, r, row, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin), budget)
+	master := row
+	master.Event.Status = ""
+	occurrences, err := expandMeetingSeries(ctx, r, master, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin), budget)
 	if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 		return linkOccurrence{}, err
 	}
 	for _, o := range occurrences {
 		if o.Ref.Key == ref.Key {
+			if row.Event.Status == meetingCancelledStatus {
+				o.Row.Event.Status = meetingCancelledStatus
+			}
 			return o, nil
 		}
 	}
@@ -461,6 +466,15 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	var out []linkOccurrence
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
+		if d.Ref.Key == "" {
+			rows, err := meetingEventRowsByID(ctx, r, d.Ref.MessageID, budget)
+			if err != nil {
+				return nil, err
+			}
+			if len(rows) == 1 {
+				d.Ref.Key = storedOccurrenceKey(rows[0], d.Ref.Key)
+			}
+		}
 		if d.Decision == "split" {
 			resolved, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
 			if err == nil {
