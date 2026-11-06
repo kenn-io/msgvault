@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -415,6 +414,9 @@ func TestReplyExpiredAdmittedAttemptNeedsNoCredentials(t *testing.T) {
 			}
 			f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
 			f.now = initial.Add(23 * time.Hour)
+			sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
+				return nil, errors.New("synthetic revoked sending policy")
+			}
 			expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 			must.NoError(err)
 			checks.Equal(store.LineReplyRemoteUnknownExpired, expired.Status)
@@ -873,20 +875,21 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 		response       lineapi.Response
 		wait           time.Duration
 		recovery       bool
+		checkSentAt    bool
 	}{
-		{"initial/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, false},
-		{"initial/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false},
-		{"initial/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false},
-		{"recovery/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, true},
-		{"recovery/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true},
-		{"recovery/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true},
-		{"credentials/token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}, 30 * time.Second, false},
-		{"credentials/token 403", "/oauth2/v3/token", lineapi.Response{Status: 403}, 30 * time.Second, false},
-		{"credentials/token 500", "/oauth2/v3/token", lineapi.Response{Status: 500}, 30 * time.Second, false},
-		{"credentials/invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}, 30 * time.Second, false},
-		{"credentials/token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}, 30 * time.Second, false},
-		{"credentials/push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}, 30 * time.Second, false},
-		{"credentials/push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}, 30 * time.Second, false},
+		{"initial/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, false, true},
+		{"initial/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true},
+		{"initial/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true},
+		{"recovery/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, true, false},
+		{"recovery/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false},
+		{"recovery/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false},
+		{"credentials/token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}, 30 * time.Second, false, false},
+		{"credentials/token 403", "/oauth2/v3/token", lineapi.Response{Status: 403}, 30 * time.Second, false, false},
+		{"credentials/token 500", "/oauth2/v3/token", lineapi.Response{Status: 500}, 30 * time.Second, false, false},
+		{"credentials/invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}, 30 * time.Second, false, false},
+		{"credentials/token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}, 30 * time.Second, false, false},
+		{"credentials/push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}, 30 * time.Second, false, false},
+		{"credentials/push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}, 30 * time.Second, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			must := require.New(t)
@@ -941,7 +944,7 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 			completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 			must.NoError(err)
 			checks.Equal(attempt.RetryKey, completed.RetryKey)
-			if strings.HasPrefix(tc.name, "initial/") {
+			if tc.checkSentAt {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
 				must.NoError(err)
@@ -1051,6 +1054,14 @@ func TestReplyPendingAttemptRechecksPolicy(t *testing.T) {
 			must.ErrorContains(err, "synthetic revoked sending policy")
 			checks.Equal(state, pending.Status)
 			checks.Equal(pushes, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+			if state == store.LineReplyRemoteUnknown {
+				sender.Client = f.sender().Client
+				must.NotNil(pending.RetryAfter)
+				f.now = pending.RetryAfter.Add(time.Second)
+				restored, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(store.LineReplySent, restored.Status)
+			}
 		})
 	}
 }

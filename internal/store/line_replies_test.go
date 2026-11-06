@@ -539,14 +539,40 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 }
 
 func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
-	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
-		t.Run(state, func(t *testing.T) {
+	for _, tc := range []struct {
+		state        string
+		afterRefusal bool
+	}{
+		{store.LineReplyAdmitted, false},
+		{store.LineReplyAdmitted, true},
+		{store.LineReplyRemoteUnknown, false},
+		{store.LineReplyAcceptedUnresolved, false},
+		{store.LineReplyRemoteAccepted, false},
+		{store.LineReplyProviderRejected, false},
+		{store.LineReplyRemoteUnknownExpired, false},
+		{store.LineReplyAcceptedUnresolvedExpired, false},
+		{store.LineReplySent, false},
+	} {
+		name := tc.state
+		if tc.afterRefusal {
+			name += "/after credential refusal"
+		}
+		t.Run(name, func(t *testing.T) {
+			state := tc.state
 			assert := assert.New(t)
 			require := require.New(t)
 			st, draft, _ := replyStoreFixture(t)
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
+			if tc.afterRefusal {
+				originalKey := attempt.RetryKey
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true})
+				require.NoError(err)
+				assert.Equal(originalKey, attempt.RetryKey)
+			}
 			if state != store.LineReplyAdmitted {
 				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 				require.NoError(err)
@@ -620,40 +646,24 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 			}
 		})
 	}
-	for _, transition := range []string{"reject", "retire"} {
-		t.Run("delete then "+transition, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-			admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-			require.NoError(err)
-			if transition == "retire" {
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true})
-				require.NoError(err)
-			}
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
-			wantState := store.LineReplyRemoteUnknownExpired
-			switch transition {
-			case "reject":
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
-				require.NoError(err)
-				wantState = store.LineReplyProviderRejected
-			case "retire":
-				target, err := st.GetOrCreateSource("line", "2000000002")
-				require.NoError(err)
-				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
-				require.NoError(err)
-			}
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			require.NoError(err)
-			require.Equal(wantState, receipt.State)
-			assert.Equal(admitted.RetryKey, receipt.RetryKey)
-			assert.Empty(receipt.Body)
-			assert.Empty(receipt.QuoteToken)
-			assert.Empty(receipt.SourceConversationID)
-		})
-	}
+	t.Run("delete then reject", func(t *testing.T) {
+		checks := assert.New(t)
+		must := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+		admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+		must.NoError(err)
+		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+		must.NoError(err)
+		must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+		_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
+		must.NoError(err)
+		receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+		must.NoError(err)
+		must.Equal(store.LineReplyProviderRejected, receipt.State)
+		checks.Equal(admitted.RetryKey, receipt.RetryKey)
+		checks.Empty(receipt.Body)
+		checks.Empty(receipt.QuoteToken)
+		checks.Empty(receipt.SourceConversationID)
+	})
 }

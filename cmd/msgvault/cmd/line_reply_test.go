@@ -17,16 +17,12 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
 
-func lineReplyAdapterFixture(t *testing.T, stores ...*store.Store) (*storeAPIAdapter, store.ChatDraft, *lineapi.Server) {
+func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *lineapi.Server) {
 	t.Helper()
 	cfg, st, fake := lineWiringFixture(t)
-	if len(stores) > 0 {
-		st = stores[0]
-	}
 	client, err := configuredLineClient(config.LineSource{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET"})
 	require.NoError(t, err)
 	source, err := line.Register(t.Context(), st, client, "2000000001")
@@ -176,37 +172,6 @@ func TestLineReplyArchiveRecoveryAfterConfigRemoval(t *testing.T) {
 			assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 		})
 	}
-}
-
-func TestLineReplyExpiredAdmittedAttemptWithSendingDisabled(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t, testutil.NewTestStore(t))
-	fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests})
-	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
-	var output strings.Builder
-	run := func() error {
-		output.Reset()
-		return a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { output.WriteString(event.Data); return nil })
-	}
-	must.NoError(run())
-	checks.Contains(output.String(), `"status":"admitted"`)
-	a.config.Line[0].AllowSend = false
-	must.NoError(a.config.Save())
-	_, err := a.store.DB().ExecContext(t.Context(), a.store.Rebind(`UPDATE line_reply_attempts SET retry_until=?,next_retry_at=? WHERE draft_id=?`), time.Now().Add(-time.Hour), time.Now().Add(-time.Minute), draft.DraftID)
-	must.NoError(err)
-	before := len(fake.Requests())
-	must.NoError(run())
-	checks.Contains(output.String(), `"status":"remote_unknown_expired"`)
-	attempt, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	must.NoError(err)
-	checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
-	checks.Empty(attempt.Body)
-	checks.Empty(attempt.QuoteToken)
-	checks.Empty(attempt.RemoteQuoteToken)
-	checks.Empty(attempt.SourceConversationID)
-	checks.Len(fake.Requests(), before)
-	checks.Zero(fake.AcceptedPushes())
 }
 
 func TestLineReplyCredentialFailureCode(t *testing.T) {
