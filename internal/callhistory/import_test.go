@@ -124,6 +124,27 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 	requirements.ErrorIs(err, ErrInvalid)
 }
 
+func TestImportRejectsInvalidAccountAndBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name, account, peer string
+		id                  int64
+	}{
+		{"blank account", " ", "peer", 1},
+		{"zero participant", "example", "peer", 0},
+		{"negative participant", "example", "peer", -1},
+		{"blank native peer", "example", " ", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (ImportRequest{
+				Format: "signal_desktop", Account: tc.account,
+				Record:   []byte(fmt.Sprintf(`{"callId":"x","peerId":%q,"mode":"Direct","status":"Accepted","timestamp":0}`, tc.peer)),
+				Bindings: map[string]int64{tc.peer: tc.id},
+			}).Observation()
+			require.ErrorIs(t, err, ErrInvalid)
+		})
+	}
+}
+
 func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
 	f.Add("a", "bc", "ab", "c")
 	f.Fuzz(func(t *testing.T, providerA, accountA, providerB, accountB string) {
