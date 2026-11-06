@@ -133,3 +133,39 @@ func TestEmailPollQueuedRequestRechecksProviderFloorBeforeSend(t *testing.T) {
 	assert.Equal(t, firstFloor.RetryNotBefore(), client.RetryNotBefore())
 	assert.EqualValues(t, 1, requests.Load(), "a floor learned during local admission blocks every still-unsent MIME worker")
 }
+
+func TestEmailPollOrdinaryGraphRetriesKeepExistingBounds(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path == "/throttle" {
+					w.Header().Set("Retry-After", "3600")
+					w.WriteHeader(status)
+					return
+				}
+				_, _ = w.Write([]byte(`{"mail":"sample@example.test"}`))
+			}))
+			defer server.Close()
+			client := NewClient(server.URL, func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
+			// The deadline rejects an impossible retry wait immediately; this
+			// regression does not actually wait through the ordinary 15m cap.
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			var profile struct{ Mail string }
+			err := client.GetJSON(ctx, "/throttle", &profile)
+			require.Error(t, err)
+			assert.NotErrorIs(t, err, context.DeadlineExceeded)
+			if status == http.StatusTooManyRequests {
+				var quota *ThrottledError
+				require.ErrorAs(t, err, &quota)
+				assert.Equal(t, 15*time.Minute, quota.RetryAfter, "ordinary retries retain the existing cap")
+			}
+			assert.True(t, client.RetryNotBefore().IsZero(), "ordinary clients do not retain the rapid cross-request floor")
+			require.NoError(t, client.GetJSON(ctx, "/next", &profile), "a later ordinary first attempt retains its existing admission behavior")
+			assert.Equal(t, "sample@example.test", profile.Mail)
+			assert.EqualValues(t, 2, requests.Load())
+		})
+	}
+}
