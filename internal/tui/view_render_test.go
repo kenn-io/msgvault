@@ -1132,7 +1132,7 @@ func TestEmptyArchiveSourceSetup(t *testing.T) {
 			model.loading = false
 			assert.Contains(t, stripANSI(model.aggregateTableView()), "No data")
 			updated, _ := model.Update(tt.message)
-			model = updated.(Model)
+			model = asModel(t, updated)
 			assert.Contains(t, stripANSI(model.aggregateTableView()), tt.want)
 		})
 	}
