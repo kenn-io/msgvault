@@ -60,7 +60,7 @@ msgvault meetings link 42 --event evt:100
 msgvault meetings unlink 42 --event evt:100
 ```
 
-`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, while the target event stays in the archive. Removing the target deletes its saved decision.
+`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` adds an event alongside any automatic links; `unlink` keeps that meeting and its calendar copies apart from the note, even after reimport, while the target stays archived. Removing the target deletes its saved decision.
 
 Some recurring series or exceptions cannot be fully expanded because their
 recurrence is unsupported, exceeds request bounds, or lacks an original start.
