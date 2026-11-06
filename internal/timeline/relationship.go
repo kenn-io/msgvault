@@ -264,7 +264,7 @@ func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	}
 }
 func (c *composer) loadFreshness() {
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
 	if r.err != nil {
 		c.gap("freshness", r.err, false)
 	} else {

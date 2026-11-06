@@ -63,7 +63,7 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 		assert.Equal(id, loaded.messageDetail.ID)
 		around, cmd := sendKey(t, selected, key('a'))
 		require.NotNil(cmd)
-		assert.Equal([]string{"msg:20", "msg:21"}[i], around.timelineState.request.Around)
+		assert.Equal([]string{"msg:20", "msg:21"}[i], around.timelineState.pending.Around)
 	}
 }
 
@@ -116,7 +116,7 @@ func TestTimelineRowsMapRepeatedRefsToTheirOwnRenderedOccurrences(t *testing.T) 
 			assert.Equal(secondRow.Line, moved.timelineState.entries[moved.timelineState.cursor].Line)
 			around, cmd := sendKey(t, moved, key('a'))
 			require.NotNil(cmd)
-			assert.Equal(second.AnchorRef, around.timelineState.request.Around)
+			assert.Equal(second.AnchorRef, around.timelineState.pending.Around)
 		})
 	}
 }

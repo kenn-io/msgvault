@@ -49,30 +49,6 @@ func sourceIdentifier(username, collection string) (string, error) {
 	return string(raw), err
 }
 
-// SourceSelected reports whether identifier names a collection archived by a
-// source configured with username, account URL, and calendars. It applies the
-// identity and calendar selection rules used by Sync.
-func SourceSelected(identifier, username, accountURL string, calendars []string) bool {
-	var identity [2]string
-	if json.Unmarshal([]byte(identifier), &identity) != nil {
-		return false
-	}
-	stored, err := sourceIdentifier(identity[0], identity[1])
-	configured, configuredErr := sourceIdentifier(username, identity[1])
-	collection, parseErr := url.Parse(identity[1])
-	if err != nil || configuredErr != nil || parseErr != nil || stored != configured {
-		return false
-	}
-	if len(calendars) > 0 {
-		return slices.ContainsFunc(calendars, func(raw string) bool {
-			u, err := url.Parse(raw)
-			return err == nil && carddav.SameCollectionURL(u, collection)
-		})
-	}
-	account, err := url.Parse(accountURL)
-	return err == nil && carddav.SameCollectionURL(&url.URL{Scheme: collection.Scheme, Host: collection.Host}, &url.URL{Scheme: account.Scheme, Host: account.Host})
-}
-
 func accountEmail(username string) string {
 	email, err := search.ParseAccountAddress(username)
 	if err != nil {

@@ -3,8 +3,6 @@ package timeline
 
 import (
 	"time"
-
-	"go.kenn.io/msgvault/internal/freshness"
 )
 
 type Mode string // "day" | "relationship" | "anchor"
@@ -94,12 +92,24 @@ type UntrustedText struct {
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated"`
 }
+type SourceFreshness struct {
+	SourceID             *int64     `json:"source_id"`
+	SourceType           string     `json:"source_type"`
+	Identifier           string     `json:"identifier"`
+	Scheduling           string     `json:"scheduling"`
+	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at"`
+	LastSyncErrors       int64      `json:"last_sync_errors"`
+	Outcome              string     `json:"outcome"`
+	Reason               string     `json:"reason,omitempty"`
+	SyncCommand          string     `json:"sync_command"`
+}
+
 type Freshness struct {
-	AsOf           time.Time                   `json:"as_of"`
-	StaleThreshold int64                       `json:"stale_threshold"` // seconds
-	Sources        []freshness.SourceFreshness `json:"sources"`
-	Projections    []ProjectionFreshness       `json:"projections"`
-	Warnings       []string                    `json:"warnings"`
+	AsOf           time.Time             `json:"as_of"`
+	StaleThreshold int64                 `json:"stale_threshold"` // seconds
+	Sources        []SourceFreshness     `json:"sources"`
+	Projections    []ProjectionFreshness `json:"projections"`
+	Warnings       []string              `json:"warnings"`
 }
 type ProjectionFreshness struct {
 	Name     string     `json:"name"`
@@ -166,6 +176,8 @@ type Day struct {
 	Notes    []Entry     `json:"notes,omitempty"`
 }
 type DaySummary struct {
+	Messages        int      `json:"messages"`
+	Calls           int      `json:"calls"`
 	PeopleCount     int      `json:"people_count"`
 	PeopleTruncated bool     `json:"people_truncated,omitzero"`
 	Meetings        int      `json:"meetings"`

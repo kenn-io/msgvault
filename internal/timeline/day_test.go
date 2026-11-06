@@ -479,32 +479,26 @@ func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
 }
 
 func TestReadActivityReportsBurstCap(t *testing.T) {
-	requirements := require.New(t)
+	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
-	for i := range 3 {
+	for i := range maxBursts + 1 {
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("page-%d", i), "Synthetic conversation")
 		requirements.NoError(err)
-		f.add(f.now.Add(time.Duration(i)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
+		at := f.now.AddDate(0, 0, -2)
+		if i == maxBursts {
+			at = f.now
+		}
+		f.add(at, false, func(m *store.Message) { m.ConversationID = conv })
 	}
 	f.project()
-	from, to := f.now.Add(-time.Hour), f.now.Add(time.Hour)
-	for _, tc := range []struct {
-		name  string
-		query store.BurstQuery
-	}{
-		{"day", store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: 2}},
-		{"timestamp", store.BurstQuery{After: &from, Before: &to, Filters: f.src.Filters, Limit: 2}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			c := composer{ctx: t.Context(), src: f.src, t: &Timeline{Window: Window{From: "2026-10-22", To: "2026-10-22"}}, loc: time.UTC}
-			got, err := c.readActivity(tc.query)
-			requirements.NoError(err)
-			requirements.Len(got.bursts, 2)
-			assertions.Equal([]int64{2}, got.bursts[1].LatestMessageIDs)
-			assertions.True(got.more)
-		})
-	}
+	req := dayRequest()
+	req.Date, req.Days = "", 3
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotEmpty(got.Days)
+	assertions.Equal("2026-10-22", got.Days[0].Date)
+	assertions.Contains(got.Gaps, Gap{Section: "days", Code: "partial", Items: []string{"2026-10-20"}})
+	assertions.Contains(Markdown(got), "not shown: days through 2026-10-20")
 }
 
 func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {

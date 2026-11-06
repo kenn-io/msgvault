@@ -1282,7 +1282,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			m.modalCursor = 0
 		}
 		selected := options[m.modalCursor]
-		switch m.mode {
+		switch m.mode { //nolint:exhaustive // Timeline has no account selector.
 		case modeMeetings:
 			m.meetingState.sourceID = selected.accountID
 		case modeTexts:
@@ -1303,7 +1303,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			if !previous.matches(selected) {
 				m.invalidateSourceScope()
 			}
-		case modePeople, modeTimeline, modeCount:
+		case modePeople, modeCount:
 		}
 		m.modal = modalNone
 		m.loading = true

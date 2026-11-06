@@ -15,57 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
-	for _, tc := range []struct {
-		name, outcome         string
-		errors                int
-		disabled, stale, keep bool
-	}{
-		{name: "current"},
-		{name: "stale", stale: true, keep: true},
-		{name: "failed", outcome: "failed", keep: true},
-		{name: "cancelled", outcome: "cancelled", keep: true},
-		{name: "paused", outcome: "paused", keep: true},
-		{name: "partial", errors: 2, keep: true},
-		{name: "disabled", disabled: true, keep: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource("gmail", "owner@example.test")
-			requirements.NoError(err)
-			run, err := st.StartSync(source.ID, "incremental")
-			requirements.NoError(err)
-			requirements.NoError(st.CompleteSync(run, "cursor"))
-			_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET errors_count = ? WHERE id = ?"), tc.errors, run)
-			requirements.NoError(err)
-			if tc.outcome != "" {
-				run, err = st.StartSync(source.ID, "incremental")
-				requirements.NoError(err)
-				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET status = ? WHERE id = ?"), tc.outcome, run)
-				requirements.NoError(err)
-			}
-			cfg := config.NewDefaultConfig()
-			cfg.Accounts = []config.AccountSchedule{{Email: "owner@example.test", Enabled: !tc.disabled}}
-			now := time.Now().UTC()
-			if tc.stale {
-				now = now.Add(48 * time.Hour)
-			}
-			src, err := NewStoreSources(st, cfg)
-			requirements.NoError(err)
-			report, err := src.Inventory.Build(t.Context(), now)
-			requirements.NoError(err)
-			if tc.keep {
-				requirements.Len(report.Sources, 1)
-				requirements.NotNil(report.Sources[0].SourceID)
-				assertions.Equal(source.ID, *report.Sources[0].SourceID)
-			} else {
-				assertions.Empty(report.Sources)
-			}
-		})
-	}
-}
-
 func TestStoreSourcesDefaultLoadedTimezoneHint(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	for _, tc := range []struct {

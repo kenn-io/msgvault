@@ -17297,7 +17297,13 @@ components:
     TimelineDaySummary:
       additionalProperties: true
       properties:
+        calls:
+          format: int64
+          type: integer
         meetings:
+          format: int64
+          type: integer
+        messages:
           format: int64
           type: integer
         people:
@@ -17312,6 +17318,8 @@ components:
         truncated:
           type: boolean
       required:
+        - messages
+        - calls
         - people_count
         - meetings
         - people

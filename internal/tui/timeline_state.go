@@ -30,7 +30,11 @@ type timelineNavigation struct {
 	cursor, scroll int
 }
 
+const timelineHistoryLimit = 20
+
 type timelineState struct {
+	pending        timeline.Request
+	remember       bool
 	request        timeline.Request
 	result         *timeline.Timeline
 	lines          []string

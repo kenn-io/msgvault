@@ -20,7 +20,7 @@ type Sources struct {
 	Meetings    MeetingsSource
 	Calls       CallsSource
 	Loops       LoopsSource
-	Inventory   InventorySource
+	Freshness   func(context.Context, time.Time) (Freshness, error)
 	People      PeopleSource
 	Notes       NotesSource
 	Briefs      BriefsSource
@@ -65,9 +65,6 @@ type CallsSource interface {
 }
 type LoopsSource interface {
 	List(ctx context.Context, opts loops.Options, now time.Time) (loops.Result, error)
-}
-type InventorySource interface {
-	Build(ctx context.Context, now time.Time) (Freshness, error)
 }
 type PeopleSource interface {
 	ResolvePersonReferenceContext(ctx context.Context, kind store.PersonRefKind, value string, allowedPersonIDs []int64, limit int) ([]store.PersonCandidate, error)

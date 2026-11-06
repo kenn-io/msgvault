@@ -67,7 +67,7 @@ type dayRead struct {
 
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
-	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts}
+	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, Descending: true}
 	var r dayRead
 	c.parallel(
 		func() {
@@ -118,7 +118,7 @@ func (c *composer) collectDay() dayRead {
 			}
 		},
 		func() {
-			r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+			r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
 		},
 	)
 	return r
@@ -185,7 +185,19 @@ func (c *composer) buildDay() {
 	c.t.Omitted.Cold = r.coldCount.value
 	c.t.Omitted.Noise += r.cold.value.NoiseOmitted
 	if r.activity.value.more || r.cold.value.NextKey != nil {
-		c.t.Gaps = append(c.t.Gaps, Gap{Section: "days", Code: "partial"})
+		oldest := ""
+		for _, bursts := range [][]store.ActivityBurst{r.activity.value.bursts, r.cold.value.Bursts} {
+			for _, burst := range bursts {
+				if oldest == "" || burst.LocalDate < oldest {
+					oldest = burst.LocalDate
+				}
+			}
+		}
+		gap := Gap{Section: "days", Code: "partial"}
+		if oldest != "" {
+			gap.Items = []string{oldest}
+		}
+		c.t.Gaps = append(c.t.Gaps, gap)
 	}
 	if r.inventory.err == nil {
 		c.t.Freshness = r.inventory.value

@@ -35,19 +35,9 @@ func (m *Model) startTimelineRequest(req timeline.Request, remember bool) tea.Cm
 	if req.Budget == 0 {
 		req.Budget = timeline.MaxBudget
 	}
-	current := m.timelineState.request
-	current.Format = "json"
-	if current.Budget == 0 {
-		current.Budget = timeline.MaxBudget
-	}
-	if remember && m.timelineState.result != nil && !m.timelineState.needsLoad && !reflect.DeepEqual(req, current) {
-		m.timelineState.history = append(m.timelineState.history, timelineNavigation{
-			request: m.timelineState.request, result: m.timelineState.result,
-			cursor: m.timelineState.cursor, scroll: m.timelineState.scroll,
-		})
-	}
 	m.cancelTimelineRequest()
-	m.timelineState.request = req
+	m.timelineState.pending = req
+	m.timelineState.remember = remember
 	m.timelineState.needsLoad = true
 
 	m.timelineState.reader = timelineReaderNone
@@ -77,6 +67,21 @@ func (m Model) handleTimelineLoaded(msg timelineLoadedMsg) (tea.Model, tea.Cmd) 
 		if msg.result == nil {
 			m.timelineState.err = errors.New("timeline: empty response")
 		} else {
+			current := m.timelineState.request
+			current.Format = "json"
+			if current.Budget == 0 {
+				current.Budget = timeline.MaxBudget
+			}
+			if m.timelineState.remember && m.timelineState.result != nil && !reflect.DeepEqual(m.timelineState.pending, current) {
+				m.timelineState.history = append(m.timelineState.history, timelineNavigation{
+					request: m.timelineState.request, result: m.timelineState.result,
+					cursor: m.timelineState.cursor, scroll: m.timelineState.scroll,
+				})
+				if len(m.timelineState.history) > timelineHistoryLimit {
+					m.timelineState.history = m.timelineState.history[len(m.timelineState.history)-timelineHistoryLimit:]
+				}
+			}
+			m.timelineState.request = m.timelineState.pending
 			m.timelineState.needsLoad = false
 			m.timelineState.result = msg.result
 			m.timelineState.cursor, m.timelineState.scroll = 0, 0
@@ -184,8 +189,9 @@ func (m *Model) activateTimeline() tea.Cmd {
 		}
 		return m.loadTimelineReader(m.timelineState.reader, m.timelineState.readerID)
 	}
+	req := m.timelineState.request
 	if m.timelineState.result != nil && !m.timelineState.needsLoad {
-		req, result := m.timelineState.request, m.timelineState.result
+		result := m.timelineState.result
 		loc, err := time.LoadLocation(result.Timezone)
 		if err != nil {
 			loc = time.UTC
@@ -194,9 +200,11 @@ func (m *Model) activateTimeline() tea.Cmd {
 			m.loading = false
 			return nil
 		}
-		m.timelineState.request.Cursor, m.timelineState.history = "", nil
+		req.Cursor, m.timelineState.history = "", nil
 	}
-	req := m.timelineState.request
+	if m.timelineState.needsLoad {
+		req = m.timelineState.pending
+	}
 	if req.Mode == "" {
 		req.Mode = timeline.ModeDay
 	}

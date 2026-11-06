@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/clirun"
-	"go.kenn.io/msgvault/internal/sourcescheduling"
 )
 
 func TestCLIRunCommandAllowedInlineCommands(t *testing.T) {
@@ -27,12 +26,12 @@ func TestInlineSourceSchedulerClassification(t *testing.T) {
 	assertions := assert.New(t)
 
 	t.Parallel()
-	name, ok := sourcescheduling.SchedulerJobNameForSource("inline", "api.inline.chat:user:42")
+	name, ok := SchedulerJobNameForSource("inline", "api.inline.chat:user:42")
 	require.True(t, ok)
-	assertions.Equal(sourcescheduling.InlineJobName, name)
-	classification := sourcescheduling.Classify("inline", "api.inline.chat:user:42")
-	assertions.Equal(sourcescheduling.Generic, classification.Kind)
-	assertions.Equal(name, classification.JobName)
+	assertions.Equal(InlineJobName, name)
+	classification := classifySourceScheduling("inline", "api.inline.chat:user:42")
+	assertions.Equal(sourceScheduleGeneric, classification.kind)
+	assertions.Equal(name, classification.jobName)
 }
 
 func TestInlineOAuthHandoffIsOnlyAcceptedForAccountSetup(t *testing.T) {

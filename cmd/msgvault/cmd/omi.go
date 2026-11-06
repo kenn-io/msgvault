@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -323,7 +323,7 @@ func init() {
 
 // registerScheduledOmiJob uses the same source-to-job mapping as API status.
 func registerScheduledOmiJob(sched *scheduler.Scheduler, state *invocation, st *store.Store, source config.OmiSource) error {
-	jobName, ok := sourcescheduling.SchedulerJobNameForSource(omi.SourceType, source.Identifier)
+	jobName, ok := api.SchedulerJobNameForSource(omi.SourceType, source.Identifier)
 	if !ok {
 		return fmt.Errorf("no scheduler job mapping for omi source %q", source.Identifier)
 	}

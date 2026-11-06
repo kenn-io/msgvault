@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -37,7 +36,7 @@ func TestHandleSourceStatusReportsGenericJobQueueState(t *testing.T) {
 	started := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	sched := newMockScheduler()
 	sched.jobStatuses = []JobStatus{{
-		Name: sourcescheduling.BeeperJobName, Schedule: "*/5 * * * *", Running: true,
+		Name: BeeperJobName, Schedule: "*/5 * * * *", Running: true,
 		Pending: true, StartedAt: started,
 	}}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())

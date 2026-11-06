@@ -17183,7 +17183,9 @@ func (t TimelineDay) Validate() error {
 }
 
 type TimelineDaySummary struct {
+	Calls           int64            `json:"calls"`
 	Meetings        int64            `json:"meetings"`
+	Messages        int64            `json:"messages"`
 	People          []TimelinePerson `json:"people" validate:"required"`
 	PeopleCount     int64            `json:"people_count"`
 	PeopleTruncated *bool            `json:"people_truncated,omitempty"`

@@ -217,7 +217,7 @@ type SyncScheduler interface {
 	// JobStatus reports every generic (non-account) scheduled job — the
 	// synctech-sms, gcal, granola, circleback, and beeper sources — so
 	// sourceStatus can surface their scheduled/running/error state via
-	// sourcescheduling.SchedulerJobNameForSource. See sourcescheduling/jobs.go.
+	// SchedulerJobNameForSource. See scheduler_jobs.go.
 	JobStatus() []JobStatus
 	// IsJobScheduled and StartJob manually run a generic (non-account)
 	// scheduler job by name, the trigger counterpart to JobStatus used by

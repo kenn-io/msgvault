@@ -124,7 +124,17 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 		date, _ := time.Parse(time.DateOnly, d.Date)
 		label := date.Format("Mon Jan 02")
 		if d.Summary != nil {
-			fmt.Fprintf(&b, "\n%s · %d meetings · %d people", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)))
+			fmt.Fprintf(&b, "\n%s", label)
+			for _, count := range []struct {
+				n     int
+				label string
+			}{
+				{d.Summary.Meetings, "meetings"}, {d.Summary.Messages, "messages"}, {d.Summary.Calls, "calls"}, {max(d.Summary.PeopleCount, len(d.Summary.People)), "people"},
+			} {
+				if count.n > 0 {
+					fmt.Fprintf(&b, " · %d %s", count.n, count.label)
+				}
+			}
 			if len(d.Summary.People) > 0 {
 				fmt.Fprintf(&b, " (%s)", peopleNames(d.Summary.People, d.Summary.PeopleCount))
 			}
@@ -195,7 +205,11 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 		if g.Retryable {
 			retry = appendUnique(retry, g.Section)
 		} else {
-			missing = appendUnique(missing, g.Section)
+			section := g.Section
+			if g.Section == "days" && g.Code == "partial" && len(g.Items) > 0 {
+				section += " through " + singleLine(g.Items[0], 10)
+			}
+			missing = appendUnique(missing, section)
 		}
 	}
 	if len(missing) > 0 || len(retry) > 0 {

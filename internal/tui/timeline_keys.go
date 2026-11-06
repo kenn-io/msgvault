@@ -27,13 +27,20 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		switch msg.String() {
 		case "a":
 			if entry := m.highlightedTimelineEntry(); entry != nil && entry.AnchorRef != "" {
-				return m.requestTimeline(timeline.Request{Mode: timeline.ModeAnchor, Around: entry.AnchorRef})
+				req := m.timelineState.request
+				req.Mode, req.Around, req.Cursor = timeline.ModeAnchor, entry.AnchorRef, ""
+				req.Date, req.From, req.To, req.Days = "", "", "", 0
+				return m.requestTimeline(req)
 			}
 			return m, nil
 		case "w":
 			if entry := m.highlightedTimelineEntry(); entry != nil {
 				if ref := timelineFirstPerson(*entry); ref != "" {
-					return m.requestTimeline(timeline.Request{Mode: timeline.ModeRelationship, With: ref})
+					req := m.timelineState.request
+					req.Mode, req.With, req.Cursor = timeline.ModeRelationship, ref, ""
+					req.Date, req.From, req.To, req.Days, req.Around = "", "", "", 0, ""
+					req.Before, req.After, req.BeforeSet, req.AfterSet, req.Conversation = 0, 0, false, false, false
+					return m.requestTimeline(req)
 				}
 			}
 			return m, nil
@@ -81,7 +88,9 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch msg.String() {
 	case "r":
 		req := m.timelineState.request
-		if m.timelineState.err == nil {
+		if m.timelineState.needsLoad {
+			req = m.timelineState.pending
+		} else {
 			req.Cursor = ""
 		}
 		return m.requestTimeline(req)
@@ -155,7 +164,11 @@ func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m, nil
 	}
-	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: date})
+	req := m.timelineState.request
+	req.Mode, req.Date, req.Cursor = timeline.ModeDay, date, ""
+	req.From, req.To, req.Days, req.Around = "", "", 0, ""
+	req.Before, req.After, req.BeforeSet, req.AfterSet, req.Conversation = 0, 0, false, false, false
+	return m.requestTimeline(req)
 }
 
 func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -212,14 +225,7 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 				}
 			}
 			if id := timelineOpenID(first); id > 0 {
-				m.timelineState.meeting.level = meetingLevelDetail
-				m.timelineState.meeting.detail = nil
-				m.timelineState.meeting.detailScroll = 0
-				m.timelineState.meeting.detailSearchActive = false
-				m.timelineState.meeting.detailSearchInput.SetValue("")
-				m.timelineState.meeting.detailSearchQuery = ""
-				m.timelineState.meeting.detailSearchMatches = nil
-				m.timelineState.meeting.detailSearchMatchIndex = 0
+				m.timelineState.meeting.resetDetail()
 				return m.openTimelineReader(timelineReaderMeeting, id)
 			}
 		}
@@ -305,6 +311,7 @@ func (m *Model) popTimelineHistory() {
 	n := len(m.timelineState.history)
 	if n == 0 {
 		if m.timelineState.result != nil {
+			m.timelineState.needsLoad = false
 			m.timelineState.err = nil
 		} else if m.timelineState.err == nil {
 			m.timelineState.err = errTimelineLoadCancelled

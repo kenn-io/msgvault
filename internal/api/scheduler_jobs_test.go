@@ -4,12 +4,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"go.kenn.io/msgvault/internal/sourcescheduling"
 )
 
 func TestPlaudSchedulerJobName(t *testing.T) {
-	name, ok := sourcescheduling.SchedulerJobNameForSource("plaud", "work")
+	name, ok := SchedulerJobNameForSource("plaud", "work")
 	assert.True(t, ok)
 	assert.Equal(t, "plaud:work", name)
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/freshness"
 )
 
 func TestMarkdownDayGolden(t *testing.T) {
@@ -66,7 +65,26 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
-	assert.Contains(t, Markdown(v), "Thu Oct 22 · 0 meetings · 13 people\n")
+	assert.Contains(t, Markdown(v), "Thu Oct 22 · 13 people\n")
+}
+
+func TestMarkdownSummaryCountsMessagesAndCalls(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	at := f.now.AddDate(0, 0, -2)
+	for range 3 {
+		f.add(at, false)
+	}
+	f.project()
+	req := dayRequest()
+	req.Date, req.Days = "", 3
+	v, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	assertions.Contains(Markdown(v), "Tue Oct 20 · 3 messages · 1 people")
+	f.call(at)
+	v, err = Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	assertions.Contains(Markdown(v), "Tue Oct 20 · 3 messages · 1 calls · 1 people")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
@@ -92,7 +110,7 @@ func TestMarkdownUsesAnchorAndShortRelatedRefs(t *testing.T) {
 
 func TestMarkdownPartialSyncOutcome(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
-	v.Freshness.Sources = []freshness.SourceFreshness{{SourceType: "gmail", Identifier: "owner@example.com", Scheduling: "manual", Outcome: "partial", LastSyncErrors: 1, LastSuccessfulSyncAt: &v.Now}}
+	v.Freshness.Sources = []SourceFreshness{{SourceType: "gmail", Identifier: "owner@example.com", Scheduling: "manual", Outcome: "partial", LastSyncErrors: 1, LastSuccessfulSyncAt: &v.Now}}
 	got := Markdown(v)
 	assert.Contains(t, got, "gmail:owner@example.com partial")
 	assert.NotContains(t, got, "gmail:owner@example.com current")

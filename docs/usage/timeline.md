@@ -30,6 +30,13 @@ selects up to 31 days ending today. `--date` selects one local date; `--from`
 and `--to` select an inclusive range. Set `[activity].timezone` in the daemon
 configuration for local day boundaries; the default is UTC.
 
+Days before yesterday show one summary line with meeting, message, call, and
+people counts. Zero counts are omitted. Each request reads at most 5,000
+conversation-days from activity and, when included, cold activity, newest first.
+If a read reaches that cap, the footer names its oldest date, for example
+`not shown: days through 2026-10-09`. Use `--from` with an earlier date and
+`--to 2026-10-09` to read the remaining days.
+
 `--with` selects relationship history. It accepts `person:<id>`,
 `participant:<id>`, `email:<address>`, a phone number, or a name. Ambiguous names
 return candidates without a timeline. Resolving a reference never creates a
@@ -63,8 +70,13 @@ Text copied from the archive is untrusted content. JSON labels it
 was detected and suppresses the snippet. In Markdown, `↓` and `↑` count inbound
 and outbound messages, `✓` marks attendance, `T1`/`T2` show tiers, `×N` gives a
 message count, and a copies label counts email copies. An empty window explicitly
-says `nothing archived`. Freshness warnings include recovery commands; the gap
-footer distinguishes missing sections from retryable failures.
+says `nothing archived`. Freshness warnings use the daemon's per-source sync
+status. A scheduled source warns when it has no successful sync, its next sync
+time has passed without a success, or its latest run failed or was cancelled.
+Warnings include recovery commands where available. Manual sources, including
+CalDAV, don't warn. Configured sources appear after their first sync creates an
+archive source. Projection warnings report incomplete or reconciling activity.
+The gap footer distinguishes missing sections from retryable failures.
 
 The HTTP endpoint is `GET /api/v1/timeline`, with the flags as query parameters
 and `mode=day|relationship|anchor`. JSON is the API default;

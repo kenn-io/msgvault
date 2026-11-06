@@ -552,6 +552,12 @@ func (c *composer) groupDays(entries []Entry) {
 				if e.Meeting != nil {
 					summary.Meetings++
 				}
+				if e.Burst != nil {
+					summary.Messages += e.Burst.Inbound + e.Burst.Outbound
+				}
+				if e.Call != nil {
+					summary.Calls++
+				}
 				for _, p := range EntryPeople(e) {
 					key := "name:" + p.Name
 					if p.PersonID > 0 {

@@ -1,5 +1,5 @@
 # Around #32 · UTC (set [activity].timezone)
-⚠ gmail:owner@example.com never\_synced failed → msgvault sync
+⚠ gmail:owner@example.com stale failed → msgvault sync
 ⚠ activity reconciling
 
 History

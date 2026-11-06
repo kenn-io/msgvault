@@ -4,7 +4,9 @@
 import type { TimelinePerson } from "./timelinePerson";
 
 export interface TimelineDaySummary {
+  calls: number;
   meetings: number;
+  messages: number;
   people: TimelinePerson[];
   people_count: number;
   people_truncated?: boolean;

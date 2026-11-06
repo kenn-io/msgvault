@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 
-	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -125,7 +124,7 @@ type pageItem struct {
 	section, part, date string
 	entry               *Entry
 	summary             *DaySummary
-	source              *freshness.SourceFreshness
+	source              *SourceFreshness
 	projection          *ProjectionFreshness
 	warning             *string
 }
@@ -259,7 +258,7 @@ func entryStub(e Entry) Entry {
 }
 
 func clonePage(t Timeline) Timeline {
-	t.Freshness.Sources = append([]freshness.SourceFreshness(nil), t.Freshness.Sources...)
+	t.Freshness.Sources = append([]SourceFreshness(nil), t.Freshness.Sources...)
 	t.Freshness.Projections = append([]ProjectionFreshness(nil), t.Freshness.Projections...)
 	t.Freshness.Warnings = append([]string(nil), t.Freshness.Warnings...)
 	t.History = append([]Entry(nil), t.History...)

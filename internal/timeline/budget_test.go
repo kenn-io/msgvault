@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -124,7 +123,7 @@ func TestFitBudgetsFreshness(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			v := budgetTimeline(1)
 			for i := range 100 {
-				v.Freshness.Sources = append(v.Freshness.Sources, freshness.SourceFreshness{SourceType: "gmail", Identifier: fmt.Sprintf("account-%d@example.com", i), Reason: "never_synced", SyncCommand: "msgvault sync-incremental account@example.com"})
+				v.Freshness.Sources = append(v.Freshness.Sources, SourceFreshness{SourceID: new(int64(i + 1)), SourceType: "gmail", Identifier: fmt.Sprintf("account-%d@example.com", i), Reason: "stale", SyncCommand: "msgvault sync-incremental account@example.com"})
 			}
 			out, err := Fit(v, format, 4096)
 			requirements.NoError(err)

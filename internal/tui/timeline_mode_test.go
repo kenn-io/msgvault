@@ -91,17 +91,21 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 		{"anchor", timeline.Request{Mode: timeline.ModeAnchor, Around: "msg:7"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
 			m := timelineModeModel()
 			defer m.cancelTimelineRequest()
+			tc.req.Cursor = "parked-page"
 			m.timelineState.request = tc.req
 			m.timelineState.result.Now = time.Now().AddDate(0, 0, -1)
 			m.timelineState.history = []timelineNavigation{{result: timelineModeFixture()}}
 			cmd := m.activateTimeline()
-			assert.Equal(t, tc.reload, cmd != nil)
+			assertions.Equal(tc.reload, cmd != nil)
+			assertions.Equal(tc.req, m.timelineState.request)
 			if tc.reload {
-				assert.Empty(t, m.timelineState.history)
+				assertions.Empty(m.timelineState.pending.Cursor)
+				assertions.Empty(m.timelineState.history)
 			} else {
-				assert.Len(t, m.timelineState.history, 1)
+				assertions.Len(m.timelineState.history, 1)
 			}
 		})
 	}
@@ -145,11 +149,11 @@ func TestTimelineKeysSwitchModes(t *testing.T) {
 				return
 			}
 			require.NotNil(cmd)
-			assert.Equal(tc.mode, updated.timelineState.request.Mode)
-			assert.Equal(tc.date, updated.timelineState.request.Date)
-			assert.Equal(tc.around, updated.timelineState.request.Around)
-			assert.Equal(tc.with, updated.timelineState.request.With)
-			assert.Equal("json", updated.timelineState.request.Format)
+			assert.Equal(tc.mode, updated.timelineState.pending.Mode)
+			assert.Equal(tc.date, updated.timelineState.pending.Date)
+			assert.Equal(tc.around, updated.timelineState.pending.Around)
+			assert.Equal(tc.with, updated.timelineState.pending.With)
+			assert.Equal("json", updated.timelineState.pending.Format)
 			returned, _ := sendKey(t, updated, keyEsc())
 			assert.Equal(m.timelineState.result, returned.timelineState.result)
 			assert.Equal(m.timelineState.request, returned.timelineState.request)
@@ -183,7 +187,7 @@ func TestTimelineCancelsAndDiscardsStaleResults(t *testing.T) {
 				requirements.ErrorIs(backend.contexts[0].Err(), context.Canceled)
 				m = sendMsg(t, m, late)
 				assertions.True(m.timelineState.loading)
-				assertions.Equal("2027-03-15", m.timelineState.request.Date)
+				assertions.Equal("2027-03-15", m.timelineState.pending.Date)
 				active, ok := second().(timelineLoadedMsg)
 				requirements.True(ok)
 				m = sendMsg(t, m, active)
@@ -218,7 +222,7 @@ func TestTimelineCancelsAndDiscardsStaleResults(t *testing.T) {
 					m, duplicate = sendKey(t, m, key('n'))
 					assertions.Nil(duplicate, "a pending page has no continuation to follow")
 				}
-				requirements.Len(m.timelineState.history, 1)
+				requirements.Empty(m.timelineState.history)
 				m, _ = sendKey(t, m, keyEsc())
 				requirements.ErrorIs(backend.contexts[len(backend.contexts)-1].Err(), context.Canceled)
 				assertions.Equal(originalRequest, m.timelineState.request)
@@ -687,11 +691,11 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 				updated, cmd := sendKey(t, m, key(step.key))
 				requirements.NotNil(cmd)
 				defer updated.cancelTimelineRequest()
-				assertions.Equal(timeline.ModeDay, updated.timelineState.request.Mode)
-				assertions.Equal(step.date, updated.timelineState.request.Date)
-				assertions.Empty(updated.timelineState.request.Around)
-				assertions.Empty(updated.timelineState.request.With)
-				assertions.Equal("json", updated.timelineState.request.Format)
+				assertions.Equal(timeline.ModeDay, updated.timelineState.pending.Mode)
+				assertions.Equal(step.date, updated.timelineState.pending.Date)
+				assertions.Empty(updated.timelineState.pending.Around)
+				assertions.Empty(updated.timelineState.pending.With)
+				assertions.Equal("json", updated.timelineState.pending.Format)
 				returned, _ := sendKey(t, updated, keyEsc())
 				assertions.Equal(m.timelineState.result, returned.timelineState.result)
 				assertions.Equal(m.timelineState.request, returned.timelineState.request)
@@ -711,7 +715,7 @@ func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {
 		if person.ParticipantID > 0 {
 			want = "participant:10"
 		}
-		assert.Equal(t, want, updated.timelineState.request.With)
+		assert.Equal(t, want, updated.timelineState.pending.With)
 	}
 }
 

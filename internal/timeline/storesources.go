@@ -42,5 +42,5 @@ func NewStoreSources(st *store.Store, cfg *config.Config) (Sources, error) {
 	if err != nil {
 		return Sources{}, err
 	}
-	return Sources{db: st.DB(), Activity: st, Cold: st, Calendar: st, Meetings: st, Calls: st, People: st, Notes: st, Briefs: st, Loops: storeLoops{st}, Inventory: storeInventory{st: st, cfg: cfg}, ArchiveUID: uid, Location: loc, ZoneDefault: cfg.Activity.Timezone == "" || cfg.Activity.Timezone == "UTC", Clock: time.Now, Filters: store.ActivityFilters{Exclusions: cfg.People.Tiers}}, nil
+	return Sources{db: st.DB(), Activity: st, Cold: st, Calendar: st, Meetings: st, Calls: st, People: st, Notes: st, Briefs: st, Loops: storeLoops{st}, ArchiveUID: uid, Location: loc, ZoneDefault: cfg.Activity.Timezone == "" || cfg.Activity.Timezone == "UTC", Clock: time.Now, Filters: store.ActivityFilters{Exclusions: cfg.People.Tiers}}, nil
 }

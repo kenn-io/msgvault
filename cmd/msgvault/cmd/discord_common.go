@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const sourceTypeDiscord = store.SourceTypeDiscord
+const sourceTypeDiscord = "discord"
 
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps

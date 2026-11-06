@@ -176,15 +176,14 @@ func TestRelationshipCuratedProfileFreshnessAndUnavailablePerson(t *testing.T) {
 	p := f.savePerson()
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("DELETE FROM person_participants WHERE person_id=?"), p)
 	requirements.NoError(err)
-	want, err := f.src.Inventory.Build(t.Context(), f.now)
-	requirements.NoError(err)
-	requirements.NotEmpty(want.Sources)
+	want := Freshness{AsOf: f.now, Sources: []SourceFreshness{{SourceType: "gcal", Identifier: "calendar@example.com/work", Reason: "stale"}}}
+	f.src.Freshness = func(context.Context, time.Time) (Freshness, error) { return want, nil }
 	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
 	requirements.NoError(err)
 	assertions.Equal(want.AsOf, got.Freshness.AsOf)
 	assertions.Equal(want.StaleThreshold, got.Freshness.StaleThreshold)
 	assertions.Equal(want.Sources, got.Freshness.Sources)
-	assertions.Equal(want.Projections, got.Freshness.Projections)
+	assertions.Equal([]ProjectionFreshness{{Name: "activity", State: "reconciling"}}, got.Freshness.Projections)
 	assertions.ElementsMatch(want.Warnings, got.Freshness.Warnings)
 	assertions.Empty(got.History)
 	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})

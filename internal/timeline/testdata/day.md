@@ -1,5 +1,5 @@
 # 2026-10-20 – 2026-10-22 · UTC (set [activity].timezone)
-⚠ gmail:owner@example.com never\_synced failed → msgvault sync
+⚠ gmail:owner@example.com stale failed → msgvault sync
 ⚠ activity reconciling
 
 Open (1)

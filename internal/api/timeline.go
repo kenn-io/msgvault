@@ -1,16 +1,20 @@
 package api
 
 import (
+	"context"
 	json "encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
@@ -145,6 +149,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "timeline_unavailable", "Timeline readers are unavailable")
 		return
 	}
+	src.Freshness = s.timelineFreshness
 	src.Clock, src.Agenda, src.Loops = s.clockNow, s.personAgendaOperations, s.timelineLoops(src.Loops)
 	result, err := timeline.Build(ctx, src, req)
 	if err != nil {
@@ -195,4 +200,84 @@ func (s *Server) writeTimelineError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to build timeline")
 	}
+}
+
+func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline.Freshness, error) {
+	result := timeline.Freshness{AsOf: now, Sources: []timeline.SourceFreshness{}, Projections: []timeline.ProjectionFreshness{}, Warnings: []string{}}
+	statusStore, ok := s.store.(SourceStatusStore)
+	if !ok {
+		return result, errors.New("source status unavailable")
+	}
+	sources, err := statusStore.ListSourcesContext(ctx, "")
+	if err != nil {
+		return result, err
+	}
+	for _, source := range sources {
+		status, err := s.sourceStatus(ctx, statusStore, source)
+		if err != nil {
+			return result, err
+		}
+		if !status.Scheduled {
+			continue
+		}
+		item := timeline.SourceFreshness{SourceID: new(source.ID), SourceType: source.SourceType, Identifier: source.Identifier, Scheduling: "scheduled", Outcome: "never", SyncCommand: timelineSyncCommand(source)}
+		if status.LatestSync != nil {
+			item.Outcome = status.LatestSync.Status
+			item.LastSyncErrors = status.LatestSync.ErrorsCount
+		}
+		if status.LastSuccessfulSync != nil && status.LastSuccessfulSync.CompletedAt != nil {
+			at, err := time.Parse(time.RFC3339, *status.LastSuccessfulSync.CompletedAt)
+			if err != nil {
+				return result, fmt.Errorf("parse timeline last successful sync: %w", err)
+			}
+			item.LastSuccessfulSyncAt = &at
+		}
+		if item.LastSuccessfulSyncAt == nil {
+			item.Reason = "never_synced"
+		} else if status.NextSyncAt != nil {
+			next, err := time.Parse(time.RFC3339, *status.NextSyncAt)
+			if err != nil {
+				return result, fmt.Errorf("parse timeline next sync: %w", err)
+			}
+			if next.Before(now) && item.LastSuccessfulSyncAt.Before(next) {
+				item.Reason = "stale"
+			}
+		}
+		if item.Reason != "" || item.Outcome == "failed" || item.Outcome == "cancelled" {
+			result.Sources = append(result.Sources, item)
+		}
+	}
+	return result, nil
+}
+
+func timelineSyncCommand(item *store.Source) string {
+	arg := shellArgument(item.Identifier)
+	switch item.SourceType {
+	case "gmail", "imap", "msmail", "o365":
+		return "msgvault sync-incremental " + arg
+	case "teams", "discord":
+		return "msgvault sync-" + item.SourceType + " " + arg
+	case "beeper", "matrix":
+		command := "msgvault sync-" + item.SourceType
+		if item.ID > 0 {
+			command += " --account " + arg
+		}
+		return command
+	case "slack":
+		return "msgvault sync-slack"
+	case "omi", "granola", "plaud", "circleback", "notion_meetings", "pocket", "inline", "twilio", "twenty", "muesli":
+		return "msgvault sync-" + strings.ReplaceAll(item.SourceType, "_", "-") + " " + arg
+	case "gcal":
+		account, _, _ := strings.Cut(item.Identifier, "/")
+		return "msgvault sync-calendar " + shellArgument(account)
+	default:
+		return ""
+	}
+}
+
+func shellArgument(value string) string {
+	if value != "" && !strings.ContainsAny(value, " \t\r\n'\"`$;&|<>()*?!#\\") && !strings.HasPrefix(value, "-") {
+		return value
+	}
+	return oauth.ShellQuote(value)
 }

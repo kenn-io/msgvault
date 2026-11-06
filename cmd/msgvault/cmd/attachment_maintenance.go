@@ -10,11 +10,11 @@ import (
 
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -449,9 +449,9 @@ func registerScheduledBeeperJob(
 	run func(context.Context) error,
 ) error {
 	// Every beeper store source (one per beeper AccountID) maps to this
-	// singleton job name via sourcescheduling.SchedulerJobNameForSource.
+	// singleton job name via api.SchedulerJobNameForSource.
 	return sched.AddJob(scheduler.Job{
-		Name:        sourcescheduling.BeeperJobName,
+		Name:        api.BeeperJobName,
 		Schedule:    schedule,
 		Preemptible: true,
 		Run: func(ctx context.Context) error {

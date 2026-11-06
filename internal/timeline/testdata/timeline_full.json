@@ -15,11 +15,11 @@
 				"source_id": 1,
 				"source_type": "gmail",
 				"identifier": "owner@example.com",
-				"scheduling": "manual",
+				"scheduling": "scheduled",
 				"last_successful_sync_at": null,
 				"last_sync_errors": 0,
 				"outcome": "failed",
-				"reason": "never_synced",
+				"reason": "stale",
 				"sync_command": "msgvault sync"
 			}
 		],
@@ -360,6 +360,8 @@
 		{
 			"date": "2026-10-20",
 			"summary": {
+				"messages": 0,
+				"calls": 0,
 				"people_count": 1,
 				"meetings": 1,
 				"people": [

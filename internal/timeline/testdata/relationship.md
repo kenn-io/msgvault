@@ -1,5 +1,5 @@
 # Alice T1 · UTC (set [activity].timezone)
-⚠ gmail:owner@example.com never\_synced failed → msgvault sync
+⚠ gmail:owner@example.com stale failed → msgvault sync
 ⚠ activity reconciling
 person:7 · email · 3 interactions
 first 2026-10-22 · last 2026-10-22 · ↓ 2026-10-22 · ↑ 2026-10-22

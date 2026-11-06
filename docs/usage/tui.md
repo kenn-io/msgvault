@@ -309,12 +309,16 @@ See [Timeline](timeline.md) for filters, freshness, and continuation.
 | `a` | Show activity around the selected entry |
 | `w` | Show the relationship with the entry's first person |
 | `n` | Load the next page when available |
-| `r` | Refresh from the first page, or retry a failed detail read |
+| `r` | Refresh from the first page, or retry the failed request or detail read |
 | `Enter` | Open the selected entry's details |
-| `Esc` | Return from details or to the previous timeline request |
+| `Esc` | Return from details or to the previous displayed timeline page |
 
 Day, relationship, anchor, and page shortcuts apply while the timeline list is
 visible. Use `j`/`k` to select an entry.
+
+Loading keeps the displayed page until a request succeeds. A failed request
+keeps that page and shows the error; `r` retries the attempted request. History
+keeps the last 20 displayed pages, including their selection and scroll position.
 
 ## Keyboard Shortcuts
 

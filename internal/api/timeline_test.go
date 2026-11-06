@@ -253,3 +253,76 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 		assertions.ErrorIs(err, timeline.ErrInvalidRequest, query)
 	}
 }
+
+func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, identifier, job, outcome, reason, command string
+		next                                                  time.Duration
+		never                                                 bool
+	}{
+		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, reason: "stale", command: "msgvault sync-calendar calendar@example.com"},
+		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, reason: "stale"},
+		{name: "calendar not due", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 48 * time.Hour},
+		{name: "calendar never succeeded", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, never: true, reason: "never_synced"},
+		{name: "calendar failed", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "failed"},
+		{name: "calendar cancelled", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "cancelled"},
+		{name: "manual discovery alias", kind: "caldav", identifier: `["owner@example.com","https://calendar.example.com/discovered/work/"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			srv, st, _ := timelineRouteFixture(t)
+			src, err := st.GetOrCreateSource(tc.kind, tc.identifier)
+			requirements.NoError(err)
+			if !tc.never {
+				run, err := st.StartSync(src.ID, "full")
+				requirements.NoError(err)
+				requirements.NoError(st.CompleteSync(run, ""))
+				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET started_at = ?, completed_at = ? WHERE id = ?"), srv.clockNow().Add(-49*time.Hour), srv.clockNow().Add(-48*time.Hour), run)
+				requirements.NoError(err)
+			}
+			if tc.outcome != "" {
+				run, err := st.StartSync(src.ID, "full")
+				requirements.NoError(err)
+				requirements.NoError(st.FailSync(run, "synthetic failure"))
+				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET status = ?, started_at = ? WHERE id = ?"), tc.outcome, srv.clockNow().Add(-time.Hour), run)
+				requirements.NoError(err)
+			}
+			sched := newMockScheduler()
+			if tc.job != "" {
+				sched.jobStatuses = []JobStatus{{Name: tc.job, Schedule: "0 */6 * * *", NextRun: srv.clockNow().Add(tc.next)}}
+			}
+			srv.scheduler = sched
+			srv.cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "personal", URL: "https://calendar.example.com/alias/", Username: "owner@example.com"}}
+			w := timelineGET(srv, "?date=2027-03-01", "")
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			var got timeline.Timeline
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &got))
+			if tc.reason == "" && tc.outcome == "" {
+				assertions.Empty(got.Freshness.Sources)
+			} else {
+				requirements.Len(got.Freshness.Sources, 1)
+				item := got.Freshness.Sources[0]
+				assertions.Equal(tc.reason, item.Reason)
+				assertions.Equal(src.ID, *item.SourceID)
+				if tc.command != "" {
+					assertions.Equal(tc.command, item.SyncCommand)
+				}
+				if tc.outcome != "" {
+					assertions.Equal(tc.outcome, item.Outcome)
+				}
+			}
+			visibleWarnings := len(got.Freshness.Sources)
+			// The fixture's Gmail source warns for the owner but is outside this grant.
+			sched.scheduled["alice@example.com"] = true
+			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+			requirements.NoError(err)
+			w = timelineGET(srv, "?date=2027-03-01", token)
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &got))
+			assertions.Len(got.Freshness.Sources, visibleWarnings)
+			for _, item := range got.Freshness.Sources {
+				assertions.Equal(src.ID, *item.SourceID)
+			}
+		})
+	}
+}

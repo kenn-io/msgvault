@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/freshness"
 )
 
 var update = flag.Bool("update", false, "update timeline goldens")
@@ -39,7 +38,7 @@ func sampleTimeline(mode Mode) *Timeline {
 	entries[3].HiddenText = true
 	entries[3].Message = &MessageEntry{People: []Person{}}
 	v := &Timeline{Mode: mode, Timezone: "UTC", TimezoneIsDefault: true, Window: Window{From: "2026-10-20", To: "2026-10-22"}, Now: now,
-		Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []freshness.SourceFreshness{{SourceID: new(int64(1)), SourceType: "gmail", Identifier: "owner@example.com", Reason: "never_synced", Outcome: "failed", Scheduling: "manual", SyncCommand: "msgvault sync"}}, Projections: []ProjectionFreshness{{Name: "activity", Frontier: &now, State: "reconciling"}}, Warnings: []string{"The latest sync failed for gmail source owner@example.com."}},
+		Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []SourceFreshness{{SourceID: new(int64(1)), SourceType: "gmail", Identifier: "owner@example.com", Reason: "stale", Outcome: "failed", Scheduling: "scheduled", SyncCommand: "msgvault sync"}}, Projections: []ProjectionFreshness{{Name: "activity", Frontier: &now, State: "reconciling"}}, Warnings: []string{"The latest sync failed for gmail source owner@example.com."}},
 		Gaps:      []Gap{{Section: "meetings", Code: "partial", Retryable: true, Items: []string{"evt:99"}}}, Omitted: Omitted{Budget: map[string]any{"history": 2, "open_loops": "more"}, Noise: 2, Cold: 3}, Cursor: "opaque"}
 	if mode == ModeAnchor {
 		entries[3].Anchor, entries[3].Filtered = true, true

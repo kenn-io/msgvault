@@ -37,6 +37,9 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 	case "go.kenn.io/msgvault/internal/senderauth":
 		return "SenderAuth" + name
 	case "go.kenn.io/msgvault/internal/timeline":
+		if name == "SourceFreshness" {
+			return name
+		}
 		if name == "Timeline" {
 			// Keep the public SDK's existing Saved View Timeline enum name.
 			return "TimelineResult"
