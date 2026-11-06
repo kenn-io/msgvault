@@ -691,10 +691,7 @@ func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.
 			return errors.Join(result, fmt.Errorf("limit SQLite planner statistics analysis: %w", err))
 		}
 	}
-	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
-		result = errors.Join(result, fmt.Errorf("optimize SQLite planner statistics: %w", err))
-	}
-	result = errors.Join(result, dropFTSDataStatistics(ctx, connections[0]))
+	result = errors.Join(result, optimizeSQLiteConnection(ctx, connections[0]))
 	for _, conn := range connections {
 		if err := reloadSQLiteConnection(ctx, conn); err != nil {
 			return errors.Join(result, fmt.Errorf("reload SQLite planner statistics: %w", err))
@@ -703,7 +700,15 @@ func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.
 	return result
 }
 
-func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
+func optimizeSQLiteConnection(ctx context.Context, conn contextStatementQuerier) error {
+	var result error
+	if _, err := conn.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+		result = fmt.Errorf("optimize SQLite planner statistics: %w", err)
+	}
+	return errors.Join(result, dropFTSDataStatistics(ctx, conn))
+}
+
+func reloadSQLiteConnection(ctx context.Context, conn contextStatementQuerier) error {
 	_, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema")
 	return err
 }
@@ -955,7 +960,12 @@ func (s *Store) withTxLockedContext(
 ) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
-	tx, err := s.db.BeginTx(ctx, opts)
+	tx := writableSnapshot(ctx, s.db.DB)
+	joined := tx != nil
+	var err error
+	if !joined {
+		tx, err = s.db.BeginTx(ctx, opts)
+	}
 	if err != nil {
 		level := slog.LevelWarn
 		if errors.Is(err, context.Canceled) {
@@ -966,17 +976,24 @@ func (s *Store) withTxLockedContext(
 	}
 	if preFence != nil {
 		if err := preFence(tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if err := fn(tx); err != nil {
+		if joined {
+			return err
+		}
 		if rbErr := tx.Rollback(); rbErr != nil {
 			slog.Warn("sql tx rollback failed",
 				"error", rbErr.Error(),
@@ -991,13 +1008,20 @@ func (s *Store) withTxLockedContext(
 	}
 	if s.directoryProjectionReady && !s.readOnly && (opts == nil || !opts.ReadOnly) {
 		if err := s.refreshDirectoryProjectionsBeforeCommitTx(ctx, tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		_ = tx.Rollback()
+		if !joined {
+			_ = tx.Rollback()
+		}
 		return err
+	}
+	if joined {
+		return nil
 	}
 	if err := tx.Commit(); err != nil {
 		slog.Warn("sql tx commit failed",
@@ -1047,13 +1071,18 @@ func (s *Store) withTxLockedContext(
 // (? → $N on PG) just like withTx. The reset statement itself has no
 // placeholders, so Rebind is a no-op on it.
 func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context, tx *loggedTx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx := writableSnapshot(ctx, s.db.DB)
+	joined := tx != nil
+	var err error
+	if !joined {
+		tx, err = s.db.BeginTx(ctx, nil)
+	}
 	if err != nil {
 		return fmt.Errorf("begin maintenance tx: %w", err)
 	}
 	committed := false
 	defer func() {
-		if !committed {
+		if !committed && !joined {
 			_ = tx.Rollback()
 		}
 	}()
@@ -1071,6 +1100,9 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 		return err
 	}
 
+	if joined {
+		return nil
+	}
 	if err := tx.Commit(); err != nil {
 		if errors.Is(err, sql.ErrTxDone) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -1466,6 +1498,44 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if version > SchemaVersion {
 		return fmt.Errorf("archive schema version %d is newer than supported version %d", version, SchemaVersion)
 	}
+	if !s.IsPostgreSQL() && version == 0 {
+		fresh := false
+		err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			var tables bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')").Scan(&tables); err != nil {
+				return fmt.Errorf("inspect SQLite schema freshness: %w", err)
+			}
+			if tables {
+				return nil
+			}
+			fresh = true
+			if err := s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "PRAGMA analysis_limit=1000"); err != nil {
+				return fmt.Errorf("limit SQLite planner statistics analysis: %w", err)
+			}
+			if err := optimizeSQLiteConnection(ctx, tx); err != nil {
+				return err
+			}
+			// Other connections load these statistics when they see the new schema.
+			return reloadSQLiteConnection(ctx, tx)
+		})
+		if err != nil && !s.dialect.IsBusyError(err) {
+			return err
+		}
+		if err == nil && fresh {
+			return nil
+		}
+	}
+	if err := s.initSchemaContext(ctx, version); err != nil {
+		return err
+	}
+	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
+	return nil
+}
+
+func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -2399,7 +2469,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// like any other and carries ctx: it returns a bool, so a cancellation that
 	// was not reported as an error would be recorded as "search is unavailable"
 	// on a store the daemon is about to hand to callers.
-	available, err := s.dialect.FTSAvailable(ctx, s.db.DB)
+	available, err := s.dialect.FTSAvailable(ctx, ReadDBContext(ctx, s.db.DB))
 	if err != nil {
 		return fmt.Errorf("probe FTS availability: %w", err)
 	}
@@ -2436,11 +2506,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
-
-	// Schema initialization can add indexes to an existing archive. Refresh
-	// statistics after all schema work so SQLite can cost those indexes against
-	// the archive's actual data distribution.
-	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 
 	if err := s.ensureFilenameDiscoveryInfrastructure(ctx); err != nil {
 		return err

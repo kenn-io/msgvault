@@ -186,7 +186,13 @@ func (d *loggedDB) ExecContext(
 ) (sql.Result, error) {
 	query = d.rebind(query)
 	start := time.Now()
-	res, err := d.DB.ExecContext(ctx, query, args...)
+	var executor interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	} = d.DB
+	if tx := writableSnapshot(ctx, d.DB); tx != nil {
+		executor = tx.Tx
+	}
+	res, err := executor.ExecContext(ctx, query, args...)
 	elapsed := time.Since(start)
 	rowsAffected := int64(-1)
 	if err == nil && res != nil {
