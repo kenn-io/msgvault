@@ -153,4 +153,96 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.Len(semantic.Results, 1)
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
+	// The built command must put continuation advice after its results.
+	for i := range 51 {
+		address := fmt.Sprintf("sender-%02d@example.com", i)
+		sender, err := st.EnsureParticipant(address, "", "example.com")
+		require.NoError(err)
+		message := storetest.NewMessage(source.ID, conv).WithSubject("overflowboundary").Build()
+		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+		id, err := st.UpsertMessage(message)
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+		require.NoError(st.UpsertFTS(id, "overflowboundary", "", address, "", ""))
+	}
+	for _, args := range [][]string{
+		{"search", "overflowboundary"},
+		{"list-senders"},
+	} {
+		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+		combined, err := command.CombinedOutput()
+		require.NoError(err, string(combined))
+		footer := bytes.Index(combined, []byte("Showing 50 results"))
+		require.GreaterOrEqual(footer, 0)
+		assert.Greater(bytes.Index(combined, []byte("Hint:")), footer, "the hint follows the results footer")
+	}
+	// Follow the advice through both server limits using real retrieval.
+	invoiceGeneration, err := backend.CreateGeneration(t.Context(), "synthetic", 4, fingerprint)
+	require.NoError(err)
+	var invoiceIDs []int64
+	var invoiceChunks []vector.Chunk
+	for i := range 312 {
+		id := storetest.NewMessage(source.ID, conv).WithSourceMessageID(fmt.Sprintf("invoice-%d", i)).WithSubject("invoice").Create(t, st)
+		require.NoError(st.UpsertFTS(id, "invoice", "invoice", "sender@example.com", "", ""))
+		invoiceIDs = append(invoiceIDs, id)
+		invoiceChunks = append(invoiceChunks, vector.Chunk{MessageID: id, Vector: []float32{1, float32(312-i) / 100, 0, 0}})
+	}
+	require.NoError(backend.Upsert(t.Context(), invoiceGeneration, invoiceChunks))
+	require.NoError(backend.ActivateGeneration(t.Context(), invoiceGeneration, true))
+	for _, step := range []struct {
+		name                 string
+		k, cap, limit, count int
+		code, message        string
+	}{
+		{"more", 100, 313, 50, 50, "more_available", "more messages match; raise --limit"},
+		{"both_caps", 100, 200, 200, 200, "ranking_limit_reached", "max_page_size_hybrid above 200 and vector.search.k_per_signal above 100"},
+		{"candidate_cap", 100, 313, 312, 200, "candidate_limit_reached", "more messages match; raise vector.search.k_per_signal above 100 on the server and restart it, then raise --limit"},
+		{"complete_union", 156, 313, 312, 312, "", ""},
+	} {
+		vectorCfg.Search.KPerSignal = step.k
+		vectorCfg.Search.MaxPageSizeHybrid = new(step.cap)
+		server.SetVectorFeatures(hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: step.k, SubjectBoost: 1}), nil, backend, vectorCfg)
+		for _, asJSON := range []bool{false, true} {
+			args := []string{"--home", home, "--log-level=error", "search", "invoice", "--mode", "hybrid", "--limit", strconv.Itoa(step.limit)}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			command := exec.CommandContext(t.Context(), binary, args...) //nolint:gosec // The opt-in test operator supplies the built CLI.
+			command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			require.NoError(command.Run(), "%s: %s", step.name, stderr.String())
+			if !asJSON {
+				assert.Contains(stdout.String(), fmt.Sprintf("Showing %d results", step.count), step.name)
+				assert.Equal(step.message != "", strings.Contains(stderr.String(), "Hint: "), step.name)
+				assert.Contains(stderr.String(), step.message, step.name)
+				continue
+			}
+			var page struct {
+				Results []struct {
+					ID int64 `json:"id"`
+				} `json:"results"`
+				Hints []struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"hints"`
+			}
+			require.NoError(json.Unmarshal(stdout.Bytes(), &page), step.name)
+			require.Len(page.Results, step.count, step.name)
+			assert.Empty(stderr.String(), step.name)
+			if step.code == "" {
+				assert.Empty(page.Hints)
+				gotIDs := make([]int64, len(page.Results))
+				for i, result := range page.Results {
+					gotIDs[i] = result.ID
+				}
+				assert.ElementsMatch(invoiceIDs, gotIDs)
+				continue
+			}
+			require.Len(page.Hints, 1, step.name)
+			assert.Equal(step.code, page.Hints[0].Code)
+			assert.Contains(page.Hints[0].Message, step.message)
+		}
+	}
 }

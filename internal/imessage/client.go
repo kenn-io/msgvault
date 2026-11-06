@@ -497,13 +497,21 @@ func (c *Client) importMessage(
 	}
 	sourceMessageID := strconv.FormatInt(msg.ROWID, 10)
 	if bodyDecodeFailed {
-		if existing, exists := stored[sourceMessageID]; exists {
+		existing, archived := stored[sourceMessageID]
+		if archived {
 			body, err = s.GetMessageBodyText(existing.ID)
 			if err != nil {
 				return fmt.Errorf("read archived body after attributed body decode failure: %w", err)
 			}
 		}
-		c.logger.Warn("failed to decode attributed body; preserving archived text")
+		summary.BodiesUndecoded++
+		// Every run rereads all of chat.db, so warn once and count the rest.
+		level := slog.LevelDebug
+		if summary.BodiesUndecoded == 1 {
+			level = slog.LevelWarn
+		}
+		c.logger.Log(ctx, level, "failed to decode attributed body",
+			"rowid", msg.ROWID, "archived_text_kept", archived)
 	}
 	message := &store.Message{
 		SourceID:        sourceID,

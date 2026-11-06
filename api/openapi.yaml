@@ -2936,6 +2936,8 @@ components:
     CliSearchResponse:
       additionalProperties: true
       properties:
+        has_more:
+          type: boolean
         hybrid_available:
           type: boolean
         index_built:
@@ -6812,6 +6814,9 @@ components:
       properties:
         accelerator:
           type: string
+        candidate_limit_reached:
+          format: int64
+          type: integer
         generation:
           $ref: "#/components/schemas/HybridGenerationSummary"
         has_more:
@@ -6822,6 +6827,9 @@ components:
           type: boolean
         query:
           type: string
+        ranking_limit_reached:
+          format: int64
+          type: integer
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"
@@ -17279,7 +17287,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.46.0
+  version: 3.47.0
 openapi: 3.1.0
 paths:
   /api/ping:

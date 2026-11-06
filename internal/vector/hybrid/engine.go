@@ -41,10 +41,11 @@ type SearchRequest struct {
 
 // ResultMeta returns engine-level metadata alongside the hit list.
 type ResultMeta struct {
-	Generation    vector.Generation
-	PoolSaturated bool
-	Accelerator   string
-	ReturnedCount int
+	Generation           vector.Generation
+	PoolSaturated        bool
+	CandidatePoolOmitted bool
+	Accelerator          string
+	ReturnedCount        int
 	// QueryVector is the embedding of FreeText used for this search.
 	// Callers use it to score within-message chunks without re-embedding.
 	QueryVector []float32
@@ -268,6 +269,7 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		Generation:             active,
 		ReturnedCount:          len(hits),
 		PoolSaturated:          searchMeta.PoolSaturated,
+		CandidatePoolOmitted:   searchMeta.CandidatePoolOmitted,
 		Accelerator:            searchMeta.Accelerator,
 		QueryVector:            queryVec,
 		QueryEmbeddingDuration: embeddingDuration,

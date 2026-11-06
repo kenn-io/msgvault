@@ -486,6 +486,9 @@ func printImessageSummary(
 	if summary.AttachmentsSkipped > 0 {
 		fmt.Printf("  Attachments skipped: %d (media policy or path outside the Messages folder%s)\n", summary.AttachmentsSkipped, messagesRootHint())
 	}
+	if summary.BodiesUndecoded > 0 {
+		fmt.Printf("  Unreadable text:  %d messages\n", summary.BodiesUndecoded)
+	}
 	if summary.DatesCleared > 0 {
 		fmt.Printf("  Dates cleared:    %d\n", summary.DatesCleared)
 	}

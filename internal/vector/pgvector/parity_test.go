@@ -256,6 +256,49 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 	}
 }
 
+func TestParity_CandidatePoolOmissionMatchesAcrossBackends(t *testing.T) {
+	pf, pgGen := buildPgvectorParity(t, parityCorpus)
+	sb, sctx, sGen := buildSqlitevecParity(t, parityCorpus)
+
+	for _, tc := range []struct {
+		name    string
+		terms   []string
+		ids     []int64
+		limit   int
+		omitted bool
+		wantIDs []int64
+	}{
+		{"ann_overflow", nil, nil, 10, true, []int64{1}},
+		{"hybrid_overflow", []string{"delta"}, nil, 10, true, []int64{1, 4}},
+		{"complete_union", []string{"delta"}, []int64{1, 4}, 10, false, []int64{1, 4}},
+		{"page_inside_union", []string{"delta"}, nil, 1, false, []int64{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := vector.FusedRequest{
+				QueryVec:   unitVec(parityDim, 0),
+				FTSTerms:   tc.terms,
+				Generation: sGen,
+				KPerSignal: 1,
+				Limit:      tc.limit,
+				RRFK:       60,
+				Filter:     vector.Filter{MessageIDs: tc.ids},
+			}
+			sHits, sMeta, err := sb.FusedSearch(sctx, req)
+			require.NoError(t, err, "sqlitevec FusedSearch")
+			req.Generation = pgGen
+			pHits, pMeta, err := pf.b.FusedSearch(pf.ctx, req)
+			require.NoError(t, err, "pgvector FusedSearch")
+
+			assert.Equal(t, tc.omitted, sMeta.CandidatePoolOmitted, "sqlitevec omission")
+			assert.Equal(t, tc.omitted, pMeta.CandidatePoolOmitted, "pgvector omission")
+			assert.True(t, sMeta.PoolSaturated, "sqlitevec ANN pool overflows in every case")
+			assert.True(t, pMeta.PoolSaturated, "pgvector ANN pool overflows in every case")
+			assert.Equal(t, tc.wantIDs, idSeq(sHits), "sqlitevec retained results")
+			assert.Equal(t, tc.wantIDs, idSeq(pHits), "pgvector retained results")
+		})
+	}
+}
+
 // idSet collects the message ids of a hit list into a set, so two
 // backends can be compared for membership equality regardless of order.
 func idSet(hits []vector.FusedHit) map[int64]bool {

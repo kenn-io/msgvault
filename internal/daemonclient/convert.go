@@ -243,6 +243,7 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 	return &CLISearch{
 		Results:          results,
 		HybridAvailable:  boolValue(resp.HybridAvailable),
+		HasMore:          boolValue(resp.HasMore),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),
@@ -275,12 +276,14 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 			RetrievalMS:      resp.Timings.RetrievalMs,
 			HydrationMS:      resp.Timings.HydrationMs,
 		},
-		PoolSaturated:    resp.PoolSaturated,
-		Accelerator:      stringValue(resp.Accelerator),
-		ReturnedCount:    int(resp.Returned),
-		ScopeLabel:       stringValue(resp.ScopeLabel),
-		ScopeSourceCount: intValue(resp.ScopeSourceCount),
-		HasMore:          resp.HasMore,
+		PoolSaturated:         resp.PoolSaturated,
+		Accelerator:           stringValue(resp.Accelerator),
+		ReturnedCount:         int(resp.Returned),
+		ScopeLabel:            stringValue(resp.ScopeLabel),
+		ScopeSourceCount:      intValue(resp.ScopeSourceCount),
+		HasMore:               resp.HasMore,
+		RankingLimitReached:   intValue(resp.RankingLimitReached),
+		CandidateLimitReached: intValue(resp.CandidateLimitReached),
 	}, nil
 }
 

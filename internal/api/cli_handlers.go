@@ -680,6 +680,7 @@ type cliDeleteDedupedExecuteResponse struct {
 }
 
 type cliSearchResponse struct {
+	HasMore          bool                   `json:"has_more,omitzero"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -2493,7 +2494,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if grant == nil {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
-	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
+	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2501,6 +2502,10 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("CLI search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
+	}
+	resp.HasMore = len(results) > limit
+	if resp.HasMore {
+		results = results[:limit]
 	}
 	if includeSnippet {
 		metadata, err := s.searchMetadata(r.Context(), resultIDs(results), parsed, true)

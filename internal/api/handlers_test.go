@@ -2333,6 +2333,47 @@ func TestHandleCLISearchDeletionScope(t *testing.T) {
 	}
 }
 
+func TestHandleCLISearchHasMore(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		matches  int
+		wantMore bool
+	}{
+		{name: "exact_50", matches: 50},
+		{name: "overflow_50", matches: 51, wantMore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			engine := &querytest.MockEngine{
+				SearchFunc: func(_ context.Context, _ *search.Query, limit, _ int) ([]query.MessageSummary, error) {
+					assert.Equal(51, limit, "probe one row past the page")
+					rows := make([]query.MessageSummary, tc.matches)
+					for i := range rows {
+						rows[i].ID = int64(i + 1)
+					}
+					return rows, nil
+				},
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
+			})
+			srv.ftsIndexComplete.Store(true)
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=scope&limit=50", nil))
+			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			var page struct {
+				Results []json.RawMessage `json:"results"`
+				HasMore bool              `json:"has_more"`
+			}
+			require.NoError(json.Unmarshal(resp.Body.Bytes(), &page))
+			assert.Len(page.Results, 50)
+			assert.Equal(tc.wantMore, page.HasMore)
+		})
+	}
+}
+
 func TestHandleCLISearchRejectsInvalidDeletionScope(t *testing.T) {
 	t.Parallel()
 	called := false
@@ -7952,6 +7993,46 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	assert.Contains(timings, "query_embedding_ms")
 	assert.Contains(timings, "retrieval_ms")
 	assert.Contains(timings, "hydration_ms")
+}
+
+func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
+	t.Parallel()
+	srv, store := newTestServerWithMockStore(t)
+	backend := &fakeVectorBackend{active: &vector.Generation{
+		ID: 1, Model: "fake", Dimension: 4, Fingerprint: "fake:4", State: vector.GenerationActive,
+	}}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+
+	store.messages = []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}
+	srv.SetVectorFeatures(engine, nil, backend, vector.Config{
+		Search: vector.SearchConfig{MaxPageSizeHybrid: new(2)},
+	})
+	for _, tc := range []struct {
+		name    string
+		hits    []vector.Hit
+		wantCap int
+	}{
+		{name: "complete", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
+		{name: "overflow", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			backend.searchHits = tc.hits
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			var page hybridSearchResponse
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+			assert.False(page.HasMore, "stop pagination at the configured cap")
+			require.Len(page.Results, 1)
+			assert.Equal(int64(2), page.Results[0].ID)
+			assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
+			assert.Equal(tc.wantCap, page.RankingLimitReached)
+		})
+	}
 }
 
 // mapKeys returns the keys of a map[string]interface{} for use in

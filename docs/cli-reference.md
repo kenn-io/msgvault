@@ -867,10 +867,14 @@ msgvault sync-full account@example.com
 
 An idle incremental sync cannot discover older omitted messages unless Gmail
 reports a new history event for them. The full listing resumes from its saved
-checkpoint when the request scope matches; after this coverage change, an older
-narrower checkpoint restarts from the first page. Previously archived messages
-are not duplicated. Gmail can return only messages that still exist in the
-mailbox; permanently deleted messages cannot be backfilled.
+checkpoint when the request scope matches. A resumed full sync without filters
+or a limit publishes the History point its first run recorded, unless the source
+already has a newer cursor. The next incremental sync catches mail that arrived
+meanwhile. Filtered or limited full syncs leave the source cursor
+unchanged. A full sync interrupted under an earlier release starts
+from the first page once. Previously archived messages aren't downloaded again
+or duplicated. Gmail can return only messages that still exist in the mailbox;
+permanently deleted messages cannot be backfilled.
 
 At the current 500-ID page size, a listing of N matching messages needs roughly
 `ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
@@ -2766,6 +2770,8 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
+Search prints a stderr hint when another full-text result exists, with the next `--offset`. Vector and hybrid text print one hint at a time; their JSON objects gain a `hints` array containing that hint's `code` and `message`. Full-text JSON stays a bare array. Complete pages add no hint. At the semantic page cap, the hint asks you to raise `vector.search.max_page_size_hybrid`. When hybrid retrieval measures messages omitted by its per-method limits, the hint names `vector.search.k_per_signal`. If both limits apply, it names both settings. Raise the named settings above their reported values on the server and restart the daemon before raising `--limit`.
+
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
 with terminal controls removed and whitespace collapsed. Terminal tables fit the
@@ -3996,6 +4002,8 @@ msgvault list-senders [flags]
 | `--after YYYY-MM-DD` | Only messages after this date |
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
+
+`list-senders`, `list-domains`, and `list-labels` print a stderr hint to raise `-n` when more rows match, including with `--json`. Their JSON stdout stays a bare array.
 
 ---
 
