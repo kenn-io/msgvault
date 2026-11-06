@@ -31,10 +31,10 @@ func TestImportPNIOnlyChat(t *testing.T) {
 
 func TestImportDirectAuthorWithoutACI(t *testing.T) {
 	for _, tc := range []struct {
-		name, author, change string
+		name, change, chatID string
 	}{
-		{"PNI only", "7", `UPDATE recipient SET e164 = NULL WHERE _id = 7`},
-		{"phone only", "8", `INSERT INTO recipient (_id, e164) VALUES (8, '+15555550104')`},
+		{"PNI only", `UPDATE recipient SET e164 = NULL WHERE _id = 7`, "signal:pni:0f0f0f0f-0000-4000-8000-000000000005"},
+		{"phone only", `UPDATE recipient SET pni = NULL WHERE _id = 7`, "signal:tel:+15555550104"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -42,8 +42,8 @@ func TestImportDirectAuthorWithoutACI(t *testing.T) {
 			signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
 			changeFixture(t, dir, tc.change,
 				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
-				 VALUES (599, 1700000390000, 1700000390001, 14, `+tc.author+`, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`,
-				`UPDATE message SET quote_id = 1700000390000, quote_author = `+tc.author+` WHERE _id = 600`)
+				 VALUES (599, 1700000390000, 1700000390001, 14, 7, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`,
+				`UPDATE message SET quote_id = 1700000390000, quote_author = 7 WHERE _id = 600`)
 			st, attachments := testutil.NewTestStore(t), t.TempDir()
 			summary := runImport(t, st, dir, attachments)
 			assert.Zero(summary.MessagesSkipped)
@@ -51,15 +51,15 @@ func TestImportDirectAuthorWithoutACI(t *testing.T) {
 			assert.Equal(int64(1), summary.RepliesLinked)
 			before := importedMessages(t, st)
 			assert.Equal(map[string]importedMessage{
-				"signal:pni:0f0f0f0f-0000-4000-8000-000000000005:peer:1700000390000": {
-					conversation: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005", body: "hello owner",
+				tc.chatID + ":peer:1700000390000": {
+					conversation: tc.chatID, body: "hello owner",
 				},
-				"signal:pni:0f0f0f0f-0000-4000-8000-000000000005:self:1700000400000": {
-					conversation: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005", body: "hello Dana", fromMe: true,
-					replyTo: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005:peer:1700000390000",
+				tc.chatID + ":self:1700000400000": {
+					conversation: tc.chatID, body: "hello Dana", fromMe: true,
+					replyTo: tc.chatID + ":peer:1700000390000",
 				},
 			}, before)
-			changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id IN (7, `+tc.author+`)`)
+			changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
 			summary = runImport(t, st, dir, attachments)
 			assert.Zero(summary.MessagesAdded)
 			assert.Equal(int64(2), summary.MessagesUpdated)

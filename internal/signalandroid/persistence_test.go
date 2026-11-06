@@ -48,6 +48,8 @@ func TestRerunCountsUnchanged(t *testing.T) {
 }
 
 func TestMigratedIncomingOnly(t *testing.T) {
+	// V185 copied the incoming author into both address columns. Counting
+	// those rows as owner evidence would reject this backup's own number.
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.V185, 0)

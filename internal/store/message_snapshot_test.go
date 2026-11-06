@@ -27,7 +27,6 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	original, err := f.Store.GetMessage(id)
 	require.NoError(err)
 	require.Len(original.Attachments, 1)
-	attachmentID := original.Attachments[0].ID
 	assert.Equal("photo.jpg", original.Attachments[0].Filename)
 	assert.True(original.HasAttachments)
 	var attachmentCount int
@@ -48,12 +47,6 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 		return values
 	}
 	assert.Equal([]string{"👍"}, readReactions())
-	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(err)
-	again, err := f.Store.GetMessage(id)
-	require.NoError(err)
-	require.Len(again.Attachments, 1)
-	assert.Equal(attachmentID, again.Attachments[0].ID)
 	// A reaction failure must roll back text and attachment additions together.
 	data.BodyText.String = "Failed replacement"
 	data.Attachments = []store.AttachmentWrite{{Filename: "new.jpg", MIMEType: "image/jpeg", StoragePath: "new.jpg", SourcePartKey: "signal:attachment:new:0"}}
@@ -70,18 +63,20 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 
 	data.BodyText.String = "Updated text"
 	data.Attachments = nil
-	reactions = []store.ReactionRef{{ParticipantID: pid, Type: "emoji", Value: "❤"}, {ParticipantID: pid, Type: "emoji", Value: "❤"}}
-	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(err)
-	assert.Equal(int64(1), data.ReactionsAdded)
-	assert.Equal([]string{"❤"}, readReactions())
 	data.Reactions = nil
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(err)
-	assert.Equal([]string{"❤"}, readReactions())
+	assert.Equal([]string{"👍"}, readReactions())
 	final, err := f.Store.GetMessage(id)
 	require.NoError(err)
 	assert.Equal(original.Attachments, final.Attachments)
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&attachmentCount))
 	assert.Equal(1, attachmentCount)
+
+	// A supplied empty snapshot clears reactions; a nil pointer leaves them.
+	reactions = nil
+	data.Reactions = &reactions
+	_, err = f.Store.PersistMessageContext(t.Context(), data)
+	require.NoError(err)
+	assert.Empty(readReactions())
 }

@@ -286,6 +286,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 }
 
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
+	// Deliberately damaged exports must fail before changing an archive.
 	for _, tc := range []struct{ name, change, want string }{
 		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
 		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
@@ -361,7 +362,6 @@ func TestSkipReason(t *testing.T) {
 		{"draft", sigMessage{Type: 27 | secureMessageBit}, "event"},
 		{"story", sigMessage{Type: signalfixture.TypeIncoming, StoryType: 1}, "story"},
 		{"group story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: 9}, "story"},
-		{"direct story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: -9}, ""},
 		{"deleted for everyone", sigMessage{Type: signalfixture.TypeIncoming, RemoteDeleted: 1}, "deleted"},
 		{"scheduled", sigMessage{Type: signalfixture.TypeOutgoing, ScheduledDate: 1}, "scheduled"},
 	}

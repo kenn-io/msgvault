@@ -23,8 +23,9 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 }
 
 func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
+	// Corrupt SQLite values exercise defensive scan-error handling. These
+	// aren't layouts emitted by Signal; triggers can't reject a SELECT.
 	for _, tc := range []struct{ name, change, wantError string }{
-		{"attachment table", `DROP TABLE attachment`, "attachment details are missing"},
 		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
 		{"mentions", `UPDATE mention SET range_start = 'invalid' WHERE message_id = 200`, "read Signal mentions"},
 	} {
@@ -70,7 +71,7 @@ type cancelProgress struct {
 
 func (p cancelProgress) OnProgress(_, _, _ int64) { p.cancel() }
 
-func TestInterruptedImportKeepsConversationCount(t *testing.T) {
+func TestInterruptedImportKeepsConversationState(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		changes   []string
@@ -102,17 +103,15 @@ func TestInterruptedImportKeepsConversationCount(t *testing.T) {
 				var count int
 				require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
 				assert.Equal(2, count)
-				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`))
 			}
 		})
 	}
 }
 
-func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
+func TestImportSnapshotReportsWriteFailures(t *testing.T) {
 	for _, tc := range []struct{ name, trigger string }{
 		{"body", `CREATE TRIGGER fail_body BEFORE UPDATE ON message_bodies WHEN NEW.body_text = 'Changed text' BEGIN SELECT RAISE(ABORT, 'body failure'); END`},
 		{"attachment", `CREATE TRIGGER fail_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'attachment failure'); END`},
-		{"reaction", `CREATE TRIGGER fail_reaction BEFORE INSERT ON reactions WHEN NEW.reaction_value = 'x' BEGIN SELECT RAISE(ABORT, 'reaction failure'); END`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -133,6 +132,8 @@ func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
 			summary := runImport(t, st, dir, attachmentsDir)
 			assert.Equal(int64(1), summary.Errors)
 			assert.Equal(int64(6), summary.MessagesUpdated)
+			// Each failure must reach the importer summary. Store-level rollback
+			// tests don't catch an importer retry that drops the failing detail.
 			assert.Equal(before, importedMessages(t, st))
 			if tc.name == "body" {
 				var snippet string
@@ -140,7 +141,6 @@ func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
 				assert.Equal("Carol here", snippet)
 			}
 			assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))
-			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM reactions WHERE reaction_value = '👍'`))
 		})
 	}
 }

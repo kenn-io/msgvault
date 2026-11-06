@@ -241,6 +241,8 @@ func TestProducerVersionSidecar(t *testing.T) {
 	}{
 		{"supported", "VERSION:uint32:330\n", false},
 		{"future", "VERSION:uint32:331\n", true},
+		// A current schema with an old sidecar reaches the version floor;
+		// the old sms/mms schema is rejected before that check.
 		{"old", "VERSION:uint32:184\n", true},
 		{"malformed", "VERSION:uint32:garbage\n", true},
 		{"missing", "", true},
@@ -262,6 +264,9 @@ func TestProducerVersionSidecar(t *testing.T) {
 				require.ErrorIs(err, ErrUnsupportedDatabase)
 				if tc.name == "future" {
 					assert.Contains(err.Error(), "331")
+				}
+				if tc.name == "old" {
+					assert.Contains(err.Error(), "database version 184 predates Signal Android database version 185")
 				}
 				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 			} else {

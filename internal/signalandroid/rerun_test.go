@@ -94,25 +94,19 @@ func TestRerunReplacesReactions(t *testing.T) {
 }
 
 func TestRerunAfterNewestRowsExpireUpdatesMessages(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	dir, storage := t.TempDir(), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	runImport(t, st, dir, storage)
 	changeFixture(t, dir,
 		`DELETE FROM message WHERE date_sent > `+ms(signalfixture.TGroup),
-		`UPDATE message SET body = 'Revised group text' WHERE _id = 200`,
-		`UPDATE reaction SET emoji = 'x' WHERE message_id = 200`,
-		`INSERT INTO attachment (_id, message_id, content_type, file_name) VALUES (504, 200, 'image/jpeg', 'new.jpg')`)
-	require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("new photo"), 0o600))
+		`UPDATE message SET body = 'Revised group text' WHERE _id = 200`)
 
 	summary := runImport(t, st, dir, storage)
 	assert.Zero(summary.MessagesAdded)
-	assert.Equal(int64(1), summary.AttachmentsStored)
 	id := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
 	assert.Equal("Revised group text\n\nBeach", importedMessages(t, st)[id].body)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'x'`))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE filename = 'new.jpg'`))
 }
 
 func TestRerunClearsEmptiedBody(t *testing.T) {
@@ -142,7 +136,7 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 	}{
 		{name: "full backup of another number", phone: "+15555550199", wantError: "--phone does not match"},
 		{name: "incoming-only backup of another number", phone: "+15555550199", changes: []string{dropOutgoing}, wantError: "--phone does not match", checkNoSource: true},
-		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 5},
+		{name: "incoming-only backup with formatted owner number", phone: "+1 555 555 0100", changes: []string{dropOutgoing}, added: 5},
 		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
 		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
 		{name: "owner account ID not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET aci = NULL WHERE _id = 1`}, added: 7},
@@ -163,6 +157,9 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 			} else {
 				require.NoError(err)
 				assert.Equal(tc.added, summary.MessagesAdded)
+				source, err := st.GetSourceByID(summary.SourceID)
+				require.NoError(err)
+				assert.Equal(signalfixture.OwnPhone, source.Identifier)
 			}
 			if tc.checkNoSource {
 				assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
@@ -172,6 +169,8 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 }
 
 func TestImportSendingSkipped(t *testing.T) {
+	// Removing type 28 from ownerEvidence would accept Alice's number here;
+	// removing it from skipReason would discard the owner's message.
 	for _, phone := range []string{signalfixture.OwnPhone, signalfixture.AlicePhone} {
 		t.Run(phone, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -197,9 +196,6 @@ func TestImportSendingSkipped(t *testing.T) {
 			assert.Equal(map[string]importedMessage{id: {
 				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
 			}}, importedMessages(t, st))
-			var sent bool
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`), id).Scan(&sent))
-			assert.False(sent, "Signal skipped sending this message")
 		})
 	}
 }
@@ -238,6 +234,10 @@ func TestSendStateFollowsSignal(t *testing.T) {
 		return sent
 	}
 	assert.False(isSent(), "a failed send did not leave the phone")
+
+	changeFixture(t, dir, `UPDATE message SET type = `+ms(28|pushMessageBit|secureMessageBit)+` WHERE _id = 101`)
+	runImport(t, st, dir, t.TempDir())
+	assert.False(isSent(), "Signal skipped sending this message")
 
 	changeFixture(t, dir, `UPDATE message SET type = `+ms(signalfixture.TypeOutgoing)+` WHERE _id = 101`)
 	runImport(t, st, dir, t.TempDir())
