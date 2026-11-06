@@ -161,23 +161,34 @@ func TestFetchableURLHostRestriction(t *testing.T) {
 type recordingTransport struct {
 	err      error
 	requests []string
-	body     string
+	// authHeaders records the Authorization header of each request, in the
+	// same order as requests, so tests can prove the token's exact reach.
+	authHeaders []string
+	body        string
 	// bodyByPath overrides body per URL path (distinct content hashes:
 	// the store dedupes same-hash rows per message).
 	bodyByPath map[string]string
 	redirect   string // when set, answer 302 to this location
-	status     int
+	// redirectOnce clears redirect after answering it, so a followed
+	// redirect reaches the body instead of looping.
+	redirectOnce bool
+	status       int
 }
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rt.requests = append(rt.requests, req.URL.String())
+	rt.authHeaders = append(rt.authHeaders, req.Header.Get("Authorization"))
 	if rt.err != nil {
 		return nil, rt.err
 	}
 	if rt.redirect != "" {
+		location := rt.redirect
+		if rt.redirectOnce {
+			rt.redirect = ""
+		}
 		return &http.Response{
 			StatusCode: http.StatusFound,
-			Header:     http.Header{"Location": {rt.redirect}},
+			Header:     http.Header{"Location": {location}},
 			Body:       io.NopCloser(strings.NewReader("")),
 			Request:    req,
 		}, nil
@@ -198,7 +209,7 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	}, nil
 }
 
-func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
+func TestDownloadFileRefusesOffHostAndStripsTokenOnRedirect(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -211,19 +222,54 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 	require.ErrorIs(err, errOffHost)
 	assert.Empty(rt.requests, "the token must never travel to an off-host URL")
 
-	// On-host succeeds.
+	// On-host succeeds and carries the token.
 	data, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
 	require.NoError(err)
 	assert.Equal("bytes", string(data))
 	require.Len(rt.requests, 1)
+	assert.Equal("Bearer xoxp-test", rt.authHeaders[0])
 
-	// A redirect — even one a compromised response injects — is refused.
-	for i, host := range []string{"attacker.example", "files.slack.com"} {
-		rt.redirect = "https://" + host + "/redirect"
-		_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
-		require.ErrorContains(err, "slack file GET: refusing redirect to "+host)
-		assert.Len(rt.requests, i+2, "the redirect target must not be followed")
+	// Slack redirects file downloads to a signed URL on a delivery host. The
+	// hop is followed so the bytes arrive, but without the token: the signed
+	// target authenticates itself, and an off-host Authorization header would
+	// hand the token to whoever controls that host.
+	for _, host := range []string{"slack-files.com", "attacker.example"} {
+		rt.requests, rt.authHeaders = nil, nil
+		rt.redirect = "https://" + host + "/files-pri-safe/a.png?c=signed"
+		rt.redirectOnce = true
+
+		data, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
+		require.NoError(err)
+		assert.Equal("bytes", string(data), "the redirect target must serve the file")
+		require.Len(rt.requests, 2, "the redirect must be followed")
+		assert.Equal("Bearer xoxp-test", rt.authHeaders[0])
+		assert.Empty(rt.authHeaders[1],
+			"the token must not travel to %s", host)
 	}
+
+	// A same-host redirect keeps the token: it never leaves files.slack.com.
+	rt.requests, rt.authHeaders = nil, nil
+	rt.redirect = "https://files.slack.com/files-pri/T01-F03/moved.png"
+	rt.redirectOnce = true
+	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F03/c.png", 100)
+	require.NoError(err)
+	require.Len(rt.authHeaders, 2)
+	assert.Equal("Bearer xoxp-test", rt.authHeaders[1])
+}
+
+func TestDownloadFileStopsRedirectLoop(t *testing.T) {
+	t.Parallel()
+	rt := &recordingTransport{body: "bytes"}
+	// redirectOnce stays false, so the transport answers every request with
+	// another redirect.
+	rt.redirect = "https://slack-files.com/loop"
+	c := NewClient("", "xoxp-test")
+	c.mediaTransport = rt
+
+	_, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
+	require.ErrorContains(t, err, "stopped after")
+	assert.LessOrEqual(t, len(rt.requests), maxMediaRedirects+1,
+		"a redirect loop must not fetch without bound")
 }
 
 func TestDownloadFileSizeCap(t *testing.T) {
