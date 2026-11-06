@@ -6,6 +6,7 @@
   --control-h: 28px;
   --field-h: 32px;
   --control-h-lg: var(--field-h);
+  --nav-item-h: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
