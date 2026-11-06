@@ -50,17 +50,21 @@ func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 		require.NoError(err)
 		second, _, err := st.CreatePersonFromParticipant(secondID)
 		require.NoError(err)
-		var event, note int64
-		event, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawFormat: "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"}}`)})
+		calendarSource := meetingCountCalendarSource(t, st, "calendar@example.test")
+		noteSource, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
 		require.NoError(err)
-		note, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"}, RawFormat: "plaud_json", RawMIME: []byte(`{}`)})
+		raw := `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"}}`
+		var event, note int64
+		event, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendarSource, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawFormat: "gcal_json", RawMIME: []byte(raw), Metadata: meetingCountCalendarMetadata(t, "calendar@example.test", raw)})
+		require.NoError(err)
+		note, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: noteSource.ID, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"}, RawFormat: "plaud_json", RawMIME: []byte(`{}`)})
 		require.NoError(err)
 		_, err = buildCache(path, cache, true)
 		require.NoError(err)
 		require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
 		_, err = st.DB().Exec(`DELETE FROM message_labels WHERE message_id = (SELECT min(message_id) FROM message_labels)`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, sent_at) SELECT source_id, 'new-mail', conversation_id, 'email', sent_at FROM messages LIMIT 1`)
+		_, err = st.DB().Exec(`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, sent_at) SELECT source_id, 'new-mail', conversation_id, 'email', sent_at FROM messages WHERE id = ?`, messageID)
 		require.NoError(err)
 		assert.True(cacheNeedsBuild(path, cache).HasRelatedRowDrift)
 		previous := executeBuildCacheSubprocessMode

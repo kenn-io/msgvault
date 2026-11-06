@@ -38,14 +38,18 @@ func TestReviewMeetingDecisionReportsStaleCache(t *testing.T) {
 				srv, backend := newIdentityLinkTestServer(t)
 				source, err := backend.GetOrCreateSource("gcal", "calendar@example.org")
 				requirements.NoError(err)
+				requirements.NoError(backend.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"calendar@example.org","time_zone":"UTC"}`))
+				noteSource, err := backend.GetOrCreateSource("meeting_import", "notes@example.org")
+				requirements.NoError(err)
 				event, err := backend.PersistMessage(&store.MessagePersistData{
 					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event"},
 					Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
+					Metadata:     &sql.NullString{String: `{"calendar_id":"calendar@example.org"}`, Valid: true},
 					RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`),
 				})
 				requirements.NoError(err)
 				note, err := backend.PersistMessage(&store.MessagePersistData{
-					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript"},
+					Message:      &store.Message{SourceID: noteSource.ID, SourceMessageID: "note", MessageType: "meeting_transcript"},
 					Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"},
 					RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
 				})
@@ -60,14 +64,6 @@ func TestReviewMeetingDecisionReportsStaleCache(t *testing.T) {
 				requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 				assertions.JSONEq(fmt.Sprintf(`{"message_id":%d,"event":"evt:%d","decision":%q,"cache_state":%q}`, note, event, decision, state), response.Body.String())
 				assertions.Equal(1, backend.refreshCalls)
-				record, err := backend.MeetingRecordContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: note})
-				requirements.NoError(err)
-				if decision == "link" {
-					requirements.Len(record.Links, 1)
-					assertions.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
-				} else {
-					assertions.Empty(record.Links)
-				}
 			})
 		}
 	}

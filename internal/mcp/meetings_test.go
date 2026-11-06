@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -69,13 +69,13 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results, st
+	return client, results
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported, _ := newMeetingMCPBackend(t)
+	backend, imported := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 

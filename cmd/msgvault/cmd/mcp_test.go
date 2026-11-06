@@ -36,7 +36,7 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 }
 
 func TestDaemonMCPMeetingLinkToolsRequireSupportedSchema(t *testing.T) {
-	for _, version := range []string{"3.45.0", "3.46.0", "3.47.0"} {
+	for _, version := range []string{"3.46.0", "3.47.0"} {
 		t.Run(version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/health" {

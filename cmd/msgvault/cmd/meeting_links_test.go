@@ -170,9 +170,9 @@ func TestIndependentCLIReportsStaleMeetingCounts(t *testing.T) {
 func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
-	requirements.NoError(err)
-	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
+	sourceID := meetingCountCalendarSource(t, st, "calendar@example.com")
+	raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: sourceID, SourceMessageID: "event", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(raw), Metadata: meetingCountCalendarMetadata(t, "calendar@example.com", raw), RawFormat: "gcal_json"})
 	requirements.NoError(err)
 	noteSource, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
 	requirements.NoError(err)
