@@ -43,7 +43,11 @@ func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)
 		if err := c.waitCommand(ctx); err != nil {
 			return zero, backoff.Permanent(err)
 		}
-		result, err := command()
+		conn := c.conn
+		result, err := runCommandContext(ctx, conn, command)
+		if ctx.Err() != nil {
+			c.invalidateConnLocked(conn)
+		}
 		if err == nil {
 			return result, nil
 		}
