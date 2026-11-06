@@ -14,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/oauth"
 )
 
 // runHybridSearch executes vector or hybrid search through the configured
@@ -96,12 +96,15 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	}
 	if searchJSON {
 		next := ""
-		if resp.HasMore || resp.RankingLimitReached > 0 {
-			next = semanticMoreResultsCommand(cmd, queryStr)
+		if resp.HasMore && resp.RankingLimitReached == 0 {
+			next, err = semanticMoreResultsCommand(cmd, queryStr)
+			if err != nil {
+				return err
+			}
 		}
 		return outputHybridResultsJSON(resp, explain, next)
 	}
-	if resp.HasMore || resp.RankingLimitReached > 0 {
+	if resp.HasMore || resp.RankingLimitReached > 0 || mode == "hybrid" && resp.PoolSaturated {
 		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+semanticMoreResultsMessage(resp)) }()
 	}
 	return outputHybridResultsTable(resp, explain)
@@ -229,8 +232,12 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, n
 	if resp.Accelerator != "" {
 		output["accelerator"] = resp.Accelerator
 	}
-	if next != "" {
-		output["hints"] = []map[string]string{{"code": "more_available", "message": semanticMoreResultsMessage(resp), "next": next}}
+	if resp.HasMore || resp.RankingLimitReached > 0 || resp.Mode == "hybrid" && resp.PoolSaturated {
+		hint := map[string]string{"code": "more_available", "message": semanticMoreResultsMessage(resp)}
+		if next != "" {
+			hint["next"] = next
+		}
+		output["hints"] = []map[string]string{hint}
 	}
 	return printJSON(output)
 }
@@ -257,7 +264,7 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 	})
 }
 
-func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) string {
+func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) (string, error) {
 	args := []string{"msgvault", "search"}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		if flag.Name != "limit" {
@@ -265,10 +272,24 @@ func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) string {
 		}
 	})
 	args = append(args, "--limit", strconv.Itoa(searchLimit*2), "--", queryStr)
-	return oauth.FormatShellCommand(args, runtime.GOOS == "windows")
+	commands, err := agenthook.BuildCommand(args[0], args[1:]...)
+	if err != nil {
+		return "", fmt.Errorf("build search retry: %w", err)
+	}
+	if runtime.GOOS == "windows" {
+		return commands.PowerShell, nil
+	}
+	return commands.POSIX, nil
 }
 
 func semanticMoreResultsMessage(resp *daemonclient.CLIHybridSearch) string {
+	if resp.Mode == "hybrid" && resp.PoolSaturated {
+		capSetting := ""
+		if resp.RankingLimitReached > 0 {
+			capSetting = fmt.Sprintf("vector.search.max_page_size_hybrid above %d and ", resp.RankingLimitReached)
+		}
+		return "hybrid candidate pool may omit matches; raise " + capSetting + "vector.search.k_per_signal on the server and restart it, then raise --limit, or narrow the query"
+	}
 	if resp.RankingLimitReached > 0 {
 		return fmt.Sprintf("more messages match; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached)
 	}

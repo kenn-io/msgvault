@@ -291,8 +291,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 				assert.NotContains(stderr, "Hint:")
 			}
 			var page struct {
-				Results []json.RawMessage                      `json:"results"`
-				Hints   []struct{ Code, Message, Next string } `json:"hints"`
+				Results []json.RawMessage   `json:"results"`
+				Hints   []map[string]string `json:"hints"`
 			}
 			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--json"), &page)
 			require.Len(page.Results, 50)
@@ -301,21 +301,65 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 				continue
 			}
 			require.Len(page.Hints, 1)
-			assert.Contains(page.Hints[0].Message, "vector.search.max_page_size_hybrid")
-			// Follow the prerequisite before executing the advertised larger-limit retry.
+			assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid")
+			assert.NotContains(page.Hints[0], "next")
+			// Apply the server prerequisite before retrying with a larger limit.
 			raised := vectorCfg
 			raised.Search.MaxPageSizeHybrid = new(100)
 			server.SetVectorFeatures(engine, nil, backend, raised)
-			retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Executes the emitted retry against the isolated fixture.
-			retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
-			var retryOut, retryErr bytes.Buffer
-			retry.Stdout, retry.Stderr = &retryOut, &retryErr
-			require.NoError(retry.Run(), retryErr.String())
 			page.Hints = nil
-			decode(retryOut.String(), &page)
+			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--limit", "100", "--json"), &page)
 			assert.Len(page.Results, 51)
 			assert.Empty(page.Hints)
 			server.SetVectorFeatures(engine, nil, backend, vectorCfg)
 		}
 	}
+	// Hybrid fusion can exhaust its candidate pool before the requested page fills.
+	for i := range 312 {
+		id := storetest.NewMessage(source.ID, conv).WithSubject("poolfixture").WithSourceMessageID(fmt.Sprintf("pool-%d", i)).Create(t, st)
+		require.NoError(st.UpsertFTS(id, "poolfixture", "", "sender@example.com", "", ""))
+		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
+	}
+	raised := vectorCfg
+	raised.Search.MaxPageSizeHybrid = new(100)
+	server.SetVectorFeatures(engine, nil, backend, raised)
+	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
+	assert.Contains(stderr, "vector.search.k_per_signal")
+	var poolPage struct {
+		Results       []json.RawMessage   `json:"results"`
+		PoolSaturated bool                `json:"pool_saturated"`
+		Hints         []map[string]string `json:"hints"`
+	}
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
+	require.Len(poolPage.Results, 100)
+	assert.True(poolPage.PoolSaturated)
+	require.Len(poolPage.Hints, 1)
+	assert.Contains(poolPage.Hints[0]["message"], "vector.search.k_per_signal")
+	assert.NotContains(poolPage.Hints[0], "next")
+	expanded := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 500, SubjectBoost: 1})
+	server.SetVectorFeatures(expanded, nil, backend, raised)
+	poolPage.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
+	assert.Len(poolPage.Results, 100)
+	assert.False(poolPage.PoolSaturated)
+	require.Len(poolPage.Hints, 1)
+	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
+	assert.NotContains(poolPage.Hints[0], "next")
+	raised.Search.MaxPageSizeHybrid = new(500)
+	server.SetVectorFeatures(expanded, nil, backend, raised)
+	poolPage.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
+	assert.Len(poolPage.Results, 200)
+	require.Len(poolPage.Hints, 1)
+	require.NotEmpty(poolPage.Hints[0]["next"])
+	retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(poolPage.Hints[0]["next"], "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Executes the emitted retry against the isolated fixture.
+	retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+	var retryOut, retryErr bytes.Buffer
+	retry.Stdout, retry.Stderr = &retryOut, &retryErr
+	require.NoError(retry.Run(), retryErr.String())
+	poolPage.Hints = nil
+	decode(retryOut.String(), &poolPage)
+	assert.Len(poolPage.Results, 312)
+	assert.False(poolPage.PoolSaturated)
+	assert.Empty(poolPage.Hints)
 }

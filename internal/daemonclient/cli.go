@@ -206,6 +206,7 @@ type CLIHybridSearchRequest struct {
 }
 
 type CLIHybridSearch struct {
+	Mode                string
 	Results             []CLIHybridSearchResult
 	Generation          CLIHybridGeneration
 	TookMS              int64

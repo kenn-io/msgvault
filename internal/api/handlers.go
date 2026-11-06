@@ -400,7 +400,7 @@ type hybridSearchResponse struct {
 	PoolSaturated       bool                    `json:"pool_saturated"`
 	Accelerator         string                  `json:"accelerator,omitempty"`
 	HasMore             bool                    `json:"has_more"`
-	RankingLimitReached int                     `json:"ranking_limit_reached,omitempty"`
+	RankingLimitReached int                     `json:"ranking_limit_reached,omitzero"`
 	Generation          hybridGenerationSummary `json:"generation"`
 	TookMS              int64                   `json:"took_ms"`
 	Timings             hybridSearchTimings     `json:"timings"`

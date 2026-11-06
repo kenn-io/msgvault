@@ -7942,6 +7942,32 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	assert.Contains(timings, "query_embedding_ms")
 	assert.Contains(timings, "retrieval_ms")
 	assert.Contains(timings, "hydration_ms")
+
+	store.messages = []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}
+	srv.SetVectorFeatures(engine, nil, backend, vector.Config{
+		Search: vector.SearchConfig{MaxPageSizeHybrid: new(2)},
+	})
+	for _, count := range []int{2, 3} {
+		backend.searchHits = []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}
+		backend.searchHits = backend.searchHits[:count]
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var page hybridSearchResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+		assert.False(page.HasMore, "offset 2 would be rejected at the configured cap")
+		require.Len(page.Results, 1)
+		assert.Equal(int64(2), page.Results[0].ID)
+		assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
+		if count == 3 {
+			assert.Equal(2, page.RankingLimitReached)
+		} else {
+			var fields map[string]json.RawMessage
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
+			assert.NotContains(fields, "ranking_limit_reached")
+		}
+	}
 }
 
 // mapKeys returns the keys of a map[string]interface{} for use in

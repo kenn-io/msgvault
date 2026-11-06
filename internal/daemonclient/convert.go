@@ -262,6 +262,7 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 		results[i] = result
 	}
 	return &CLIHybridSearch{
+		Mode:    resp.Mode,
 		Results: results,
 		Generation: CLIHybridGeneration{
 			ID:          resp.Generation.ID,
