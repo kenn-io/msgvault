@@ -102,6 +102,9 @@ func (o Observation) Validate() error {
 	if err := o.Evidence.Validate(); err != nil {
 		return err
 	}
+	if o.NativeCallID != "" && o.RecordID != o.NativeCallID {
+		return invalid("record_id must equal native_call_id")
+	}
 	if !validID(o.RecordID) || len(o.Participants) > 100 ||
 		len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes || !o.Raw.IsValid() {
 		return invalid("record_id, participants or raw")

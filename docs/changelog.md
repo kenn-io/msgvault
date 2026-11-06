@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Call imports require `record_id` to equal `native_call_id` when supplied,
+  so reimporting the same call replaces its evidence and counts it once.
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and

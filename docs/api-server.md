@@ -159,6 +159,8 @@ recurrence limits, notification behavior, and reconciliation instructions.
 
 Call history is owner-only. Delegated agent grants do not authorize these routes.
 Imports use the daemon mutation gate and return stable message/source IDs.
+When `native_call_id` is set, `record_id` must equal it. Reimporting the same
+record for the same provider and account replaces its evidence.
 
 | Route | Contract |
 | --- | --- |
