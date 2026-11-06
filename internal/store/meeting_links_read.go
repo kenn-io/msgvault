@@ -25,6 +25,17 @@ type MeetingRecord struct {
 	MessageIDs []int64       `json:"message_ids"`
 }
 
+type meetingReadResult[T any] struct {
+	value T
+	err   error
+}
+
+type meetingExpansionKey struct {
+	messageID   int64
+	uid, status string
+	from, to    time.Time
+}
+
 // MeetingRecordContext reads a record from either a note or an event reference.
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
@@ -34,6 +45,9 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	}
 	defer release()
 	r := s.meetingReader()
+	// Reuse work only within this snapshot; charge each expansion and resolution once.
+	r.expansions = make(map[meetingExpansionKey]meetingReadResult[[]linkOccurrence])
+	r.occurrences = make(map[OccurrenceRef]meetingReadResult[linkOccurrence])
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
 		var found int64

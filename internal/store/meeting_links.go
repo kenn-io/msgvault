@@ -40,7 +40,9 @@ type linkOccurrence struct {
 type reboundReader struct {
 	loggedReader
 
-	dialect Dialect
+	dialect     Dialect
+	expansions  map[meetingExpansionKey]meetingReadResult[[]linkOccurrence]
+	occurrences map[OccurrenceRef]meetingReadResult[linkOccurrence]
 }
 
 func meetingEventRows(ctx context.Context, r reboundReader, predicate string, args []any, budget *int) ([]CalendarEventRow, error) {
@@ -93,7 +95,14 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	return o
 }
 
-func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEventRow, from, to time.Time, budget *int) ([]linkOccurrence, error) {
+func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEventRow, from, to time.Time, budget *int) (out []linkOccurrence, err error) {
+	if r.expansions != nil {
+		key := meetingExpansionKey{master.MessageID, master.ICalUID, master.Event.Status, from.UTC(), to.UTC()}
+		if cached, ok := r.expansions[key]; ok {
+			return slices.Clone(cached.value), cached.err
+		}
+		defer func() { r.expansions[key] = meetingReadResult[[]linkOccurrence]{slices.Clone(out), err} }()
+	}
 	predicate, args := calendarExceptionWindow(r.dialect, from, to)
 	predicate += ` AND m.source_id = ? AND e.series_provider_id = ?`
 	args = append(args, master.SourceID, master.Event.ProviderEventID)
@@ -117,7 +126,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	for _, row := range related {
 		byID[row.MessageID] = row
 	}
-	out := make([]linkOccurrence, 0, len(expanded))
+	out = make([]linkOccurrence, 0, len(expanded))
 	for _, instance := range expanded {
 		effective, instance, err := materializeCalendarOccurrence(ctx, r, master, byID, instance)
 		if err != nil {
@@ -135,7 +144,13 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	return out, expansionErr
 }
 
-func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
+func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (out linkOccurrence, err error) {
+	if r.occurrences != nil {
+		if cached, ok := r.occurrences[ref]; ok {
+			return cached.value, cached.err
+		}
+		defer func(ref OccurrenceRef) { r.occurrences[ref] = meetingReadResult[linkOccurrence]{out, err} }(ref)
+	}
 	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
 		return linkOccurrence{}, err

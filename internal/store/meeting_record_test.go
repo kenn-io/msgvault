@@ -9,6 +9,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"series","iCalUID":"daily@example.org","start":{"dateTime":"2010-01-01T10:00:00Z"},"end":{"dateTime":"2010-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`
+	var event int64
+	for i := range 5 {
+		_, id := calendarFixture(t, st, fmt.Sprintf("calendar-%d", i), raw, fmt.Sprintf("calendar-%d@example.com", i))
+		if i == 0 {
+			event = id
+		}
+	}
+	var notes []int64
+	for i := range 7 {
+		_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"daily@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+		notes = append(notes, note)
+	}
+	for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, {Kind: "msg", MessageID: notes[0]}} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(err, "record %s:%d", ref.Kind, ref.MessageID)
+		assert.Equal(notes, record.MessageIDs)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), record.Links[0].Ref)
+	}
+}
+
 func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
