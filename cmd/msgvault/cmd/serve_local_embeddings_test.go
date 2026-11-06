@@ -314,6 +314,9 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			srv.SetLocalEmbeddings(controller)
 			initialStatus := httptest.NewRecorder()
 			serve(initialStatus, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+			var availability api.LocalEmbeddingsStatus
+			require.NoError(t, json.Unmarshal(initialStatus.Body.Bytes(), &availability))
+			assert.NotEmpty(t, availability.Host, "the daemon supplies the download destination independently of the request host")
 			if useOllama {
 				assert.Contains(t, initialStatus.Body.String(), `"ollama_available":true`)
 			}

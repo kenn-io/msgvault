@@ -10418,6 +10418,22 @@ func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, options 
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 409:
+		out.JSON409 = new(EnableLocalEmbeddingsErrorResponseJSON409)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "EnableLocalEmbeddingsErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
 		out.JSON503 = new(EnableLocalEmbeddingsErrorResponseJSON503)
 		bodyBytes := resp.Content

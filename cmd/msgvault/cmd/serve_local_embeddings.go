@@ -35,6 +35,11 @@ type localEmbeddingsController struct {
 }
 
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		return api.LocalEmbeddingsStatus{}, fmt.Errorf("read local search host: %w", err)
+	}
+
 	dir, err := localEmbeddingsDir()
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, err
@@ -60,7 +65,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 			provider = "configured"
 		}
 	}
-	return api.LocalEmbeddingsStatus{DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
+	return api.LocalEmbeddingsStatus{Host: host, DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
 		OllamaAvailable: status.OllamaAvailable, DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 

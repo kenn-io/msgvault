@@ -748,7 +748,7 @@
 
   {#if localSearchOff && localSetup}
     <div class="local-search-hint">
-      <SearchByMeaningHint labels={localSearchHintLabels(localSetup, window.location.hostname)} onturnon={() => void turnOnSearchByMeaning()} />
+      <SearchByMeaningHint labels={localSearchHintLabels(localSetup)} onturnon={() => void turnOnSearchByMeaning()} />
       {#if localSetupError}<p role="alert">{localSetupError}{(/[.!?]$/.test(localSetupError)) ? '' : '.'}</p>{/if}
     </div>
   {/if}

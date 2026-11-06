@@ -642,7 +642,7 @@
             <p class="state" role="status">Loading…</p>
           {:else}
             <SettingsOverview
-              localSearch={localStatus && localStatus.provider !== 'configured' ? localSearchState(localStatus, embeddingStatus, window.location.hostname) : undefined}
+              localSearch={localStatus && localStatus.provider !== 'configured' ? localSearchState(localStatus, embeddingStatus) : undefined}
               localLabels={localStatus ? localSearchLabels(localStatus, embeddingStatus) : undefined}
               {localError} onLocalSearch={(builtin) => void turnOnLocalSearch(builtin)}
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />

@@ -10,6 +10,7 @@ export interface LocalEmbeddingsStatus {
   download_bytes: number;
   enabled: boolean;
   error?: string;
+  host: string;
   ollama_available: boolean;
   phase: LocalEmbeddingsStatusPhase;
   provider: string;

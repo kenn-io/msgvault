@@ -18,6 +18,7 @@ type LocalEmbeddingsController interface {
 }
 
 type LocalEmbeddingsStatus struct {
+	Host            string `json:"host"`
 	DocumentRebuild bool   `json:"document_rebuild,omitempty"`
 	Enabled         bool   `json:"enabled"`
 	Provider        string `json:"provider"`

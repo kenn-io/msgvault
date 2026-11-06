@@ -5,7 +5,7 @@ import type { LocalEmbeddingsStatus } from '../api/generated/models';
 import { embeddingStatus } from '../../test/operations';
 import { localSearchHintLabels, localSearchLabels, localSearchState } from './local-embeddings';
 
-const off: LocalEmbeddingsStatus = { enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', done_bytes: 0, total_bytes: 0, download_bytes: 290000000 };
+const off: LocalEmbeddingsStatus = { host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', done_bytes: 0, total_bytes: 0, download_bytes: 290000000 };
 const row = { id: 'message_embedding', name: 'Message search', chip: { text: 'Off', tone: 'muted' as const } };
 
 describe('local search row', () => {
@@ -23,7 +23,7 @@ describe('local search row', () => {
     ['indexing', { ...off, phase: 'indexing' }, 'Turning on', undefined],
     ['retry', { ...off, error: 'Download interrupted' }, 'Off', 'Turn on'],
   ] as const)('%s', (_name, status, chip, action) => {
-    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: 'On' } }], localSearch: localSearchState(status, embeddingStatus, 'archive.example.test'), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: 'On' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
@@ -48,6 +48,13 @@ for (const kind of ['on', 'ollama'] as const) {
 }
 
 it('discloses the download size and remote host before hint activation', () => {
- expect(localSearchHintLabels(off,'archive.example.test').hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
- expect(localSearchHintLabels({...off,ollama_available:true},'archive.example.test').hint).toBe('Search by meaning is off · Uses Ollama on this computer');
+ expect(localSearchHintLabels(off).hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
+ expect(localSearchHintLabels({...off,ollama_available:true}).hint).toBe('Search by meaning is off · Uses Ollama on this computer');
+});
+
+it.each(['running', 'idle'] as const)('estimates the whole replacement index from observed throughput when %s', (jobState) => {
+  const status = { ...off, enabled: true, provider: 'ollama', compatible: false };
+  const embedding = { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: jobState === 'running' ? 0.025 : null, job: { ...embeddingStatus.job, state: jobState } };
+  render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+  expect(screen.getByText('Switching rebuilds the index for 48,000 messages, about 20 minutes.')).toBeDefined();
 });

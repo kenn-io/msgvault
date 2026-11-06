@@ -2799,7 +2799,7 @@ it('turns on semantic search from an empty full-text result and opens Settings o
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') posts.push(await request.json());
       else availabilityRequests += 1;
-      return Response.json({ enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
     return Response.json(exploreResponse());
   };
@@ -2810,7 +2810,7 @@ it('turns on semantic search from an empty full-text result and opens Settings o
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
-  expect(screen.getByText(/Downloads 290 MB once to this computer/)).toBeDefined();
+  expect(screen.getByText(/Downloads 290 MB once to archive\.example\.test/)).toBeDefined();
   state.replaceSearchDraft('pear', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);

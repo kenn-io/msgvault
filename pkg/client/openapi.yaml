@@ -7580,6 +7580,8 @@ components:
           type: boolean
         error:
           type: string
+        host:
+          type: string
         ollama_available:
           type: boolean
         phase:
@@ -7596,6 +7598,7 @@ components:
           format: int64
           type: integer
       required:
+        - host
         - enabled
         - provider
         - compatible
@@ -22229,6 +22232,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
           content:
             application/json:
               schema:

@@ -7350,6 +7350,7 @@ type LocalEmbeddingsStatus struct {
 	DownloadBytes   int64                      `json:"download_bytes"`
 	Enabled         bool                       `json:"enabled"`
 	ErrorData       *string                    `json:"error,omitzero"`
+	Host            string                     `json:"host" validate:"required"`
 	OllamaAvailable bool                       `json:"ollama_available"`
 	Phase           LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
 	Provider        string                     `json:"provider" validate:"required"`
@@ -7359,6 +7360,9 @@ type LocalEmbeddingsStatus struct {
 
 func (l LocalEmbeddingsStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Host, "required"); err != nil {
+		errors = errors.Append("Host", err)
+	}
 	if v, ok := any(l.Phase).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Phase", err)
