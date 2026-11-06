@@ -2045,3 +2045,24 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 		})
 	}
 }
+
+func TestPlanTextSearchLeavesPausedProviderDisabledWithoutBackend(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector]
+enabled = false
+[vector.embeddings]
+endpoint = "http://localhost:11434/v1"
+model = "custom-model"
+dimension = 4
+`)
+	cfg := fixture.load(t)
+	snapshot, err := config.ReadConfigFile(fixture.path)
+	require.NoError(t, err)
+	lane := planTextSearch(cfg, setupDetection{resumeLocalText: true, backendUnavailable: "archive vector backend unavailable"})
+	assert.Equal(t, planActionPending, lane.Action)
+	assert.Equal(t, "archive vector backend unavailable", lane.Reason)
+	next, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
+	require.NoError(t, err)
+	assert.False(t, next.Vector.Enabled)
+	assert.Equal(t, cfg.Vector.Embeddings, next.Vector.Embeddings)
+}

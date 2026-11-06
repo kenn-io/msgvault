@@ -543,6 +543,10 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true}}
 	switch {
 	case detection.resumeLocalText:
+		if detection.backendUnavailable != "" {
+			lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
+			return lane
+		}
 		lane.Action, lane.Provider, lane.Model = planActionEnable, textEmbeddingProviderName(embeddings), embeddings.Model
 		lane.local = embeddings.LocalOnly
 		lane.edits = append([]config.TableEdit{vectorEdit}, setupScheduleEdits(detection.configKeys, "embed")...)

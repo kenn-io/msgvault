@@ -550,7 +550,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 
 	var (
-		backend         vector.Backend
+		backend         vector.BuildScopeBackend
 		documentBackend vectordocument.Backend
 		vectorsDB       *sql.DB
 		closeFn         func() error
@@ -618,10 +618,12 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 
 	features.configureText = func(ctx context.Context, nextState *invocation, vecCfg vector.Config) (*vectorFeatures, error) {
+		backend := backend.WithBuildScope(vecCfg.Embed.Scope.BuildScope())
 		state := nextState
 		cfg := state.cfg
 		next := *features
 		features := &next
+		features.Backend = backend
 		features.Cfg = vecCfg
 		features.DocumentSearch = nil
 		embeddingAPIKey, err := resolveTextEmbeddingCredential(credentialSnapshot, vecCfg)

@@ -32,18 +32,17 @@ describe('local search row', () => {
   });
 });
 
-for (const kind of ['on', 'ollama'] as const) {
-  it(`keeps rebuild for a stale ${kind} index`, async () => {
-    const calls: string[] = [];
-    render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState({ ...off, enabled: true, provider: kind === 'on' ? 'builtin' : 'ollama', compatible: true, error: 'Build interrupted' }), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
-    expect(screen.getByText('Stale')).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toBe('Build interrupted');
-    await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
-    expect(calls).toEqual(['build']);
-    if (kind === 'ollama') expect(screen.getByRole('button', { name: 'Use built-in instead' })).toBeDefined();
-  });
-}
+it.each([['on', 'builtin'], ['ollama', 'ollama']] as const)('keeps rebuild for a stale %s index', async (kind, provider) => {
+  const calls: string[] = [];
+  const status = { ...off, enabled: true, provider, compatible: true, error: 'Build interrupted' };
+  render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
+  expect(screen.getByText('Stale')).toBeDefined();
+  expect(screen.getByRole('alert').textContent).toBe('Build interrupted');
+  await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  expect(calls).toEqual(['build']);
+  if (kind === 'ollama') expect(screen.getByRole('button', { name: 'Use built-in instead' })).toBeDefined();
+});
 
 it('discloses the download size and remote host before hint activation', () => {
  expect(localSearchHintLabels(off).hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');

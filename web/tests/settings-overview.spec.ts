@@ -96,11 +96,14 @@ test('local search hint follows results and groups its setup error with matching
     const table = document.querySelector('.results-split')!;
     return {
       hintFont: getComputedStyle(hint).fontSize, errorFont: getComputedStyle(error).fontSize,
+      hintLineHeight: getComputedStyle(hint).lineHeight, errorLineHeight: getComputedStyle(error).lineHeight,
       relatedGap: error.getBoundingClientRect().y - hint.getBoundingClientRect().bottom,
       tableGap: element.getBoundingClientRect().y - table.getBoundingClientRect().bottom
     };
   });
   expect(geometry.tableGap).toBeGreaterThanOrEqual(8);
   expect(geometry.hintFont).toBe(geometry.errorFont);
+  expect(geometry.hintLineHeight).toBe('17.4px');
+  expect(geometry.errorLineHeight).toBe('17.4px');
   expect(geometry.relatedGap).toBeLessThanOrEqual(geometry.tableGap / 2);
 });

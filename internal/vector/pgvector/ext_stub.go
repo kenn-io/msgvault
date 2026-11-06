@@ -44,6 +44,9 @@ func Available() bool { return false }
 // Close is a no-op for the stub.
 func (b *Backend) Close() error { return nil }
 
+// WithBuildScope returns the unavailable backend placeholder.
+func (b *Backend) WithBuildScope(vector.BuildScope) vector.Backend { return b }
+
 // DB returns nil for the stub.
 func (b *Backend) DB() *sql.DB { return nil }
 
