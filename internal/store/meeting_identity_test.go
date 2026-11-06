@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
@@ -809,11 +812,21 @@ func TestMeetingIdentityReverseSavedTargetAfterLiveCopyArrives(t *testing.T) {
 			var archived bool
 			requirements.NoError(st.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, note).Scan(&archived))
 			requirements.True(archived)
+			ids := []int64{note}
+			result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+			requirements.NoError(err, "a unique archived note remains readable")
+			var packet meetingcontent.Packet
+			requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+			requirements.Len(packet.Meetings, 1)
+			assertions.Equal(note, packet.Meetings[0].Meeting.MessageID)
 			if mode == "new decision" {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}
 			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
-			ids := []int64{note}
+			links, err := meetingLinksForTest(t, st, note)
+			requirements.NoError(err, "a unique archived note remains readable through meeting links")
+			requirements.Len(links, 1)
+			assertions.Equal(ref, links[0].Ref)
 			for _, transcriptIDs := range [][]int64{ids, nil} {
 				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: transcriptIDs})
 				requirements.NoError(err)
@@ -839,6 +852,8 @@ func TestMeetingIdentityReverseSavedTargetAfterLiveCopyArrives(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Empty(got.ByTranscript)
 				assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+				_, err = meetingLinksForTest(t, st, note)
+				requirements.ErrorIs(err, sql.ErrNoRows)
 			}
 		})
 	}

@@ -1,8 +1,6 @@
 package store
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -10,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 func TestMeetingLinksDedupUndoAndPurge(t *testing.T) {
@@ -164,56 +161,5 @@ func TestMeetingSubsetDecisions(t *testing.T) {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, dst, note)[note])
 		}
 		requirements.NoError(dst.Close())
-	}
-}
-
-func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
-	for _, mode := range []string{"automatic", "saved", "new decision"} {
-		t.Run(mode, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "merge@example.org"))
-			var data *MessagePersistData
-			var note int64
-			if mode == "automatic" {
-				data, note = identityNote(t, st, "unique-note", "merge@example.org")
-			} else {
-				data, note = projectionFixture(t, st, "unique-note", "meeting_json", meetingProjectionRaw)
-			}
-			target := OccurrenceRef{MessageID: event}
-			if mode == "saved" {
-				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			}
-			destination, err := st.GetOrCreateSource("meeting_import", "empty@example.com")
-			requirements.NoError(err)
-			merged, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: destination.ID})
-			requirements.NoError(err)
-			requirements.Equal(int64(1), merged.MessagesMoved)
-			requirements.Zero(merged.DuplicatesHidden)
-			var archived bool
-			requirements.NoError(st.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, note).Scan(&archived))
-			requirements.True(archived)
-			ids := []int64{note}
-			result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
-			requirements.NoError(err, "a unique archived note remains readable")
-			var packet meetingcontent.Packet
-			requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
-			requirements.Len(packet.Meetings, 1)
-			assertions.Equal(note, packet.Meetings[0].Meeting.MessageID)
-			if mode == "new decision" {
-				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			}
-			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
-			links, err := meetingLinksForTest(t, st, note)
-			requirements.NoError(err, "a unique archived note remains readable through meeting links")
-			requirements.Len(links, 1)
-			assertions.Equal(ref, links[0].Ref)
-			if mode == "automatic" {
-				_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
-				requirements.NoError(err)
-				_, err = meetingLinksForTest(t, st, note)
-				requirements.ErrorIs(err, sql.ErrNoRows)
-			}
-		})
 	}
 }
