@@ -108,3 +108,32 @@ func TestMeetingSplitSuppressesConvergedManualLink(t *testing.T) {
 		assert.Empty(record.MessageIDs)
 	})
 }
+
+func TestMeetingRecordIncludesExceptionUIDFromResolvedCopy(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	calendarFixture(t, st, "exception", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	changed := strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", "changed@example.org")
+	calendarFixture(t, st, "master", changed)
+	_, copyID := calendarFixture(t, st, "copy", changed, "copy@example.com")
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	require.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
+	require.NoError(err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
+
+func TestMeetingRecordIncludesFormerCopyGoogleOccurrence(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw, "other@example.com")
+	_, copyID := calendarFixture(t, st, "copy", strings.Replace(linkSeriesRaw, `"id":"series"`, `"id":"copy-series"`, 1))
+	calendarFixture(t, st, "exception", `{"id":"copy-series_20270314T100000Z","recurringEventId":"copy-series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	note := granolaLinkFixture(t, st, "copy-series_20270314T100000Z")
+	require.NoError(st.UpsertMessageRawWithFormat(copyID, []byte(singleLinkRaw("copy-series", "weekly@example.org")), "gcal_json"))
+	require.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", copyID), linkedMeetingRefs(t, st, note)[note])
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"})
+	require.NoError(err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
