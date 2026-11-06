@@ -48,6 +48,8 @@ func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
 		{name: "uppercase first", primary: "ALICE", alias: "Alice", want: "Alice"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			b := NewTestDataBuilder(t)
 			source := b.AddSourceWithType("archive@example.test", "gmail")
 			primary := b.AddParticipant("primary@example.test", "example.test", test.primary)
@@ -61,12 +63,12 @@ func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
 			engine := b.BuildEngine()
 
 			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "alice", Limit: 8})
-			require.NoError(t, err)
-			require.Len(t, response.Rows, 1)
-			assert.Equal(t, primary, response.Rows[0].ParticipantID)
-			assert.Equal(t, PeopleCompletionName, response.Rows[0].Kind)
-			assert.Equal(t, "observed", response.Rows[0].Source)
-			assert.Equal(t, test.want, response.Rows[0].Value)
+			require.NoError(err)
+			require.Len(response.Rows, 1)
+			assert.Equal(primary, response.Rows[0].ParticipantID)
+			assert.Equal(PeopleCompletionName, response.Rows[0].Kind)
+			assert.Equal("observed", response.Rows[0].Source)
+			assert.Equal(test.want, response.Rows[0].Value)
 		})
 	}
 }
