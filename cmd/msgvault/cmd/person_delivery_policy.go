@@ -84,11 +84,22 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			header := "PERSON UID\tENDPOINT\tREVISION\tSTORED POLICY\tEFFECTIVE POLICY\tSOURCE"
 			row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(source))
-			switch state.Reason {
+			reason := state.Reason
+			switch reason {
 			case "draft_required", "explicit_approval", "explicit_person_default":
-			default:
+				reason = ""
+			case "detached_endpoint":
+				reason = "Address no longer saved"
+			case "ambiguous_endpoint":
+				reason = "Address shared by multiple people"
+			case "binding_changed":
+				reason = "Address changed; approve again"
+			case "approval_predates_address":
+				reason = "Address added after approval"
+			}
+			if reason != "" {
 				header += "\tREASON"
-				row += "\t" + textutil.SanitizeTerminal(state.Reason)
+				row += "\t" + textutil.SanitizeTerminal(reason)
 			}
 			_, _ = fmt.Fprintln(writer, header)
 			_, _ = fmt.Fprintln(writer, row)
