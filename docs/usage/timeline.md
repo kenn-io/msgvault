@@ -53,7 +53,7 @@ activity are omitted by default; use `--include-noise` or `--include-cold` to
 include them. `--brief` uses a smaller budget and shorter upcoming window.
 It accepts `--date` and rejects `--days`, `--from`, and `--to`.
 
-Markdown is the default. JSON returns the same timeline envelope with entries,
+Markdown is the default. Rows name their first opener; `--json` lists all of them. JSON returns the same timeline envelope with entries,
 gaps, freshness, omission counts, and `open` targets. The byte budget
 applies to the final UTF-8 encoding, including JSON escaping: 16384 bytes by
 default, 6144 with `--brief`, and 4096 through 65536 with `--budget`.

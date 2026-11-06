@@ -57,11 +57,16 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.timelineState.reader == timelineReaderMessage && m.detailSearchQuery != "" {
 			return m.handleMessageDetailKeys(msg)
 		}
+		wasLoading := m.timelineState.loading
 		m.cancelTimelineRequest()
 		m.loading = false
 		if m.timelineState.reader != timelineReaderNone {
 			m.timelineState.err = nil
 			m.timelineState.reader = timelineReaderNone
+			return m, nil
+		}
+		if wasLoading && m.timelineState.result != nil {
+			m.timelineState.needsLoad = false
 			return m, nil
 		}
 		m.popTimelineHistory()

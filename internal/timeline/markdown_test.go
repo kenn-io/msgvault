@@ -6,7 +6,27 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMarkdownBurstOpenerRespectsScope(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.add(f.now, false)
+	f.project()
+	req := dayRequest()
+	req.Scope.OpenTools = []string{"list_messages"}
+	got, err := Build(t.Context(), f.src, req)
+	require.NoError(err)
+	assert.Contains(Markdown(got), ` → list_messages {"conversation_id":1}`)
+	text, entries := MarkdownWithEntries(got)
+	assert.NotContains(text, " → ")
+	assert.NotEmpty(entries)
+	req.Scope.OpenTools = []string{}
+	got, err = Build(t.Context(), f.src, req)
+	require.NoError(err)
+	assert.NotContains(Markdown(got), " → ")
+}
 
 func TestMarkdownDayGolden(t *testing.T) {
 	v := sampleTimeline(ModeDay)

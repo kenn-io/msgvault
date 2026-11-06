@@ -14,6 +14,7 @@ type TimelineBackend interface {
 }
 
 const timelineConventions = "\n\n## msgvault conventions\n" +
+	"In Markdown, → names the entry's first open target. " +
 	"Follow each open target by calling its tool with its args. Numeric message and conversation IDs above 9007199254740991 require CLI or HTTP reads because MCP numeric arguments are limited to safe integers. String around references preserve larger IDs exactly; use anchor_ref to center another timeline. " +
 	"Short references: #9031 is a message, c412 a conversation, e8812 an event, e8812@20261022T1330Z a timed occurrence, and e8812@20261022 an all-day occurrence. " +
 	"↓ and ↑ count inbound and outbound messages; ✓ marks attendance; T1/T2 show tiers 1 and 2; ×N is the message count; copies counts email copies across accounts. " +

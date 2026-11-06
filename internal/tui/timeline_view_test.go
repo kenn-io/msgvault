@@ -17,7 +17,8 @@ func TestTimelineViewRendersSharedMarkdownRows(t *testing.T) {
 	require := require.New(t)
 	m := timelineModeModel()
 	m.rebuildTimelineRows()
-	want := strings.Split(strings.TrimSuffix(timeline.Markdown(m.timelineState.result), "\n"), "\n")
+	markdown, _ := timeline.MarkdownWithEntries(m.timelineState.result)
+	want := strings.Split(strings.TrimSuffix(markdown, "\n"), "\n")
 	assert.Equal(want, m.timelineState.lines)
 	view := stripANSI(m.renderView())
 	for _, line := range want {

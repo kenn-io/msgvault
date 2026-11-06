@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/timeline"
@@ -142,6 +143,8 @@ func TestTimelineCancelledRefreshEscapeRestoresPreviousPage(t *testing.T) {
 	requirements.NotNil(cmd)
 	late := cmd()
 	m, _ = sendKey(t, m, keyEsc())
+	assertions.Len(m.timelineState.history, 1)
+	m, _ = sendKey(t, m, keyEsc())
 	requirements.Len(backend.contexts, 2)
 	requirements.ErrorIs(backend.contexts[1].Err(), context.Canceled)
 	assertions.Same(previousResult, m.timelineState.result)
@@ -152,6 +155,34 @@ func TestTimelineCancelledRefreshEscapeRestoresPreviousPage(t *testing.T) {
 	assertions.Same(previousResult, m.timelineState.result)
 	assertions.Equal(previous, m.timelineState.request)
 	assertions.Equal(1, m.timelineState.scroll)
+}
+
+func TestTimelineCancelledDayKeepsDisplayedPageAndHistory(t *testing.T) {
+	for _, cancelKey := range []tea.KeyPressMsg{keyEsc(), {Code: tea.KeyBackspace}} {
+		t.Run(cancelKey.String(), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			m := timelineModeModel()
+			m.timelineState.result.Cursor = "second-page"
+			m, cmd := sendKey(t, m, key('n'))
+			requirements.NotNil(cmd)
+			m = sendMsg(t, m, cmd())
+			requirements.Len(m.timelineState.history, 1)
+			displayed := m.timelineState.result
+			displayedRequest := m.timelineState.request
+			m.timelineState.scroll = 1
+			m, cmd = sendKey(t, m, key(']'))
+			defer m.cancelTimelineRequest()
+			requirements.NotNil(cmd)
+			m, _ = sendKey(t, m, cancelKey)
+			assertions.Same(displayed, m.timelineState.result)
+			assertions.Equal(displayedRequest, m.timelineState.request)
+			assertions.Equal(1, m.timelineState.scroll)
+			assertions.Len(m.timelineState.history, 1)
+			assertions.False(m.timelineState.loading)
+			assertions.False(m.timelineState.needsLoad)
+			assertions.Contains(stripANSI(m.renderView()), "Project update")
+		})
+	}
 }
 
 func TestTimelineHistoryStopsAtTwenty(t *testing.T) {

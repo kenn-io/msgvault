@@ -2,6 +2,7 @@ package timeline
 
 import (
 	"cmp"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"sort"
@@ -13,7 +14,7 @@ import (
 
 // Markdown renders compact rows. Sender-controlled text is flattened and escaped.
 func Markdown(t *Timeline) string {
-	text, _ := MarkdownWithEntries(t)
+	text, _ := renderMarkdown(t, true)
 	return text
 }
 
@@ -26,6 +27,10 @@ type RenderedEntry struct {
 
 // MarkdownWithEntries renders Markdown and records each entry's line.
 func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
+	return renderMarkdown(t, false)
+}
+
+func renderMarkdown(t *Timeline, openers bool) (string, []RenderedEntry) {
 	if t == nil {
 		return "", nil
 	}
@@ -109,7 +114,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	rows := func(entries []Entry) {
 		for _, e := range entries {
 			record(e)
-			fmt.Fprintf(&b, "- %s\n", entryRow(e, loc))
+			fmt.Fprintf(&b, "- %s\n", entryRow(e, loc, openers))
 			count++
 		}
 	}
@@ -159,7 +164,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 		var otherEntries []Entry
 		for _, e := range d.Calls {
 			if e.Call != nil && e.Call.Outcome != "answered" {
-				other = append(other, entryRow(e, loc))
+				other = append(other, entryRow(e, loc, openers))
 				otherEntries = append(otherEntries, e)
 				count++
 			} else {
@@ -181,7 +186,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 		b.WriteString("\nUpcoming\n")
 		for _, e := range t.Upcoming {
 			record(e)
-			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc))
+			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc, openers))
 			count++
 		}
 	}
@@ -243,7 +248,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	}
 	return text, entries
 }
-func entryRow(e Entry, loc *time.Location) string {
+func entryRow(e Entry, loc *time.Location, openers bool) string {
 	ref := FormatShortRef(cmp.Or(e.AnchorRef, e.Ref))
 	clock := e.Time.In(loc).Format("15:04")
 	var body string
@@ -340,6 +345,12 @@ func entryRow(e Entry, loc *time.Location) string {
 	}
 	if e.Anchor {
 		body += " ◀"
+	}
+	if openers && len(e.Open) > 0 {
+		open := e.Open[0]
+		if args, err := json.Marshal(open.Args, json.Deterministic(true)); err == nil {
+			body += " → " + open.Tool + " " + string(args)
+		}
 	}
 	return body
 }
