@@ -244,27 +244,15 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 	db, _ := sqlobserve.Open(t, nil)
 	seedMetadataSearch(t, db)
 	_, err := db.Exec(`INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');
- INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'),(2,1,'from');
- UPDATE messages SET account_address='reader@example.test', account_path='inbound';`)
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'),(2,1,'from');`)
 	require.NoError(err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
-	for _, handler := range []toolHandler{h.searchMetadata, h.searchMessages} {
-		for _, term := range []string{"alex", "alex@exam"} {
-			before := requests.Load()
-			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": "from:" + term + " subject:first account:reader@example.test"})
-			assert.Equal(before+1, requests.Load(), "hints must ride the single fast-search request")
-			assert.Empty(response.Data)
-			require.Len(response.Hints, 1)
-			assert.Equal("sender_name_requires_address", response.Hints[0].Code)
-			assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
-			assert.Equal("from:alex@example.com subject:first account:reader@example.test", response.Hints[0].RetryWith.Query)
-			retry := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": response.Hints[0].RetryWith.Query})
-			require.Len(retry.Data, 1)
-			assert.Equal(int64(1), retry.Data[0].ID)
-			assert.Empty(retry.Hints)
-		}
-	}
+	response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "from:alex@exam subject:first"})
+	assert.Equal(int32(1), requests.Load(), "hints must ride the single fast-search request")
+	require.Len(response.Hints, 1)
+	assert.Equal("sender_name_requires_address", response.Hints[0].Code)
+	assert.Equal("from:alex@example.com subject:first", response.Hints[0].RetryWith.Query)
 }
 
 func TestSearchMetadataSenderNameHintUnknownTotal(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,12 +20,10 @@ import (
 
 func TestCLISenderNameHintCancellation(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
-	db, observer := sqlobserve.Open(t, nil)
-	schema, err := os.ReadFile("../store/schema.sql")
-	requirements.NoError(err)
-	_, err = db.Exec(string(schema))
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: testutil.NewTestStore(t), Engine: query.NewSQLiteEngine(db), Logger: testLogger()})
+	path := filepath.Join(t.TempDir(), "msgvault.db")
+	st := testutil.NewSQLiteTestStoreAt(t, path)
+	db, observer := sqlobserve.OpenFile(t, path, nil)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: st, Engine: query.NewSQLiteEngine(db), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

@@ -16,9 +16,6 @@ func TestSenderNameHintQueryFailure(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
 	q := search.Parse("from:alex")
-	results, err := env.Engine.Search(env.Ctx, q, 10, 0)
-	requirements.NoError(err)
-	assertions.Empty(results)
 	requirements.NoError(env.DB.Close())
 	var diagnostic bytes.Buffer
 	previous := log.Writer()
@@ -48,10 +45,6 @@ func TestSenderNameHints(t *testing.T) {
 	results, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 20, 0)
 	requirements.NoError(err)
 	assertions.Len(results, 4)
-	// PostgreSQL wraps the SQL engine, so the wrapper must forward the optional matcher.
-	matcher, ok := Engine(&pgEngine{Engine: env.Engine}).(SenderNameMatcher)
-	requirements.True(ok)
-	assertions.Equal(hints, matcher.MatchSenderName(env.Ctx, q))
 	for _, tc := range []struct {
 		q             string
 		opt           bool

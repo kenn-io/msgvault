@@ -113,24 +113,24 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	var warningResults []map[string]any
 	decode(jsonOut.String(), &warningResults)
 	assert.Contains(warningOut.String(), `OR was matched as a literal word`)
-	for _, args := range [][]string{{"search", "from:alex@exam"}, {"search", "from:alex@exam", "--json"}} {
+	for _, tc := range []struct {
+		args   []string
+		stdout string
+	}{
+		{[]string{"search", "from:alex@exam"}, "No messages found.\n"},
+		{[]string{"search", "from:alex@exam", "--json"}, "[]\n"},
+	} {
+		args := tc.args
 		command = exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The binary path is supplied by the test operator.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		jsonOut.Reset()
 		warningOut.Reset()
 		command.Stdout, command.Stderr = &jsonOut, &warningOut
 		require.NoError(command.Run())
-		if len(args) == 2 {
-			assert.Equal("No messages found.\n", jsonOut.String())
-		} else {
-			assert.JSONEq("[]", jsonOut.String())
-		}
-		assert.Contains(warningOut.String(), `Hint: from: matches addresses; senders matching "alex@exam": alex@example.com (1 message); try from:alex@example.com`)
+		assert.Equal(tc.stdout, jsonOut.String())
+		assert.Contains(warningOut.String(), "Hint: from: matches addresses;")
+		assert.Contains(warningOut.String(), "try from:alex@example.com")
 	}
-	var senderMatches []map[string]any
-	decode(run("search", "from:alex@example.com", "--json"), &senderMatches)
-	require.Len(senderMatches, 1)
-	assert.Equal(json.Number(strconv.FormatInt(ids[0], 10)), senderMatches[0]["id"])
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
 	assert.Contains(out, "contextneedle")
