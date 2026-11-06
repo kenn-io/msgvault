@@ -44,10 +44,10 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. When `native_call_id` is set, `record_id` must equal it; reimporting that record replaces its evidence. See the [HTTP contract](../api-server.md#call-history). |
+| `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. When `native_call_id` is set, `record_id` must equal it; reimporting that record replaces its evidence. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
-to 512 KiB. An observation allows 100 participants. No importer opens protected databases, retrieves encryption keys,
+to 512 KiB. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
 
 ## Read the evidence and counts

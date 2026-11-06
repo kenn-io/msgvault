@@ -97,7 +97,7 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	t.Run("normalized nanosecond timestamps", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"nanoseconds","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00.123456789Z","ended_at":"2026-10-01T09:01:00.987654321Z","precision":"instant","participants":[{"participant_id":%d,"participation":"joined"}],"raw":{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}}}`, peer)
+		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"nanoseconds","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00.123456789Z","ended_at":"2026-10-01T09:01:00.987654321Z","participants":[{"participant_id":%d,"participation":"joined"}],"raw":{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}}}`, peer)
 		out := do("POST", "/api/v1/import/calls", body)
 		require.Equal(200, out.Code, out.Body.String())
 		var imported CallImportResponse
@@ -180,7 +180,7 @@ func TestCallHistoryNormalizedReplacement(t *testing.T) {
 	const supplied = `{"format":"signal_desktop","account":"example","record":{"callId":"e1","timestamp":1790841600000,"mode":"Direct","direction":"Incoming","status":"Accepted"}}`
 	out := post(supplied)
 	requirements.Equal(200, out.Code, out.Body.String())
-	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","raw":{"cancelled":true}}}`)
+	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","raw":{"cancelled":true}}}`)
 	requirements.Equal(200, out.Code, out.Body.String())
 	items, err := archive.ListCallObservationsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
@@ -188,7 +188,6 @@ func TestCallHistoryNormalizedReplacement(t *testing.T) {
 	assertions.Equal("e1", items[0].RecordID)
 	assertions.Equal("cancelled", items[0].Outcome)
 	assertions.Equal("unknown", items[0].Direction)
-	assertions.Equal("day", items[0].Precision)
 	raw, err := archive.GetMessageRawContext(t.Context(), items[0].MessageID)
 	requirements.NoError(err)
 	assertions.JSONEq(`{"cancelled":true}`, string(raw))
