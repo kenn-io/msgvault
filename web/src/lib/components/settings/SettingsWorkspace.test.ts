@@ -788,6 +788,24 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
 });
 
+it.each([true, false])('discloses the built-in download before switching from compatible=%s Ollama', async compatible => {
+  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') return request.method === 'POST'
+      ? Response.json({ phase: 'idle', running: true }, { status: 202 })
+      : Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false });
+    if (path === '/api/v1/embeddings/status') return Response.json(embeddingStatus);
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'ollama-switch', eligible_count: 10, embedded_count: 10, percentage: 100, status: 'ready', actions: [] });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  const button = await screen.findByRole('button', { name: 'Use built-in instead' });
+  const row = screen.getByText('Search by meaning').closest('li')!;
+  expect(row.textContent).toContain('Downloads 290 MB once to archive.example.test');
+  await fireEvent.click(button);
+  await waitFor(() => expect(seen.find(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')?.body).toEqual({ use_builtin: true }));
+});
+
 it('retries setup after a publication failure without changing the selected provider', async () => {
   let retried = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {

@@ -7,6 +7,17 @@ function rebuildDuration(embedding?: EmbeddingStatus): number {
   return rate > 0 && count > 0 ? count / rate * 60_000 : 0;
 }
 
+const documentConsent = 'Document\u00a0search requires consent for the built-in provider';
+
+function builtinDownload(status: LocalEmbeddingsStatus): string {
+  const size = new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', unitDisplay: 'short', maximumFractionDigits: 0 }).format(status.download_bytes / 1_000_000);
+  return status.download_bytes ? `Downloads ${size} once to ${status.host || 'this computer'}` : '';
+}
+
+function sentences(...parts: string[]): string {
+  return parts.filter(Boolean).map(part => `${part}.`).join(' ');
+}
+
 export function localSearchState(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): SearchByMeaningState {
   if (status.phase === 'downloading' || (status.running && status.phase === 'idle')) return { kind: 'downloading', doneBytes: status.done_bytes, totalBytes: status.total_bytes || status.download_bytes };
   if (status.phase === 'indexing') return {
@@ -27,8 +38,8 @@ export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: Emb
     meanwhile: 'Keyword search works',
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing search by meaning' } : {}),
     ...(!status.enabled && status.provider !== 'builtin' && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
-    rebuild: ('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : '')) + (status.document_rebuild ? '. Document\u00a0search requires consent for the built-in provider.' : '.'),
-    ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index. Document\u00a0search requires consent for the built-in provider.' } : {}),
+    rebuild: sentences('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : ''), builtinDownload(status), status.document_rebuild ? documentConsent : ''),
+    keepsIndex: sentences(status.document_rebuild ? 'Switching keeps your message index' : 'Switching keeps your index', builtinDownload(status), status.document_rebuild ? documentConsent : ''),
   };
 }
 
@@ -36,7 +47,7 @@ export function localSearchHintLabels(status: LocalEmbeddingsStatus): Partial<Se
   const state = localSearchState(status);
   const labels = localSearchLabels(status);
   const disclosure = state.kind === 'off'
-    ? `Downloads ${new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', unitDisplay: 'short', maximumFractionDigits: 0 }).format(state.downloadBytes / 1_000_000)} once to ${state.host || 'this computer'}`
+    ? builtinDownload(status)
     : labels.downloaded || 'Already on this computer';
   return { ...labels, hint: `Search by meaning is off · ${disclosure}` };
 }
