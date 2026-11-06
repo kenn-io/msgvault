@@ -47,8 +47,9 @@ func TestMarkdownPartialSyncOutcome(t *testing.T) {
 	assert.NotContains(t, got, "gmail:owner@example.com current")
 }
 
-func TestFitTruncatedNoteKeepsToolTarget(t *testing.T) {
-	t.Skip("Sol P2: advertise a callable get_daily_note opener with its date")
+// MCP has no daily-note reader, so a truncated note must not name an
+// uncallable tool; its date anchor re-centers the timeline instead.
+func TestFitTruncatedNoteNamesNoUncallableTool(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	_, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: strings.Repeat("<", 2000), Author: "owner"})
@@ -61,5 +62,6 @@ func TestFitTruncatedNoteKeepsToolTarget(t *testing.T) {
 	require.Len(got.Days[0].Notes, 1)
 	note := got.Days[0].Notes[0]
 	assert.True(note.Truncated)
-	assert.Equal([]Open{{Tool: "get_daily_note", Args: map[string]any{"date": "2026-10-22"}}}, note.Open)
+	assert.Equal([]Open{}, note.Open)
+	assert.Equal("2026-10-22", note.AnchorRef)
 }
