@@ -365,6 +365,7 @@ func TestCatalogSchemas(t *testing.T) {
 					"get_stats",
 					"list_messages",
 					ToolListThread,
+					ToolSkills,
 					"search_by_domains",
 					"search_in_message",
 					"search_message_bodies",
@@ -432,6 +433,10 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 
 				for _, tool := range tools {
+					if tool["name"] == ToolSkills {
+						// Kit owns the bundled guide tool's schema and idempotent hints.
+						continue
+					}
 					inputSchema, ok := tool["inputSchema"].(map[string]any)
 					must.True(ok, "%s inputSchema", tool["name"])
 					checks.Equal("https://json-schema.org/draft/2020-12/schema", inputSchema["$schema"], "%s input dialect", tool["name"])

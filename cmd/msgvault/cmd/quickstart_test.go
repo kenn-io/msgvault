@@ -21,7 +21,7 @@ func TestQuickstartOffline(t *testing.T) {
 		want string
 	}{
 		{name: "cli", want: quickstartText},
-		{name: "mcp", args: []string{"--mcp"}, want: mcpQuickstart(docs.AgentQuickstart)},
+		{name: "mcp", args: []string{"--mcp"}, want: docs.MCPQuickstart(docs.AgentQuickstart)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -55,7 +55,7 @@ func TestMCPQuickstartNormalizesGuide(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			output := mcpQuickstart(tc.doc)
+			output := docs.MCPQuickstart(tc.doc)
 			assert.True(strings.HasPrefix(output, "# msgvault MCP quickstart\n\n"))
 			assert.NotContains(output, "\r")
 			assert.NotContains(output, "title:")
@@ -65,6 +65,14 @@ func TestMCPQuickstartNormalizesGuide(t *testing.T) {
 				assert.True(strings.HasPrefix(link[1], "https://") || strings.HasPrefix(link[1], "#"), "link must be absolute: %s", link[1])
 			}
 		})
+	}
+}
+
+func TestMCPQuickstartFormatting(t *testing.T) {
+	const input = "---\ntitle: Synthetic guide\n---\n\nRead [tools](../usage/chat.md) and [local](#scope).\n"
+	const want = "# msgvault MCP quickstart\n\nRead [tools](https://msgvault.io/docs/usage/chat.md) and [local](#scope).\n"
+	for _, source := range []string{input, strings.ReplaceAll(input, "\n", "\r\n")} {
+		assert.Equal(t, want, docs.MCPQuickstart(source))
 	}
 }
 

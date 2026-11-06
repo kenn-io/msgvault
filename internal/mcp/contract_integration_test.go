@@ -36,6 +36,7 @@ var task5StableToolNames = []string{
 	ToolListMessages,
 	ToolListSavedViews,
 	ToolListThread,
+	ToolSkills,
 	ToolRunSavedView,
 	ToolSearchByDomains,
 	ToolSearchInMessage,
@@ -347,6 +348,8 @@ func task5ExpectedTools(shape string, allowWrites bool) []string {
 
 func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 	switch name {
+	case ToolSkills:
+		return map[string]any{}, true
 	case ToolCreateSavedView:
 		return map[string]any{
 			"name": "Created view", "schema_version": 1,
@@ -436,6 +439,13 @@ func task5AssertJSONParity(t *testing.T, toolName string, result *sdkmcp.CallToo
 	text, ok := result.Content[0].(*sdkmcp.TextContent)
 	require.True(t, ok, "first content type: %T", result.Content[0])
 	require.NotEmpty(t, text.Text)
+	if toolName == ToolSkills {
+		assert.Contains(t, text.Text, "workflow:")
+		assert.Len(t, task5StructuredAs[struct {
+			Skills []map[string]any `json:"skills"`
+		}](t, result).Skills, 4)
+		return
+	}
 	var textJSON any
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &textJSON))
 	structuredBytes, err := json.Marshal(result.StructuredContent)

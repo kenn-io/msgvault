@@ -504,7 +504,7 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
 	}
-	assertions.ElementsMatch([]string{"calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "calendar_freebusy", "calendar_conflicts"}, names)
+	assertions.ElementsMatch([]string{"calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "calendar_freebusy", "calendar_conflicts", ToolSkills}, names)
 }
 
 func TestCalendarMutationToolsRequireExplicitOptIn(t *testing.T) {

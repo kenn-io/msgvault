@@ -359,7 +359,8 @@ func newMCPServerWithPolicy(
 		confirmation = confirmationConfigs[0]
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
-	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
+	guides := bundledSkills()
+	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages. " + guides.Instructions()
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -379,6 +380,7 @@ func newMCPServerWithPolicy(
 		invocationPolicyMiddleware(policy),
 		cachePolicyMiddleware,
 	)
+	guides.Register(s)
 
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}
