@@ -1265,3 +1265,35 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	cancel()
 	must.ErrorIs(processor.Drain(ctx), context.Canceled)
 }
+
+func TestReviewLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
+	f := newInboxFixture(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/bot/message/1/content" {
+			close(started)
+			<-release
+		}
+		f.api.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments)
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	f.enqueue(t, f.message("2", "later text", f.now.UnixMilli()+1), time.Time{})
+	done := make(chan error, 1)
+	go func() { done <- f.processor.Process(t.Context()) }()
+	defer func() {
+		close(release)
+		require.NoError(t, <-done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "processor did not reach media fetch")
+	}
+	var count int
+	require.NoError(t, f.st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
+	assert.Equal(t, 1, count, "the text in an acknowledged batch must be available while earlier optional media is downloading")
+}
