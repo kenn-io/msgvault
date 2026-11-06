@@ -90,12 +90,13 @@ func TestSenderNameHintSpecialFragments(t *testing.T) {
 }
 
 func TestSenderNameHintParsedAddressRetry(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	env := newTestEnv(t)
 	upper := env.AddParticipant(dbtest.ParticipantOpts{Email: new("École@example.com"), DisplayName: new("Alex Kim")})
 	env.AddMessage(dbtest.MessageOpts{FromID: upper, Subject: "hintfixture"})
 	q := search.Parse("from:alex")
 	hints := env.Engine.MatchSenderName(env.Ctx, q)
-	assert.Empty(t, hints, "an address that the parsed exact retry cannot match must be excluded")
+	assert.Empty(hints, "an address that the parsed exact retry cannot match must be excluded")
 
 	for range 3 {
 		env.AddMessage(dbtest.MessageOpts{FromID: upper, Subject: "hintfixture"})
@@ -110,16 +111,16 @@ func TestSenderNameHintParsedAddressRetry(t *testing.T) {
 		env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
 	}
 	hints = env.Engine.MatchSenderName(env.Ctx, q)
-	require.Len(t, hints, 1)
-	assert.Equal(t, `from: matches addresses; senders matching "alex": try from:école@example.com (3 messages); other matching senders: first@example.org (1 message), second@example.org (1 message)`, hints[0].Message)
-	assert.Equal(t, "from:école@example.com", hints[0].RetryWith.Query)
+	require.Len(hints, 1)
+	assert.Equal(`from: matches addresses; senders matching "alex": try from:école@example.com (3 messages); other matching senders: first@example.org (1 message), second@example.org (1 message)`, hints[0].Message)
+	assert.Equal("from:école@example.com", hints[0].RetryWith.Query)
 	results, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
-	require.NoError(t, err)
+	require.NoError(err)
 	var gotIDs []int64
 	for _, result := range results {
 		gotIDs = append(gotIDs, result.ID)
 	}
-	assert.ElementsMatch(t, wantIDs, gotIDs)
+	assert.ElementsMatch(wantIDs, gotIDs)
 }
 
 func TestSenderNameHintKnownAddressScope(t *testing.T) {
@@ -152,6 +153,7 @@ func TestSenderNameHintKnownAddressScope(t *testing.T) {
 		{name: "structured", filter: MessageFilter{AccountScopes: []search.AccountScope{{Addresses: []string{"visible@example.com"}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			ctx := env.Ctx
 			if tc.granted != nil {
 				ctx = sourcescope.WithSourceIDs(ctx, tc.granted)
@@ -159,19 +161,19 @@ func TestSenderNameHintKnownAddressScope(t *testing.T) {
 			q := search.Parse("from:al@example.com subject:hintfixture" + tc.operator)
 			q.AccountIDs = tc.accounts
 			result, err := env.Engine.SearchFastWithStats(ctx, q, "", tc.filter, ViewNoStats, 10, 0)
-			require.NoError(t, err)
-			assert.Empty(t, result.Messages)
+			require.NoError(err)
+			assert.Empty(result.Messages)
 			hints := result.Hints
-			require.Len(t, hints, 1)
+			require.Len(hints, 1)
 			wantRetry := "from:sal@example.com subject:hintfixture" + tc.operator
-			assert.Equal(t, wantRetry, hints[0].RetryWith.Query)
-			assert.Equal(t, `from: matches addresses; senders matching "al@example.com": try `+wantRetry+" (1 message)", hints[0].Message)
+			assert.Equal(wantRetry, hints[0].RetryWith.Query)
+			assert.Equal(`from: matches addresses; senders matching "al@example.com": try `+wantRetry+" (1 message)", hints[0].Message)
 			retry := search.Parse(hints[0].RetryWith.Query)
 			retry.AccountIDs = tc.accounts
 			results, err := env.Engine.SearchFast(ctx, retry, tc.filter, 10, 0)
-			require.NoError(t, err)
-			require.Len(t, results, 1)
-			assert.Equal(t, id, results[0].ID)
+			require.NoError(err)
+			require.Len(results, 1)
+			assert.Equal(id, results[0].ID)
 		})
 	}
 }

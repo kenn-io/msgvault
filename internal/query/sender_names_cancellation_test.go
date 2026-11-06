@@ -17,6 +17,7 @@ import (
 
 func TestSenderNameHintTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
 		engine, observer := observedSearchEngine(t)
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
@@ -32,11 +33,11 @@ func TestSenderNameHintTimeout(t *testing.T) {
 		log.SetOutput(&diagnostic)
 		t.Cleanup(func() { log.SetOutput(previous) })
 		result, err := engine.SearchFastWithStats(ctx, search.Parse("from:alex"), "", MessageFilter{}, ViewNoStats, 10, 0)
-		require.NoError(t, err)
-		require.True(t, blocked)
-		require.Empty(t, result.Hints)
-		require.NoError(t, ctx.Err())
-		require.NotContains(t, diagnostic.String(), "sender hint query failed")
+		require.NoError(err)
+		require.True(blocked)
+		require.Empty(result.Hints)
+		require.NoError(ctx.Err())
+		require.NotContains(diagnostic.String(), "sender hint query failed")
 	})
 }
 
