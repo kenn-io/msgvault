@@ -61,17 +61,17 @@ func TestMeetingIdentityBareGranolaSeriesStaysUnlinked(t *testing.T) {
 }
 
 func TestMeetingIdentitySeriesReferenceNeedsOccurrenceKey(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "series", linkSeriesRaw)
 	_, single := calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
 	_, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{fmt.Sprintf("evt:%d", single), fmt.Sprintf("evt:%d", series)}})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "series reference needs @<occurrence key>")
+	require.ErrorContains(err, "series reference needs @<occurrence key>")
 	singleRef := fmt.Sprintf("evt:%d", single)
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{singleRef, "evt:999999"}})
-	require.NoError(t, err)
-	assert.Contains(t, got.ByOccurrence, singleRef)
-	assert.NotContains(t, got.ByOccurrence, "evt:999999")
+	require.NoError(err)
+	assert.Contains(got.ByOccurrence, singleRef)
+	assert.NotContains(got.ByOccurrence, "evt:999999")
 }
 
 func TestMeetingIdentityUnlinkedItemsStaySeparate(t *testing.T) {
