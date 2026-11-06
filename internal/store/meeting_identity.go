@@ -303,7 +303,8 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
 				g.linked = append(g.linked, id)
 			}
-			info.ExactOccurrenceRefs = sortedUniqueMeetingRefs(info.ExactOccurrenceRefs)
+			slices.Sort(info.ExactOccurrenceRefs)
+			info.ExactOccurrenceRefs = slices.Compact(info.ExactOccurrenceRefs)
 			if len(info.ExactOccurrenceRefs) == 1 {
 				info.OccurrenceRef = info.ExactOccurrenceRefs[0]
 				info.Key = "occ:" + formatMeetingOccurrence(aliases[info.OccurrenceRef].occurrence.Ref)
@@ -337,8 +338,6 @@ func publicMeetingOccurrenceRef(o linkOccurrence) string {
 	}
 	return formatMeetingOccurrence(o.Ref)
 }
-
-func sortedUniqueMeetingRefs(refs []string) []string { slices.Sort(refs); return slices.Compact(refs) }
 
 // ParseMeetingIdentityRef validates a public calendar occurrence reference.
 func ParseMeetingIdentityRef(value string) (OccurrenceRef, error) {
