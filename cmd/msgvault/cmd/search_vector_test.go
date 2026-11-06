@@ -284,8 +284,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		message       string
 	}{
 		{name: "fts_complete", limit: 50},
-		{name: "fts_later_page", hasMore: true, offset: 50, limit: 50, message: "--offset 100 for the next page or raise --limit"},
-		{name: "fts_remote_cap", hasMore: true, limit: 500, message: "--offset 500 for the next page"},
+		{name: "fts_later_page", hasMore: true, offset: 50, limit: 50, message: "Hint: more messages match; use --offset 100 for the next page\n"},
 	} {
 		for _, asJSON := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
@@ -323,11 +322,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				if tc.message == "" {
 					assert.Empty(stderr.String())
 				} else {
-					assert.Equal(1, strings.Count(stderr.String(), "Hint:"))
-					assert.Contains(stderr.String(), tc.message)
-					if tc.limit == 500 {
-						assert.NotContains(stderr.String(), "raise --limit")
-					}
+					assert.Equal(tc.message, stderr.String())
 				}
 				if asJSON {
 					var rows []map[string]any
