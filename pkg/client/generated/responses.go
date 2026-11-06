@@ -179,6 +179,32 @@ type ListCalendarEventsErrorResponseJSON503 = ErrorResponse
 
 type ListCalendarEventsErrorResponseJSONDefault = ErrorResponse
 
+type GetCalendarEventResponse = CalendarOccurrenceDetail
+
+type GetCalendarEventErrorResponse = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON403 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON404 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON422 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON500 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON503 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSONDefault = ErrorResponse
+
+type ListCallObservationsResponse = CallEvidenceResponse
+
+type ListCallObservationsErrorResponse = ErrorResponse
+
+type SummarizeCallsResponse = CallSummaryResponse
+
+type SummarizeCallsErrorResponse = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -1705,6 +1731,10 @@ type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
 
+type ImportCallObservationResponse = CallImportResponse
+
+type ImportCallObservationErrorResponse = ErrorResponse
+
 type ImportMeetingResponse = MeetingImportResponse
 
 type ImportMeetingResponseJSON = MeetingImportResponse
@@ -2011,6 +2041,26 @@ type GetMeetingContextErrorResponseJSON503 = ErrorResponse
 
 type GetMeetingContextErrorResponseJSONDefault = ErrorResponse
 
+type DecideMeetingLinkResponse = MeetingLinkDecisionResponse
+
+type DecideMeetingLinkErrorResponse = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON404 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON409 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON413 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON415 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON500 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSON503 = ErrorResponse
+
+type DecideMeetingLinkErrorResponseJSONDefault = ErrorResponse
+
 type GetMeetingMetricsResponse = Metrics
 
 type GetMeetingMetricsErrorResponse = ErrorResponse
@@ -2030,6 +2080,38 @@ type GetMeetingMetricsErrorResponseJSON500 = ErrorResponse
 type GetMeetingMetricsErrorResponseJSON503 = ErrorResponse
 
 type GetMeetingMetricsErrorResponseJSONDefault = ErrorResponse
+
+type GetMeetingRecordResponse = MeetingRecord
+
+type GetMeetingRecordErrorResponse = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON403 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON404 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON500 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSON503 = ErrorResponse
+
+type GetMeetingRecordErrorResponseJSONDefault = ErrorResponse
+
+type SuggestMeetingLinksResponse = MeetingSuggestionsResponse
+
+type SuggestMeetingLinksErrorResponse = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON403 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON404 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON500 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON503 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSONDefault = ErrorResponse
 
 type ListMessagesResponse = MessageListResponse
 
@@ -4377,6 +4459,37 @@ type ListCalendarEventsResp struct {
 	JSONDefault  *ListCalendarEventsErrorResponseJSONDefault
 }
 
+type GetCalendarEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCalendarEventResponse
+	JSON400      *GetCalendarEventErrorResponse
+	JSON401      *GetCalendarEventErrorResponseJSON
+	JSON403      *GetCalendarEventErrorResponseJSON403
+	JSON404      *GetCalendarEventErrorResponseJSON404
+	JSON422      *GetCalendarEventErrorResponseJSON422
+	JSON500      *GetCalendarEventErrorResponseJSON500
+	JSON503      *GetCalendarEventErrorResponseJSON503
+	JSONDefault  *GetCalendarEventErrorResponseJSONDefault
+}
+
+type ListCallObservationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCallObservationsResponse
+	JSONDefault  *ListCallObservationsErrorResponse
+}
+
+type SummarizeCallsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SummarizeCallsResponse
+	JSONDefault  *SummarizeCallsErrorResponse
+}
+
 type SaveCardDAVAccountResp503Headers struct {
 	RetryAfter string `header:"Retry-After"`
 }
@@ -5624,6 +5737,14 @@ type UnlinkIdentityParticipantsResp struct {
 	JSONDefault  *UnlinkIdentityParticipantsErrorResponse
 }
 
+type ImportCallObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportCallObservationResponse
+	JSONDefault  *ImportCallObservationErrorResponse
+}
+
 type ImportMeetingResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5942,6 +6063,22 @@ type GetMeetingContextResp struct {
 	JSONDefault  *GetMeetingContextErrorResponseJSONDefault
 }
 
+type DecideMeetingLinkResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DecideMeetingLinkResponse
+	JSON400      *DecideMeetingLinkErrorResponse
+	JSON401      *DecideMeetingLinkErrorResponseJSON
+	JSON404      *DecideMeetingLinkErrorResponseJSON404
+	JSON409      *DecideMeetingLinkErrorResponseJSON409
+	JSON413      *DecideMeetingLinkErrorResponseJSON413
+	JSON415      *DecideMeetingLinkErrorResponseJSON415
+	JSON500      *DecideMeetingLinkErrorResponseJSON500
+	JSON503      *DecideMeetingLinkErrorResponseJSON503
+	JSONDefault  *DecideMeetingLinkErrorResponseJSONDefault
+}
+
 type GetMeetingMetricsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5956,6 +6093,34 @@ type GetMeetingMetricsResp struct {
 	JSON500      *GetMeetingMetricsErrorResponseJSON500
 	JSON503      *GetMeetingMetricsErrorResponseJSON503
 	JSONDefault  *GetMeetingMetricsErrorResponseJSONDefault
+}
+
+type GetMeetingRecordResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMeetingRecordResponse
+	JSON400      *GetMeetingRecordErrorResponse
+	JSON401      *GetMeetingRecordErrorResponseJSON
+	JSON403      *GetMeetingRecordErrorResponseJSON403
+	JSON404      *GetMeetingRecordErrorResponseJSON404
+	JSON500      *GetMeetingRecordErrorResponseJSON500
+	JSON503      *GetMeetingRecordErrorResponseJSON503
+	JSONDefault  *GetMeetingRecordErrorResponseJSONDefault
+}
+
+type SuggestMeetingLinksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SuggestMeetingLinksResponse
+	JSON400      *SuggestMeetingLinksErrorResponse
+	JSON401      *SuggestMeetingLinksErrorResponseJSON
+	JSON403      *SuggestMeetingLinksErrorResponseJSON403
+	JSON404      *SuggestMeetingLinksErrorResponseJSON404
+	JSON500      *SuggestMeetingLinksErrorResponseJSON500
+	JSON503      *SuggestMeetingLinksErrorResponseJSON503
+	JSONDefault  *SuggestMeetingLinksErrorResponseJSONDefault
 }
 
 type ListMessagesResp struct {

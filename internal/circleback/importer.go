@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingidentity"
+	"go.kenn.io/msgvault/internal/meetingurl"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -1001,7 +1001,7 @@ func (imp *Importer) buildMetadata(
 		DurationSeconds: m.DurationSecs(),
 		OrganizerEmail:  organizerEmail,
 		MeetingURL:      m.PlatformURL(),
-		JoinURL:         knownJoinURL(m.MeetingURL),
+		JoinURL:         meetingurl.KnownJoinURL(m.MeetingURL),
 		RecordingURL:    m.RecordingURL,
 		Tags:            m.Tags,
 		TranscriptState: desiredTranscriptState,
@@ -1036,26 +1036,6 @@ func (imp *Importer) buildMetadata(
 		meta.TranscriptSegments = len(tr.ContentEntries())
 	}
 	return meta
-}
-
-// knownJoinURL preserves the usable provider URL, including passcodes and
-// context parameters. Join-key normalization belongs to the link projection.
-func knownJoinURL(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	u, err := url.Parse(trimmed)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
-		return ""
-	}
-	host := strings.ToLower(u.Hostname())
-	switch {
-	case host == "meet.google.com",
-		host == "teams.microsoft.com", host == "teams.live.com",
-		strings.HasSuffix(host, ".teams.microsoft.us"),
-		host == "zoom.us", strings.HasSuffix(host, ".zoom.us"),
-		host == "zoomgov.com", strings.HasSuffix(host, ".zoomgov.com"):
-		return trimmed
-	}
-	return ""
 }
 
 // composeRaw archives both tool payloads verbatim in one JSON object.

@@ -157,7 +157,7 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 			}
 			location := response.Header.Get("Location")
 			next, parseErr := target.Parse(location)
-			if location == "" || parseErr != nil || !sameOrigin(c.origin, next) {
+			if location == "" || parseErr != nil || !netguard.SameOrigin(c.origin, next) {
 				return response, fmt.Errorf("redirect target: %w", ErrUnsafeRedirect)
 			}
 			target = next
@@ -232,14 +232,14 @@ func davErrorPrecondition(body []byte) string {
 }
 
 func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.AddrPort, error) {
-	if !validHTTPURL(target) || !sameOrigin(c.origin, target) {
+	if !validHTTPURL(target) || !netguard.SameOrigin(c.origin, target) {
 		return nil, fmt.Errorf("DAV URL: %w", ErrUnsafeTarget)
 	}
 	port, err := netguard.TargetPort(target)
 	if err != nil {
 		return nil, fmt.Errorf("DAV URL port: %w", ErrUnsafeTarget)
 	}
-	if c.trustedOrigin != nil && sameOrigin(c.trustedOrigin, target) {
+	if c.trustedOrigin != nil && netguard.SameOrigin(c.trustedOrigin, target) {
 		pinned := make([]netip.AddrPort, 0, len(c.trustedAddresses))
 		for _, addr := range c.trustedAddresses {
 			pinned = append(pinned, netip.AddrPortFrom(addr, port))
@@ -394,11 +394,11 @@ func (c *Client) readResponseBody(reader io.Reader, operationBytes *int64) ([]by
 // leave the credential origin or collection. It reuses the request target
 // validation path so literal and resolved destinations remain denylisted.
 func (c *Client) ValidateChildHref(ctx context.Context, collection *url.URL, href string) (*url.URL, error) {
-	if collection == nil || !validHTTPURL(collection) || href == "" || !sameOrigin(c.origin, collection) {
+	if collection == nil || !validHTTPURL(collection) || href == "" || !netguard.SameOrigin(c.origin, collection) {
 		return nil, ErrUnsafeHref
 	}
 	resolved, err := collection.Parse(href)
-	if err != nil || resolved.User != nil || resolved.Fragment != "" || !sameOrigin(c.origin, resolved) {
+	if err != nil || resolved.User != nil || resolved.Fragment != "" || !netguard.SameOrigin(c.origin, resolved) {
 		return nil, ErrUnsafeHref
 	}
 	basePath := path.Clean(collection.Path)
@@ -423,15 +423,6 @@ func originURL(target *url.URL) *url.URL {
 	clone := *target
 	clone.Path, clone.RawPath, clone.RawQuery, clone.Fragment = "", "", "", ""
 	return &clone
-}
-
-func sameOrigin(left, right *url.URL) bool {
-	if left == nil || right == nil {
-		return false
-	}
-	return strings.EqualFold(left.Scheme, right.Scheme) &&
-		strings.EqualFold(left.Hostname(), right.Hostname()) &&
-		netguard.EffectivePort(left) == netguard.EffectivePort(right)
 }
 
 func isRedirect(status int) bool {

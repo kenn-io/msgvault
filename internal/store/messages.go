@@ -269,6 +269,7 @@ func (s *Store) gmailAuditPageIDsTx(
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
+		AND COALESCE(m.message_type, '') <> 'calendar_event'
 		ORDER BY m.id
 		LIMIT ?
 	`, afterID, sourceID, sourceID, limit)
@@ -862,13 +863,24 @@ func (s *Store) MessageMetadataBatch(
 // count use this to reconcile rows against the complete archived set instead
 // of probing unbounded higher IDs with one query per candidate group. The
 // result is keyed by source_message_id, holds no message bodies, and stays
-// linear in the archived messages of the source.
-func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadataRecord, error) {
-	rows, err := s.db.Query(`
+// linear in the archived messages of the source. liveOnly omits provider
+// deletions and archive-only history retained by source merges.
+func (s *Store) SourceMessageMetadata(sourceID int64, liveOnly bool) (map[string]MessageMetadataRecord, error) {
+	return s.SourceMessageMetadataContext(context.Background(), sourceID, liveOnly)
+}
+
+// SourceMessageMetadataContext honors cancellation during SourceMessageMetadata.
+func (s *Store) SourceMessageMetadataContext(ctx context.Context, sourceID int64, liveOnly bool) (map[string]MessageMetadataRecord, error) {
+	query := `
 		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?`, sourceID)
+		WHERE m.source_id = ?`
+	if liveOnly {
+		query += ` AND m.deleted_from_source_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)`
+	}
+	rows, err := s.db.QueryContext(ctx, query, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("load source message metadata: %w", err)
 	}
@@ -1232,6 +1244,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := copyMeetingLinkDecisionsTx(context.Background(), tx, legacyID, newID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,
@@ -2183,7 +2198,6 @@ func (s *Store) PersistMessageWithParticipantsContext(
 		return 0, errors.New("persist message requires a participant builder")
 	}
 	// The source is known only after build runs, so this entry locks none.
-	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
 }
 
@@ -2342,10 +2356,13 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 1 || hasPhoneParticipant {
+	if len(participants) > 0 {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.
+		// Email builders expose MIME only after participant writes; calendar
+		// refresh takes this lock later, so single-participant writes take it
+		// up front (TestEmailCalendarSingleParticipantLockOrder).
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
@@ -2435,6 +2452,11 @@ func (s *Store) persistMessageWith(
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
+	if IsEmailMessageType(data.Message.MessageType) {
+		if err := s.lockEmailCalendarParticipantsWith(ctx, tx, data.RawMIME, data.RawFormat); err != nil {
+			return 0, err
+		}
+	}
 	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
@@ -2517,6 +2539,11 @@ func (s *Store) persistMessageWith(
 	}
 	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
+	}
+	if len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == rawFormatMIME) {
+		if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, data.RawMIME); err != nil {
+			return 0, err
+		}
 	}
 
 	if !data.PreserveLabels {
@@ -3660,9 +3687,10 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 	}
 
 	var missing []string
+	var missingCalendarIDs []int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT source_message_id
+			SELECT id, source_message_id, message_type
 			FROM messages
 			WHERE source_id = ?
 			  AND deleted_at IS NULL
@@ -3676,13 +3704,18 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			return fmt.Errorf("reconcile source message snapshot: list live messages: %w", err)
 		}
 		for rows.Next() {
+			var id int64
 			var sourceMessageID string
-			if err := rows.Scan(&sourceMessageID); err != nil {
+			var messageType sql.NullString
+			if err := rows.Scan(&id, &sourceMessageID, &messageType); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("reconcile source message snapshot: scan live message: %w", err)
 			}
 			if _, ok := present[sourceMessageID]; !ok {
 				missing = append(missing, sourceMessageID)
+				if messageType.String == "calendar_event" {
+					missingCalendarIDs = append(missingCalendarIDs, id)
+				}
 			}
 		}
 		if err := rows.Close(); err != nil {
@@ -3697,6 +3730,12 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 		if err := execInChunksContext(ctx, tx, missing, []any{sourceID},
 			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
 			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
+		}
+		// Refresh newly deleted CalDAV message times from their preserved snapshots.
+		for _, id := range missingCalendarIDs {
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
+				return fmt.Errorf("reconcile source message snapshot: refresh calendar event: %w", err)
+			}
 		}
 		return nil
 	})
@@ -3859,8 +3898,8 @@ func (s *Store) CountMessagesForSource(sourceID int64) (int64, error) {
 func (s *Store) CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s
-	`, LiveMessagesWhere("", true)), sourceID).Scan(&count)
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s AND %s
+	`, LiveMessagesWhere("", true), SourceNativeMessagesWhere("messages", "sources")), sourceID).Scan(&count)
 	return count, err
 }
 
@@ -3870,8 +3909,8 @@ func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 	err := s.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages m
 		JOIN message_raw mr ON m.id = mr.message_id
-		WHERE m.source_id = ? AND %s
-	`, LiveMessagesWhere("m", true)), sourceID).Scan(&count)
+		WHERE m.source_id = ? AND %s AND %s
+	`, LiveMessagesWhere("m", true), SourceNativeMessagesWhere("m", "sources")), sourceID).Scan(&count)
 	return count, err
 }
 
@@ -3909,7 +3948,7 @@ func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
-	live := LiveMessagesWhere("", true)
+	live := LiveMessagesWhere("", true) + " AND " + SourceNativeMessagesWhere("messages", "sources")
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id FROM messages
 		WHERE source_id = ? AND %s
@@ -6219,6 +6258,9 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // UpsertMessageRawWithFormatContext honors cancellation during UpsertMessageRawWithFormat.
 func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID int64, rawData []byte, format string) error {
 	write := func(tx *loggedTx) error {
+		if err := s.lockEmailCalendarParticipantsWith(ctx, tx, rawData, format); err != nil {
+			return err
+		}
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
 		}
@@ -6248,6 +6290,11 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		}
 		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
+		}
+		if format == rawFormatMIME {
+			if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, rawData); err != nil {
+				return err
+			}
 		}
 		switch {
 		case format == "mime":
@@ -6513,6 +6560,7 @@ func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
 	return nil
 }
 
+// nullIfEmpty represents an empty string as SQL NULL.
 func nullIfEmpty(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }

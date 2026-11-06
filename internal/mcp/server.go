@@ -77,6 +77,10 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
@@ -175,10 +179,12 @@ type ServeOptions struct {
 	// when the embedder has no durable Saved View store; the Saved View tools
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
+	CalEvents  CalendarEventsBackend
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings     MeetingBackend
+	MeetingLinks bool
+	Calendar     CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
@@ -407,6 +413,7 @@ func newMCPServerWithPolicy(
 		savedViews:           opts.SavedViews,
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
+		calEvents:            opts.CalEvents,
 		personAgendaBackend:  opts.PersonAgendaBackend,
 		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,
@@ -619,17 +626,19 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// agentReadToolPermission names the grant permission the daemon requires for a read tool.
-func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
+// agentReadToolPermission lists the permissions that admit a read tool.
+func agentReadToolPermission(name string) []agentgrant.Permission {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
-		return agentgrant.PermissionSearchRead, true
+		return []agentgrant.Permission{agentgrant.PermissionSearchRead}
 	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
-		return agentgrant.PermissionMessageRead, true
+		return []agentgrant.Permission{agentgrant.PermissionMessageRead}
 	case ToolGetAttachment:
-		return agentgrant.PermissionAttachmentRead, true
+		return []agentgrant.Permission{agentgrant.PermissionAttachmentRead}
 	case ToolGetStats:
-		return agentgrant.PermissionStatsRead, true
+		return []agentgrant.Permission{agentgrant.PermissionStatsRead}
+	case ToolListCalendarEvents, ToolGetCalendarEvent:
+		return []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionMessageRead}
 	}
-	return "", false
+	return nil
 }

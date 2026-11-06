@@ -64,6 +64,7 @@ WITH message_facts AS (
 	       (mr.recipient_type = 'from' AND mr.participant_id = m.owner_participant_id) AS is_owner_sender,
 	       (mr.recipient_type = 'from') AS is_author
 	FROM %s mr JOIN message_facts m ON m.message_id = mr.message_id
+	WHERE mr.recipient_type NOT IN ('call_joined', 'call_invited', 'call_unknown')
 	UNION ALL
 	SELECT m.message_id, m.sender_id, true,
 	       coalesce(m.sender_id = m.owner_participant_id, false), true

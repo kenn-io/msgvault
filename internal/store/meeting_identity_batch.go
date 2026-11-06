@@ -1,0 +1,365 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
+)
+
+// Each cache belongs to the request's read snapshot. The scalar meeting-link
+// resolver consumes the same evidence as the batch reader.
+type meetingIdentityBatch struct {
+	calendarSources map[string][]any
+	events          map[string][]CalendarEventRow
+	keys            map[int64]meetingLinkKey
+	decisions       map[int64][]meetingLinkDecision
+	occurrences     map[OccurrenceRef]linkOccurrence
+}
+
+// The batch plans the scheduled reference before resolving notes. Reuse all
+// effective starts, including coincident moved occurrences, to retain ambiguity.
+func cachedMeetingSeriesCandidates(r reboundReader, row CalendarEventRow, at time.Time) ([]linkOccurrence, bool) {
+	if r.batch == nil {
+		return nil, false
+	}
+	predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, at, at.Add(time.Second))
+	related, loaded := r.batch.events[meetingQueryKey(predicate, args)]
+	if !loaded {
+		return nil, false
+	}
+	for _, exception := range related {
+		ref := OccurrenceRef{MessageID: exception.MessageID}
+		if exception.Event.Original != nil {
+			ref = OccurrenceRef{MessageID: row.MessageID, Key: exception.Event.Original.Key()}
+		}
+		if _, ok := r.batch.occurrences[ref]; !ok {
+			return nil, false
+		}
+	}
+	var candidates []linkOccurrence
+	for _, o := range r.batch.occurrences {
+		if (o.Ref.MessageID == row.MessageID || o.Row.SourceID == row.SourceID && o.Row.Event.SeriesProviderID == row.Event.ProviderEventID) && o.Start.Equal(at) {
+			candidates = append(candidates, o)
+		}
+	}
+	return candidates, len(candidates) > 0
+}
+
+// Reuse successful resolutions only within the batch's read snapshot.
+func resolvedMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
+	if err := ctx.Err(); err != nil {
+		return linkOccurrence{}, err
+	}
+	if r.batch != nil {
+		if o, ok := r.batch.occurrences[ref]; ok {
+			return o, nil
+		}
+		for _, row := range r.batch.eventRowsByID(ref.MessageID) {
+			if ref.Key == "" && row.Event.Kind == meetingExceptionKind && row.Event.Original != nil {
+				predicate, args := meetingMasterPredicate(row)
+				masters := r.batch.events[meetingQueryKey(predicate, args)]
+				if len(masters) == 1 {
+					if o, ok := r.batch.occurrences[OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}]; ok {
+						return o, nil
+					}
+				}
+			}
+		}
+	}
+	o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
+	if err == nil && r.batch != nil {
+		if r.batch.occurrences == nil {
+			r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+		}
+		r.batch.occurrences[ref] = o
+	}
+	return o, err
+}
+
+type meetingEventQuery struct {
+	predicate string
+	args      []any
+}
+
+func meetingQueryKey(predicate string, args []any) string {
+	return fmt.Sprintf("%s:%#v", predicate, args)
+}
+
+func (b *meetingIdentityBatch) eventRowsByID(id int64) []CalendarEventRow {
+	if rows := b.events[meetingQueryKey("e.message_id = ?", []any{id})]; len(rows) > 0 {
+		return rows
+	}
+	return b.events[meetingQueryKey(meetingEventAliasPredicate("?"), []any{id, id})]
+}
+
+// Admit owner-calendar matches before loading cross-calendar ambiguity evidence.
+// Both reads share the request memo and hydrate each event only once.
+func (s *Store) preloadMeetingMemberCandidates(ctx context.Context, r reboundReader, ids []int64, budget *int) error {
+	queries := []meetingEventQuery{}
+	for _, id := range ids {
+		key, ok := r.batch.keys[id]
+		if !ok {
+			continue
+		}
+		for _, d := range r.batch.decisions[id] {
+			queries = append(queries, meetingEventQuery{meetingEventAliasPredicate("?"), []any{d.Ref.MessageID, d.Ref.MessageID}})
+		}
+		predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
+		if err != nil {
+			return err
+		}
+		queries = append(queries, meetingEventQuery{predicate, args})
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	queries = nil
+	for _, id := range ids {
+		key := r.batch.keys[id]
+		if key.Kind != meetingGoogleEventIDKey {
+			continue
+		}
+		predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
+		if err != nil {
+			return err
+		}
+		if len(r.batch.events[meetingQueryKey(predicate, args)]) > 0 {
+			predicate, args = meetingGoogleEventPredicate(key.Value)
+			queries = append(queries, meetingEventQuery{predicate, args})
+		}
+	}
+	return s.preloadMeetingQueries(ctx, r, queries, budget)
+}
+
+// Load the scalar resolver's master, moved-exception, and expansion reads together.
+func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, refs []OccurrenceRef, budget *int) error {
+	queries := []meetingEventQuery{}
+	for _, ref := range refs {
+		for _, row := range r.batch.eventRowsByID(ref.MessageID) {
+			if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
+				predicate, args := meetingMasterPredicate(row)
+				queries = append(queries, meetingEventQuery{predicate, args})
+			}
+		}
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	type recurringRef struct {
+		row CalendarEventRow
+		id  calrecur.Identity
+	}
+	recurring := []recurringRef{}
+	queries = nil
+	for _, ref := range refs {
+		if _, ok := r.batch.occurrences[ref]; ok {
+			continue
+		}
+		rows := r.batch.eventRowsByID(ref.MessageID)
+		if len(rows) != 1 {
+			continue
+		}
+		row, ref, err := meetingOccurrenceMaster(ctx, r, rows[0], ref, budget)
+		if err != nil {
+			return err
+		}
+		if ref.Key == "" || row.Event.Kind != meetingSeriesKind && row.Event.Kind != "single" {
+			continue
+		}
+		_, id, ok := calrecur.ParseInstanceID("event_" + ref.Key)
+		if !ok {
+			continue
+		}
+		recurring = append(recurring, recurringRef{row, id})
+		predicate, args := meetingMovedExceptionPredicate(row, id)
+		queries = append(queries, meetingEventQuery{predicate, args})
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	queries = nil
+	masters := map[int64]CalendarEventRow{}
+	windows := map[int64][][2]time.Time{}
+	for _, ref := range recurring {
+		if _, ok := r.batch.occurrences[OccurrenceRef{MessageID: ref.row.MessageID, Key: ref.id.Key()}]; ok {
+			continue
+		}
+		if ref.row.ICalUID == "" {
+			continue
+		}
+		row, window, bounded, err := planMeetingOccurrence(ctx, r, ref.row, ref.id, budget)
+		if err != nil {
+			return err
+		}
+		if bounded != nil {
+			continue
+		}
+		id := ref.row.MessageID
+		masters[id] = row
+		windows[id] = append(windows[id], window)
+	}
+	for id, master := range masters {
+		windows[id] = coalesceMeetingWindows(windows[id])
+		for _, window := range windows[id] {
+			predicate, args := meetingSeriesExceptionsPredicate(r.dialect, master, window[0], window[1])
+			queries = append(queries, meetingEventQuery{predicate, args})
+		}
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	// Generate each master's overlapping windows once, then reuse the occurrences
+	// for individual references, representative selection, and note discovery.
+	for id, master := range masters {
+		for _, window := range windows[id] {
+			occurrences, err := expandMeetingSeries(ctx, r, master, window[0], window[1], budget)
+			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				return err
+			}
+			if r.batch.occurrences == nil {
+				r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+			}
+			for _, o := range occurrences {
+				r.batch.occurrences[o.Ref] = o
+			}
+		}
+	}
+	return nil
+}
+
+// Retain gaps so unrelated edits cannot exhaust a sparse request's read budget.
+func coalesceMeetingWindows(windows [][2]time.Time) [][2]time.Time {
+	slices.SortFunc(windows, func(a, b [2]time.Time) int { return a[0].Compare(b[0]) })
+	out := windows[:0]
+	for _, window := range windows {
+		if n := len(out); n > 0 && window[0].Before(out[n-1][1]) {
+			if window[1].After(out[n-1][1]) {
+				out[n-1][1] = window[1]
+			}
+		} else {
+			out = append(out, window)
+		}
+	}
+	return out
+}
+
+// Find IDs for many predicates together, then hydrate each calendar row once.
+// Keep the predicate owners in meeting_links.go so scalar and batch reads agree.
+func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, queries []meetingEventQuery, budget *int) error {
+	pending := []meetingEventQuery{}
+	seen := map[string]bool{}
+	for _, q := range queries {
+		key := meetingQueryKey(q.predicate, q.args)
+		if _, ok := r.batch.events[key]; !ok && !seen[key] {
+			pending = append(pending, q)
+			seen[key] = true
+		}
+	}
+	for chunk := range slices.Chunk(pending, 20) {
+		terms := make([]string, 0, len(chunk))
+		args := []any{}
+		// Scope before LIMIT so hidden copies cannot exhaust candidate bounds.
+		from, scopeArgs := calendarEventFromContext(ctx, "e", "m")
+		for i, q := range chunk {
+			terms = append(terms, fmt.Sprintf("SELECT %d,message_id FROM (SELECT e.message_id ", i)+from+"("+q.predicate+") LIMIT ?) candidates")
+			args = append(args, scopeArgs...)
+			args = append(args, q.args...)
+			args = append(args, min(200, *budget)+1)
+		}
+		byQuery := make([][]int64, len(chunk))
+		ids := []int64{}
+		err := func() error {
+			rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL ")+" LIMIT ?", append(args, *budget+1)...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var i int
+				var id int64
+				if err := rows.Scan(&i, &id); err != nil {
+					return err
+				}
+				byQuery[i] = append(byQuery[i], id)
+				ids = append(ids, id)
+			}
+			return errors.Join(rows.Err(), rows.Close())
+		}()
+		if err != nil {
+			return err
+		}
+		if len(ids) > *budget {
+			return calendarRecurrenceBudgetError()
+		}
+		// Hydrate each missing row once within the same scope and snapshot.
+		slices.Sort(ids)
+		ids = slices.Compact(ids)
+		missing := []any{}
+		for _, id := range ids {
+			if _, ok := r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		for chunk := range slices.Chunk(missing, 200) {
+			rows, err := queryCalendarEventRows(ctx, r, "e.message_id IN ("+placeholders(len(chunk))+")", chunk, 0)
+			if err != nil {
+				return err
+			}
+			*budget -= len(rows)
+			for _, row := range rows {
+				r.batch.events[meetingQueryKey("e.message_id = ?", []any{row.MessageID})] = []CalendarEventRow{row}
+			}
+		}
+		for i, q := range chunk {
+			var found []CalendarEventRow
+			if len(byQuery[i]) > 200 {
+				return ErrQueryTooBroad
+			}
+			slices.Sort(byQuery[i])
+			for _, id := range byQuery[i] {
+				found = append(found, r.batch.events[meetingQueryKey("e.message_id = ?", []any{id})]...)
+			}
+			r.batch.events[meetingQueryKey(q.predicate, q.args)] = found
+		}
+	}
+	return nil
+}
+
+func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids []int64) error {
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	// Prefix arguments precede the chunk arguments in the shared chunking helper.
+	query := `SELECT m.id,k.kind,k.value,k.calendar_id,k.scheduled_at,d.target_message_id,d.occurrence_key,d.decision
+ FROM messages m
+ LEFT JOIN meeting_link_key k ON k.message_id=m.id
+ LEFT JOIN meeting_link_decisions d ON d.member_message_id=m.id
+ WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s)
+ ORDER BY m.id,d.target_message_id,d.occurrence_key`
+	for _, id := range ids {
+		r.batch.decisions[id] = nil
+	}
+	return queryInChunksContext(ctx, snapshot.tx, ids, args, query, func(rows *loggedRows) error {
+		var id int64
+		var kind, value, calendar, key, decision sql.NullString
+		var scheduled sql.NullTime
+		var target sql.NullInt64
+		if err := rows.Scan(&id, &kind, &value, &calendar, &scheduled, &target, &key, &decision); err != nil {
+			return err
+		}
+		linkKey := meetingLinkKey{Kind: kind.String, Value: value.String, CalendarID: calendar.String}
+		if scheduled.Valid {
+			linkKey.ScheduledAt = &scheduled.Time
+		}
+		r.batch.keys[id] = linkKey
+		if decision.Valid {
+			r.batch.decisions[id] = append(r.batch.decisions[id], meetingLinkDecision{Ref: OccurrenceRef{MessageID: target.Int64, Key: key.String}, Decision: decision.String})
+		}
+		return nil
+	})
+}

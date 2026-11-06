@@ -8,12 +8,15 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Call history](usage/call-history.md) shows how often you call each person. Use `msgvault calls import`, `msgvault calls list`, and `msgvault calls summary` to import, browse, and count calls. Summaries count only calls where you and that person attended; invitations never count as calls.
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
   `reopen` manage them, and the HTTP API has matching routes. Each request
   computes evidence for up to 1,000 uncached messages; repeated requests
   continue using retained evidence. They need HTTP API schema 3.44.0.
+- Read archived calendar occurrences through the CLI, HTTP API, and MCP, with paging, detail reads, and source-scoped grants.
+- Archive CalDAV calendars with manual, read-only sync. Unsupported resources are skipped and reported while other events continue.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 - Resumed Gmail full syncs preserve their starting History point so the next

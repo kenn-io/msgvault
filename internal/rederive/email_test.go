@@ -276,3 +276,71 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
+
+func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		merged bool
+	}{
+		{"original source", false},
+		{"merged source", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+			raw := []byte("Content-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nInvitation\r\n--invite\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Archived invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
+			wantSubject := "Archived invite"
+			if tc.merged {
+				raw = []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:merged-backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Merged invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+				wantSubject = "Merged invite"
+			}
+			// Represent retained MIME written before invitation extraction existed.
+			_, err := st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
+			requirements.NoError(err)
+			var drop string
+			if tc.merged {
+				into, err := st.GetOrCreateSource("gmail", "destination@example.org")
+				requirements.NoError(err)
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: into.ID})
+				requirements.NoError(err)
+				src = into
+				sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+				requirements.NoError(err)
+				assertions.Zero(sum.Errors)
+			} else {
+				requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Invitation", Valid: true}, sql.NullString{}))
+				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet='' WHERE id=?`), id)
+				requirements.NoError(err)
+				requirements.NoError(st.UpsertFTS(id, "Stored subject", "Invitation", "", "", ""))
+				fault := `CREATE TRIGGER fail_invite_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
+				drop = `DROP TRIGGER fail_invite_revision`
+				if st.IsPostgreSQL() {
+					_, err = st.DB().Exec(`CREATE FUNCTION fail_invite_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+					requirements.NoError(err)
+					fault = `CREATE TRIGGER fail_invite_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_invite_revision()`
+					drop += ` ON archive_metadata`
+				}
+				_, err = st.DB().Exec(fault)
+				requirements.NoError(err)
+				sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+				requirements.Error(err)
+				assertions.Zero(sum.Errors)
+				assertions.Zero(sum.BodiesRewritten)
+			}
+
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 1)
+			assertions.Equal(wantSubject, page.Occurrences[0].Subject)
+			if !tc.merged {
+				assertions.Zero(derivedDataRevision(t, st))
+				_, err = st.DB().Exec(drop)
+				requirements.NoError(err)
+				_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+				requirements.NoError(err)
+				assertions.Positive(derivedDataRevision(t, st), "retry must publish the calendar write even though email text is unchanged")
+			}
+		})
+	}
+}

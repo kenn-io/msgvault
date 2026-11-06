@@ -399,8 +399,10 @@ import (
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
-// 3.45.0 adds sender labels to message and file search rows.
-const APISchemaVersion = "3.45.0"
+// 3.45.0 adds archive calendar paging, detail, source-scoped agent reads, ICS invitations,
+// sender labels, and owner-only call evidence import, inspection, and person summaries.
+// 3.46.0 adds owner meeting records, link decisions, suggestions, and occurrence references.
+const APISchemaVersion = "3.46.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1125,6 +1127,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",
@@ -1207,6 +1215,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
+	if request := schemas["CallImportRequest"]; request != nil {
+		request.Properties["record"].Extensions = map[string]any{
+			"x-go-type":        "jsontext.Value",
+			"x-go-type-import": map[string]any{pathKey: "encoding/json/jsontext"},
+		}
+	}
 	// Read responses preserve definitions from any stored schema version.
 	if view := schemas["SavedView"]; view != nil {
 		state := view.Properties["canonical_state"]

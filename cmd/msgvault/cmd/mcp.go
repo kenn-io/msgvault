@@ -198,6 +198,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMinAPISchemaVersion) {
+		opts.CalEvents = st
+	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
@@ -314,6 +317,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+		opts.MeetingLinks = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMinAPISchemaVersion) {
+		opts.CalEvents = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

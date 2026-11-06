@@ -70,7 +70,7 @@ func TestListCalendarOccurrencesCancellationInheritance(t *testing.T) {
 			_, err := st.db.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, subject, cancelled)
 			require.NoError(err)
 			from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			require.NoError(err)
 			assert.Empty(page.Unexpandable)
 			require.Len(page.Occurrences, 1)

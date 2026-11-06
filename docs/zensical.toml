@@ -35,7 +35,7 @@ nav = [
     {"Local Email" = "usage/importing.md"},
     {"Remote Email Images" = "usage/remote-images.md"},
     {"Text Messages" = "usage/text-messages.md"},
-    {"Google Calendar" = "usage/calendar.md"},
+    {"Calendars" = "usage/calendar.md"},
     {"Microsoft Teams" = "usage/teams.md"},
     {"Discord" = "usage/discord.md"},
     {"Beeper" = "usage/beeper.md"},
@@ -44,6 +44,7 @@ nav = [
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
+    {"Call History" = "usage/call-history.md"},
   ]},
   {"People and Accounts" = [
     {"People and Profiles" = "usage/people.md"},

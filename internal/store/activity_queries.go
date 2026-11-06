@@ -486,7 +486,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	hasTimestamp := activityUsableTime(row.candidate.SentAt) ||
 		activityUsableTime(row.candidate.ReceivedAt) ||
 		activityUsableTime(row.candidate.InternalDate)
-	cancelled := row.candidate.MessageType == "calendar_event" &&
+	cancelled := row.candidate.MessageType == messageTypeCalendarEvent &&
 		strings.EqualFold(strings.TrimSpace(metadata.Status), "cancelled")
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
@@ -550,8 +550,70 @@ func (s *Store) attachActivityCounterpartChunkContext(
 ) error {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messageIDs)), ",")
 
-	query := `
-		WITH direct AS (
+	query := s.activityCounterpartsSQL(placeholders)
+
+	args := make([]any, 0, len(messageIDs)*4)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
+	if err != nil {
+		return fmt.Errorf("load activity counterparts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			messageID     int64
+			participantID int64
+			recipientType string
+			personID      *int64
+			isOwner       int
+			ownerAddress  string
+		)
+		if err := rows.Scan(
+			&messageID,
+			&participantID,
+			&recipientType,
+			&personID,
+			&isOwner,
+			&ownerAddress,
+		); err != nil {
+			return fmt.Errorf("scan activity counterpart: %w", err)
+		}
+		candidate, found := byMessageID[messageID]
+		if !found {
+			continue
+		}
+		candidate.Counterparts = append(candidate.Counterparts, ActivityCounterpart{
+			ParticipantID: participantID,
+			PersonID:      personID,
+			RecipientType: recipientType,
+			IsOwner:       isOwner != 0,
+			OwnerAddress:  ownerAddress,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate activity counterparts: %w", err)
+	}
+	return nil
+}
+
+// activityCounterpartsSQL keeps every read and projection on the same population.
+// selection is an internal placeholder list or a scoped message-ID subquery.
+func (s *Store) activityCounterpartsSQL(placeholders string) string {
+	// Direct recipients are reused by the sender and room fallbacks. Keep the
+	// selected ID set out of their correlated lookups so SQLite does not rebuild
+	// that set for each message or counterpart.
+	materialization, directLookup := "MATERIALIZED", "direct"
+	if s.IsPostgreSQL() {
+		// PostgreSQL needs the recipient index for per-message probes. A fenced
+		// CTE has no index and can turn these into repeated full scans.
+		materialization, directLookup = "NOT MATERIALIZED", "message_recipients"
+	}
+	return `
+		WITH direct AS ` + materialization + ` (
 			SELECT mr.message_id, mr.participant_id, mr.recipient_type,
 			       mr.email_address AS envelope_address
 			FROM message_recipients mr
@@ -581,7 +643,7 @@ func (s *Store) attachActivityCounterpartChunkContext(
 			WHERE m.id IN (` + placeholders + `)
 			  AND NOT EXISTS (
 				SELECT 1
-				FROM direct d
+				FROM ` + directLookup + ` d
 				WHERE d.message_id = m.id
 				  AND d.recipient_type = 'from'
 			  )
@@ -620,7 +682,7 @@ func (s *Store) attachActivityCounterpartChunkContext(
 			JOIN participants p ON p.id = cp.participant_id
 			WHERE m.id IN (` + placeholders + `)
 			  AND NOT EXISTS (
-				SELECT 1 FROM direct d
+				SELECT 1 FROM ` + directLookup + ` d
 				WHERE d.message_id = m.id
 				  AND d.recipient_type IN ('to', 'cc', 'bcc')
 			  )
@@ -682,7 +744,7 @@ func (s *Store) attachActivityCounterpartChunkContext(
 					     AND sender_id IS NULL
 					     AND 1 = (
 						SELECT COUNT(DISTINCT d.participant_id)
-						FROM direct d
+						FROM ` + directLookup + ` d
 						WHERE d.message_id = matched_counterparts.message_id
 						  AND d.recipient_type = 'from'
 					     )
@@ -704,51 +766,4 @@ func (s *Store) attachActivityCounterpartChunkContext(
 		FROM counterparts cp
 		LEFT JOIN person_participants pp ON pp.participant_id = cp.participant_id
 		ORDER BY cp.message_id, cp.participant_id, cp.recipient_type`
-
-	args := make([]any, 0, len(messageIDs)*4)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
-	if err != nil {
-		return fmt.Errorf("load activity counterparts: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var (
-			messageID     int64
-			participantID int64
-			recipientType string
-			personID      *int64
-			isOwner       int
-			ownerAddress  string
-		)
-		if err := rows.Scan(
-			&messageID,
-			&participantID,
-			&recipientType,
-			&personID,
-			&isOwner,
-			&ownerAddress,
-		); err != nil {
-			return fmt.Errorf("scan activity counterpart: %w", err)
-		}
-		candidate, found := byMessageID[messageID]
-		if !found {
-			continue
-		}
-		candidate.Counterparts = append(candidate.Counterparts, ActivityCounterpart{
-			ParticipantID: participantID,
-			PersonID:      personID,
-			RecipientType: recipientType,
-			IsOwner:       isOwner != 0,
-			OwnerAddress:  ownerAddress,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate activity counterparts: %w", err)
-	}
-	return nil
 }

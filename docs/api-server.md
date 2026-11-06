@@ -84,6 +84,16 @@ never scan or rebuild the archive. See
 [ranking and maintenance](architecture/search-ranking.md#filename-suggestions)
 and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
+### Archived calendar occurrences, unreleased
+
+`GET /api/v1/calendar/events` lists archived occurrences in a positive, half-open RFC3339 `from`/`to` window. Omit `limit` and `cursor` for the whole window; either enables paging, default 100, range 1–500. Responses carry `occurrences`, `unexpandable`, and optional `next_cursor`.
+
+Pass `next_cursor` as `cursor` with the same window, including offsets, and authorized sources. Cursors belong to one archive and format version. `GET /api/v1/calendar/events/{ref}` opens one returned occurrence with `location`, `description`, and `join_url` decoded from its archived raw message. Empty content fields are omitted. Repeating occurrences use `evt:<masterID>@<original-key>`; standalone events use `evt:<messageID>`.
+
+Agents need `calendar.event.read` or `message.read` on the source. Reads include only granted sources. `calendar.read` alone returns 403. Missing or hidden occurrences return 404, and unsupported recurrence returns 422. Lists with too many candidate rows return 400 `query_too_broad`. When list expansion reaches its work limit, the response keeps completed results and lists interrupted and remaining series under `unexpandable`. Invalid windows, limits, refs, or cursors return 400 `invalid_argument`.
+
+Archived calendar reads require schema 3.46.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#list-archived-events) for display and expansion behavior.
+
 ### Calendar control
 
 `POST /api/v1/calendar/control` accepts one strict JSON object with `action` and
@@ -155,14 +165,39 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Call history
+
+Call history is owner-only. Delegated agent grants do not authorize these routes.
+Imports use the daemon mutation gate and return stable message/source IDs.
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
+| `GET /api/v1/calls` | Typed observations. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
+| `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
+
+Read results use an `items` array. Limits default to 50 and are capped at 100.
+Times accept RFC3339 timestamps or `YYYY-MM-DD` dates at midnight UTC, with inclusive `after` and exclusive `before`.
+Invalid queries return 400; malformed imports 400, invalid observations 422,
+oversized imports 413, unsupported media 415, retired-source
+conflicts 409, and unavailable or busy service 503.
+The [call-history guide](usage/call-history.md) owns format details, attendance
+rules, deduplication and source limitations. The generated OpenAPI document
+describes every response field.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.45.0**.
+it is separate from the binary release version. The current schema is **3.46.0**.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
+
+Schema 3.46.0 adds owner-only call evidence import, inspection, and person summaries.
+
+Schema 3.46.0 adds archive calendar paging, detail, and source-scoped agent reads.
+Schema 3.46.0 adds owner meeting link decisions and suggestions.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
@@ -2381,9 +2416,14 @@ for the user workflow and coverage meanings.
 
 | Endpoint | Request and result |
 |---|---|
+| `GET /api/v1/meetings/record?ref=msg:42` | Returns linked event references, titles, and times for one note |
+| `POST /api/v1/meetings/links/decisions` | Accepts `message_id`, an `event` reference, and `decision: "link"` or `"unlink"`; returns the saved decision |
+| `GET /api/v1/meetings/suggestions?ref=msg:42` | Returns overlapping events for a note, or notes for an `evt:<id>[@occurrence key]`, with ranking reasons and an `unexpandable` array of affected calendar message IDs and reasons |
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+Link reads, decisions, and suggestions require owner access. Suggestions leave links unchanged; saved decisions survive reimport. See [connecting notes to calendar events](usage/meetings.md#connect-notes-to-calendar-events) for references and examples. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

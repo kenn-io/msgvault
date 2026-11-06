@@ -1,4 +1,4 @@
-package activity
+package activitydate
 
 import (
 	"testing"
