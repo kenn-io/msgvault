@@ -142,7 +142,7 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 		assert.Equal("alice@example.com", r.URL.Query().Get("account"), "account")
 		assert.Equal("sms", r.URL.Query().Get("message_type"), "message_type")
 		assert.Equal("50", r.URL.Query().Get("page_size"), "page_size")
-		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
+		writeVectorSearchResponse(t, w, "", 0)
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
@@ -187,7 +187,7 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		assert.Equal("Important", r.URL.Query().Get("collection"), "collection")
-		writeVectorSearchResponse(t, w, "alice@example.com", "Important", 2)
+		writeVectorSearchResponse(t, w, "Important", 2)
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
@@ -255,7 +255,7 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		assert.Equal("hybrid", r.URL.Query().Get("mode"), "mode")
-		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
+		writeVectorSearchResponse(t, w, "", 0)
 	})
 
 	testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
@@ -312,7 +312,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 						return
 					}
 					assert.Equal(tc.mode, r.URL.Query().Get("mode"))
-					writeVectorSearchResponse(t, w, "alice@example.com", "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
+					writeVectorSearchResponse(t, w, "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
 				})
 				ctx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
 				defer restore()
@@ -412,7 +412,6 @@ func configureVectorSearchHTTPTest(t *testing.T, dataDir string, local bool, rem
 func writeVectorSearchResponse(
 	t *testing.T,
 	w http.ResponseWriter,
-	from string,
 	scopeLabel string,
 	scopeSourceCount int,
 	metadata ...map[string]any,
@@ -441,7 +440,7 @@ func writeVectorSearchResponse(
 		"results": []map[string]any{{
 			"id":      42,
 			"subject": "Lunch",
-			"from":    from,
+			"from":    "alice@example.com",
 			"sent_at": "2024-01-02T03:04:05Z",
 			"score": map[string]any{
 				"rrf":             0.5,
