@@ -284,11 +284,10 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		cap, results    int
 		codes, messages []string
 	}{
-		{name: "complete", results: 1, mode: "vector"},
+		{name: "complete", results: 1, mode: "hybrid", pool: true},
 		{name: "more", results: 50, mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "saturated_more", results: 50, mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "ranking_cap", results: 50, mode: "vector", cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
-		{name: "pool_only", results: 1, mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"hybrid search may omit matches; raise vector.search.k_per_signal"}},
 	} {
 		for _, asJSON := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {

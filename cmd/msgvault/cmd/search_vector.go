@@ -262,11 +262,5 @@ func semanticMoreResultsHints(resp *daemonclient.CLIHybridSearch) []map[string]s
 			"message": fmt.Sprintf("semantic result limit reached; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached),
 		}}
 	}
-	if resp.Mode == "hybrid" && resp.PoolSaturated {
-		return []map[string]string{{
-			"code":    "candidate_pool_saturated",
-			"message": "hybrid search may omit matches; raise vector.search.k_per_signal on the server and restart it, then raise --limit, or narrow the query",
-		}}
-	}
 	return nil
 }

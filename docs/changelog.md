@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. When an extra ranked match exists beyond the semantic ranking cap, raise `vector.search.max_page_size_hybrid` on the server and restart the daemon before raising `--limit`. When no extra ranked row is available, saturated hybrid search points to `vector.search.k_per_signal` or a narrower query.
+- CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. When an extra ranked match exists beyond the semantic ranking cap, raise `vector.search.max_page_size_hybrid` on the server and restart the daemon before raising `--limit`.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
