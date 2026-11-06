@@ -121,7 +121,7 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 }
 
 func meetingSeriesExceptionsPredicate(ctx context.Context, dialect Dialect, master CalendarEventRow, from, to time.Time) (string, []any) {
-	predicate, args := calendarExceptionWindow(ctx, dialect, from, to)
+	predicate, args := calendarExceptionWindow(dialect, from, to)
 	return predicate + ` AND m.source_id = ? AND e.series_provider_id = ?`, append(args, master.SourceID, master.Event.ProviderEventID)
 }
 
@@ -372,7 +372,7 @@ func (s *Store) automaticMeetingPredicate(ctx context.Context, r reboundReader, 
 		args = append([]any{key.Value, base}, sourceIDs...)
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
-		window, windowArgs := calendarExceptionWindow(ctx, r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
+		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
 		predicate += ` AND (e.kind != 'exception' OR (` + window + `))`
 		args = append(args, windowArgs...)
 	} else {
