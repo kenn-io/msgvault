@@ -209,7 +209,13 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 			assertions.Empty(got.Person.CadenceStatus)
 		}
 		for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence", "notes"} {
-			assertions.Contains(got.Gaps, Gap{Section: section, Code: "owner-only"})
+			count := 0
+			for _, gap := range got.Gaps {
+				if gap.Section == section && gap.Code == "owner-only" {
+					count++
+				}
+			}
+			assertions.Equal(1, count, section)
 		}
 		for _, entry := range append(allDayEntries(got), got.History...) {
 			assertions.NotEqual("call", entry.Kind)

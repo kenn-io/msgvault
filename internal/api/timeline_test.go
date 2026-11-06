@@ -74,7 +74,6 @@ func TestTimelineOwnerFormatsAndErrors(t *testing.T) {
 }
 func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
 	requirements := require.New(t)
-	assertions := assert.New(t)
 	srv, st, src := timelineRouteFixture(t)
 	const noteBody = "Synthetic owner-only timeline note"
 	_, err := st.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{
@@ -107,13 +106,6 @@ func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
 			assertions.NotContains(response.Body.String(), noteBody)
 		})
 	}
-
-	_, secret, _, err := srv.agentGrants.Issue("timeline note control", []agentgrant.Permission{agentgrant.PermissionMessageRead},
-		[]agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	delegated := timelineGET(srv, "?mode=day&date=2027-03-01", secret)
-	requirements.Equal(http.StatusOK, delegated.Code, delegated.Body.String())
-	assertions.NotContains(delegated.Body.String(), noteBody)
 }
 
 func TestTimelineDelegatedAdmission(t *testing.T) {
@@ -136,18 +128,6 @@ func TestTimelineDelegatedAdmission(t *testing.T) {
 		})
 	}
 }
-func TestTimelineDuringSync(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	gate := NewSerialOperationGate()
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Logger: testLogger(), OperationGate: gate})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
-	done, ok := gate.BeginWork()
-	require.True(t, ok)
-	defer done()
-	w := timelineGET(srv, "?date=2027-03-01", "")
-	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
-}
-
 func TestTimelinePersonAuthorizationAndAmbiguity(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

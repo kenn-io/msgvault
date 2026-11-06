@@ -21,27 +21,6 @@ func anchorRequest(ref string) Request {
 	return Request{Around: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
 
-func TestAnchorComposesOwnerGapsOnce(t *testing.T) {
-	f := newTimelineFixture(t)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	req := anchorRequest("2026-10-22T12:00:00Z")
-	req.Scope.Owner = false
-	view := &Timeline{Now: f.now}
-	c := composer{ctx: ctx, src: f.src, req: req, t: view, loc: time.UTC, keys: map[string]string{}, positions: map[string]string{}, entryDates: map[string]string{}, more: map[string]bool{}}
-	target, err := c.resolveAnchor()
-	require.NoError(t, err)
-	c.buildAnchor(target)
-	for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence", "notes"} {
-		count := 0
-		for _, gap := range view.Gaps {
-			if gap.Section == section && gap.Code == "owner-only" {
-				count++
-			}
-		}
-		assert.Equal(t, 1, count, section)
-	}
-}
-
 type anchorBurstRead struct {
 	query store.BurstQuery
 	page  store.BurstPage
@@ -264,10 +243,7 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	loc, err := time.LoadLocation("America/Santiago")
 	require := require.New(t)
 	require.NoError(err)
-	ref, err := ParseAnchor("2026-09-06", loc)
-	require.NoError(err)
 	assert := assert.New(t)
-	assert.Equal("2026-09-06T01:00:00-03:00", ref.Time.Format(time.RFC3339))
 	f := newTimelineFixture(t)
 	f.src.Location = loc
 	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Civil date", Author: "owner"})
@@ -275,7 +251,7 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
 	require.NoError(err)
-	assert.Equal(ref.Time, got.Anchor.Time)
+	assert.Equal("2026-09-06T01:00:00-03:00", got.Anchor.Time.Format(time.RFC3339))
 	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
 	require.Len(got.History, 2)
 	for _, entry := range got.History {

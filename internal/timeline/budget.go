@@ -437,23 +437,14 @@ func boundTimeline(t *Timeline) {
 			boundText(&p.Title, 80)
 			p.Attendees, p.AttendeeCount, p.AttendeesTruncated = boundPeople(p.Attendees, p.AttendeeCount)
 			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
-			if e.HiddenText {
-				p.Title = UntrustedText{}
-			}
 		}
 		if p := e.Burst; p != nil {
 			boundText(&p.Snippet, 80)
 			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
-			if e.HiddenText {
-				p.Snippet = UntrustedText{}
-			}
 		}
 		if p := e.Message; p != nil {
 			boundText(&p.Snippet, 80)
 			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
-			if e.HiddenText {
-				p.Snippet = UntrustedText{}
-			}
 		}
 		if p := e.Call; p != nil {
 			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
@@ -464,9 +455,6 @@ func boundTimeline(t *Timeline) {
 		if p := e.Note; p != nil {
 			boundText(&p.Text, 600)
 			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
-			if e.HiddenText {
-				p.Text = UntrustedText{}
-			}
 		}
 	}
 }

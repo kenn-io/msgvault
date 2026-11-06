@@ -61,11 +61,12 @@ func TestFreshnessWarningsAndClockSkew(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	future := now.Add(time.Hour)
+	future := now.Add(48 * time.Hour)
 	got, err := Build(t.Context(), Inputs{Now: now, StaleAfter: 24 * time.Hour, Sources: []SourceInventoryItem{
-		{SourceType: "gmail", Identifier: "owner@example.test", Scheduling: "disabled", Outcome: "failed", LastSuccessfulSyncAt: &future},
+		{SourceType: "gmail", Identifier: "owner@example.test", Scheduling: "scheduled", Outcome: "failed", LastSuccessfulSyncAt: &future},
+		{SourceType: "gmail", Identifier: "z-disabled@example.test", Scheduling: "disabled"},
 	}})
 	requirements.NoError(err)
 	assertions.Empty(got.Sources[0].Reason)
-	assertions.Equal([]string{"Sync is disabled for gmail source owner@example.test.", "The latest sync failed for gmail source owner@example.test."}, got.Warnings)
+	assertions.Equal([]string{"The latest sync failed for gmail source owner@example.test.", "Sync is disabled for gmail source z-disabled@example.test."}, got.Warnings)
 }

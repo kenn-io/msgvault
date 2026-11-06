@@ -213,27 +213,6 @@ func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
 	assertions.Equal(1, got.Person.Monthly[11])
 }
 
-func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
-	require := require.New(t)
-	f := newTimelineFixture(t)
-	old := f.now.Add(-10 * time.Hour)
-	f.add(old, false)
-	latest := f.add(f.now.Add(-time.Minute), false)
-	conv, err := f.Store.EnsureConversation(f.Source.ID, "recent", "Recent conversation")
-	require.NoError(err)
-	f.add(old.Add(time.Hour), false, func(m *store.Message) { m.ConversationID = conv })
-	f.project()
-	// A one-group cap exercises the reader's ordering with just two groups.
-	got, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{
-		Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}},
-		After:   new(time.Time), Until: &f.now, Descending: true, Limit: 1,
-	})
-	require.NoError(err)
-	require.Len(got.Bursts, 1)
-	require.NotNil(got.NextKey)
-	assert.Contains(t, got.Bursts[0].LatestMessageIDs, latest)
-}
-
 func TestRelationshipRejectsOwnerAddress(t *testing.T) {
 	f := newTimelineFixture(t)
 	f.add(f.now.Add(-time.Hour), false)

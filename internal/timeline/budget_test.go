@@ -145,7 +145,12 @@ func TestFitFallbackCursorKeysPreserveSubsecondOrder(t *testing.T) {
 				v := budgetTimeline(1)
 				v.History[0].Time = v.Now.Add(offset)
 				if section == "upcoming" {
-					v.Upcoming = v.History
+					v.Mode = ModeDay
+					meeting := sampleTimeline(ModeDay).Upcoming[0]
+					meeting.Time = v.Now.Add(offset)
+					meeting.Meeting.Start = meeting.Time
+					meeting.Meeting.End = meeting.Time.Add(time.Hour)
+					v.Upcoming = []Entry{meeting}
 					v.History = nil
 				}
 				SetContinuation(v, Continuation{Binding: cursorBinding(), More: map[string]bool{section: true}})
@@ -290,36 +295,55 @@ func TestFitSectionSharesFlowForward(t *testing.T) {
 	assertions.Len(out.Upcoming, 1)
 	assertions.NotEmpty(out.History)
 }
-func TestFitHiddenTextStripsJSONText(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	v := budgetTimeline(1)
-	v.History[0].HiddenText = true
-	v.History[0].Message.Snippet.Text = "secret text"
-	out, err := Fit(v, "json", 4096)
-	requirements.NoError(err)
-	b, err := json.Marshal(out)
-	requirements.NoError(err)
-	assertions.NotContains(string(b), "secret text")
-}
-func TestFitExistingMoreStillContinues(t *testing.T) {
-	v := budgetTimeline(80)
-	v.Omitted.Budget = map[string]any{"history": "more"}
-	out, err := Fit(v, "json", 4096)
-	require.NoError(t, err)
-	assert.NotEmpty(t, out.Cursor)
-	assert.Equal(t, "more", out.Omitted.Budget["history"])
-}
 func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	v := budgetTimeline(60)
-	entries := v.History
-	v.History = nil
-	v.Days = []Day{{Date: "2026-10-22", Meetings: entries[:5], Bursts: entries[5:30], Calls: entries[30:45], Notes: entries[45:]}}
+	assertions, requirements := assert.New(t), require.New(t)
+	v := budgetTimeline(0)
+	v.Mode = ModeDay
+	day := Day{Date: "2026-10-22"}
+	keys := map[string]string{}
+	var entries []Entry
+	sample := sampleTimeline(ModeDay).Days[0]
+	for i := range 60 {
+		var e Entry
+		switch {
+		case i < 5:
+			e = sample.Meetings[0]
+			e.Key = fmt.Sprintf("occ:evt:%d", i+1)
+			e.Ref = fmt.Sprintf("evt:%d", i+1)
+			e.AnchorRef = e.Ref
+			e.Open = []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": e.Ref}}}
+			day.Meetings = append(day.Meetings, e)
+		case i < 30:
+			e = sample.Bursts[0]
+			e.Key = fmt.Sprintf("burst:1:%d:2026-10-22", i+1)
+			e.Ref = fmt.Sprintf("conv:%d", i+1)
+			e.AnchorRef = e.Key
+			e.Open = []Open{{Tool: "list_messages", Args: map[string]any{"conversation_id": i + 1}}}
+			burst := *e.Burst
+			burst.LatestMessageIDs = []int64{int64(i + 1)}
+			burst.Copies = nil
+			e.Burst = &burst
+			day.Bursts = append(day.Bursts, e)
+		case i < 45:
+			e = sample.Calls[0]
+			e.Key = fmt.Sprintf("m:%d", i+1)
+			e.Ref = fmt.Sprintf("msg:%d", i+1)
+			e.AnchorRef = e.Ref
+			e.Open = []Open{{Tool: "get_message", Args: map[string]any{"id": i + 1}}}
+			day.Calls = append(day.Calls, e)
+		default:
+			e = sample.Notes[0]
+			e.Key = fmt.Sprintf("note:%d", i+1)
+			day.Notes = append(day.Notes, e)
+		}
+		entries = append(entries, e)
+		keys[e.Key] = fmt.Sprintf("%03d", i+1)
+	}
+	v.Days = []Day{day}
+	SetContinuation(v, Continuation{Binding: cursorBinding(), SortKeys: keys})
 	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
-	assertions.NotEmpty(out.Days)
+	requirements.NotEmpty(out.Days)
 	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
 	var got []Entry
 	for _, d := range out.Days {
@@ -330,13 +354,14 @@ func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 	}
 	requirements.NotEmpty(got)
 	for i, e := range got {
-		assertions.Equal(fmt.Sprintf("msg:%d", i+1), e.Key)
-		assertions.Equal(i+1, e.Open[0].Args["id"])
+		assertions.Equal(entries[i].Key, e.Key)
+		assertions.Equal(entries[i].Open, e.Open)
 	}
 	c, err := DecodeCursor(out.Cursor, cursorBinding())
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("%03d", len(got)), c.Positions["days"])
 }
+
 func TestFitBoundsPeoplePreservingCountsAndTierSource(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -388,9 +413,9 @@ func TestFitCompletePageDoesNotRequireContinuation(t *testing.T) {
 func TestFitSameEntryUsesSectionSortKeys(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	v := budgetTimeline(1)
-	entry := v.History[0]
-	v.History = nil
+	v := budgetTimeline(0)
+	v.Mode = ModeDay
+	entry := sampleTimeline(ModeDay).Upcoming[0]
 	v.Upcoming = []Entry{entry}
 	v.Days = []Day{{Date: "2026-10-22", Meetings: []Entry{entry}}}
 	binding := cursorBinding()

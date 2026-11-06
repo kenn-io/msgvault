@@ -66,10 +66,11 @@ func TestBuildDayRecurringSeriesMovedOccurrence(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d@20261022T100000Z", master), e.Open[0].Args["ref"])
 	assertions.Equal(15, e.Time.Hour())
 
-	detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", moved))
+	req := anchorRequest(fmt.Sprintf("evt:%d", moved))
+	req.BeforeSet, req.AfterSet = true, true
+	around, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
-	c := composer{ctx: t.Context(), src: f.src, req: dayRequest(), t: got, loc: time.UTC, entryDates: map[string]string{}}
-	entries, _ := c.mergeEntries(nil, nil, []store.CalendarOccurrence{detail.CalendarOccurrence}, nil, nil)
+	entries := around.History
 	requirements.Len(entries, 1)
 	assertions.Equal(fmt.Sprintf("evt:%d", moved), entries[0].Ref)
 	assertions.Equal(fmt.Sprintf("evt:%d", moved), entries[0].AnchorRef)

@@ -10,24 +10,25 @@ import (
 )
 
 func TestCalDAVInventorySeparatesSelectedCollections(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("caldav", `["owner@example.org","https://calendar.example.org/dav/personal/"]`)
-	require.NoError(t, err)
+	require.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.CalDAV.Sources = []config.CalDAVSource{
 		{Name: "personal", Username: "Owner@Example.org", URL: "https://calendar.example.org/dav/", Calendars: []string{"https://CALENDAR.example.org:443/dav/personal/"}},
 		{Name: "work", Username: "owner@example.org", URL: "https://calendar.example.org/dav/", Calendars: []string{"https://calendar.example.org/dav/work/"}},
 	}
 	items, err := Build(t.Context(), cfg, st)
-	require.NoError(t, err)
-	assert.Len(t, items, 2, "the unimported work collection needs its own inventory item")
+	require.NoError(err)
+	assert.Len(items, 2, "the unimported work collection needs its own inventory item")
 	for _, item := range items {
 		if item.SourceID != nil {
-			assert.Equal(t, source.ID, *item.SourceID)
-			assert.Equal(t, "msgvault sync-caldav personal", item.SyncCommand)
+			assert.Equal(source.ID, *item.SourceID)
+			assert.Equal("msgvault sync-caldav personal", item.SyncCommand)
 		} else {
-			assert.Equal(t, "work", item.Identifier)
-			assert.Equal(t, "msgvault sync-caldav work", item.SyncCommand)
+			assert.Equal("work", item.Identifier)
+			assert.Equal("msgvault sync-caldav work", item.SyncCommand)
 		}
 	}
 }

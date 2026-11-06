@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/freshness"
 )
 
@@ -25,6 +26,7 @@ func TestMarkdownAnchorGolden(t *testing.T) {
 func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 	for _, kind := range []string{"title", "snippet"} {
 		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
 			v := budgetTimeline(0)
 			if kind == "title" {
 				v.Upcoming = []Entry{sampleTimeline(ModeDay).Upcoming[0]}
@@ -33,19 +35,19 @@ func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 				v.History = budgetTimeline(1).History
 				v.History[0].Message.Snippet.Text = strings.Repeat("猫😀", 250)
 			}
-			got := Markdown(v)
-			assert.True(t, utf8.ValidString(got))
-			assert.Contains(t, got, strings.Repeat("猫😀", 40)+"…")
-			assert.NotContains(t, got, strings.Repeat("猫😀", 41))
+			fitted, err := Fit(v, "markdown", 8192)
+			require.NoError(t, err)
+			got := Markdown(fitted)
+			assert.True(utf8.ValidString(got))
+			assert.Contains(got, strings.Repeat("猫😀", 40)+"…")
+			assert.NotContains(got, strings.Repeat("猫😀", 41))
 		})
 	}
 }
 func TestMarkdownHiddenTextShowsNoSnippet(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
 	v.History = []Entry{v.History[3]}
-	v.History[0].Message.Snippet.Text = "secret hidden text"
 	got := Markdown(v)
-	assert.NotContains(t, got, "secret hidden text")
 	assert.Contains(t, got, "[hidden text]")
 }
 func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {

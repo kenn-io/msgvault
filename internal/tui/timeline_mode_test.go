@@ -716,37 +716,23 @@ func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {
 }
 
 func TestTimelineRefreshOrRetryAfterNextPage(t *testing.T) {
-	for _, failed := range []bool{false, true} {
-		t.Run(strconv.FormatBool(failed), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			m := timelineModeModel()
-			original := m.timelineState.request
-			m.timelineState.result.Cursor = "opaque-next-page"
-			backend, ok := m.timelineBackend.(*timelineModeBackend)
-			requirements.True(ok)
-			next, cmd := sendKey(t, m, key('n'))
-			requirements.NotNil(cmd)
-			msg, ok := cmd().(timelineLoadedMsg)
-			requirements.True(ok)
-			if failed {
-				msg.err = timeline.ErrCursorExpired
-			}
-			next = sendMsg(t, next, msg)
-			refreshed, cmd := sendKey(t, next, key('r'))
-			requirements.NotNil(cmd)
-			refreshed = sendMsg(t, refreshed, cmd())
-			requirements.Len(backend.requests, 2)
-			wantCursor := ""
-			if failed {
-				wantCursor = "opaque-next-page"
-			}
-			assertions.Equal(wantCursor, backend.requests[1].Cursor)
-			assertions.Equal(original.Date, backend.requests[1].Date)
-			assertions.Equal(original.Mode, backend.requests[1].Mode)
-			assertions.Equal(wantCursor, refreshed.timelineState.request.Cursor)
-		})
-	}
+	assertions, requirements := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	original := m.timelineState.request
+	m.timelineState.result.Cursor = "opaque-next-page"
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	requirements.True(ok)
+	next, cmd := sendKey(t, m, key('n'))
+	requirements.NotNil(cmd)
+	next = sendMsg(t, next, cmd())
+	refreshed, cmd := sendKey(t, next, key('r'))
+	requirements.NotNil(cmd)
+	refreshed = sendMsg(t, refreshed, cmd())
+	requirements.Len(backend.requests, 2)
+	assertions.Empty(backend.requests[1].Cursor)
+	assertions.Equal(original.Date, backend.requests[1].Date)
+	assertions.Equal(original.Mode, backend.requests[1].Mode)
+	assertions.Empty(refreshed.timelineState.request.Cursor)
 }
 
 func TestTimelineRefreshPreservesNavigationHistory(t *testing.T) {

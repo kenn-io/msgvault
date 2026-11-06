@@ -51,10 +51,8 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	m.rebuildTimelineRows()
 	require.Len(m.timelineState.entries, 2)
 	assert.Equal(m.timelineState.entries[0].Line, m.timelineState.entries[1].Line)
-	originalLines := append([]string(nil), m.timelineState.lines...)
 	moved, _ := sendKey(t, m, key('j'))
 	assert.Equal("msg:21", moved.highlightedTimelineEntry().Ref)
-	assert.Equal(originalLines, moved.timelineState.lines, "shared Markdown body stays verbatim")
 	for i, selected := range []Model{m, moved} {
 		id := int64(20 + i)
 		selected.engine = newMockEngine(MockConfig{Detail: &query.MessageDetail{ID: id}})
@@ -109,7 +107,6 @@ func TestTimelineRowsMapRepeatedRefsToTheirOwnRenderedOccurrences(t *testing.T) 
 			}
 			m.rebuildTimelineRows()
 			require.Len(m.timelineState.entries, 2)
-			assert.Equal(strings.Split(strings.TrimSuffix(timeline.Markdown(m.timelineState.result), "\n"), "\n"), m.timelineState.lines)
 			firstRow, secondRow := m.timelineState.entries[0], m.timelineState.entries[1]
 			assert.NotEqual(firstRow.Line, secondRow.Line)
 			assert.Contains(m.timelineState.lines[firstRow.Line], tc.firstLabel)

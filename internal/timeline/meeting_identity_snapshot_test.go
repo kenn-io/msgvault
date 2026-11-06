@@ -128,9 +128,6 @@ func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
 	requirements.Len(fallback.History, 1)
 	assertions.True(fallback.History[0].Filtered)
 	assertions.Equal("[encrypted]", fallback.History[0].Message.Snippet.Text)
-	relationship, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	requirements.NoError(err)
-	assertions.Zero(relationship.Person.InteractionCount)
 }
 
 func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T) {

@@ -27,6 +27,11 @@ func TestParseAnchorForms(t *testing.T) {
 			assertions.Equal(4, a.Time.UTC().Hour())
 		}
 	}
+	santiago, err := time.LoadLocation("America/Santiago")
+	requirements.NoError(err)
+	date, err := ParseAnchor("2026-09-06", santiago)
+	requirements.NoError(err)
+	assertions.Equal("2026-09-06T01:00:00-03:00", date.Time.Format(time.RFC3339))
 	for _, s := range []string{"msg:0", "msg:-1", "conv:", "e1@bad", "evt:1@20260230", "burst:1:2:bad", "nope"} {
 		_, err := ParseAnchor(s, loc)
 		requirements.ErrorIs(err, ErrUnknownReference, s)

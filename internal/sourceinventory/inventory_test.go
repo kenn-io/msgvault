@@ -24,7 +24,6 @@ func TestConfiguredAccountUsesDaemonSelectors(t *testing.T) {
 		{name: "casefolded identifier", kind: "gmail", identifier: "Owner@Example.Test", configured: "owner@example.test", command: "msgvault sync-incremental owner@example.test", matched: true},
 		{name: "archive alias", kind: "teams", identifier: "owner@example.test", alias: "Work", configured: "work", command: "msgvault sync-teams owner@example.test", matched: true},
 		{name: "Discord exact guild", kind: "discord", identifier: "123456789", configured: "123456789", command: "msgvault sync-discord 123456789", matched: true},
-		{name: "Discord display rejected", kind: "discord", identifier: "123456789", display: "Community", configured: "community", matched: false},
 		{name: "Discord alias rejected", kind: "discord", identifier: "123456789", alias: "Community", configured: "community", matched: false},
 		{name: "unsupported account type", kind: "o365", identifier: "owner@example.test", configured: "owner@example.test", matched: false},
 	} {
@@ -239,7 +238,7 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 }
 
 func TestImportOnlySourcesAreStatic(t *testing.T) {
-	for _, sourceType := range []string{telegram.SourceType, "synctech_sms", "whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
+	for _, sourceType := range []string{"mbox", telegram.SourceType, "synctech_sms", "whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
 		t.Run(sourceType, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -263,8 +262,6 @@ func TestArchiveAndConfigurationUnion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	imap, err := st.GetOrCreateSource("imap", "owner@example.test")
 	requirements.NoError(err)
-	_, err = st.GetOrCreateSource("mbox", "owner@example.test")
-	requirements.NoError(err)
 	_, err = st.GetOrCreateSource("slack", "workspace")
 	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
@@ -273,16 +270,13 @@ func TestArchiveAndConfigurationUnion(t *testing.T) {
 	cfg.Slack.Schedule = "*/15 * * * *"
 	items, err := Build(t.Context(), cfg, st)
 	requirements.NoError(err)
-	requirements.Len(items, 3, "existing sources must prevent phantom account/provider placeholders")
+	requirements.Len(items, 2, "existing sources must prevent phantom account/provider placeholders")
 	for _, item := range items {
 		switch item.SourceType {
 		case "imap":
 			assertions.Equal("disabled", item.Scheduling)
 			requirements.NotNil(item.SourceID)
 			assertions.Equal(imap.ID, *item.SourceID)
-		case "mbox":
-			assertions.Equal("static", item.Scheduling)
-			assertions.Empty(item.SyncCommand)
 		case "slack":
 			assertions.Equal("scheduled", item.Scheduling)
 			assertions.Equal("msgvault sync-slack", item.SyncCommand)

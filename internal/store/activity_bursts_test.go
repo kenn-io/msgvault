@@ -323,3 +323,25 @@ func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
 		})
 	}
 }
+
+func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
+	require := require.New(t)
+	f := newTimelineActivityFixture(t)
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-10 * time.Hour)
+	f.add(t, f.ConvID, f.Source.ID, old, false, "")
+	latest := f.add(t, f.ConvID, f.Source.ID, now.Add(-time.Minute), false, "")
+	conv, err := f.Store.EnsureConversation(f.Source.ID, "recent", "Recent conversation")
+	require.NoError(err)
+	f.add(t, conv, f.Source.ID, old.Add(time.Hour), false, "")
+	projectTierSignals(t, f.Fixture, "UTC", 0)
+	// A one-group cap exercises the reader's ordering with just two groups.
+	got, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{
+		Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}},
+		After:   new(time.Time), Until: &now, Descending: true, Limit: 1,
+	})
+	require.NoError(err)
+	require.Len(got.Bursts, 1)
+	require.NotNil(got.NextKey)
+	assert.Contains(t, got.Bursts[0].LatestMessageIDs, latest)
+}
