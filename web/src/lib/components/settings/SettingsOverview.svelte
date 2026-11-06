@@ -72,6 +72,9 @@
       {#if local}
         <div class="row__local">
           <SearchByMeaningRow state={local} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
+          <span class="row__chip-sizer" aria-hidden="true">
+            {#each [localLabels?.off ?? 'Off', localLabels?.on ?? 'On', localLabels?.ollama ?? 'On · Ollama', localLabels?.turningOn ?? 'Turning on'] as text}<Chip size="xs" uppercase={false}><span data-label={text}></span></Chip>{/each}
+          </span>
         </div>
         {#if recovery}
           <div class="row__recovery">
@@ -119,8 +122,11 @@
     border-top: 1px solid var(--border-default);
   }
   .row__local { display: grid; grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; min-width: 0; }
-  .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-template-columns: subgrid; grid-template-rows: minmax(24px, auto); min-height: 24px; gap: var(--control-gap) var(--section-gap); }
+  .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; grid-template-rows: minmax(24px, auto); min-height: 24px; gap: var(--control-gap) var(--section-gap); }
   .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
+  /* Reserves the widest local status so activation never shifts the status column. */
+  .row__chip-sizer { display: flex; flex-direction: column; grid-column: 2; grid-row: 1; height: 0; overflow: hidden; visibility: hidden; }
+  .row__chip-sizer [data-label]::before { content: attr(data-label); }
   .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; justify-self: end; }
   .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
   .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
@@ -177,6 +183,7 @@
     .row__chip { justify-content: flex-end; }
     .row__local :global(.kit-search-by-meaning) { min-height: 0; grid-template-rows: none; }
     .row__local :global(.kit-chip) { justify-self: end; }
+    .row__chip-sizer { display: none; }
     .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: 0; }
     .row__recovery-copy { grid-column: 1 / -1; }
     .row__recovery .row__action { grid-column: 1 / -1; margin-top: 0; }

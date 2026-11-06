@@ -66,7 +66,7 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 		r.failBuild = false
 		if emit != nil {
 			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: strings.Repeat("index progress\n", 1024)}))
-			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "embedding build interrupted: "}))
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "Error: embedding build interrupted: "}))
 			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "context canceled\n"}))
 		}
 		return errors.New(cliSubprocessExitSentinel)
@@ -632,8 +632,7 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	f.start(t)
 	f.runner.failBuild = true
 	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-	require.ErrorContains(err, "embedding build interrupted: context canceled")
-	assert.LessOrEqual(len(err.Error()), len(cliSubprocessExitSentinel)+2+8192)
+	require.EqualError(err, "embedding build interrupted: context canceled")
 	assert.Equal(1, f.refreshes, "published MCP capabilities refresh even when the initial build fails")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
@@ -653,7 +652,7 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 			f.runner.failBuild = true
 			f.enableThroughAPI(t)
 			require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-			require.Contains(f.localStatus(t).Error, "embedding build interrupted")
+			require.Equal("embedding build interrupted: context canceled", f.localStatus(t).Error)
 			args := []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}
 			if empty {
 				var sourceID int64

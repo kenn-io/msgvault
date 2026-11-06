@@ -298,6 +298,15 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 			return nil
 		})
 		if detail := strings.TrimSpace(stderr); err != nil && detail != "" {
+			loggerFromContext(workCtx).Warn("Local search index command failed", "error", err, "stderr", detail)
+			if index := strings.LastIndex("\n"+detail, "\nError: "); index >= 0 {
+				detail = strings.TrimSpace(("\n" + detail)[index+len("\nError: "):])
+			} else if index := strings.LastIndex(detail, "\n"); index >= 0 {
+				detail = strings.TrimSpace(detail[index+1:])
+			}
+			if err.Error() == cliSubprocessExitSentinel {
+				return errors.New(detail)
+			}
 			return fmt.Errorf("%w: %s", err, detail)
 		}
 		return err
