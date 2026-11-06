@@ -72,5 +72,5 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	_, err = run("", "summary", "--after", "invalid")
 	requirements.Error(err)
 	assertions.Len(client.summaries, 1)
-	assertions.Equal(3, cleanups)
+	assertions.Equal(3, cleanups, "invalid --after must fail before opening the daemon client")
 }
