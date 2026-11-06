@@ -231,10 +231,16 @@ func (c *Client) observeFolderStates(
 ) map[string]FolderState {
 	states := make(map[string]FolderState, len(mailboxes))
 	for _, mailbox := range mailboxes {
+		if ctx.Err() != nil {
+			return states
+		}
 		status, err := c.statusFolder(ctx, mailbox)
 		if err != nil {
 			c.logger.Warn("STATUS failed, enumerating mailbox fully",
 				"mailbox", mailbox, "error", err)
+			if ctx.Err() != nil {
+				return states
+			}
 			continue
 		}
 		if prior, ok := c.priorFolderStates[mailbox]; ok &&

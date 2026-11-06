@@ -3,7 +3,6 @@ package imap
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"log/slog"
 	"net"
 	"strings"
@@ -83,50 +82,47 @@ func commandContextPipe(t *testing.T) (*imapclient.Client, net.Conn) {
 	return conn, remote
 }
 
-func TestReadCommandCancellationPreservesReplacementTransport(t *testing.T) {
-	old, peer := commandContextPipe(t)
-	replacement, replacementPeer := commandContextPipe(t)
-	client := &Client{conn: old, logger: slog.Default()}
+func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
+	conn, peer := commandContextPipe(t)
+	client := &Client{conn: conn, logger: slog.Default()}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	finished := make(chan error, 1)
+	type result struct {
+		states     map[string]FolderState
+		panicValue any
+	}
+	finished := make(chan result, 1)
 	go func() {
+		out := result{}
+		defer func() {
+			out.panicValue = recover()
+			finished <- out
+		}()
 		client.mu.Lock()
-		_, err := runCommand(ctx, client, func() (struct{}, error) {
-			client.conn = replacement
-			return struct{}{}, old.Noop().Wait()
-		})
-		client.mu.Unlock()
-		finished <- err
+		defer client.mu.Unlock()
+		out.states = client.observeFolderStates(ctx, []string{"INBOX", "Archive"})
 	}()
-	line, err := bufio.NewReader(peer).ReadString('\n')
+	reader := bufio.NewReader(peer)
+	line, err := reader.ReadString('\n')
 	require.NoError(t, err)
-	require.Contains(t, line, " NOOP\r\n")
+	require.Contains(t, strings.ToUpper(line), "STATUS")
+	require.Contains(t, strings.ToUpper(line), "INBOX")
 	cancel()
+	var got result
 	select {
-	case err := <-finished:
-		assert.ErrorIs(t, err, context.Canceled)
+	case got = <-finished:
 	case <-time.After(2 * time.Second):
-		_ = old.Close()
+		_ = conn.Close()
 		<-finished
-		require.FailNow(t, "captured command did not terminate")
+		require.FailNow(t, "cancelled STATUS did not terminate")
 	}
-	assert.Same(t, replacement, client.conn)
-	select {
-	case <-replacement.Closed():
-		assert.Fail(t, "replacement transport was closed")
-	default:
-	}
-	answered := make(chan struct{})
-	go func() {
-		line, err := bufio.NewReader(replacementPeer).ReadString('\n')
-		if err == nil {
-			_, _ = fmt.Fprintf(replacementPeer, "%s OK completed\r\n", strings.Fields(line)[0])
-		}
-		close(answered)
-	}()
-	require.NoError(t, client.withConn(t.Context(), func(conn *imapclient.Client) error { return conn.Noop().Wait() }))
-	<-answered
+	assert.Nil(t, got.panicValue, "cancellation must stop mailbox enumeration before the invalidated connection is reused")
+	assert.Empty(t, got.states)
+	assert.Nil(t, client.conn)
+	require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+	line, err = reader.ReadString('\n')
+	assert.Error(t, err, "cancellation closes the captured transport before another STATUS")
+	assert.NotContains(t, strings.ToUpper(line), "ARCHIVE")
 }
 
 func TestReadCommandCancellationJoinsStalledCleanup(t *testing.T) {
