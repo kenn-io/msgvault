@@ -172,7 +172,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	assert.Equal(actualErr.Error(), records[0]["error"])
 }
 
-func TestStoreClosePreservesAnalyzedStatistics(t *testing.T) {
+func TestOptimizeSQLiteStatisticsPreservesAnalyzedStatistics(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	s, err := openSQLiteContext(t.Context(), path, testSQLiteParams)
@@ -182,12 +182,10 @@ func TestStoreClosePreservesAnalyzedStatistics(t *testing.T) {
 	seedLiveMessages(t, s, 100)
 	require.NoError(s.optimizeSQLite(t.Context()))
 	require.Positive(messagePlannerStatisticCount(t, s))
-	// Close on a fresh connection, as a short-lived archive command would.
-	s.db.SetMaxIdleConns(0)
-	s.db.SetMaxOpenConns(1)
-	s.db.SetMaxIdleConns(1)
-	// WAL checkpoints also change data_version. Isolate statistics writes.
-	_, err = s.db.ExecContext(t.Context(), "PRAGMA journal_mode=DELETE")
+	maintenance, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(maintenance.Close()) })
+	_, err = maintenance.ExecContext(t.Context(), "PRAGMA analysis_limit=1000")
 	require.NoError(err)
 
 	observer, err := sql.Open("sqlite3", path)
@@ -198,9 +196,9 @@ func TestStoreClosePreservesAnalyzedStatistics(t *testing.T) {
 	t.Cleanup(func() { require.NoError(conn.Close()) })
 	var before, after int
 	require.NoError(conn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&before))
-	require.NoError(s.Close())
+	require.NoError(optimizeSQLiteStatistics(t.Context(), maintenance))
 	require.NoError(conn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&after))
-	assert.Equal(t, before, after, "closing an analyzed archive must leave its statistics unchanged")
+	assert.Equal(t, before, after, "maintenance on an analyzed archive must leave its statistics unchanged")
 }
 
 func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
