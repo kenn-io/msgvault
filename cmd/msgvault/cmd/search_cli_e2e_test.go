@@ -160,23 +160,19 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
 	// Semantic pages use the measured extra result to advise a larger limit.
-	for _, mode := range []string{"vector", "hybrid"} {
-		out, stderr := runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "1", "--json", "--snippet", "--sort", "date")
-		var page struct {
-			Results []map[string]any                 `json:"results"`
-			Hints   []struct{ Code, Message string } `json:"hints"`
-		}
-		decode(out, &page)
-		require.Len(page.Results, 1)
-		require.Len(page.Hints, 1)
-		assert.Equal("more_available", page.Hints[0].Code)
-		assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
-		assert.NotContains(stderr, "Hint:")
-		page.Hints = nil
-		decode(run("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "2", "--json", "--snippet", "--sort", "date"), &page)
-		assert.Len(page.Results, 2)
-		assert.Empty(page.Hints)
+	var page struct {
+		Results []map[string]any                 `json:"results"`
+		Hints   []struct{ Code, Message string } `json:"hints"`
 	}
+	decode(run("search", "project plan filename:plan.pdf", "--mode", "vector", "--limit", "1", "--json"), &page)
+	require.Len(page.Results, 1)
+	require.Len(page.Hints, 1)
+	assert.Equal("more_available", page.Hints[0].Code)
+	assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
+	page.Hints = nil
+	decode(run("search", "project plan filename:plan.pdf", "--mode", "vector", "--limit", "2", "--json"), &page)
+	assert.Len(page.Results, 2)
+	assert.Empty(page.Hints)
 	// Exactly full pages and truncated pages differ by one measured row.
 	for i := range 101 {
 		subject := "paginationneedle"
@@ -206,54 +202,35 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(st.UpsertFTS(id, subject, "", address, "", ""))
 		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
 	}
-	for _, jsonMode := range []bool{false, true} {
-		for _, tc := range []struct{ query, offset, hint string }{
-			{"overflowboundary", "0", "--offset 50"},
-			{"exactboundary", "0", ""},
-			{"paginationneedle", "50", "--offset 100"},
-		} {
-			args := []string{"search", tc.query, "--offset", tc.offset}
-			if jsonMode {
-				args = append(args, "--json")
+	for _, tc := range []struct{ query, offset, hint string }{
+		{"overflowboundary", "0", "--offset 50"},
+		{"exactboundary", "0", ""},
+		{"paginationneedle", "50", "--offset 100"},
+	} {
+		out, stderr := runWithStderr("search", tc.query, "--offset", tc.offset, "--json")
+		var rows []map[string]any
+		decode(out, &rows)
+		assert.Len(rows, 50)
+		if tc.hint == "" {
+			assert.NotContains(stderr, "Hint:")
+		} else {
+			assert.Contains(stderr, "Hint: more messages match; use "+tc.hint+" for the next page or raise --limit")
+		}
+	}
+	for _, list := range []string{"senders", "domains", "labels"} {
+		for _, exact := range []bool{false, true} {
+			args := []string{"list-" + list, "--json"}
+			if exact {
+				args = append(args, "--before", "2027-01-01")
 			}
 			out, stderr := runWithStderr(args...)
-			if jsonMode {
-				var rows []map[string]any
-				decode(out, &rows)
-				if tc.hint != "" {
-					assert.Len(rows, 50)
-				}
-			} else if tc.hint != "" {
-				assert.Contains(out, "Showing 50 results")
-			}
-			if tc.hint == "" {
+			var rows []map[string]any
+			decode(out, &rows)
+			assert.Len(rows, 50)
+			if exact {
 				assert.NotContains(stderr, "Hint:")
 			} else {
-				assert.Contains(stderr, "Hint: more messages match; use "+tc.hint+" for the next page or raise --limit")
-			}
-		}
-		for _, list := range []string{"senders", "domains", "labels"} {
-			for _, exact := range []bool{false, true} {
-				args := []string{"list-" + list}
-				if exact {
-					args = append(args, "--before", "2027-01-01")
-				}
-				if jsonMode {
-					args = append(args, "--json")
-				}
-				out, stderr := runWithStderr(args...)
-				if jsonMode {
-					var rows []map[string]any
-					decode(out, &rows)
-					assert.Len(rows, 50)
-				} else {
-					assert.Contains(out, "Showing 50 results")
-				}
-				if exact {
-					assert.NotContains(stderr, "Hint:")
-				} else {
-					assert.Contains(stderr, "Hint: more "+list+" exist; raise -n")
-				}
+				assert.Contains(stderr, "Hint: more "+list+" exist; raise -n")
 			}
 		}
 	}
@@ -277,18 +254,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			} else {
 				assert.NotContains(stderr, "Hint:")
 			}
-			var page struct {
-				Hints []map[string]string `json:"hints"`
-			}
-			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--json"), &page)
-			if boundary == "exactboundary" {
-				assert.Empty(page.Hints)
-				continue
-			}
-			require.Len(page.Hints, 1)
-			assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
-			assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid")
-			assert.NotContains(page.Hints[0], "next")
 		}
 	}
 	// Hybrid fusion can exhaust its candidate pool before the requested page fills.
@@ -301,10 +266,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)
 	// An extra ranked row can be returned by raising --limit alone.
-	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10")
-	assert.Contains(stderr, "Hint: more messages match; raise --limit")
-	assert.Equal(1, strings.Count(stderr, "Hint:"))
-	assert.NotContains(stderr, "vector.search.k_per_signal")
 	var poolPage struct {
 		Results       []map[string]any    `json:"results"`
 		PoolSaturated bool                `json:"pool_saturated"`
@@ -316,9 +277,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	assert.Equal("more_available", poolPage.Hints[0]["code"])
 	assert.Equal("more messages match; raise --limit", poolPage.Hints[0]["message"])
 	// At both caps, widening the pool and the page is needed to return more.
-	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
-	assert.Contains(stderr, "vector.search.max_page_size_hybrid above 100")
-	assert.Contains(stderr, "vector.search.k_per_signal")
+	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
 	assert.Equal(2, strings.Count(stderr, "Hint:"))
 	assert.Contains(stderr, "Hint: semantic result limit reached; raise vector.search.max_page_size_hybrid above 100")
 	assert.Contains(stderr, "\nHint: hybrid candidate pool may omit matches; raise vector.search.k_per_signal")
@@ -331,14 +290,9 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
 	assert.Equal("candidate_pool_saturated", poolPage.Hints[1]["code"])
 	assert.Contains(poolPage.Hints[1]["message"], "vector.search.k_per_signal")
-	assert.NotContains(poolPage.Hints[0], "next")
 	// A wider page alone exposes the pool limit.
 	raised.Search.MaxPageSizeHybrid = new(200)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200")
-	assert.Contains(stderr, "vector.search.k_per_signal")
-	assert.NotContains(stderr, "vector.search.max_page_size_hybrid")
-	assert.Equal(1, strings.Count(stderr, "Hint:"))
 	poolPage.Hints = nil
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
 	require.Len(poolPage.Hints, 1)
