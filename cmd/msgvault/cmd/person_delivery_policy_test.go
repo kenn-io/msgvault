@@ -37,18 +37,19 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		schema, wantError string
 		human             bool
 		wantReason        string
+		wantSource        string
 		before, after     string
 	}{
 		{name: "read JSON", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, after: addressSend},
-		{name: "read human", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: addressSend},
-		{name: "read human person default", operation: "read", args: []string{"person-example"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, human: true, after: personSend},
-		{name: "read human changed binding", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: bindingChanged, wantReason: "binding_changed"},
-		{name: "read human ambiguous endpoint", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: ambiguousAddress, wantReason: "ambiguous_endpoint"},
+		{name: "read human", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: addressSend, wantSource: "Address"},
+		{name: "read human person default", operation: "read", args: []string{"person-example"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, human: true, after: personSend, wantSource: "Person"},
+		{name: "read human changed binding", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: bindingChanged, wantReason: "binding_changed", wantSource: "Address"},
+		{name: "read human ambiguous endpoint", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: ambiguousAddress, wantReason: "ambiguous_endpoint", wantSource: "Address"},
 		{name: "set address", operation: "set", args: []string{"person-example", "send_allowed", "--endpoint", "alice@example.test", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, Reason: "Owner approval"}, before: addressDraft, after: addressApproved},
 		{name: "set person default", operation: "set", args: []string{"person-example", "send_allowed", "--person-all-routes", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, ScopeAcknowledgement: "person_all_routes", Reason: "Owner approval"}, before: personDraft, after: personApproved},
 		{name: "restrict person default", operation: "set", args: []string{"person-example", "draft_only", "--expected-revision", "3", "--reason", "Restrict", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliveryDraftOnly, Reason: "Restrict"}, before: personSend, after: personRestricted},
 		{name: "clear address", operation: "clear", args: []string{"person-example", "--endpoint", "alice@example.test", "--expected-revision", "3", "--reason", "Reset", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test", ExpectedRevision: 3, Reason: "Reset"}, before: addressSend, after: addressCleared},
-		{name: "clear person default", operation: "clear", args: []string{"person-example", "--person-all-routes", "--expected-revision", "3", "--reason", "Reset"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, ScopeAcknowledgement: "person_all_routes", Reason: "Reset"}, human: true, before: personSend, after: personCleared},
+		{name: "clear person default", operation: "clear", args: []string{"person-example", "--person-all-routes", "--expected-revision", "3", "--reason", "Reset"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, ScopeAcknowledgement: "person_all_routes", Reason: "Reset"}, human: true, before: personSend, after: personCleared, wantSource: "Default"},
 		{name: "invalid policy", operation: "set", args: []string{"person-example", "allow", "--expected-revision", "3", "--reason", "Owner approval"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Policy: "allow", ExpectedRevision: 3, Reason: "Owner approval"}, wantError: store.ErrDeliveryPolicyInvalid.Error()},
 		{name: "invalid revision", operation: "clear", args: []string{"person-example", "--expected-revision", "0", "--reason", "Reset"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Reason: "Reset"}, wantError: store.ErrDeliveryPolicyInvalid.Error()},
 		{name: "missing revision", operation: "set", args: []string{"person-example", "send_allowed", "--reason", "Owner approval"}, wantError: "expected-revision"},
@@ -120,7 +121,7 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 				if after.StoredPolicy != nil {
 					stored = string(*after.StoredPolicy)
 				}
-				assert.Equal(strings.Fields(fmt.Sprintf("%s %s %d %s %s %s %s", after.PersonUID, after.Endpoint, after.Revision, stored, after.EffectivePolicy, after.InheritanceSource, test.wantReason)), strings.Fields(lines[1]))
+				assert.Equal(strings.Fields(fmt.Sprintf("%s %s %d %s %s %s %s", after.PersonUID, after.Endpoint, after.Revision, stored, after.EffectivePolicy, test.wantSource, test.wantReason)), strings.Fields(lines[1]))
 			} else {
 				assert.JSONEq(payload, output.String())
 			}

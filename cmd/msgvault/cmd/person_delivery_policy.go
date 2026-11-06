@@ -72,9 +72,18 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 			if state.StoredPolicy != nil {
 				stored = string(*state.StoredPolicy)
 			}
+			source := state.InheritanceSource
+			switch source {
+			case "system_default":
+				source = "Default"
+			case "person_default":
+				source = "Person"
+			case "contact_method":
+				source = "Address"
+			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			header := "PERSON UID\tENDPOINT\tREVISION\tSTORED POLICY\tEFFECTIVE POLICY\tSOURCE"
-			row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(state.InheritanceSource))
+			row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(source))
 			switch state.Reason {
 			case "draft_required", "explicit_approval", "explicit_person_default":
 			default:
