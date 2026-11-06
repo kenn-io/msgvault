@@ -55,26 +55,11 @@ type MockEngine struct {
 	GetMessageSummariesByIDsFunc            func(context.Context, []int64) ([]query.MessageSummary, error)
 
 	RawMessages map[int64][]byte
-	// SenderLabelsByID answers SenderLabels for the requested message IDs.
-	SenderLabelsByID map[int64]string
-	SenderLabelsErr  error
 }
 
 // Compile-time check.
 var _ query.Engine = (*MockEngine)(nil)
 var _ query.MessageBodySearcher = (*MockEngine)(nil)
-var _ query.SenderLabeler = (*MockEngine)(nil)
-
-func (m *MockEngine) SenderLabels(_ context.Context, ids []int64) (map[int64]string, error) {
-	if m.SenderLabelsErr != nil {
-		return nil, m.SenderLabelsErr
-	}
-	labels := make(map[int64]string, len(ids))
-	for _, id := range ids {
-		labels[id] = m.SenderLabelsByID[id]
-	}
-	return labels, nil
-}
 
 func (m *MockEngine) Aggregate(ctx context.Context, viewType query.ViewType, opts query.AggregateOptions) ([]query.AggregateRow, error) {
 	if m.AggregateFunc != nil {

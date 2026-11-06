@@ -358,25 +358,6 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusServiceUnavailable, "identity_matches_unavailable", "Message identity matches could not be resolved")
 		return
 	}
-	messageIDs := make([]int64, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		if row.Kind != query.EntryConversation && row.AnchorMessageID != nil {
-			messageIDs = append(messageIDs, *row.AnchorMessageID)
-		}
-	}
-	senders, err := s.pageSenderLabels(r.Context(), messageIDs)
-	if err != nil {
-		if s.writeIfContextError(w, err) {
-			return
-		}
-		s.logger.Warn("message sender labels unavailable", "error", err)
-	}
-	for i := range result.Rows {
-		row := &result.Rows[i]
-		if row.Kind != query.EntryConversation && row.AnchorMessageID != nil {
-			row.SenderLabel = senders[*row.AnchorMessageID]
-		}
-	}
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
@@ -405,20 +386,6 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-// pageSenderLabels resolves only the distinct messages in the returned page.
-func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[int64]string, error) {
-	labels := make(map[int64]string, len(messageIDs))
-	ids := normalizeSourceIDs(messageIDs)
-	if len(ids) == 0 {
-		return labels, nil
-	}
-	labeler, ok := s.queryEngineForContext(ctx).(query.SenderLabeler)
-	if !ok {
-		return labels, nil
-	}
-	return labeler.SenderLabels(ctx, ids)
 }
 
 // addExploreTiming reports milliseconds in the browser's request timing panel.

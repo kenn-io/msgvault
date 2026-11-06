@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1667,4 +1668,110 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	require.Len(response.Rows, 1, "the additional group must widen the alias to its whole identity cluster")
 	require.NotNil(response.Rows[0].AnchorMessageID)
 	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
+}
+
+func senderLabelFixture(t *testing.T) (*DuckDBEngine, map[int64]string, int64) {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	recipient := b.AddParticipant("recipient@example.com", "example.com", "Zoe Recipient")
+	first := b.AddMessage(MessageOpt{})
+	b.AddFrom(first, alice, "Personal Alias")
+	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
+	b.AddFrom(preferred, alice, "Alice")
+	direct := b.AddMessage(MessageOpt{SenderID: &alice})
+	phoneSender := b.AddPhoneParticipant("+12025550123", "")
+	phone := b.AddMessage(MessageOpt{SenderID: &phoneSender})
+	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
+	email := b.AddMessage(MessageOpt{SenderID: &emailSender})
+	deletedAt := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	deleted := b.AddMessage(MessageOpt{SenderID: &alice, DeletedFromSourceAt: &deletedAt})
+	unknown := b.AddMessage(MessageOpt{})
+	chatSource := b.AddSourceWithType("+12025550100", "imessage")
+	chat := b.AddMessage(MessageOpt{SourceID: chatSource, SenderID: &alice, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
+	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: "Alice"}
+	for id := range labels {
+		b.AddTo(id, recipient, "Zoe Recipient")
+		b.AddAttachment(id, 10, "example.pdf")
+	}
+	return b.BuildEngine(), labels, recipient
+}
+
+func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
+	engine, labels, _ := senderLabelFixture(t)
+	for _, id := range []int64{4, 5} {
+		var fromName string
+		require.NoError(t, engine.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", id).Scan(&fromName))
+		assert.Empty(t, fromName, "other readers keep an empty name for unnamed direct senders")
+	}
+	for _, deletion := range []DeletionFilter{DeletionAny, DeletionDeleted} {
+		t.Run(string(deletion), func(t *testing.T) {
+			assert := assert.New(t)
+			fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{Deletion: deletion}, Page: PageSpec{Limit: 20}})
+			assert.Equal(legacy, fast)
+			expected := make(map[int64]string)
+			if deletion == DeletionAny {
+				for id, label := range labels {
+					expected[id] = label
+				}
+				expected[8] = "" // The chat is one conversation, with no single sender.
+			} else {
+				expected[6] = "Alice"
+			}
+			actual := make(map[int64]string)
+			for _, row := range fast.Rows {
+				actual[*row.AnchorMessageID] = row.SenderLabel
+				assert.Contains(row.ParticipantLabels, "Zoe Recipient")
+			}
+			assert.Equal(expected, actual)
+		})
+	}
+}
+
+func TestPageSenderLabelsAggregationIsBounded(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	for range 1000 {
+		id := b.AddMessage(MessageOpt{})
+		b.AddFrom(id, sender, "Sender")
+		b.AddAttachment(id, 10, "example.pdf")
+	}
+	e := b.BuildEngine()
+	for _, workspace := range []string{"explore", "files"} {
+		t.Run(workspace, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			profile, err := profileQuery(t, e, func() error {
+				if workspace == "explore" {
+					result, err := e.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 500}})
+					require.NoError(err)
+					require.Len(result.Rows, 1)
+					assert.Equal("Sender", result.Rows[0].SenderLabel)
+				} else {
+					result, err := e.SearchFiles(t.Context(), FileSearchRequest{Page: PageSpec{Limit: 1, Offset: 500}})
+					require.NoError(err)
+					require.Len(result.Files, 1)
+					assert.Equal("Sender", result.Files[0].SenderLabel)
+				}
+				return nil
+			})
+			require.NoError(err)
+			matched := 0
+			var inspect func(domainPopulationProfile)
+			inspect = func(operator domainPopulationProfile) {
+				if strings.Contains(strings.ToLower(strings.ReplaceAll(fmt.Sprint(operator.ExtraInfo["Aggregates"]), `"`, "")), "first(") {
+					matched++
+					assert.LessOrEqual(operator.IntermediateRows, int64(1), "sender aggregation must be limited to the requested page")
+				}
+				for _, child := range operator.Children {
+					inspect(child)
+				}
+			}
+			inspect(profile)
+			require.Positive(matched, "profile must include sender aggregation")
+		})
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -361,60 +360,4 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		assert.Equal(t, addresses{}, populated, "legacy cache carries neither column")
 		assert.Equal(t, addresses{}, absent)
 	})
-}
-
-func TestSenderLabelsPreferEnvelopeAndFallBackToSender(t *testing.T) {
-	assert := assert.New(t)
-	b := NewTestDataBuilder(t)
-	b.AddSource("archive@example.com")
-	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
-	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
-	first := b.AddMessage(MessageOpt{})
-	b.AddFrom(first, alice, "Personal Alias")
-	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
-	b.AddFrom(preferred, alice, "Alice")
-	direct := b.AddMessage(MessageOpt{SenderID: &alice})
-	phoneSender := b.AddPhoneParticipant("+12025550123", "")
-	phone := b.AddMessage(MessageOpt{SenderID: &phoneSender})
-	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
-	email := b.AddMessage(MessageOpt{SenderID: &emailSender})
-
-	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{first, preferred, direct, phone, email})
-	require.NoError(t, err)
-	assert.Equal("Personal Alias", labels[first])
-	assert.Equal("Alice", labels[preferred])
-	assert.Equal("Alice", labels[direct])
-	assert.Equal("+12025550123", labels[phone])
-	assert.Equal("sender@example.com", labels[email])
-}
-
-func TestSenderLabelsAggregationIsPageBounded(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	b.AddSource("archive@example.com")
-	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
-	var requested int64
-	for range 1000 {
-		id := b.AddMessage(MessageOpt{})
-		b.AddFrom(id, sender, "Sender")
-		requested = id
-	}
-	e := b.BuildEngine()
-	profile, err := profileQuery(t, e, func() error {
-		labels, err := e.SenderLabels(t.Context(), []int64{requested})
-		require.NoError(t, err)
-		assert.Equal(t, "Sender", labels[requested])
-		return nil
-	})
-	require.NoError(t, err)
-	var inspect func(domainPopulationProfile)
-	inspect = func(operator domainPopulationProfile) {
-		if strings.Contains(operator.Type, "GROUP_BY") {
-			assert.LessOrEqual(t, operator.IntermediateRows, int64(1), "sender aggregation must be limited to the requested page")
-		}
-		for _, child := range operator.Children {
-			inspect(child)
-		}
-	}
-	inspect(profile)
 }

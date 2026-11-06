@@ -913,3 +913,30 @@ func TestSearchFilesSentOnlyExcludesDraftAttachments(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchFilesSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
+	engine, labels, recipient := senderLabelFixture(t)
+	for _, scope := range []string{"all", "person", "deleted"} {
+		t.Run(scope, func(t *testing.T) {
+			assert := assert.New(t)
+			request := FileSearchRequest{Page: PageSpec{Limit: 20}}
+			if scope == "person" {
+				request.Person = &PersonFileScope{ParticipantIDs: []int64{recipient}, Directions: []PersonFileDirection{PersonFileToPerson}}
+			}
+			if scope == "deleted" {
+				request.Explore.Context.Deletion = DeletionDeleted
+			}
+			fast, legacy := runSearchFilesBothPaths(t, engine, request)
+			assert.Equal(legacy, fast)
+			expected := labels
+			if scope == "deleted" {
+				expected = map[int64]string{6: "Alice"}
+			}
+			actual := make(map[int64]string)
+			for _, row := range fast.Files {
+				actual[row.MessageID] = row.SenderLabel
+			}
+			assert.Equal(expected, actual)
+		})
+	}
+}

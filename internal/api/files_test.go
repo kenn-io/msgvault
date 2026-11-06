@@ -121,9 +121,9 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
-	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{SenderLabelsByID: map[int64]string{11: "Zoe Sender"}}, result: &query.FileSearchResponse{
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
 		Files: []query.FileRow{
-			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, ConversationID: 21, OccurredAt: now, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
+			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, SenderLabel: "Zoe Sender", ConversationID: 21, OccurredAt: now, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
 			{ID: 2, Key: "file:2", EntryKey: "message:2", MessageID: 12, ConversationID: 22, OccurredAt: now, Filename: "remote.pdf", MimeType: "application/pdf", MIMEFamily: query.FileMIMEPDF},
 			{ID: 3, Key: "file:3", EntryKey: "message:3", MessageID: 13, ConversationID: 23, OccurredAt: now, Filename: "missing.bin"},
 			{ID: 4, Key: "file:4", EntryKey: "message:4", MessageID: 14, ConversationID: 24, OccurredAt: now, Filename: "metadata.txt"},

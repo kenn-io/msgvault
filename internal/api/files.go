@@ -536,17 +536,6 @@ func (s *Server) handleSearchFilesRequest(
 		writeError(w, http.StatusServiceUnavailable, "file_metadata_unavailable", "Authoritative file metadata is unavailable")
 		return
 	}
-	messageIDs := make([]int64, 0, len(result.Files))
-	for _, file := range result.Files {
-		messageIDs = append(messageIDs, file.MessageID)
-	}
-	senders, err := s.pageSenderLabels(r.Context(), messageIDs)
-	if err != nil {
-		if s.writeIfContextError(w, err) {
-			return
-		}
-		s.logger.Warn("message sender labels unavailable", "error", err)
-	}
 	response := FileSearchHTTPResponse{
 		Files: make([]FileSearchRow, 0, len(result.Files)), TotalCount: result.TotalCount,
 		CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance,
@@ -561,7 +550,7 @@ func (s *Server) handleSearchFilesRequest(
 		state, available := s.fileContentState(r.Context(), authority)
 		response.Files = append(response.Files, FileSearchRow{
 			ID: file.ID, Key: file.Key, EntryKey: file.EntryKey, MessageID: file.MessageID,
-			SenderLabel:    senders[file.MessageID],
+			SenderLabel:    file.SenderLabel,
 			ConversationID: file.ConversationID, OccurredAt: file.OccurredAt,
 			SourceID: file.SourceID, SourceType: file.SourceType, SourceIdentifier: file.SourceIdentifier,
 			ContainingTitle: file.ContainingTitle, Filename: file.Filename, MimeType: file.MimeType,
