@@ -569,9 +569,9 @@ func TestMeetingIdentityCompletesNewManualGroups(t *testing.T) {
 				}
 				got, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{formatMeetingOccurrence(OccurrenceRef{MessageID: one})}})
 				require.NoError(err)
-				assert.Equal([]int64{first, deferred}, got.ByOccurrence[formatMeetingOccurrence(OccurrenceRef{MessageID: one})].LinkedTranscriptIDs)
-				assert.Equal([]int64{first, second}, got.ByOccurrence[formatMeetingOccurrence(OccurrenceRef{MessageID: two})].LinkedTranscriptIDs)
-				assert.Equal([]int64{second, deferred}, got.ByOccurrence[formatMeetingOccurrence(OccurrenceRef{MessageID: three})].LinkedTranscriptIDs)
+				assert.Equal([]int64{first, deferred}, got.ByOccurrence[refs[0]].LinkedTranscriptIDs)
+				assert.Len(got.ByOccurrence, 1, "discovered notes do not expand the requested meetings")
+				assert.NotContains(got.ByTranscript, second)
 			case "transcript only with split":
 				assert, require := assert.New(t), require.New(t)
 				st := newRFC822IDBackfillBackendStore(t)

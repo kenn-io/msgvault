@@ -130,62 +130,55 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		}
 		aliases[value] = g
 	}
-	// Complete every returned group, including groups first reached through a transcript.
-	discovered := map[*timelineMeetingGroup]bool{}
+	// Resolve explicit notes first, then discover members of the requested groups.
 	processed := map[int64]bool{}
 	transcriptOccurrences := map[int64][]linkOccurrence{}
-	for {
-		groupCount := len(groups)
-		aliasQueries := []meetingEventQuery{}
-		for _, g := range groups {
-			if discovered[g] {
-				continue
-			}
-			predicate, args := s.meetingIdentityPredicate(g.occurrence.Identity)
-			predicate, args = meetingIdentityAliasPredicate(g.occurrence, r.batch.events[meetingQueryKey(predicate, args)])
-			if predicate != "" {
-				aliasQueries = append(aliasQueries, meetingEventQuery{predicate, args})
-			}
-		}
-		if err := s.preloadMeetingQueries(ctx, r, aliasQueries, &budget); err != nil {
-			return result, err
-		}
-		memberQueries := []meetingEventQuery{}
-		for _, g := range groups {
-			if discovered[g] {
-				continue
-			}
-			discovered[g] = true
-			query, args, err := s.meetingIdentityMemberQuery(ctx, r, g.occurrence, &budget)
-			if err != nil {
-				return result, fmt.Errorf("discover meeting transcripts: %w", err)
-			}
-			memberQueries = append(memberQueries, meetingEventQuery{query, args})
-		}
-		for chunk := range slices.Chunk(memberQueries, 20) {
-			terms := []string{}
-			args := []any{}
-			for _, q := range chunk {
-				terms = append(terms, q.predicate)
-				args = append(args, q.args...)
-			}
-			err := func() error {
-				rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
-				if err != nil {
-					return err
+	for _, discover := range []bool{false, true} {
+		if discover {
+			aliasQueries := []meetingEventQuery{}
+			for _, g := range groups {
+				predicate, args := s.meetingIdentityPredicate(g.occurrence.Identity)
+				predicate, args = meetingIdentityAliasPredicate(g.occurrence, r.batch.events[meetingQueryKey(predicate, args)])
+				if predicate != "" {
+					aliasQueries = append(aliasQueries, meetingEventQuery{predicate, args})
 				}
-				defer func() { _ = rows.Close() }()
-				for rows.Next() {
-					var id int64
-					if err := rows.Scan(&id); err != nil {
+			}
+			if err := s.preloadMeetingQueries(ctx, r, aliasQueries, &budget); err != nil {
+				return result, err
+			}
+			memberQueries := []meetingEventQuery{}
+			for _, g := range groups {
+				query, args, err := s.meetingIdentityMemberQuery(ctx, r, g.occurrence, &budget)
+				if err != nil {
+					return result, fmt.Errorf("discover meeting transcripts: %w", err)
+				}
+				memberQueries = append(memberQueries, meetingEventQuery{query, args})
+			}
+			for chunk := range slices.Chunk(memberQueries, 20) {
+				terms := []string{}
+				args := []any{}
+				for _, q := range chunk {
+					terms = append(terms, q.predicate)
+					args = append(args, q.args...)
+				}
+				err := func() error {
+					rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
+					if err != nil {
 						return err
 					}
-					members[id] = true
+					defer func() { _ = rows.Close() }()
+					for rows.Next() {
+						var id int64
+						if err := rows.Scan(&id); err != nil {
+							return err
+						}
+						members[id] = true
+					}
+					return errors.Join(rows.Err(), rows.Close())
+				}()
+				if err != nil {
+					return result, err
 				}
-				return errors.Join(rows.Err(), rows.Close())
-			}()
-			if err != nil {
-				return result, err
 			}
 		}
 		ids := make([]int64, 0, len(members))
@@ -196,7 +189,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			}
 		}
 		if len(ids) == 0 {
-			break
+			continue
 		}
 		slices.Sort(ids)
 		if err := s.preloadMeetingMembers(ctx, r, ids); err != nil {
@@ -251,14 +244,8 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
 			}
 			if !explicit[id] {
-				relevant := false
-				for _, candidate := range candidates {
-					if groups[candidate.Identity] != nil {
-						relevant = true
-					}
-				}
-				if !relevant {
-					delete(processed, id)
+				candidates = slices.DeleteFunc(candidates, func(o linkOccurrence) bool { return groups[o.Identity] == nil })
+				if len(candidates) == 0 {
 					continue
 				}
 			}
@@ -294,9 +281,6 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				}
 				g.linked = append(g.linked, id)
 			}
-		}
-		if len(groups) == groupCount {
-			break
 		}
 	}
 	// Retain the representatives selected by the single-note reader, including
