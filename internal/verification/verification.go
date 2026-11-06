@@ -203,6 +203,12 @@ func nearCue(field string, left, right int, before bool, matches [][]int) bool {
 		gap, breaks := field[left:loc[0]], 0
 		if before {
 			gap = strings.Replace(field[loc[1]:right], ".\n", "\n", 1) // the cue line may end a sentence
+			if gap == ". " {
+				tail, _, _ := strings.Cut(field[right+codeToken.FindStringIndex(field[right:])[1]:], "\n")
+				if strings.TrimRight(tail, ".,;:!?)]}>\"'”’") == "" {
+					gap = " "
+				}
+			}
 			breaks = 4
 		}
 		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || before && introGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
