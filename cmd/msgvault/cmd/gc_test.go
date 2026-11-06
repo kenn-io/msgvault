@@ -98,7 +98,7 @@ func TestRunGCLocalCancellationWritesNothing(t *testing.T) {
 		"cancelled GC must preserve the source-deleted row")
 }
 
-func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
+func TestRunGCLocalBacksUpBeforeDeleteAndSweepsBlobs(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	deletedID, activeID, dedupID, testCtx, cfg := seedGCCommandArchive(t)

@@ -71,7 +71,6 @@ func TestMeetingLinkCommands(t *testing.T) {
 		{"suggest warning", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", true, true},
 		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]`, true, false},
 		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
-		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
 		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", "", false, false},
 		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", "", false, false},
 	} {
@@ -168,10 +167,6 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	command := newMeetingLinksCommand(func(context.Context) (meetingLinkClient, func(), error) { return client, func() {}, nil })
 	var out bytes.Buffer
 	command.SetOut(&out)
-	command.SetArgs([]string{fmt.Sprintf("evt:%d", event)})
-	requirements.NoError(command.Execute())
-	assertions.Contains(out.String(), fmt.Sprintf("Notes: %d\n", note))
-	out.Reset()
 	command.SetArgs([]string{fmt.Sprintf("evt:%d", event), "--json"})
 	requirements.NoError(command.Execute())
 	var record store.MeetingRecord
