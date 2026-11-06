@@ -286,6 +286,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 				continue
 			}
 			require.Len(page.Hints, 1)
+			assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
 			assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid")
 			assert.NotContains(page.Hints[0], "next")
 		}
@@ -302,6 +303,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	// An extra ranked row can be returned by raising --limit alone.
 	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10")
 	assert.Contains(stderr, "Hint: more messages match; raise --limit")
+	assert.Equal(1, strings.Count(stderr, "Hint:"))
 	assert.NotContains(stderr, "vector.search.k_per_signal")
 	var poolPage struct {
 		Results       []map[string]any    `json:"results"`
@@ -311,18 +313,24 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10", "--json"), &poolPage)
 	assert.True(poolPage.PoolSaturated)
 	require.Len(poolPage.Hints, 1)
+	assert.Equal("more_available", poolPage.Hints[0]["code"])
 	assert.Equal("more messages match; raise --limit", poolPage.Hints[0]["message"])
 	// At both caps, widening the pool and the page is needed to return more.
 	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
 	assert.Contains(stderr, "vector.search.max_page_size_hybrid above 100")
 	assert.Contains(stderr, "vector.search.k_per_signal")
+	assert.Equal(2, strings.Count(stderr, "Hint:"))
+	assert.Contains(stderr, "Hint: semantic result limit reached; raise vector.search.max_page_size_hybrid above 100")
+	assert.Contains(stderr, "\nHint: hybrid candidate pool may omit matches; raise vector.search.k_per_signal")
 	poolPage.Hints = nil
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
 	assert.True(poolPage.PoolSaturated)
 	assert.Len(poolPage.Results, 100)
-	require.Len(poolPage.Hints, 1)
+	require.Len(poolPage.Hints, 2)
+	assert.Equal("ranking_limit_reached", poolPage.Hints[0]["code"])
 	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
-	assert.Contains(poolPage.Hints[0]["message"], "vector.search.k_per_signal")
+	assert.Equal("candidate_pool_saturated", poolPage.Hints[1]["code"])
+	assert.Contains(poolPage.Hints[1]["message"], "vector.search.k_per_signal")
 	assert.NotContains(poolPage.Hints[0], "next")
 	// A wider page alone exposes the pool limit.
 	raised.Search.MaxPageSizeHybrid = new(200)
@@ -330,6 +338,11 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200")
 	assert.Contains(stderr, "vector.search.k_per_signal")
 	assert.NotContains(stderr, "vector.search.max_page_size_hybrid")
+	assert.Equal(1, strings.Count(stderr, "Hint:"))
+	poolPage.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
+	require.Len(poolPage.Hints, 1)
+	assert.Equal("candidate_pool_saturated", poolPage.Hints[0]["code"])
 	raised.Search.KPerSignal = 200
 	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
 	server.SetVectorFeatures(engine, nil, backend, raised)
