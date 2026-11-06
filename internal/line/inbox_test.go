@@ -299,7 +299,7 @@ func TestProcessorLatestEditWins(t *testing.T) {
 	f.run(t)
 	added, updated = latestCounts()
 	checks.Zero(added, "replaying an existing message is not a new addition")
-	checks.Zero(updated, "replaying an original preserves its edit")
+	checks.Equal(int64(1), updated, "replaying an existing message records its enrichment pass")
 	archived := f.archived(t, "1")
 	body, edited, sent := archived.body, archived.edited, archived.sent
 	checks.Equal("latest", body)
