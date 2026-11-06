@@ -70,6 +70,8 @@ func TestMediaSizeSearch(t *testing.T) {
 				must.NoError(err)
 				checks.Zero(total)
 				f.now = f.now.Add(time.Minute)
+				before, err = f.st.DerivedDataRevisionContext(t.Context())
+				must.NoError(err)
 				f.run(t)
 			}
 			after, err := f.st.DerivedDataRevisionContext(t.Context())
