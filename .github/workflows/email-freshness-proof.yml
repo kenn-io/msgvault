@@ -1,0 +1,30 @@
+name: Email freshness proof
+on:
+  push:
+    branches: [feat/mailflow-provider-sync]
+permissions:
+  contents: read
+concurrency:
+  group: email-freshness-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  focused:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2 -trimpath'
+      GOMEMLIMIT: 5GiB
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Config polling contract
+        run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./internal/config -run '^TestAccountPolling'
