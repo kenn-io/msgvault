@@ -105,30 +105,6 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		require.Len(matches, 1, query)
 		assert.Equal(id, matches[0].ID, query)
 	}
-	o.Withdrawn = true
-	again, err := st.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(err)
-	require.Equal(id, again)
-	for _, query := range queries {
-		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
-		require.NoError(err)
-		assert.Zero(total, query)
-		assert.Empty(matches, query)
-	}
-	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
-	require.NoError(err)
-	assert.Zero(total, "withdrawn calls leave archive search")
-	assert.Empty(matches)
-	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("subject:incoming"), 0, 10)
-	require.NoError(err)
-	assert.Zero(total, "withdrawn calls leave subject search")
-	assert.Empty(matches)
-	_, err = st.RebuildFTSContext(t.Context(), nil)
-	require.NoError(err)
-	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
-	require.NoError(err)
-	assert.Zero(total, "rebuilding search keeps withdrawn calls absent")
-	assert.Empty(matches)
 }
 
 func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
@@ -170,7 +146,7 @@ func TestCallReimportPreservesLabels(t *testing.T) {
 	assert.Equal([]int64{labelID}, labels)
 }
 
-func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
+func TestCallObservationReplacement(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := storetest.New(t).Store
@@ -224,50 +200,6 @@ func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	o.RecordID = "cancelled-write"
 	_, err = st.PutCallObservationContext(ctx, src.ID, o)
 	requirements.ErrorIs(err, context.Canceled)
-}
-
-func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := storetest.New(t).Store
-	peer, err := st.EnsureParticipant("peer@example.com", "Peer", "example.com")
-	require.NoError(err)
-	other, err := st.EnsureParticipant("other@example.com", "Other", "example.com")
-	require.NoError(err)
-	o := callhistory.Observation{RecordID: "e1", Version: 1, Provider: "signal", Account: "example",
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
-		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}}, Raw: []byte(`{}`),
-	}
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(err)
-	stale := o
-	o.Outcome, o.Withdrawn = "cancelled", true
-	o.Participants = []callhistory.Participant{{ID: other, Participation: "invited"}}
-	o.Raw = []byte(`{"replacement":true}`)
-	record, err := json.Marshal(o)
-	require.NoError(err)
-	o, err = (callhistory.ImportRequest{Format: "normalized", Account: "example", Record: record}).Observation()
-	require.NoError(err)
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(err)
-	assert.Equal(id, again)
-	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	require.NoError(err)
-	require.Len(items, 1)
-	assert.True(items[0].Withdrawn)
-	assert.Equal("cancelled", items[0].Outcome)
-	assert.Equal(o.Participants, items[0].Participants)
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(err)
-	assert.JSONEq(string(o.Raw), string(raw))
-	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	require.NoError(err)
-	assert.Empty(summary)
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, stale)
-	require.ErrorIs(err, store.ErrCallObservationWithdrawn)
 }
 
 func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {

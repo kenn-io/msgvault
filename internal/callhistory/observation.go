@@ -38,7 +38,6 @@ type Evidence struct {
 	DurationSeconds    *float64   `json:"duration_seconds"`
 	Timezone           string     `json:"timezone,omitempty"`
 	Precision          string     `json:"precision"`
-	Withdrawn          bool       `json:"withdrawn,omitempty"`
 }
 
 type Participant struct {

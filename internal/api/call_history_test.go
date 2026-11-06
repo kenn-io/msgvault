@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -121,7 +122,9 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 	assertions.Equal(200, out.Code, out.Body.String())
 }
 
-func TestCallHistoryCancelledWithdrawal(t *testing.T) {
+func TestCallHistoryNormalizedReplacement(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	archive := testutil.NewTestStore(t)
 	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
 	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
@@ -136,9 +139,17 @@ func TestCallHistoryCancelledWithdrawal(t *testing.T) {
 	}
 	const supplied = `{"format":"signal_desktop","account":"example","record":{"callId":"e1","timestamp":1790841600000,"mode":"Direct","direction":"Incoming","status":"Accepted"}}`
 	out := post(supplied)
-	require.Equal(t, 200, out.Code, out.Body.String())
-	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","withdrawn":true,"raw":{"cancelled":true}}}`)
-	require.Equal(t, 200, out.Code, out.Body.String())
-	out = post(supplied)
-	assert.Equal(t, 409, out.Code, out.Body.String())
+	requirements.Equal(200, out.Code, out.Body.String())
+	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","raw":{"cancelled":true}}}`)
+	requirements.Equal(200, out.Code, out.Body.String())
+	items, err := archive.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal("e1", items[0].RecordID)
+	assertions.Equal("cancelled", items[0].Outcome)
+	assertions.Equal("unknown", items[0].Direction)
+	assertions.Equal("day", items[0].Precision)
+	raw, err := archive.GetMessageRawContext(t.Context(), items[0].MessageID)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"cancelled":true}`, string(raw))
 }

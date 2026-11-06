@@ -22,6 +22,5 @@ export interface CallObservationView {
   source_id: number;
   timezone?: string;
   version: number;
-  withdrawn?: boolean;
   [key: string]: unknown;
 }

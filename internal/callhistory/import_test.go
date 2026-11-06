@@ -13,29 +13,28 @@ import (
 func TestSignalNativeStatuses(t *testing.T) {
 	for _, tc := range []struct {
 		mode, status, outcome, owner, peer string
-		withdrawn                          bool
 	}{
-		{"Direct", "Accepted", "answered", "joined", "joined", false},
-		{"Direct", "Missed", "missed", "not_joined", "unknown", false},
-		{"Direct", "MissedNotificationProfile", "missed", "not_joined", "unknown", false},
-		{"Direct", "Declined", "declined", "not_joined", "unknown", false},
-		{"Direct", "Pending", "unknown", "unknown", "unknown", false},
-		{"Direct", "Deleted", "unknown", "unknown", "unknown", true},
-		{"Direct", "FutureStatus", "unknown", "unknown", "unknown", false},
-		{"Group", "Accepted", "unknown", "unknown", "", false},
-		{"Group", "Joined", "answered", "joined", "", false},
-		{"Group", "Ringing", "unknown", "unknown", "", false},
-		{"Group", "GenericGroupCall", "unknown", "unknown", "", false},
-		{"Group", "OutgoingRing", "unknown", "unknown", "", false},
-		{"Group", "Missed", "missed", "not_joined", "", false},
-		{"Group", "Declined", "declined", "not_joined", "", false},
-		{"Group", "Deleted", "unknown", "unknown", "", true},
-		{"Adhoc", "JoinedAdhoc", "answered", "joined", "", false},
-		{"Adhoc", "GenericAdhocCall", "unknown", "unknown", "", false},
-		{"Adhoc", "Pending", "unknown", "unknown", "", false},
-		{"Adhoc", "Deleted", "unknown", "unknown", "", true},
-		{"Adhoc", "Unknown", "unknown", "unknown", "", false},
-		{"FutureMode", "Accepted", "unknown", "unknown", "", false},
+		{"Direct", "Accepted", "answered", "joined", "joined"},
+		{"Direct", "Missed", "missed", "not_joined", "unknown"},
+		{"Direct", "MissedNotificationProfile", "missed", "not_joined", "unknown"},
+		{"Direct", "Declined", "declined", "not_joined", "unknown"},
+		{"Direct", "Pending", "unknown", "unknown", "unknown"},
+		{"Direct", "Deleted", "unknown", "unknown", "unknown"},
+		{"Direct", "FutureStatus", "unknown", "unknown", "unknown"},
+		{"Group", "Accepted", "unknown", "unknown", ""},
+		{"Group", "Joined", "answered", "joined", ""},
+		{"Group", "Ringing", "unknown", "unknown", ""},
+		{"Group", "GenericGroupCall", "unknown", "unknown", ""},
+		{"Group", "OutgoingRing", "unknown", "unknown", ""},
+		{"Group", "Missed", "missed", "not_joined", ""},
+		{"Group", "Declined", "declined", "not_joined", ""},
+		{"Group", "Deleted", "unknown", "unknown", ""},
+		{"Adhoc", "JoinedAdhoc", "answered", "joined", ""},
+		{"Adhoc", "GenericAdhocCall", "unknown", "unknown", ""},
+		{"Adhoc", "Pending", "unknown", "unknown", ""},
+		{"Adhoc", "Deleted", "unknown", "unknown", ""},
+		{"Adhoc", "Unknown", "unknown", "unknown", ""},
+		{"FutureMode", "Accepted", "unknown", "unknown", ""},
 	} {
 		t.Run(tc.mode+"/"+tc.status, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -46,13 +45,13 @@ func TestSignalNativeStatuses(t *testing.T) {
 				req.Bindings = map[string]int64{"peer": 7}
 			}
 			got, err := req.Observation()
+			if tc.status == "Deleted" {
+				requirements.ErrorIs(err, ErrInvalid)
+				return
+			}
 			requirements.NoError(err)
 			assertions.Equal(tc.outcome, got.Outcome)
 			assertions.Equal(tc.owner, got.OwnerParticipation)
-			assertions.Equal(tc.withdrawn, got.Withdrawn)
-			if tc.withdrawn {
-				assertions.Nil(got.EndedAt)
-			}
 			assertions.Equal("incoming", got.Direction)
 			assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
 			assertions.Empty(got.Timezone, "epoch milliseconds do not identify the source zone")
@@ -139,9 +138,7 @@ func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
 	})
 }
 
-func TestSignalDeletedDropsEnd(t *testing.T) {
-	o, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
-	require.NoError(t, err)
-	assert.True(t, o.Withdrawn)
-	assert.Nil(t, o.EndedAt)
+func TestSignalDeletedRejected(t *testing.T) {
+	_, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
+	require.ErrorIs(t, err, ErrInvalid)
 }
