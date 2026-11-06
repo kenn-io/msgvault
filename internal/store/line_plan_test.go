@@ -10,20 +10,21 @@ import (
 )
 
 func TestLineInboxStatusUsesReceivedIndexSQLite(t *testing.T) {
+	require := require.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "line-status-plan.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
 	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT MAX(received_at) FROM line_webhook_events WHERE source_id=?", 1)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	var details []string
 	for rows.Next() {
 		var id, parent, unused int
 		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
 		details = append(details, detail)
 	}
-	require.NoError(t, rows.Err())
+	require.NoError(rows.Err())
 	assert.Contains(t, strings.Join(details, "\n"), "USING COVERING INDEX idx_line_webhook_received (source_id=?)")
 }
