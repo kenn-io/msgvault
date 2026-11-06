@@ -21,7 +21,10 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 	conn := imapclient.New(local, nil)
 	defer func() { _ = conn.Close(); _ = remote.Close() }()
 	greeted := make(chan struct{})
-	go func() { _, _ = remote.Write([]byte("* PREAUTH fixture ready\r\n")); close(greeted) }()
+	go func() {
+		_, _ = remote.Write([]byte("* PREAUTH [CAPABILITY IMAP4rev1] fixture ready\r\n"))
+		close(greeted)
+	}()
 	require.NoError(t, conn.WaitGreeting())
 	<-greeted
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
@@ -37,8 +40,9 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 		_, err := runCommand(ctx, client, func() (struct{}, error) { return struct{}{}, conn.Noop().Wait() })
 		finished <- err
 	}()
-	_, err := bufio.NewReader(remote).ReadString('\n')
+	line, err := bufio.NewReader(remote).ReadString('\n')
 	require.NoError(t, err, "command is blocked awaiting a server response")
+	require.Contains(t, line, " NOOP\r\n", "cancel the target read, not an initial capability request")
 	cancel()
 	select {
 	case err := <-finished:
@@ -62,13 +66,18 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 	}
 }
 
+// Advertise capabilities in PREAUTH so the library has no automatic CAPABILITY
+// command that could be mistaken for the blocked NOOP or LOGOUT under test.
 func commandContextPipe(t *testing.T) (*imapclient.Client, net.Conn) {
 	t.Helper()
 	local, remote := net.Pipe()
 	conn := imapclient.New(local, nil)
 	t.Cleanup(func() { _ = conn.Close(); _ = remote.Close() })
 	greeted := make(chan struct{})
-	go func() { _, _ = remote.Write([]byte("* PREAUTH fixture ready\r\n")); close(greeted) }()
+	go func() {
+		_, _ = remote.Write([]byte("* PREAUTH [CAPABILITY IMAP4rev1] fixture ready\r\n"))
+		close(greeted)
+	}()
 	require.NoError(t, conn.WaitGreeting())
 	<-greeted
 	return conn, remote
@@ -90,8 +99,9 @@ func TestReadCommandCancellationPreservesReplacementTransport(t *testing.T) {
 		client.mu.Unlock()
 		finished <- err
 	}()
-	_, err := bufio.NewReader(peer).ReadString('\n')
+	line, err := bufio.NewReader(peer).ReadString('\n')
 	require.NoError(t, err)
+	require.Contains(t, line, " NOOP\r\n")
 	cancel()
 	select {
 	case err := <-finished:
@@ -128,7 +138,7 @@ func TestReadCommandCancellationJoinsStalledCleanup(t *testing.T) {
 	go func() { finished <- client.CloseContext(ctx) }()
 	line, err := bufio.NewReader(peer).ReadString('\n')
 	require.NoError(t, err)
-	assert.Contains(t, line, "LOGOUT")
+	require.Contains(t, line, " LOGOUT\r\n")
 	cancel()
 	select {
 	case err := <-finished:
