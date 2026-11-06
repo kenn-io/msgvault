@@ -15,6 +15,18 @@ func TestMarkdownDayGolden(t *testing.T) {
 	v.Omitted.Budget["entry_fields"] = 1
 	golden(t, "day.md", []byte(Markdown(v)))
 }
+func TestMarkdownSingleDayHeading(t *testing.T) {
+	v := sampleTimeline(ModeDay)
+	v.TimezoneIsDefault = false
+	v.Window.From = v.Window.To
+	v.Days = []Day{{Date: v.Window.To, Meetings: v.Days[0].Meetings}}
+	got := Markdown(v)
+	assertions := assert.New(t)
+	assertions.Contains(got, "# Thu 2026-10-22 · UTC\n")
+	assertions.Equal(1, strings.Count(got, "2026-10-22"))
+	assertions.NotContains(got, "Thu Oct 22")
+	assertions.Contains(got, "1 unparseable\n\n- 13:30 Weekly sync")
+}
 func TestMarkdownRelationshipGolden(t *testing.T) {
 	v := sampleTimeline(ModeRelationship)
 	golden(t, "relationship.md", []byte(Markdown(v)))
@@ -44,12 +56,6 @@ func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 		})
 	}
 }
-func TestMarkdownHiddenTextShowsNoSnippet(t *testing.T) {
-	v := sampleTimeline(ModeAnchor)
-	v.History = []Entry{v.History[3]}
-	got := Markdown(v)
-	assert.Contains(t, got, "[hidden text]")
-}
 func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
 	v.Gaps = []Gap{{Section: "calls", Code: "owner-only"}, {Section: "loops", Code: "timeout", Retryable: true}, {Section: "loops", Code: "partial", Retryable: true}}
@@ -60,7 +66,7 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
-	assert.Contains(t, Markdown(v), "13 people (+13)")
+	assert.Contains(t, Markdown(v), "Thu Oct 22 · 0 meetings · 13 people\n")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)

@@ -42,7 +42,12 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	if t.TimezoneIsDefault {
 		zone += " (set [activity].timezone)"
 	}
+	oneDay := t.Mode == ModeDay && t.Window.From == t.Window.To
 	heading := t.Window.To
+	if oneDay {
+		date, _ := time.Parse(time.DateOnly, t.Window.To)
+		heading = date.Format("Mon 2006-01-02")
+	}
 	if t.Window.From != t.Window.To {
 		heading = t.Window.From + " – " + t.Window.To
 	}
@@ -119,11 +124,19 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 		date, _ := time.Parse(time.DateOnly, d.Date)
 		label := date.Format("Mon Jan 02")
 		if d.Summary != nil {
-			fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			fmt.Fprintf(&b, "\n%s · %d meetings · %d people", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)))
+			if len(d.Summary.People) > 0 {
+				fmt.Fprintf(&b, " (%s)", peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			}
+			b.WriteByte('\n')
 			count++
 			continue
 		}
-		fmt.Fprintf(&b, "\n%s\n", label)
+		if oneDay {
+			b.WriteByte('\n')
+		} else {
+			fmt.Fprintf(&b, "\n%s\n", label)
+		}
 		rows(d.Meetings)
 		rows(d.Bursts)
 		var other []string
