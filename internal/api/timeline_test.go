@@ -255,7 +255,7 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 		never                                                 bool
 		errors                                                int64
 	}{
-		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, age: 48 * time.Hour, reason: "stale", command: "msgvault sync-calendar calendar@example.com"},
+		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, age: 48 * time.Hour, reason: "stale", command: "msgvault sync-calendar 'calendar@example.com'"},
 		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, age: 48 * time.Hour, reason: "stale"},
 		{name: "restarted scheduler stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 5 * time.Minute, age: 48 * time.Hour, reason: "stale"},
 		{name: "calendar not due", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 48 * time.Hour},

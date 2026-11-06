@@ -252,7 +252,7 @@ func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline
 }
 
 func timelineSyncCommand(item *store.Source) string {
-	arg := shellArgument(item.Identifier)
+	arg := oauth.ShellQuote(item.Identifier)
 	switch item.SourceType {
 	case "gmail", "imap", "msmail":
 		return "msgvault sync-incremental " + arg
@@ -270,15 +270,8 @@ func timelineSyncCommand(item *store.Source) string {
 		return "msgvault sync-" + strings.ReplaceAll(item.SourceType, "_", "-") + " " + arg
 	case "gcal":
 		account, _, _ := strings.Cut(item.Identifier, "/")
-		return "msgvault sync-calendar " + shellArgument(account)
+		return "msgvault sync-calendar " + oauth.ShellQuote(account)
 	default:
 		return ""
 	}
-}
-
-func shellArgument(value string) string {
-	if value != "" && !strings.ContainsAny(value, " \t\r\n'\"`$;&|<>()*?!#\\") && !strings.HasPrefix(value, "-") {
-		return value
-	}
-	return oauth.ShellQuote(value)
 }
