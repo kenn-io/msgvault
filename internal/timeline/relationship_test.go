@@ -74,6 +74,33 @@ func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
 
+func TestTimelineRelationshipNoiseExcludedContact(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			f.peer = f.EnsureParticipant("noreply@example.com", "Notifications", "example.com")
+			id := f.add(f.now.Add(-time.Hour), false)
+			ref := "email:noreply@example.com"
+			if saved {
+				ref = fmt.Sprintf("person:%d", f.savePerson())
+			}
+			f.project()
+			req := relationshipRequest(ref)
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			assertions.Empty(got.History)
+
+			req.IncludeNoise = true
+			got, err = Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			requirements.Len(got.History, 1)
+			requirements.NotNil(got.History[0].Burst)
+			assertions.Equal([]int64{id}, got.History[0].Burst.LatestMessageIDs)
+		})
+	}
+}
+
 func TestTimelineRelationshipPastCalendarWithoutNotes(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)

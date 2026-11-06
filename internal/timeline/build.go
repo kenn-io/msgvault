@@ -400,7 +400,7 @@ func personKey(p Person) string {
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
 	people := []Person{}
 	for _, p := range counterparts {
-		if p.Excluded != "" {
+		if p.Excluded == "owner" {
 			continue
 		}
 		name := p.DisplayName
