@@ -15821,6 +15821,9 @@ components:
           format: date-time
           nullable: true
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         last_sync_errors:
           format: int64
           type: integer
@@ -17433,6 +17436,9 @@ components:
           format: date-time
           nullable: true
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         name:
           type: string
         state:

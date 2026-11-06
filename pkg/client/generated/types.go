@@ -15913,7 +15913,7 @@ func (s SourceCount) Validate() error {
 
 type SourceFreshness struct {
 	Identifier           string     `json:"identifier" validate:"required"`
-	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at" validate:"required"`
+	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at" validate:"omitempty"`
 	LastSyncErrors       int64      `json:"last_sync_errors"`
 	Outcome              string     `json:"outcome" validate:"required"`
 	Reason               *string    `json:"reason,omitzero"`
@@ -17636,7 +17636,7 @@ func (t TimelinePersonHeader) Validate() error {
 }
 
 type TimelineProjectionFreshness struct {
-	Frontier *time.Time `json:"frontier" validate:"required"`
+	Frontier *time.Time `json:"frontier" validate:"omitempty"`
 	Name     string     `json:"name" validate:"required"`
 	State    string     `json:"state" validate:"required"`
 }

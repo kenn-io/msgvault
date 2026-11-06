@@ -1529,19 +1529,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
 	}
-	// Openers contain primitive arguments, including numeric IDs and string refs.
-	// Empty-schema map values otherwise generate struct{} and reject those values.
-	if open := schemas["TimelineOpen"]; open != nil && open.Properties["args"] != nil {
-		if values, ok := open.Properties["args"].AdditionalProperties.(*huma.Schema); ok {
-			setCodegenGoType(values, "any")
-		}
-	}
-	// Budget omissions contain integer counts or the string sentinel "more".
-	if omitted := schemas["TimelineOmitted"]; omitted != nil && omitted.Properties["budget"] != nil {
-		if values, ok := omitted.Properties["budget"].AdditionalProperties.(*huma.Schema); ok {
-			setCodegenGoType(values, "any")
-		}
-	}
+	hardenTimelineClientSchemas(schemas)
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
 		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {
@@ -1561,6 +1549,25 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	setCodegenGoType(values, "any")
+}
+
+func hardenTimelineClientSchemas(schemas map[string]*huma.Schema) {
+	// Openers contain primitive arguments, including numeric IDs and string refs.
+	// Empty-schema map values otherwise generate struct{} and reject those values.
+	if open := schemas["TimelineOpen"]; open != nil && open.Properties["args"] != nil {
+		if values, ok := open.Properties["args"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
+	// Budget omissions contain integer counts or the string sentinel "more".
+	if omitted := schemas["TimelineOmitted"]; omitted != nil && omitted.Properties["budget"] != nil {
+		if values, ok := omitted.Properties["budget"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
+	// Freshness timestamps are always present and null before the first success.
+	nullableSchemaProperty(schemas["TimelineProjectionFreshness"], "frontier")
+	nullableSchemaProperty(schemas["SourceFreshness"], "last_successful_sync_at")
 }
 
 func setCodegenGoType(schema *huma.Schema, goType string) {

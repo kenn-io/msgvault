@@ -8,7 +8,6 @@ import (
 )
 
 func TestTimelineNullableFreshnessTimestamps(t *testing.T) {
-	t.Skip("Sol P2: apply nullableSchemaProperty to freshness timestamps and regenerate the client")
 	t.Run("projection frontier", func(t *testing.T) {
 		projection := generated.TimelineProjectionFreshness{Name: "activity", State: "current"}
 		require.NoError(t, projection.Validate())
