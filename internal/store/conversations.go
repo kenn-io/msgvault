@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // ConversationWindow is a bounded, stable slice of full message details.
@@ -344,7 +346,7 @@ func (s *Store) GetConversationWindowContext(
 		return nil, err
 	}
 	inlineIDs := applyConversationBodyBudget(window.Messages, bodySizes, anchorID)
-	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs); err != nil {
+	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs, 0); err != nil {
 		return nil, err
 	}
 	if err := s.batchPopulateContext(ctx, window.Messages, ids); err != nil {
@@ -393,7 +395,7 @@ func applyConversationBodyBudget(messages []APIMessage, bodySizes []int64, ancho
 // primary-key IN lookup on message_bodies — the only sanctioned access path
 // for that table — and assigns BodyText/BodyHTML/Body on the matching
 // messages.
-func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, ids []int64) error {
+func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, ids []int64, maxFieldBytes int) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -421,6 +423,16 @@ func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, 
 		var bodyText, bodyHTML string
 		if err := rows.Scan(&messageID, &bodyText, &bodyHTML); err != nil {
 			return fmt.Errorf("scan conversation body: %w", err)
+		}
+		// Clone oversized prefixes to release full bodies while preserving the
+		// field-size verdict. A zero limit keeps authorized reads unrestricted.
+		if maxFieldBytes > 0 {
+			if len(bodyText) > maxFieldBytes {
+				bodyText = strings.Clone(bodyText[:maxFieldBytes])
+			}
+			if len(bodyHTML) > maxFieldBytes {
+				bodyHTML = strings.Clone(bodyHTML[:maxFieldBytes])
+			}
 		}
 		index, ok := indexByID[messageID]
 		if !ok {
@@ -756,5 +768,5 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
 		return err
 	}
-	return s.batchPopulateBodies(ctx, messages, ids)
+	return s.batchPopulateBodies(ctx, messages, ids, verification.MaxFieldBytes)
 }
