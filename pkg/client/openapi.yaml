@@ -2935,6 +2935,8 @@ components:
       type: object
     CliSearchResponse:
       properties:
+        has_more:
+          type: boolean
         hybrid_available:
           type: boolean
         index_built:

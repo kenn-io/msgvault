@@ -2766,6 +2766,8 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
+Newer `main` builds print a stderr hint when another full-text result exists, with the next `--offset` or a suggestion to raise `--limit`. Vector and hybrid text suggest raising `--limit`; their JSON objects gain a `hints` entry with `code`, `message`, and a runnable `next` command. Full-text JSON stays a bare array. Exactly full final pages add no hint. Semantic hints depend on the configured result cap; the default cap is 50.
+
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
 with terminal controls removed and whitespace collapsed. Terminal tables fit the
@@ -3997,6 +3999,8 @@ msgvault list-senders [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
+Newer `main` builds print a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
+
 ---
 
 ## list-domains
@@ -4014,6 +4018,8 @@ msgvault list-domains [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
+Newer `main` builds print a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
+
 ---
 
 ## list-labels
@@ -4030,6 +4036,8 @@ msgvault list-labels [flags]
 | `--after YYYY-MM-DD` | Only messages after this date |
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
+
+Newer `main` builds print a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
 
 ---
 

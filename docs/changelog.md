@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes an actionable `hints` entry.
+
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and

@@ -234,3 +234,27 @@ func TestRemoteClientAuthentication(t *testing.T) {
 	w := f.do(t, "", http.MethodGet, "/api/v1/cli/stats", "")
 	assert.Equal(t, http.StatusUnauthorized, w.Code, "empty configured key never matches: %s", w.Body.String())
 }
+
+func TestRemoteClientSearchMaximumPage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRemoteClientFixture(t, false)
+	conversation, err := f.st.EnsureConversation(f.sourceID, "pagination-thread", "Pagination fixture")
+	require.NoError(err)
+	for i := range 501 {
+		_, err := f.st.PersistMessage(&store.MessagePersistData{Message: &store.Message{
+			SourceID: f.sourceID, ConversationID: conversation, SourceMessageID: fmt.Sprintf("pagination-%d", i), MessageType: "email",
+			Subject: sql.NullString{String: "Pagination fixture", Valid: true},
+		}})
+		require.NoError(err)
+	}
+	w := f.do(t, remoteClientTestReaderKey, http.MethodGet, "/api/v1/cli/search?q=subject:Pagination&limit=500", "")
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var page struct {
+		Results []json.RawMessage `json:"results"`
+		HasMore bool              `json:"has_more"`
+	}
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+	assert.Len(page.Results, 500)
+	assert.True(page.HasMore)
+}

@@ -93,7 +93,7 @@ func TestOutputHybridResultsJSONHiddenTextPresent(t *testing.T) {
 	err := outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{
 		{ID: 1, Message: query.MessageSummary{HiddenTextPresent: true}},
 		{ID: 2, Message: query.MessageSummary{HiddenTextPresent: false}},
-	}}, false)
+	}}, false, "")
 	out := done()
 	require.NoError(err)
 	var result struct {

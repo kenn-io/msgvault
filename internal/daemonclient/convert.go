@@ -243,6 +243,7 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 	return &CLISearch{
 		Results:          results,
 		HybridAvailable:  boolValue(resp.HybridAvailable),
+		HasMore:          boolValue(resp.HasMore),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),

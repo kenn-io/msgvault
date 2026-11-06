@@ -58,7 +58,7 @@ func TestSemanticJSONIncludesSearchContext(t *testing.T) {
 	count := int64(1)
 
 	done := captureStdout(t)
-	require.NoError(outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{{ID: 1, AttachmentCount: &count, Message: query.MessageSummary{ConversationID: 7, Snippet: "needle context", AttachmentCount: 1, AttachmentNames: []string{"plan.pdf"}}}}}, false))
+	require.NoError(outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{{ID: 1, AttachmentCount: &count, Message: query.MessageSummary{ConversationID: 7, Snippet: "needle context", AttachmentCount: 1, AttachmentNames: []string{"plan.pdf"}}}}}, false, ""))
 	var got struct {
 		Results []map[string]any `json:"results"`
 	}
@@ -129,7 +129,7 @@ func TestSearchJSONAttachmentMetadataAvailability(t *testing.T) {
 				done := captureStdout(t)
 				var err error
 				if semantic {
-					err = outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{{Message: message, AttachmentCount: count}}}, false)
+					err = outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{{Message: message, AttachmentCount: count}}}, false, "")
 				} else {
 					err = outputSearchResultsJSON([]query.MessageSummary{message})
 				}

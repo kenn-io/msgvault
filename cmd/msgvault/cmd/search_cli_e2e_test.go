@@ -85,7 +85,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	home := filepath.Join(root, "cli-home")
 	require.NoError(os.MkdirAll(home, 0700))
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0600))
-	run := func(args ...string) string {
+	runWithStderr := func(args ...string) (string, string) {
 		t.Helper()
 		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // G702: the opt-in test operator supplies the built CLI; argv is passed without a shell.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
@@ -93,7 +93,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		command.Stdout = &out
 		command.Stderr = &stderr
 		require.NoError(command.Run(), "CLI %v: %s", args, stderr.String())
-		return out.String()
+		return out.String(), stderr.String()
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		out, _ := runWithStderr(args...)
+		return out
 	}
 	decode := func(raw string, value any) {
 		decoder := json.NewDecoder(strings.NewReader(raw))
@@ -152,5 +157,110 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		decode(out, &semantic)
 		require.Len(semantic.Results, 1)
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
+	}
+	// Semantic pages use the measured extra result and keep a runnable scoped retry.
+	for _, mode := range []string{"vector", "hybrid"} {
+		out, stderr := runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "1", "--json", "--snippet", "--sort", "date")
+		var page struct {
+			Results []map[string]any                       `json:"results"`
+			Hints   []struct{ Code, Message, Next string } `json:"hints"`
+		}
+		decode(out, &page)
+		require.Len(page.Results, 1)
+		require.Len(page.Hints, 1)
+		assert.Equal("more_available", page.Hints[0].Code)
+		assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
+		assert.NotContains(stderr, "Hint:")
+		assert.Contains(page.Hints[0].Next, "'--mode="+mode+"'")
+		assert.Contains(page.Hints[0].Next, "'--account=archive@example.com'")
+		assert.Contains(page.Hints[0].Next, "'--home="+home+"'")
+		// Execute the advertised command, including its quoting and connection flags.
+		retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "'msgvault'", "'"+binary+"'", 1)) //nolint:gosec // Runs the CLI-generated command against isolated test state.
+		retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+		var retryOut, retryErr bytes.Buffer
+		retry.Stdout, retry.Stderr = &retryOut, &retryErr
+		require.NoError(retry.Run(), retryErr.String())
+		page.Hints = nil
+		decode(retryOut.String(), &page)
+		assert.Len(page.Results, 2)
+		assert.Empty(page.Hints)
+		_, stderr = runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--limit", "1")
+		assert.Contains(stderr, "Hint: more messages match; raise --limit")
+		_, stderr = runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--limit", "2")
+		assert.NotContains(stderr, "Hint:")
+	}
+	// Exactly full pages and truncated pages differ by one measured row.
+	for i := range 101 {
+		subject := "paginationneedle"
+		if i < 51 {
+			subject += " overflowboundary"
+		}
+		if i < 50 {
+			subject += " exactboundary"
+		}
+		year := 2026
+		if i >= 50 {
+			year = 2027
+		}
+		message := storetest.NewMessage(source.ID, conv).WithSubject(subject).WithSentAt(time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)).Build()
+		address := fmt.Sprintf("sender-%02d@example.com", i%51)
+		sender, err := st.EnsureParticipant(address, "", "example.com")
+		require.NoError(err)
+		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+		id, err := st.UpsertMessage(message)
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+		require.NoError(st.UpsertFTS(id, subject, "", address, "", ""))
+	}
+	for _, jsonMode := range []bool{false, true} {
+		for _, tc := range []struct{ query, offset, hint string }{
+			{"overflowboundary", "0", "--offset 50"},
+			{"exactboundary", "0", ""},
+			{"paginationneedle", "50", "--offset 100"},
+			{"paginationneedle", "100", ""},
+			{"missingpaginationword", "0", ""},
+		} {
+			args := []string{"search", tc.query, "--offset", tc.offset}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			out, stderr := runWithStderr(args...)
+			if jsonMode {
+				var rows []map[string]any
+				decode(out, &rows)
+				if tc.hint != "" {
+					assert.Len(rows, 50)
+				}
+			} else if tc.hint != "" {
+				assert.Contains(out, "Showing 50 results")
+			}
+			if tc.hint == "" {
+				assert.NotContains(stderr, "Hint:")
+			} else {
+				assert.Contains(stderr, "Hint: more messages match; use "+tc.hint+" for the next page or raise --limit")
+			}
+		}
+		for _, exact := range []bool{false, true} {
+			args := []string{"list-senders"}
+			if exact {
+				args = append(args, "--before", "2027-01-01")
+			}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			out, stderr := runWithStderr(args...)
+			if jsonMode {
+				var rows []map[string]any
+				decode(out, &rows)
+				assert.Len(rows, 50)
+			} else {
+				assert.Contains(out, "Showing 50 results")
+			}
+			if exact {
+				assert.NotContains(stderr, "Hint:")
+			} else {
+				assert.Contains(stderr, "Hint: more senders exist; raise -n")
+			}
+		}
 	}
 }

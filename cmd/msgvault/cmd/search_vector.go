@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 // runHybridSearch executes vector or hybrid search through the configured
@@ -91,8 +93,17 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	if strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 {
 		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", kind, &result)
 	}
+	next := ""
+	if resp.HasMore {
+		next = semanticMoreResultsCommand(cmd, queryStr)
+		if !searchJSON {
+			defer func() {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: more messages match; raise --limit")
+			}()
+		}
+	}
 	if searchJSON {
-		return outputHybridResultsJSON(resp, explain)
+		return outputHybridResultsJSON(resp, explain, next)
 	}
 	return outputHybridResultsTable(resp, explain)
 }
@@ -169,7 +180,7 @@ func outputHybridTimings(resp *daemonclient.CLIHybridSearch, explain bool) {
 		resp.TookMS, resp.Timings.QueryEmbeddingMS, resp.Timings.RetrievalMS, resp.Timings.HydrationMS)
 }
 
-func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) error {
+func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, next string) error {
 	rows := make([]map[string]any, len(resp.Results))
 	for i, r := range resp.Results {
 		row := map[string]any{
@@ -219,6 +230,9 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 	if resp.Accelerator != "" {
 		output["accelerator"] = resp.Accelerator
 	}
+	if next != "" {
+		output["hints"] = []map[string]string{{"code": "more_available", "message": "more messages match; raise --limit", "next": next}}
+	}
 	return printJSON(output)
 }
 
@@ -242,4 +256,18 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 		}
 		return 0
 	})
+}
+
+func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) string {
+	args := []string{"msgvault", "search"}
+	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		if flag.Name != "limit" {
+			args = appendDaemonCLIFlag(args, flag)
+		}
+	})
+	args = append(args, "--limit", strconv.Itoa(searchLimit*2), "--", queryStr)
+	for i := range args {
+		args[i] = oauth.ShellQuote(args[i])
+	}
+	return strings.Join(args, " ")
 }
