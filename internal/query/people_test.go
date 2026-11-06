@@ -92,6 +92,61 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 	assert.Equal(int64(len(want)), response.TotalCount)
 }
 
+func TestRoomPersonEligibilityAndExploreRosterGroups(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "beeper")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+	otherRoom := b.AddParticipant("room@floor.resource.calendar.google.com", "floor.resource.calendar.google.com", "Room 5B")
+	b.LinkCluster(room, otherRoom)
+	unlinkedRoom := b.AddParticipant("unlinked@resource.calendar.google.com", "resource.calendar.google.com", "Unlinked Room")
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201, MessageType: "chat", ConversationType: "group_chat"})
+	b.AddFrom(message, alice, "Alice")
+	for _, id := range []int64{room, otherRoom, unlinkedRoom} {
+		b.AddConversationParticipant(201, id)
+	}
+	engine := b.BuildEngine()
+	for _, dimension := range []string{"participant", "domain"} {
+		groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Page: PageSpec{Limit: 25}})
+		requirements.NoError(err)
+		requirements.Len(groups.Rows, 1, dimension)
+		assertions.Equal(int64(1), groups.Rows[0].Count)
+		if dimension == "domain" {
+			assertions.Equal("example.com", groups.Rows[0].Key)
+		}
+	}
+	for _, tc := range []struct {
+		id      int64
+		members []int64
+	}{{room, []int64{room, otherRoom}}, {unlinkedRoom, nil}} {
+		detail, err := engine.GetPerson(t.Context(), tc.id, Context{}, tc.members)
+		requirements.NoError(err)
+		assertions.Nil(detail)
+	}
+}
+
+func TestLinkedRoomActivityStaysWithPerson(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
+	b.LinkCluster(room, alice)
+	humanMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 301})
+	b.AddTo(humanMessage, alice, "Alice")
+	roomMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 302})
+	b.AddTo(roomMessage, room, "Room")
+	engine := b.BuildEngine()
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Page: PageSpec{Limit: 10}})
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assertions.Equal(alice, people.Rows[0].ID)
+	assertions.Equal("Alice", people.Rows[0].DisplayLabel)
+	assertions.Equal(int64(2), people.Rows[0].ActivityCount)
+}
+
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

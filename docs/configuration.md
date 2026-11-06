@@ -164,7 +164,7 @@ min_meeting_days_long = 2
 | `long_window_days` | `365` | Days counted for tier 2. At most 3650. |
 | `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
 | `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
-| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
+| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. See [People's room exclusions](/docs/usage/people/). |
 | `min_call_seconds` | `120` | How long an answered Synctech or Google Voice call must stay connected to count. Each counted call adds one to the outbound and inbound counts and is its own channel. `0` stops calls from counting. |
 | `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window, plus counted calls. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |

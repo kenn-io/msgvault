@@ -10,6 +10,8 @@ and the things you want to remember in one profile. Start in the Web UI's
 choose **Save** in their header. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
+Google resource addresses not linked to a person are excluded from observed people regardless of `exclude_domain_patterns`; their addresses stay searchable.
+
 | I want to… | Start here |
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
