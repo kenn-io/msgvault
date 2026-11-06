@@ -837,9 +837,7 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			}
 			raw, err := json.Marshal(event)
 			must.NoError(err)
-			bot, err := f.st.LineBotUserIDContext(t.Context(), f.draft.SourceID)
-			must.NoError(err)
-			must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", bot, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now, RawJSON: string(raw)}}))
+			must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now, RawJSON: string(raw)}}))
 			processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(func() time.Time { return f.now }))
 			must.NoError(processor.Process(t.Context()))
 			var count int
@@ -868,7 +866,7 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
 			checks.Equal(2, count)
 			var active bool
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT cp.left_at IS NULL FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+bot).Scan(&active))
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT cp.left_at IS NULL FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:U00000000000000000000000000000001").Scan(&active))
 			checks.True(active)
 		})
 	}

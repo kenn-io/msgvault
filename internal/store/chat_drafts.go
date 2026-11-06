@@ -205,11 +205,17 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 		}
 		// An admitted attempt has never reached LINE. Retire it after deletion
 		// so an admission that held the draft row is visible to this statement.
-		if _, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='remote_unknown_expired',body='',quote_token='',source_conversation_id=''
- WHERE draft_id=? AND state='admitted'`, draftID); err != nil {
-			return fmt.Errorf("retire unsubmitted LINE reply: %w", err)
+		attempt, err := loadLineReply(ctx, tx, draftID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
 		}
-		return nil
+		if err != nil {
+			return err
+		}
+		if attempt.State == LineReplyAdmitted {
+			attempt.State = LineReplyRemoteUnknownExpired
+		}
+		return writeLineReplyTx(ctx, tx, &attempt)
 	})
 }
 

@@ -85,11 +85,11 @@ func (s *Store) changeLineReply(ctx context.Context, id string, change func(*log
 	return a, err
 }
 
-// writeLineReplyTx records a state change. A state that can no longer send
-// drops its unsent payload; acceptance evidence keeps it for the archive.
+// writeLineReplyTx records a state change. Rejected and expired attempts drop
+// their payload while retaining acceptance and receipt identifiers.
 func writeLineReplyTx(ctx context.Context, tx *loggedTx, a *LineReplyAttempt) error {
-	if a.State == LineReplyProviderRejected || a.State == LineReplyRemoteUnknownExpired {
-		a.Body, a.QuoteToken, a.SourceConversationID = "", "", ""
+	if a.State == LineReplyProviderRejected || lineReplyExpired(a.State) {
+		a.Body, a.QuoteToken, a.RemoteQuoteToken, a.SourceConversationID = "", "", "", ""
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state=?,admitted_at=?,retry_until=?,next_retry_at=?,status_code=?,request_id=?,remote_message_id=?,remote_quote_token=?,
  body=?,quote_token=?,source_conversation_id=? WHERE draft_id=?`, a.State, a.AdmittedAt, a.RetryUntil, a.NextRetryAt, a.StatusCode, a.RequestID, a.RemoteMessageID, a.RemoteQuoteToken,
