@@ -75,7 +75,7 @@ type ImportSummary struct {
 	ChatsSkipped       int64
 	MessagesProcessed  int64
 	MessagesAdded      int64
-	MessagesUpdated    int64
+	MessagesUpdated    int64 // Messages already archived, including unchanged messages.
 	MessagesSkipped    int64
 	MessagesEdited     int64
 	Participants       int64

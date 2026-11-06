@@ -29,7 +29,7 @@ func TestLongTextAttachment(t *testing.T) {
 	}{
 		{
 			name: "short edit", full: "Original long text", body: "Short replacement",
-			messageID: "signal:aci:" + signalfixture.AliceACI + ":" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),
+			messageID: "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TEditOld),
 			search:    "replacement",
 			changes:   []string{`INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 102, 'text/x-signal-plain')`, `UPDATE message SET body = 'Short replacement' WHERE _id = 106`},
 		},
@@ -87,7 +87,7 @@ func TestReplyQuotesLatestRevision(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `UPDATE message SET quote_id = `+ms(signalfixture.TEditNew)+` WHERE _id = 103`)
 	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:"+signalfixture.OwnACI+":"+ms(signalfixture.TEditOld), importedMessages(t, st)["signal:aci:0f0f0f0f-0000-4000-8000-000000000002:"+signalfixture.AliceACI+":"+ms(signalfixture.TQuoteDraft)].replyTo)
+	assert.Equal(t, "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:"+ms(signalfixture.TEditOld), importedMessages(t, st)["signal:aci:0f0f0f0f-0000-4000-8000-000000000002:peer:"+ms(signalfixture.TQuoteDraft)].replyTo)
 	assert.Zero(t, summary.RepliesUnresolved)
 }
 
@@ -145,7 +145,7 @@ func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
 			assert.Equal(before, importedMessages(t, st))
 			if tc.name == "body" {
 				var snippet string
-				require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id = ?`, "signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)).Scan(&snippet))
+				require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id = ?`, "signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)).Scan(&snippet))
 				assert.Equal("Carol here", snippet)
 			}
 			assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))

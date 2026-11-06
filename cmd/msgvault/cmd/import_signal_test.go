@@ -60,6 +60,11 @@ func TestImportSignalConfirmsNormalizedPhone(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	command.SetArgs([]string{"import-signal", dir, "--phone", "+1 555 555 0100"})
 	require.NoError(command.Execute())
+	done := captureStdout(t)
+	err := command.Execute()
+	summaryOutput := done()
+	require.NoError(err)
+	assert.Contains(summaryOutput, "10 processed, 0 new, 7 already archived, 3 skipped")
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)

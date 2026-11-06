@@ -35,7 +35,7 @@ func TestLongTextRevisionIdentityAcrossRestore(t *testing.T) {
 			changeFixture(t, dir, tc.changes...)
 			summary := runImport(t, st, dir, storage)
 			assert.Zero(summary.Errors)
-			assert.Equal(tc.want, importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
+			assert.Equal(tc.want, importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)].body)
 		})
 	}
 }

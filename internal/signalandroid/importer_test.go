@@ -62,19 +62,19 @@ func ms(v int64) string { return strconv.FormatInt(v, 10) }
 func expectedMessages() map[string]importedMessage {
 	direct := "signal:aci:" + signalfixture.AliceACI
 	return map[string]importedMessage{
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1): {conversation: direct, body: "Hello from Alice"},
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply): {
-			conversation: direct, body: "Replying", fromMe: true, replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1),
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:peer:" + ms(signalfixture.TAlice1): {conversation: direct, body: "Hello from Alice"},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TReply): {
+			conversation: direct, body: "Replying", fromMe: true, replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:peer:" + ms(signalfixture.TAlice1),
 		},
-		"signal:group-v1:ABEiM0RVZneImaq7zN3u_w:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10):       {conversation: "signal:group-v1:ABEiM0RVZneImaq7zN3u_w", body: "Old group text"},
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TQuoteDraft): {
-			conversation: direct, body: "Nice draft", replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),
+		"signal:group-v1:ABEiM0RVZneImaq7zN3u_w:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10): {conversation: "signal:group-v1:ABEiM0RVZneImaq7zN3u_w", body: "Old group text"},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld):                   {conversation: direct, body: "First draft", fromMe: true, edited: true},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:peer:" + ms(signalfixture.TQuoteDraft): {
+			conversation: direct, body: "Nice draft", replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld),
 		},
 		"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup): {
 			conversation: "signal:group:" + signalfixture.GroupB64, body: "Hi @Alice Example, look\n\nBeach",
 		},
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000004:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol): {conversation: "signal:aci:" + signalfixture.CarolACI, body: "Carol here"},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000004:peer:" + ms(signalfixture.TCarol): {conversation: "signal:aci:" + signalfixture.CarolACI, body: "Carol here"},
 	}
 }
 
@@ -146,7 +146,7 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 		return got
 	}()
 	assert.Equal([]reaction{
-		{"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld), "\u2764", signalfixture.AlicePhone},
+		{"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld), "\u2764", signalfixture.AlicePhone},
 		{"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup), "\U0001F44D", signalfixture.AlicePhone},
 	}, reactions)
 

@@ -167,7 +167,7 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	fmt.Println("Import complete!")
 	fmt.Printf("  Duration:       %s\n", summary.Duration.Round(time.Second))
 	fmt.Printf("  Chats:          %d imported, %d skipped\n", summary.ChatsProcessed, summary.ChatsSkipped)
-	fmt.Printf("  Messages:       %d processed, %d added, %d updated, %d skipped\n",
+	fmt.Printf("  Messages:       %d processed, %d new, %d already archived, %d skipped\n",
 		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesUpdated, summary.MessagesSkipped)
 	if summary.MessagesEdited > 0 {
 		fmt.Printf("  Edited:         %d\n", summary.MessagesEdited)

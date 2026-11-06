@@ -189,7 +189,10 @@ They keep their archived chat ID when Signal later learns the contact's account 
 ### Run it again
 
 Run the command with each newer backup. Every message is identified by its
-chat, author's Signal account ID, and original sent timestamp. A rerun adds
+chat, author, and original sent timestamp. Direct chats identify the author as
+the owner or the other person, so messages keep their IDs when Signal learns
+a contact's account ID. Groups identify other authors by account ID, phone-number ID,
+or phone number, in that order. A rerun adds
 new messages and updates existing edits and reactions. It reuses archived
 attachments even when other files are added, removed, or reordered, and stores newly available files. Messages and attachment rows
 keep their identities, including after a backup is restored on a new phone. Each rerun replaces a message's reactions with
@@ -203,6 +206,7 @@ If a reaction's author conflicts with existing people, that message keeps its pr
 Missing, oversized, or failed attachment files leave message text available and count as missing or skipped attachments. File storage failures also count as errors. Reruns store files that become available later.
 If the import fails or is interrupted, rerun it to finish and repair conversation counts.
 The attachment and reaction additions in the summary count committed additions.
+The message summary separates new messages from those already archived, including unchanged messages.
 The unresolved reply count covers messages written in that run.
 
 Messages deleted in Signal, including messages later deleted for everyone, stay

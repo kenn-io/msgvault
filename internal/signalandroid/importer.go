@@ -218,9 +218,6 @@ func (r *run) resolveSelf(ctx context.Context) error {
 	if self.E164 != r.opts.Phone {
 		return errors.New("--phone does not match the number of the account that made this Signal backup")
 	}
-	if self.ACI == "" {
-		return fmt.Errorf("%w: the account owner has no Signal account ID", ErrUnsupportedDatabase)
-	}
 	return nil
 }
 
@@ -293,8 +290,23 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 }
 
 // token returns the identity token of a recipient for message IDs.
-func (r *run) token(recipientID int64) string {
-	return r.recipients[recipientID].ACI
+func (r *run) token(recipientID int64, direct bool) string {
+	if recipientID == r.selfRecipientID {
+		return "self"
+	}
+	if direct {
+		return "peer"
+	}
+	recipient := r.recipients[recipientID]
+	switch {
+	case recipient.ACI != "":
+		return recipient.ACI
+	case recipient.PNI != "":
+		return "pni:" + recipient.PNI
+	case recipient.E164 != "":
+		return "tel:" + recipient.E164
+	}
+	return ""
 }
 
 func (r *run) displayName(recipientID int64) string {
@@ -455,7 +467,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if isOutgoing(m.Type) {
 			author = r.selfRecipientID
 		}
-		token := r.token(author)
+		token := r.token(author, conversation.ConversationType == "direct_chat")
 		if token == "" || m.DateSent <= 0 {
 			r.summary.MessagesSkipped++
 			continue
@@ -626,7 +638,7 @@ func (r *run) writeMessage(
 		Attachments: writes, PreserveLabels: true,
 		FTS: &store.FTSDoc{Body: body, FromAddr: senderAddr},
 	}
-	parentID, err := r.quotedMessageID(ctx, p.chatID, m)
+	parentID, err := r.quotedMessageID(ctx, p.chatID, conversation.ConversationType == "direct_chat", m)
 	if err != nil {
 		return err
 	}
@@ -688,11 +700,11 @@ func (r *run) writeMessage(
 }
 
 // quotedMessageID resolves quotes to an edit's original identity before writing.
-func (r *run) quotedMessageID(ctx context.Context, chatID string, m sigMessage) (string, error) {
+func (r *run) quotedMessageID(ctx context.Context, chatID string, direct bool, m sigMessage) (string, error) {
 	if m.QuoteID <= 0 || m.QuoteAuthor <= 0 {
 		return "", nil
 	}
-	token := r.token(m.QuoteAuthor)
+	token := r.token(m.QuoteAuthor, direct)
 	if token == "" {
 		return "", nil
 	}

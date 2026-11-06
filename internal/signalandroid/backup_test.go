@@ -48,7 +48,7 @@ func TestImportRejectsDuplicateAttachmentFiles(t *testing.T) {
 			assert.Equal(tc.wantStored, summary.AttachmentsStored)
 			assert.Equal(int(tc.wantStored), countRows(t, st, `SELECT COUNT(*) FROM attachments`))
 			if tc.longText {
-				id := "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol)
+				id := "signal:aci:" + signalfixture.CarolACI + ":peer:" + ms(signalfixture.TCarol)
 				assert.Equal("Carol here", importedMessages(t, st)[id].body)
 			}
 		})
@@ -181,7 +181,7 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			}
 			id := tc.messageID
 			if id == "" {
-				id = "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol)
+				id = "signal:aci:" + signalfixture.CarolACI + ":peer:" + ms(signalfixture.TCarol)
 			}
 			body := importedMessages(t, st)[id].body
 			if tc.bodyContains {
@@ -297,8 +297,8 @@ func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	changeFixture(t, dir, `DELETE FROM message WHERE _id = 101`)
 	runImport(t, st, dir, t.TempDir())
 	var parent string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?`), "signal:aci:"+signalfixture.AliceACI+":"+signalfixture.OwnACI+":"+ms(signalfixture.TReply)).Scan(&parent))
-	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":"+signalfixture.AliceACI+":"+ms(signalfixture.TAlice1), parent)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?`), "signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply)).Scan(&parent))
+	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":peer:"+ms(signalfixture.TAlice1), parent)
 }
 
 func TestStatsFailureCannotCompleteImport(t *testing.T) {

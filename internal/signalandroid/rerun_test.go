@@ -66,7 +66,7 @@ func TestRerunReplacesReactions(t *testing.T) {
 		return values
 	}
 	assert.Equal([]string{"\U0001F602"}, reactionsOf("signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)))
-	assert.Empty(reactionsOf("signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld)))
+	assert.Empty(reactionsOf("signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld)))
 }
 
 func TestRerunClearsEmptiedBody(t *testing.T) {
@@ -80,10 +80,10 @@ func TestRerunClearsEmptiedBody(t *testing.T) {
 	runImport(t, st, dir, t.TempDir())
 
 	got := importedMessages(t, st)
-	assert.Empty(got["signal:aci:0f0f0f0f-0000-4000-8000-000000000004:"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
+	assert.Empty(got["signal:aci:0f0f0f0f-0000-4000-8000-000000000004:peer:"+ms(signalfixture.TCarol)].body)
 	assert.Equal(0, countRows(t, st, `
 		SELECT COUNT(*) FROM messages m WHERE m.source_message_id = ? AND m.snippet IS NOT NULL`,
-		"signal:aci:0f0f0f0f-0000-4000-8000-000000000004:"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)))
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000004:peer:"+ms(signalfixture.TCarol)))
 }
 
 func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
@@ -99,7 +99,7 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 5},
 		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
 		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
-		{name: "owner account ID not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET aci = NULL WHERE _id = 1`}, wantError: "the account owner has no Signal account ID", checkNoSource: true},
+		{name: "owner account ID not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET aci = NULL WHERE _id = 1`}, added: 7},
 		{name: "owner absent from empty backup", phone: "+15555550199", changes: []string{`DELETE FROM message`}, wantError: "cannot find your Signal account for --phone", checkNoSource: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestImportSendingSkipped(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Zero(summary.MessagesSkipped)
-			id := "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply)
+			id := "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TReply)
 			assert.Equal(map[string]importedMessage{id: {
 				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
 			}}, importedMessages(t, st))
@@ -188,7 +188,7 @@ func TestSendStateFollowsSignal(t *testing.T) {
 	isSent := func() bool {
 		var sent bool
 		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`),
-			"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:"+signalfixture.OwnACI+":"+ms(signalfixture.TReply)).Scan(&sent))
+			"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:"+ms(signalfixture.TReply)).Scan(&sent))
 		return sent
 	}
 	assert.False(isSent(), "a failed send did not leave the phone")
