@@ -205,6 +205,9 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
    history_only = TRUE, merged_into_source_id = excluded.merged_into_source_id, retired_at = excluded.retired_at`, req.FromSourceID, req.IntoSourceID); err != nil {
 			return fmt.Errorf("retire merged source: %w", err)
 		}
+		if err := s.invalidateEmailPushBinding(ctx, tx, req.FromSourceID); err != nil {
+			return err
+		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			return err

@@ -353,6 +353,9 @@ func (s *Store) RemoveSourceSerialized(
 	if deletedSources == 0 {
 		return hadActiveSync, 0, fmt.Errorf("source %d: %w", sourceID, ErrSourceNotFound)
 	}
+	if err := s.invalidateEmailPushBinding(ctx, conn, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, conn); err != nil {
 		return hadActiveSync, 0, err
 	}
@@ -458,6 +461,9 @@ func (s *Store) removeSourceExec(
 	}
 	if rows == 0 {
 		return fmt.Errorf("source %d: %w", sourceID, ErrSourceNotFound)
+	}
+	if err := s.invalidateEmailPushBinding(ctx, tx, sourceID); err != nil {
+		return err
 	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
