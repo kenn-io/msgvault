@@ -279,18 +279,16 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 
 func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode           string
-		hasMore, pool        bool
-		cap, offset, results int
-		codes, messages      []string
+		name, mode      string
+		hasMore, pool   bool
+		cap, results    int
+		codes, messages []string
 	}{
 		{name: "complete", results: 1, mode: "vector"},
 		{name: "more", results: 50, mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "saturated_more", results: 50, mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "ranking_cap", results: 50, mode: "vector", cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
 		{name: "pool_only", results: 1, mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"hybrid search may omit matches; raise vector.search.k_per_signal"}},
-		{name: "fts_complete", mode: "fts"},
-		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
 	} {
 		for _, asJSON := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
@@ -298,18 +296,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				requests := &atomic.Int32{}
 				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
-					if tc.mode == "fts" {
-						assert.Equal("50", r.URL.Query().Get("limit"))
-						if tc.offset > 0 {
-							assert.Equal("50", r.URL.Query().Get("offset"))
-						}
-						rows := make([]map[string]any, 50)
-						for i := range rows {
-							rows[i] = map[string]any{"id": i + 1, "subject": "Lunch"}
-						}
-						assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": rows, "has_more": tc.hasMore}))
-						return
-					}
 					assert.Equal(tc.mode, r.URL.Query().Get("mode"))
 					writeVectorSearchResponse(t, w, tc.results, "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
 				})
@@ -319,9 +305,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				root.SetContext(ctx)
 				root.AddCommand(searchCmd)
 				args := []string{"search", "--mode", tc.mode, "lunch"}
-				if tc.mode == "fts" {
-					args = append(args, "--offset", strconv.Itoa(tc.offset))
-				}
 				if asJSON {
 					args = append(args, "--json")
 				}
@@ -333,7 +316,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				out := done()
 				require.NoError(err)
 				assert.Equal(int32(1), requests.Load())
-				if asJSON && tc.mode != "fts" {
+				if asJSON {
 					var page struct {
 						Hints []struct {
 							Code    string `json:"code"`
@@ -352,11 +335,63 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 					for _, message := range tc.messages {
 						assert.Contains(stderr.String(), message)
 					}
-					if asJSON {
-						var rows []map[string]any
-						require.NoError(json.Unmarshal([]byte(out), &rows))
-						assert.Len(rows, 50)
+				}
+			})
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		hasMore bool
+		offset  int
+		message string
+	}{
+		{name: "fts_complete"},
+		{name: "fts_later_page", hasMore: true, offset: 50, message: "--offset 100"},
+	} {
+		for _, asJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				requests := &atomic.Int32{}
+				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					assert.Equal("50", r.URL.Query().Get("limit"))
+					if tc.offset > 0 {
+						assert.Equal("50", r.URL.Query().Get("offset"))
 					}
+					rows := make([]map[string]any, 50)
+					for i := range rows {
+						rows[i] = map[string]any{"id": i + 1, "subject": "Lunch"}
+					}
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": rows, "has_more": tc.hasMore}))
+				})
+				ctx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
+				defer restore()
+				root := newTestRootCmd()
+				root.SetContext(ctx)
+				root.AddCommand(searchCmd)
+				args := []string{"search", "--mode", "fts", "lunch", "--offset", strconv.Itoa(tc.offset)}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				root.SetArgs(args)
+				var stderr bytes.Buffer
+				root.SetErr(&stderr)
+				done := captureStdout(t)
+				err := root.Execute()
+				out := done()
+				require.NoError(err)
+				assert.Equal(int32(1), requests.Load())
+				if tc.message == "" {
+					assert.Empty(stderr.String())
+				} else {
+					assert.Equal(1, strings.Count(stderr.String(), "Hint:"))
+					assert.Contains(stderr.String(), tc.message)
+				}
+				if asJSON {
+					var rows []map[string]any
+					require.NoError(json.Unmarshal([]byte(out), &rows))
+					assert.Len(rows, 50)
 				}
 			})
 		}
