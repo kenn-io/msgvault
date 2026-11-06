@@ -127,7 +127,7 @@ allow_sensitive = true
 request_timeout = "1m0s"
 ```
 
-Use `msgvault setup providers --local-embeddings` to switch text search to the shared local server. The same Nomic message recipe keeps its index. Another model requires a full rebuild. See [local embedding setup](vector-search.md) for separate document-vector and person-consent behavior.
+Use `msgvault setup providers --local-embeddings` to use the shared local server for search by meaning. The same Nomic message recipe keeps its index. Another model requires a full rebuild. See [local embedding setup](vector-search.md) for separate document-vector and person-consent behavior.
 
 ### `[vector]` and `[vector.embeddings]`
 
@@ -335,11 +335,11 @@ credentials, and archive consent records. It does not contact a provider. An
 coverage.
 
 ```text
-LANE                                            STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
-Search by meaning (messages, chats, meetings)     on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
-Semantic people search                          pending  voyage    voyage-context-4  missing  -
-Visual attachment search                        pending  -         -                 -        -
-Document attachments (...)                      pending  mistral   mistral-ocr-4-1   missing  -
+LANE                                           STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
+Search by meaning (messages, chats, meetings)  on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
+Semantic people search                         pending  voyage    voyage-context-4  missing  -
+Visual attachment search                       pending  -         -                 -        -
+Document attachments (...)                     pending  mistral   mistral-ocr-4-1   missing  -
 ```
 
 `pending` means the lane is configured or the key is present but an operator

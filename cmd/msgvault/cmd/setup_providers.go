@@ -642,7 +642,7 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "one curated, non-sensitive attribute document per person rides the text-search generation"
+		lane.Reason = "one curated, non-sensitive attribute document per person uses the generation for search by meaning"
 		lane.edits = []config.TableEdit{{
 			Path: []string{tomlTableVector, "people"},
 			Values: map[string]any{
@@ -766,7 +766,7 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "document chunks and search query text are sent to the text-search provider after separate document and query consents"
+		lane.Reason = "document chunks and search query text are sent to the provider for search by meaning after separate document and query consents"
 		lane.edits = []config.TableEdit{{
 			Path: []string{"attachments", "documents", "index", "embeddings"}, Values: map[string]any{"enabled": true},
 		}}

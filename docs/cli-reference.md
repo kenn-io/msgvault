@@ -4733,7 +4733,7 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+`--local-embeddings` uses the shared local server for search by meaning, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
 
 Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
