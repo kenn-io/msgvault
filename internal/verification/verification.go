@@ -124,19 +124,17 @@ func Is(c Content) bool {
 				continue
 			}
 			left, right := start, end
-			for range 120 {
-				if left == 0 {
-					break
-				}
+			for n := 0; n < 120 && left > 0; n++ {
 				_, n := utf8.DecodeLastRuneInString(field[:left])
 				left -= n
 			}
-			for range 120 {
-				if right == len(field) {
-					break
-				}
+			for n := 0; n < 120 && right < len(field); n++ {
 				_, n := utf8.DecodeRuneInString(field[right:])
 				right += n
+			}
+			// Every code cue contains one of these letters, including localized cues.
+			if !separateCue && !useFields[i] && !strings.ContainsAny(field[left:right], "cCpPoOfFкК验驗認인") {
+				continue
 			}
 			if len(value) == 4 && value >= "1900" && value <= "2099" {
 				if codeFields[i] && nearCue(field[left:start], true, cue) {
