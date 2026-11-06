@@ -141,7 +141,7 @@ func Is(c Content) bool {
 					digits++
 				}
 			}
-			if len(value) < 4 || len(value) > 10 || digits == 0 || (digits != len(value) && len(value) < 5) {
+			if len(value) < 4 || len(value) > 10 || digits == 0 && (len(value) < 6 || value == "INVALID" || value == "DISABLED") || (digits != len(value) && len(value) < 5) {
 				continue
 			}
 			if digits != len(value) && !credentialsScanned {
@@ -234,15 +234,10 @@ func asciiAlnum(b byte) bool {
 
 func tokenValue(value string) bool {
 	letters, digits := 0, 0
-	lower, upper := false, false
 	for _, r := range value {
 		switch {
-		case r >= 'a' && r <= 'z':
+		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
 			letters++
-			lower = true
-		case r >= 'A' && r <= 'Z':
-			letters++
-			upper = true
 		case r >= '0' && r <= '9':
 			digits++
 		case r == '-' || r == '_' || r == '.':
@@ -251,7 +246,7 @@ func tokenValue(value string) bool {
 		}
 	}
 	return len(value) >= 16 && letters > 0 && digits > 0 ||
-		len(value) >= 32 && letters == len(value) && lower && upper
+		len(value) >= 32 && letters == len(value)
 }
 
 func credentialLink(raw string, cue bool) bool {
