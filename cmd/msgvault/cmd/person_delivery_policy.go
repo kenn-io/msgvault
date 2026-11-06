@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"text/tabwriter"
 
@@ -30,14 +29,6 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 		Long: "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\n",
 		Args: cobra.ExactArgs(map[string]int{"read": 1, "set": 2, "clear": 1}[operation]),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if operation != "read" {
-				if err := positivePersonCLIRevision(cmd, revision, "delivery policy"); err != nil {
-					return err
-				}
-				if operation == "set" && args[1] != string(store.DeliveryDraftOnly) && args[1] != string(store.DeliverySendAllowed) {
-					return usageErr(cmd, errors.New("policy must be draft_only or send_allowed"))
-				}
-			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
 				return err

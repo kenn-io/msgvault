@@ -50,8 +50,8 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		{name: "restrict person default", operation: "set", args: []string{"person-example", "draft_only", "--expected-revision", "3", "--reason", "Restrict", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliveryDraftOnly, Reason: "Restrict"}, before: personSend, after: personRestricted},
 		{name: "clear address", operation: "clear", args: []string{"person-example", "--endpoint", "alice@example.test", "--expected-revision", "3", "--reason", "Reset", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test", ExpectedRevision: 3, Reason: "Reset"}, before: addressSend, after: addressCleared},
 		{name: "clear person default", operation: "clear", args: []string{"person-example", "--person-all-routes", "--expected-revision", "3", "--reason", "Reset"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, ScopeAcknowledgement: "person_all_routes", Reason: "Reset"}, human: true, before: personSend, after: personCleared},
-		{name: "invalid policy", operation: "set", args: []string{"person-example", "allow", "--expected-revision", "3", "--reason", "Owner approval"}, wantError: "policy must be draft_only or send_allowed"},
-		{name: "invalid revision", operation: "clear", args: []string{"person-example", "--expected-revision", "0", "--reason", "Reset"}, wantError: "revision"},
+		{name: "invalid policy", operation: "set", args: []string{"person-example", "allow", "--expected-revision", "3", "--reason", "Owner approval"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Policy: "allow", ExpectedRevision: 3, Reason: "Owner approval"}, wantError: store.ErrDeliveryPolicyInvalid.Error()},
+		{name: "invalid revision", operation: "clear", args: []string{"person-example", "--expected-revision", "0", "--reason", "Reset"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Reason: "Reset"}, wantError: store.ErrDeliveryPolicyInvalid.Error()},
 		{name: "missing revision", operation: "set", args: []string{"person-example", "send_allowed", "--reason", "Owner approval"}, wantError: "expected-revision"},
 		{name: "missing reason", operation: "clear", args: []string{"person-example", "--expected-revision", "3"}, wantError: "reason"},
 		{name: "missing UID", operation: "read", wantError: "arg"},
@@ -79,8 +79,11 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 				assert.Equal("/api/v1/people/delivery-policy/"+test.operation, r.URL.Path)
 				var body store.DeliveryPolicyWrite
 				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-				if test.wantError == "" {
-					assert.Equal(test.want, body)
+				assert.Equal(test.want, body)
+				if test.wantError == store.ErrDeliveryPolicyInvalid.Error() {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprintf(w, `{"error":%q}`, store.ErrDeliveryPolicyInvalid.Error())
+					return
 				}
 				_, _ = io.WriteString(w, payload)
 			}))
@@ -95,7 +98,11 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 			err := command.ExecuteContext(ctx)
 			if test.wantError != "" {
 				require.ErrorContains(err, test.wantError)
-				assert.Zero(requests)
+				if test.wantError == store.ErrDeliveryPolicyInvalid.Error() {
+					assert.Equal(1, requests)
+				} else {
+					assert.Zero(requests)
+				}
 				return
 			}
 			require.NoError(err)
