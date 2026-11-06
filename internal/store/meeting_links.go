@@ -356,13 +356,18 @@ func (s *Store) calendarUIDPredicate(uid string) (string, []any) {
 	return `e.message_id IN (SELECT uid_message.id FROM messages uid_message WHERE uid_message.message_type='calendar_event' AND ` + calendarUIDExpression(s.dialect, "uid_message.metadata") + ` = ?)`, []any{uid}
 }
 
+func meetingGoogleEventPredicate(value string) (string, []any) {
+	base, _, _ := calrecur.ParseInstanceID(value)
+	return `e.provider_event_id IN (?, ?)`, []any{value, base}
+}
+
 func (s *Store) automaticMeetingPredicate(ctx context.Context, r reboundReader, key meetingLinkKey) (string, []any, error) {
-	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
+	if key.Kind != meetingGoogleEventIDKey && key.Kind != "ical_uid" {
 		return "1=0", nil, nil
 	}
 	predicate, args := s.calendarUIDPredicate(key.Value)
 	base, _, _ := calrecur.ParseInstanceID(key.Value)
-	if key.Kind == "google_event_id" {
+	if key.Kind == meetingGoogleEventIDKey {
 		sources, err := meetingCalendarSources(ctx, r)
 		if err != nil {
 			return "", nil, err
@@ -419,7 +424,7 @@ func meetingCalendarSources(ctx context.Context, r reboundReader) (map[string][]
 // Plan the original occurrence before resolving either a note or its reference.
 func automaticMeetingRef(row CalendarEventRow, key meetingLinkKey) (OccurrenceRef, error) {
 	ref := OccurrenceRef{MessageID: row.MessageID}
-	if key.Kind == "google_event_id" {
+	if key.Kind == meetingGoogleEventIDKey {
 		if base, instance, ok := calrecur.ParseInstanceID(key.Value); ok && row.Event.ProviderEventID == base {
 			ref.Key = instance.Key()
 		}
@@ -447,13 +452,13 @@ func (s *Store) automaticMeetingCandidates(ctx context.Context, r reboundReader,
 		return nil, err
 	}
 	ownerRows := rows
-	if key.Kind == "google_event_id" {
+	if key.Kind == meetingGoogleEventIDKey {
 		if len(ownerRows) == 0 {
 			return nil, nil
 		}
 		// Other calendars can expose conflicting identities for a calendar-scoped ID.
-		base, _, _ := calrecur.ParseInstanceID(key.Value)
-		rows, err = meetingEventRows(ctx, r, `e.provider_event_id IN (?, ?)`, []any{key.Value, base}, budget)
+		predicate, args := meetingGoogleEventPredicate(key.Value)
+		rows, err = meetingEventRows(ctx, r, predicate, args, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -469,7 +474,7 @@ candidatesLoop:
 			}
 		}
 		var candidates []linkOccurrence
-		if key.Kind == "google_event_id" {
+		if key.Kind == meetingGoogleEventIDKey {
 			ref, err := automaticMeetingRef(row, key)
 			if err != nil {
 				return nil, err
@@ -514,7 +519,7 @@ candidatesLoop:
 			candidates = append(candidates, o)
 		}
 		for _, o := range candidates {
-			if key.Kind == "google_event_id" && len(out) > 0 && o.Identity != out[0].Identity {
+			if key.Kind == meetingGoogleEventIDKey && len(out) > 0 && o.Identity != out[0].Identity {
 				return nil, nil
 			}
 			if key.Kind == "ical_uid" && row.Event.Kind != "single" {
@@ -525,7 +530,7 @@ candidatesLoop:
 			out = append(out, o)
 		}
 	}
-	if key.Kind == "google_event_id" {
+	if key.Kind == meetingGoogleEventIDKey {
 		out = slices.DeleteFunc(out, func(o linkOccurrence) bool {
 			return !slices.ContainsFunc(ownerRows, func(row CalendarEventRow) bool {
 				return row.SourceID == o.Row.SourceID

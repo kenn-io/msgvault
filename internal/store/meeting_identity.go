@@ -199,23 +199,10 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		if err := s.preloadMeetingMembers(ctx, r, ids); err != nil {
 			return result, err
 		}
-		candidateQueries := []meetingEventQuery{}
-		for _, id := range ids {
-			if _, ok := r.batch.keys[id]; !ok {
-				continue
-			}
-			for _, d := range r.batch.decisions[id] {
-				candidateQueries = append(candidateQueries, meetingEventQuery{meetingEventAliasPredicate("?"), []any{d.Ref.MessageID, d.Ref.MessageID}})
-			}
-			predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
-			if err != nil {
-				return result, err
-			}
-			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
-		}
-		if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
+		if err := s.preloadMeetingMemberCandidates(ctx, r, ids, &budget); err != nil {
 			return result, err
 		}
+		candidateQueries := []meetingEventQuery{}
 		candidateRefs := []OccurrenceRef{}
 		for _, id := range ids {
 			if _, ok := r.batch.keys[id]; !ok {
@@ -229,12 +216,15 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, err
 			}
+			if key.Kind == meetingGoogleEventIDKey && len(r.batch.events[meetingQueryKey(predicate, args)]) > 0 {
+				predicate, args = meetingGoogleEventPredicate(key.Value)
+			}
 			for _, row := range r.batch.events[meetingQueryKey(predicate, args)] {
 				ref, err := automaticMeetingRef(row, key)
 				if err != nil {
 					return result, err
 				}
-				if row.Event.Kind == meetingSeriesKind && key.Kind != "google_event_id" && key.ScheduledAt != nil {
+				if row.Event.Kind == meetingSeriesKind && key.Kind != meetingGoogleEventIDKey && key.ScheduledAt != nil {
 					predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
 					candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
 				}

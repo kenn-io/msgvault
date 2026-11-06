@@ -8,6 +8,8 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
+const meetingGoogleEventIDKey = "google_event_id"
+
 type meetingLinkKey struct {
 	Kind, Value, CalendarID string
 	ScheduledAt             *time.Time
@@ -18,7 +20,7 @@ func deriveMeetingLinkKey(content meetingcontent.Content) meetingLinkKey {
 	key := meetingLinkKey{ScheduledAt: evidence.ScheduledAt}
 	switch {
 	case evidence.GoogleEventID != "" && evidence.CalendarID != "":
-		key.Kind, key.Value, key.CalendarID = "google_event_id", evidence.GoogleEventID, evidence.CalendarID
+		key.Kind, key.Value, key.CalendarID = meetingGoogleEventIDKey, evidence.GoogleEventID, evidence.CalendarID
 	case evidence.ICalUID != "":
 		key.Kind, key.Value = "ical_uid", evidence.ICalUID
 	}

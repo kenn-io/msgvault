@@ -98,6 +98,45 @@ func (b *meetingIdentityBatch) eventRowsByID(id int64) []CalendarEventRow {
 	return b.events[meetingQueryKey(meetingEventAliasPredicate("?"), []any{id, id})]
 }
 
+// Admit owner-calendar matches before loading cross-calendar ambiguity evidence.
+// Both reads share the request memo and hydrate each event only once.
+func (s *Store) preloadMeetingMemberCandidates(ctx context.Context, r reboundReader, ids []int64, budget *int) error {
+	queries := []meetingEventQuery{}
+	for _, id := range ids {
+		key, ok := r.batch.keys[id]
+		if !ok {
+			continue
+		}
+		for _, d := range r.batch.decisions[id] {
+			queries = append(queries, meetingEventQuery{meetingEventAliasPredicate("?"), []any{d.Ref.MessageID, d.Ref.MessageID}})
+		}
+		predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
+		if err != nil {
+			return err
+		}
+		queries = append(queries, meetingEventQuery{predicate, args})
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	queries = nil
+	for _, id := range ids {
+		key := r.batch.keys[id]
+		if key.Kind != meetingGoogleEventIDKey {
+			continue
+		}
+		predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
+		if err != nil {
+			return err
+		}
+		if len(r.batch.events[meetingQueryKey(predicate, args)]) > 0 {
+			predicate, args = meetingGoogleEventPredicate(key.Value)
+			queries = append(queries, meetingEventQuery{predicate, args})
+		}
+	}
+	return s.preloadMeetingQueries(ctx, r, queries, budget)
+}
+
 // Load the scalar resolver's master, moved-exception, and expansion reads together.
 func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, refs []OccurrenceRef, budget *int) error {
 	queries := []meetingEventQuery{}
