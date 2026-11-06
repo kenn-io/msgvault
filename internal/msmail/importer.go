@@ -32,6 +32,7 @@ const walkPrefix = "walk:"
 // Old opaque cursors cannot gain fields, so their folders rewalk once. The old
 // cursor covers content changes until the replacement walk finishes.
 const categoryDeltaPrefix = "categories-v1:"
+const stateDeltaPrefix = "provider-state-v2:"
 
 // retryPrefix marks a saved-state key that names a message to download again.
 const retryPrefix = "retry:"
@@ -60,25 +61,43 @@ type Options struct {
 
 // Summary reports what one sync did.
 type Summary struct {
-	SourceID int64
-	Folders  int
-	Added    int
-	Updated  int
-	Moved    int
-	Deleted  int
-	Errors   int
-	Duration time.Duration
+	SourceID   int64
+	Folders    int
+	Added      int
+	Updated    int
+	Moved      int
+	Deleted    int
+	Errors     int
+	Duration   time.Duration
+	Incomplete bool // Durable retry/walk debt remains despite a nil import error.
 }
 
 // Import syncs every folder of the mailbox. A folder with no saved cursor is
 // walked from the start. A folder with a cursor fetches only the changes since
 // the last sync. Known messages are refreshed when delta reports an update.
-func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *slog.Logger) (sum *Summary, err error) {
-	start := time.Now()
+func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *slog.Logger) (*Summary, error) {
 	src, err := st.GetOrCreateSource(SourceType, opts.Email)
 	if err != nil {
 		return nil, err
 	}
+	return ImportSource(ctx, st, c, src, opts, log)
+}
+
+// ImportSource syncs only the selected existing active mailbox. It cannot create
+// an alternate source; authenticated profile verification belongs to its caller.
+func ImportSource(ctx context.Context, st *store.Store, c *Client, src *store.Source, opts Options, log *slog.Logger) (sum *Summary, err error) {
+	start := time.Now()
+	if src == nil || src.ID == 0 {
+		return nil, errors.New("selected mail source is required")
+	}
+	src, err = st.GetSourceByIDContext(ctx, src.ID)
+	if err != nil {
+		return nil, err
+	}
+	if src.SourceType != SourceType || src.MergedIntoSourceID != 0 || (opts.Email != "" && opts.Email != src.Identifier) {
+		return nil, errors.New("selected mail source is not an active canonical Microsoft mailbox")
+	}
+	opts.Email = src.Identifier
 	sum = &Summary{SourceID: src.ID}
 
 	// Cursors: the last completed run, then any checkpoint of an interrupted
@@ -149,8 +168,11 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, walkPrefix):
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
+		case strings.HasPrefix(link, stateDeltaPrefix):
+			link = strings.TrimPrefix(link, stateDeltaPrefix)
 		case strings.HasPrefix(link, categoryDeltaPrefix):
-			link = strings.TrimPrefix(link, categoryDeltaPrefix)
+			oldCursor = strings.TrimPrefix(link, categoryDeltaPrefix)
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		default:
 			oldCursor = link
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
@@ -192,14 +214,14 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				link, seen, oldCursor = oldCursor, nil, ""
 				continue
 			}
-			cursors[f.ID] = categoryDeltaPrefix + link
+			cursors[f.ID] = stateDeltaPrefix + link
 			switch {
 			case oldCursor != "":
 				cursors[f.ID] = oldCursor
 			case replacementCursor != "":
 				cursors[f.ID] = link
 				if page.NextLink == "" && freshRound {
-					cursors[f.ID] = categoryDeltaPrefix + replacementCursor
+					cursors[f.ID] = stateDeltaPrefix + replacementCursor
 				}
 			case seen != nil && page.NextLink != "":
 				cursors[f.ID] = walkPrefix + link
@@ -221,6 +243,11 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 
 	if err = st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
+	}
+	for key, cursor := range cursors {
+		if strings.HasPrefix(key, retryPrefix) || strings.HasPrefix(cursor, walkPrefix) {
+			sum.Incomplete = true
+		}
 	}
 	cp := checkpoint()
 	// Complete through the source so last_sync_at moves. The cursors live in
@@ -353,7 +380,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 			continue
 		}
-		if err := s.setFolder(ctx, id, folderLabel, m.Categories); err != nil {
+		if err := s.setFolder(ctx, id, folderLabel, m.Categories, graphProviderState(m.IsRead, m.Flag)); err != nil {
 			return err
 		}
 		if seen == nil || (s.drafts != "" && folderID == s.drafts) {
@@ -387,8 +414,8 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		msgID = ids[m.ID]
 	}
 	// Known messages already saved their categories before the MIME download.
-	if m.archiveID == 0 && m.Categories != nil {
-		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
+	if m.archiveID == 0 && (m.Categories != nil || m.IsRead != nil || m.Flag != nil) {
+		if _, err := s.st.ReconcileMicrosoftMailStateContext(ctx, msgID, nil, m.Categories, graphProviderState(m.IsRead, m.Flag)); err != nil {
 			return fmt.Errorf("save Microsoft categories: %w", err)
 		}
 	}
@@ -476,12 +503,12 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			continue
 		}
 		if messageID := known[id]; messageID != 0 {
-			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories); err != nil {
+			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
 				return err
 			}
 		}
 		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, IsRead: info.IsRead, Flag: info.Flag, archiveID: known[id]}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -536,7 +563,7 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		}
 		// A folder this run did not list is picked up on the next sync.
 		if label, ok := s.labels[parent]; ok {
-			if err := s.setFolder(ctx, msgID, label, info.Categories); err != nil {
+			if err := s.setFolder(ctx, msgID, label, info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
 				return err
 			}
 		}
@@ -550,8 +577,8 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 	return nil
 }
 
-func (s *syncer) setFolder(ctx context.Context, messageID, label int64, categories *[]string) error {
-	changed, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, messageID, &label, categories)
+func (s *syncer) setFolder(ctx context.Context, messageID, label int64, categories *[]string, state store.MicrosoftMailState) error {
+	changed, err := s.st.ReconcileMicrosoftMailStateContext(ctx, messageID, &label, categories, state)
 	if changed {
 		s.sum.Moved++
 	}
@@ -675,4 +702,12 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	// A known message that delta reported but $value no longer finds moved or
 	// is gone since the page was read.
 	return s.relocate(ctx, vanished)
+}
+
+func graphProviderState(read *bool, flag *FollowUpFlag) store.MicrosoftMailState {
+	state := store.MicrosoftMailState{IsRead: read}
+	if flag != nil {
+		state.FlagStatus = flag.Status
+	}
+	return state
 }

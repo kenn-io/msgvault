@@ -2,6 +2,7 @@ package microsoft
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -207,26 +208,13 @@ func (m *GraphManager) Authorize(ctx context.Context, email string) error {
 // signed-in user's Graph profile lists email as its mailbox or an alias.
 func (m *GraphManager) confirmMailbox(ctx context.Context, email, accessToken string, identityErr error) error {
 	client := msgraph.NewClient(m.graphURL, func(context.Context) (string, error) { return accessToken, nil }, 0)
-	var me struct {
-		Mail              string   `json:"mail"`
-		UserPrincipalName string   `json:"userPrincipalName"`
-		ProxyAddresses    []string `json:"proxyAddresses"`
-	}
-	if err := client.GetJSON(ctx, "/me?$select=mail,userPrincipalName,proxyAddresses", &me); err != nil {
+	if err := VerifyGraphMailbox(ctx, client, email); err != nil {
+		if errors.Is(err, ErrGraphMailboxMismatch) {
+			return identityErr
+		}
 		return fmt.Errorf("%w; could not confirm the signed-in mailbox: %w", identityErr, err)
 	}
-	addrs := []string{me.Mail, me.UserPrincipalName}
-	for _, proxy := range me.ProxyAddresses {
-		if len(proxy) > 5 && strings.EqualFold(proxy[:5], "smtp:") {
-			addrs = append(addrs, proxy[5:])
-		}
-	}
-	for _, addr := range addrs {
-		if strings.EqualFold(addr, email) {
-			return nil
-		}
-	}
-	return identityErr
+	return nil
 }
 
 // TokenSource loads the persisted Graph token and returns a function yielding a

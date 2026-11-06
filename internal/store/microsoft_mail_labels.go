@@ -19,8 +19,8 @@ func (s *Store) EnsureMicrosoftMailFoldersContext(ctx context.Context, sourceID 
 		q := boundQuerier{ctx: ctx, q: tx}
 		folderNames := make(map[string]bool, len(labels))
 		for providerID, info := range labels {
-			if strings.HasPrefix(providerID, microsoftCategoryPrefix) {
-				return errors.New("microsoft folder identity uses the category namespace")
+			if strings.HasPrefix(providerID, microsoftCategoryPrefix) || strings.HasPrefix(providerID, microsoftStatePrefix) {
+				return errors.New("microsoft folder identity uses a reserved namespace")
 			}
 			folderNames[info.Name] = true
 		}
@@ -34,10 +34,16 @@ func (s *Store) EnsureMicrosoftMailFoldersContext(ctx context.Context, sourceID 
 			if err != nil {
 				return fmt.Errorf("check Microsoft folder name: %w", err)
 			}
-			if !strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
+			category := strings.HasPrefix(providerID.String, microsoftCategoryPrefix)
+			state := strings.HasPrefix(providerID.String, microsoftStatePrefix)
+			if !category && !state {
 				continue
 			}
-			name, err := microsoftCategoryLabelName(q, sourceID, id, strings.TrimPrefix(providerID.String, microsoftCategoryPrefix), folderNames)
+			base := "Category: " + strings.TrimPrefix(providerID.String, microsoftCategoryPrefix)
+			if state {
+				base = microsoftStateLabelBase(providerID.String)
+			}
+			name, err := microsoftMailLabelName(q, sourceID, id, base, folderNames)
 			if err != nil {
 				return err
 			}
@@ -55,7 +61,10 @@ func (s *Store) EnsureMicrosoftMailFoldersContext(ctx context.Context, sourceID 
 // microsoftCategoryLabelName returns "Category: <name>", or the first
 // "Category: <name> (n)" that no other label of the source or reserved name uses.
 func microsoftCategoryLabelName(q boundQuerier, sourceID, labelID int64, category string, reserved map[string]bool) (string, error) {
-	base := "Category: " + category
+	return microsoftMailLabelName(q, sourceID, labelID, "Category: "+category, reserved)
+}
+
+func microsoftMailLabelName(q boundQuerier, sourceID, labelID int64, base string, reserved map[string]bool) (string, error) {
 	for n := 1; ; n++ {
 		name := base
 		if n > 1 {
@@ -79,21 +88,7 @@ func microsoftCategoryLabelName(q boundQuerier, sourceID, labelID int64, categor
 // snapshot. Missing categories preserve the previous snapshot; an empty slice
 // clears them. The result reports a folder change, not a category change.
 func (s *Store) ReconcileMicrosoftMailLabelsContext(ctx context.Context, messageID int64, folderID *int64, categories *[]string) (bool, error) {
-	var folderChanged bool
-	err := s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
-		var sourceID int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM messages
- WHERE id=? AND EXISTS (SELECT 1 FROM sources s WHERE s.id=messages.source_id AND s.source_type='msmail')`, messageID).Scan(&sourceID); err != nil {
-			return fmt.Errorf("resolve Microsoft message labels: %w", err)
-		}
-		var err error
-		folderChanged, err = s.reconcileMicrosoftMailLabelsTx(ctx, tx, sourceID, messageID, folderID, categories)
-		return err
-	})
-	if err != nil {
-		return false, err
-	}
-	return folderChanged, nil
+	return s.ReconcileMicrosoftMailStateContext(ctx, messageID, folderID, categories, MicrosoftMailState{})
 }
 
 func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, folderID *int64, categories *[]string) (bool, error) {
@@ -104,7 +99,7 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		if err := q.QueryRow(`SELECT source_id,source_label_id FROM labels WHERE id=?`, *folderID).Scan(&source, &providerID); err != nil {
 			return false, fmt.Errorf("resolve Microsoft folder label: %w", err)
 		}
-		if source != sourceID || providerID.String == "" || strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
+		if source != sourceID || providerID.String == "" || (strings.HasPrefix(providerID.String, microsoftCategoryPrefix) || strings.HasPrefix(providerID.String, microsoftStatePrefix)) {
 			return false, errors.New("microsoft folder label does not belong to the message source")
 		}
 	}
@@ -124,7 +119,7 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			return false, err
 		}
 		category := source.Valid && source.Int64 == sourceID && strings.HasPrefix(providerID.String, microsoftCategoryPrefix)
-		nativeFolder := source.Valid && source.Int64 == sourceID && providerID.String != "" && !category
+		nativeFolder := source.Valid && source.Int64 == sourceID && providerID.String != "" && !category && !strings.HasPrefix(providerID.String, microsoftStatePrefix)
 		if nativeFolder {
 			folders = append(folders, id)
 		}
