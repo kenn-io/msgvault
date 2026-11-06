@@ -47,6 +47,7 @@ poll_interval = "30s"
 	require.NoError(t, err)
 	cfg.OAuth.ServiceAccountKey = keyPath
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/oauth2":
 			if !assert.NoError(t, r.ParseForm()) {
