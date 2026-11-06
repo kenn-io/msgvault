@@ -401,7 +401,6 @@ import (
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
 // 3.47.0 adds owner-only call evidence import, inspection and person summaries.
-
 const APISchemaVersion = "3.47.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

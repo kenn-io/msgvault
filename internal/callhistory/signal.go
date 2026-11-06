@@ -15,7 +15,7 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 		Timestamp      *int64 `json:"timestamp"`
 		EndedTimestamp *int64 `json:"endedTimestamp"`
 	}
-	if err := json.Unmarshal(r.Record, &row); err != nil || row.Timestamp == nil {
+	if err := json.Unmarshal(r.Record, &row); err != nil || row.Timestamp == nil || *row.Timestamp == 0 {
 		return Observation{}, invalid("Signal row or timestamp")
 	}
 	if row.Status == "Deleted" {
