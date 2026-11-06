@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/search"
@@ -59,7 +60,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
 	if err != nil {
-		return nil
+		return senderHintFailure(err)
 	}
 	defer func() { _ = rows.Close() }()
 	var labels []string
@@ -67,7 +68,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		var address string
 		var count int64
 		if err := rows.Scan(&address, &count); err != nil {
-			return nil
+			return senderHintFailure(err)
 		}
 		if labels == nil {
 			scoped.FromAddrs = []string{address}
@@ -78,13 +79,21 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		}
 		labels = append(labels, fmt.Sprintf("%s (%d %s)", address, count, unit))
 	}
-	if rows.Err() != nil || labels == nil {
-		return nil
+	if err := rows.Err(); err != nil || labels == nil {
+		return senderHintFailure(err)
 	}
 	retry := search.Format(&scoped)
 	hint := SearchHint{Code: "sender_name_requires_address", Message: fmt.Sprintf("from: matches addresses; senders matching %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry)}
 	hint.RetryWith.Query = retry
 	return []SearchHint{hint}
+}
+
+// senderHintFailure logs a suppressed lookup error, if any, and returns no hint.
+func senderHintFailure(err error) []SearchHint {
+	if err != nil {
+		log.Printf("warning: sender hint query failed: %v", err)
+	}
+	return nil
 }
 
 func (e *DuckDBEngine) MatchSenderName(ctx context.Context, q *search.Query) []SearchHint {

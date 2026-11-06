@@ -1,7 +1,9 @@
 package query
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +11,22 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
+
+func TestSenderNameHintQueryFailure(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	q := search.Parse("from:alex")
+	results, err := env.Engine.Search(env.Ctx, q, 10, 0)
+	requirements.NoError(err)
+	assertions.Empty(results)
+	requirements.NoError(env.DB.Close())
+	var diagnostic bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&diagnostic)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	assertions.Empty(env.Engine.MatchSenderName(env.Ctx, q))
+	assertions.Contains(diagnostic.String(), "sender hint query failed")
+}
 
 func TestSenderNameHints(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
