@@ -72,6 +72,7 @@ type setupProvidersOptions struct {
 
 // ollamaProbeResult is what a local Ollama server reports about itself.
 type ollamaProbeResult struct {
+	Catalog   bool
 	Reachable bool
 	Models    []string
 }
@@ -215,7 +216,7 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 	if err := json.UnmarshalRead(io.LimitReader(response.Body, ollamaProbeMaxBody), &payload); err != nil {
 		return ollamaProbeResult{Reachable: true}
 	}
-	result := ollamaProbeResult{Reachable: true}
+	result := ollamaProbeResult{Reachable: true, Catalog: payload.Models != nil}
 	for _, model := range payload.Models {
 		if name := strings.TrimSpace(model.Name); name != "" {
 			result.Models = append(result.Models, name)

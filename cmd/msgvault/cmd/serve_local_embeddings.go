@@ -83,10 +83,10 @@ func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir st
 
 func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
-	return embeddingProviderName(endpoint) == "local" && len(probeOllamaServer(ctx, server).Models) > 0
+	return embeddingProviderName(endpoint) == "local" && probeOllamaServer(ctx, server).Catalog
 }
 
-func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {
+func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) (result error) {
 	// Large archives may take hours; retries resume an unfinished message build.
 	runtimeCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
@@ -219,16 +219,16 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	c.handle.vf = vf
 	c.handle.mu.Unlock()
 	publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
-	if rebuildDocuments {
-		if _, err := c.scheduler.StartJob("scheduled document indexing", false); err != nil {
-			return err
+	defer func() {
+		if rebuildDocuments {
+			_, err := c.scheduler.StartJob("scheduled document indexing", false)
+			result = errors.Join(result, err)
 		}
-	}
-	if c.refreshMCP != nil {
-		if err := c.refreshMCP(nextCtx, &state); err != nil {
-			return err
+		if c.refreshMCP != nil {
+			result = errors.Join(result, c.refreshMCP(nextCtx, &state))
 		}
-	}
+	}()
+
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
 	building, err := vf.Backend.BuildingGeneration(ctx)
@@ -278,10 +278,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 			args = append(args, "--full-rebuild")
 		}
 	}
-	if err := run(args...); err != nil {
-		return err
-	}
-	return nil
+	return run(args...)
 }
 
 // Rebuild documents only when their selected destination already has exact consent.
