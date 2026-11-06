@@ -1,3 +1,4 @@
+import { MEDIA } from '@kenn-io/kit-ui';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +33,23 @@ function row(index: number, overrides: Partial<EntryRow> = {}): EntryRow {
 }
 
 describe('EverythingTable', () => {
+  it.each([
+    { label: 'message sender', kind: 'message' as const, sender: 'Zoe Sender', expected: 'Zoe Sender' },
+    { label: 'message roster without a sender', kind: 'message' as const, sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
+  ])('shows the $label on a phone', async ({ kind, sender, expected }) => {
+    const originalMatchMedia = window.matchMedia;
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...originalMatchMedia(query), matches: query === MEDIA.compact }));
+    try {
+      const rendered = render(EverythingTable, {
+        rows: [row(1, { kind, participant_labels: ['Alice Recipient', 'Zoe Sender'], ...(sender ? { sender_label: sender } : {}) })],
+        selection: new ExploreSelectionState()
+      });
+      await waitFor(() => expect(rendered.container.querySelector('.phone-sender')?.textContent).toBe(expected));
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it('owns headers, virtual rows, and named states in one focusable grid', () => {
     const { rerender } = render(EverythingTable, {
       rows: [row(1)], selection: new ExploreSelectionState()
@@ -47,7 +65,7 @@ describe('EverythingTable', () => {
   });
 
   it('waits for computed row geometry before virtualizing and becomes ready reactively', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     const rendered = render(EverythingTable, {
       rows: [row(1)],
@@ -57,7 +75,7 @@ describe('EverythingTable', () => {
     expect(screen.getByText('Preparing table layout…')).toBeDefined();
     expect(rendered.container.querySelector('.virtual-spacer')).toBeNull();
 
-    document.documentElement.style.setProperty('--row-height', '41px');
+    document.documentElement.style.setProperty('--table-row-height', '41px');
     document.documentElement.dataset.density = 'comfortable';
 
     await waitFor(() => {
@@ -95,7 +113,6 @@ describe('EverythingTable', () => {
 
     const rendered = screen.getByRole('row', { name: /Email item/ });
     expect((rendered as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
     expect(screen.getByRole('columnheader', { name: 'Kind' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'People / source' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'Attachments' }).textContent).toBe('⌕');
@@ -379,13 +396,14 @@ describe('EverythingTable', () => {
     const { rerender } = render(EverythingTable, { rows: [], selection, loading: true, onRetry });
     const skeleton = screen.getAllByTestId('everything-skeleton')[0]!;
     expect(skeleton.style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
     const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(grid.getAttribute('aria-busy')).toBe('true');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();
-    expect(skeleton.style.gridTemplateColumns).toBe(
-      screen.getByRole('row', { name: /Kind/ }).style.gridTemplateColumns
-    );
+    const skeletonTemplate = skeleton.style.getPropertyValue('--row-template').trim();
+    const headerTemplate = screen.getByRole('row', { name: /Kind/ }).style.getPropertyValue('--row-template').trim();
+    expect(skeletonTemplate).not.toBe('');
+    expect(headerTemplate).not.toBe('');
+    expect(skeletonTemplate).toBe(headerTemplate);
     expect(skeleton.children).toHaveLength(7);
 
     void rerender({ rows: [], selection, loading: false });

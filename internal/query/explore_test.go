@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1667,4 +1668,93 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	require.Len(response.Rows, 1, "the additional group must widen the alias to its whole identity cluster")
 	require.NotNil(response.Rows[0].AnchorMessageID)
 	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
+}
+
+func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	first := b.AddMessage(MessageOpt{})
+	b.AddFrom(first, alice, "Personal Alias")
+	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
+	b.AddFrom(preferred, alice, "Alice")
+	direct := b.AddMessage(MessageOpt{SenderID: &alice})
+	phoneSender := b.AddPhoneParticipant("+12025550123", "")
+	phone := b.AddMessage(MessageOpt{SenderID: &phoneSender})
+	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
+	email := b.AddMessage(MessageOpt{SenderID: &emailSender})
+	deletedAt := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	deleted := b.AddMessage(MessageOpt{SenderID: &alice, DeletedFromSourceAt: &deletedAt})
+	unknown := b.AddMessage(MessageOpt{})
+	chatSource := b.AddSourceWithType("+12025550100", "imessage")
+	chat := b.AddMessage(MessageOpt{SourceID: chatSource, SenderID: &alice, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
+	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: ""}
+	engine := b.BuildEngine()
+	assert := assert.New(t)
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{Deletion: DeletionAny}, Page: PageSpec{Limit: 20}})
+	assert.Equal(legacy, fast)
+	actual := make(map[int64]string)
+	for _, row := range fast.Rows {
+		actual[*row.AnchorMessageID] = row.SenderLabel
+	}
+	assert.Equal(labels, actual)
+}
+
+func TestPageSenderLabelsAggregationIsBounded(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	recipient := b.AddParticipant("recipient@example.com", "example.com", "Recipient")
+	for range 1000 {
+		id := b.AddMessage(MessageOpt{})
+		b.AddFrom(id, sender, "Sender")
+		b.AddTo(id, recipient, "Recipient")
+		b.AddAttachment(id, 10, "example.pdf")
+	}
+	e := b.BuildEngine()
+	for _, variant := range []struct {
+		name   string
+		legacy bool
+		person bool
+	}{
+		{name: "explore/fast"},
+		{name: "explore/legacy", legacy: true},
+		{name: "files/fast"},
+		{name: "files/legacy", legacy: true},
+		{name: "files/person/fast", person: true},
+		{name: "files/person/legacy", legacy: true, person: true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			e.exploreFastPathDisabled = variant.legacy
+			profile, err := profileQuery(t, e, func() error {
+				if strings.HasPrefix(variant.name, "explore/") {
+					_, err := e.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 500}})
+					return err
+				}
+				request := FileSearchRequest{Page: PageSpec{Limit: 1, Offset: 500}}
+				if variant.person {
+					request.Person = &PersonFileScope{ParticipantIDs: []int64{recipient}, Directions: []PersonFileDirection{PersonFileToPerson}}
+				}
+				_, err := e.SearchFiles(t.Context(), request)
+				return err
+			})
+			require.NoError(err)
+			matched := 0
+			var inspect func(domainPopulationProfile)
+			inspect = func(operator domainPopulationProfile) {
+				if strings.Contains(strings.ToLower(strings.ReplaceAll(fmt.Sprint(operator.ExtraInfo["Aggregates"]), `"`, "")), "first(") {
+					matched++
+					assert.LessOrEqual(operator.IntermediateRows, int64(1), "sender aggregation must be limited to the requested page")
+				}
+				for _, child := range operator.Children {
+					inspect(child)
+				}
+			}
+			inspect(profile)
+			require.Positive(matched, "profile must include sender aggregation")
+		})
+	}
 }

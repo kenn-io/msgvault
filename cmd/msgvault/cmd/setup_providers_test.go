@@ -478,6 +478,54 @@ const setupProvidersMinimalConfig = `# operator comment survives setup
 data_dir = "{{DIR}}/data"
 `
 
+func TestSetupHelpNamesSearchByMeaning(t *testing.T) {
+	for _, test := range []struct {
+		command string
+		want    []string
+	}{
+		{command: "status", want: []string{"Report every optional lane: search by meaning,"}},
+		{command: "providers", want: []string{
+			"VOYAGE_API_KEY search by meaning with Voyage contextual embeddings",
+			"OPENAI_API_KEY search by meaning on the OpenAI-compatible path",
+			"document vectors when search by meaning is on",
+			"Use the shared local embedding server for search by meaning",
+		}},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			output, err := fixture.run(t, test.command, "--help")
+			require.NoError(t, err, output)
+			for _, want := range test.want {
+				assert.Contains(t, strings.Join(strings.Fields(output), " "), want)
+			}
+		})
+	}
+}
+
+func TestSetupDependentReasonsNameSearchByMeaning(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
+	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+	output, err := fixture.run(t, "providers", "--yes", "--json",
+		"--document-retention", documentindex.RetentionZDR, "--document-training", documentindex.TrainingOptedOut)
+	require.NoError(err, output)
+	var result setupProvidersOutput
+	require.NoError(json.Unmarshal([]byte(output), &result))
+	for _, name := range []string{lanePersonSearch, laneDocumentVectors} {
+		index := slices.IndexFunc(result.Plan, func(lane setupLanePlan) bool { return lane.Lane == name })
+		require.NotEqual(-1, index, "provider plan: %s", name)
+		assert.Contains(result.Plan[index].Reason, "search by meaning", "provider plan: %s", name)
+	}
+	output, err = fixture.run(t, "status", "--json")
+	require.NoError(err, output)
+	var report laneReport
+	require.NoError(json.Unmarshal([]byte(output), &report))
+	for _, name := range []string{lanePersonSearch, laneDocumentVectors} {
+		assert.Contains(findLane(t, report, name).Reason, "search by meaning", "status: %s", name)
+	}
+}
+
 func TestSetupProvidersPreservesPosturesUnlessFlagsOverride(t *testing.T) {
 	for name, override := range map[string]bool{"preserve": false, "override": true} {
 		t.Run(name, func(t *testing.T) {
@@ -1603,6 +1651,26 @@ func TestSetupProvidersRefusesConfiguredRemote(t *testing.T) {
 	assert.Equal(strings.ReplaceAll(setupProvidersMinimalConfig, "{{DIR}}", filepath.ToSlash(fixture.dir)), fixture.readConfig(t))
 }
 
+func TestSetupStatusWithoutProviderKeepsKeywordSearchAvailable(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[attachments.documents]
+enabled = true
+`)
+	output, err := fixture.run(t, "status", "--json")
+	require.NoError(err, output)
+	var report laneReport
+	require.NoError(json.Unmarshal([]byte(output), &report))
+
+	text := findLane(t, report, "text_search")
+	assert.Equal("Search by meaning (messages, chats, meetings)", text.Label)
+	assert.Equal(laneStateOff, text.State)
+	assert.Equal("keyword search works; set up search by meaning for semantic matches", text.Reason)
+	assert.Equal([]string{"msgvault setup providers --local-embeddings"}, text.Next)
+	assert.Equal("requires search by meaning", findLane(t, report, lanePersonSearch).Reason)
+	assert.Equal("requires search by meaning", findLane(t, report, laneDocumentVectors).Reason)
+}
+
 func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1633,7 +1701,7 @@ func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	human, err := fixture.run(t, "status")
 	require.NoError(err, human)
 	assert.Contains(human, "LANE")
-	assert.Contains(human, "Text search (messages, chats, meetings)")
+	assert.Contains(human, "Search by meaning (messages, chats, meetings)")
 	assert.Contains(human, "MCP tools live with this configuration")
 }
 

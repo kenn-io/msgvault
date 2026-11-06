@@ -21,6 +21,7 @@ export interface FileSearchRow {
   participant_ids?: number[];
   participant_labels?: string[];
   search_explain?: FileSearchExplain;
+  sender_label?: string;
   size_bytes: number;
   source_id: number;
   source_identifier: string;

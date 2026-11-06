@@ -297,6 +297,11 @@ func listLiveDaemonRuntimeRecordsContext(ctx context.Context, dataDir string) ([
 	if err != nil {
 		return nil, fmt.Errorf("list daemon runtimes: %w", err)
 	}
+	if len(records) == 0 {
+		// Probing takes the ownership lock briefly. Leave startup free to claim
+		// it while there are no runtime records to validate.
+		return records, nil
+	}
 	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("inspect daemon ownership: %w", err)

@@ -522,7 +522,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByText('Running');
-  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await screen.findByRole('button', { name: 'Build index, Search by meaning' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   try {
     await waitFor(() => {
@@ -530,7 +530,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
       expect(coverageReads).toBe(2);
     });
     expect(screen.getByText('Running')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Build index, Message search' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toBeDefined();
   } finally {
     finish(Response.json({ lanes: lanes(lane('visual_embedding')) }));
     finishCoverage(Response.json(coverage));
@@ -722,17 +722,17 @@ it('marks failed coverage refreshes unavailable without hiding Overview', async 
     }
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
-  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await screen.findByRole('button', { name: 'Build index, Search by meaning' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   const features = screen.getByRole('list', { name: 'Features' });
-  const row = within(features).getByText('Message search').closest('li')!;
-  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
+  const row = within(features).getByText('Search by meaning').closest('li')!;
+  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull());
   expect(within(row).getByText('Unavailable')).toBeDefined();
   expect(within(features).getByText('Source sync')).toBeDefined();
 });
 
 it.each([
-  { name: 'Message search', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
+  { name: 'Search by meaning', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
   { name: 'Visual search', kind: 'visual_embedding' as const, path: '/multimodal/status', status: { ...visualStatus, current: 2 } },
 ])('clears $name progress when a refresh fails over the network', async ({ name, kind, path, status }) => {
   let reads = 0;
@@ -768,14 +768,14 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     if (request.url.endsWith('/cli/run')) { building = true; sent(); return pending; }
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Search by meaning' }));
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
     await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
-    const row = screen.getByText('Message search').closest('li')!;
+    const row = screen.getByText('Search by meaning').closest('li')!;
     await waitFor(() => {
       expect(within(row).getByText('Running')).toBeDefined();
-      const button = within(row).getByRole('button', { name: 'Build index, Message search' });
+      const button = within(row).getByRole('button', { name: 'Build index, Search by meaning' });
       expect(button).toHaveProperty('disabled', true);
       expect(button.textContent).toContain('Working…');
     });
@@ -785,7 +785,7 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     building = false;
     finish(new Response('{"type":"complete"}\n'));
   }
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
 });
 
 it.each(['manual', 'scheduled'] as const)('clears the setup failure after a successful %s index recovery', async recovery => {
@@ -809,7 +809,7 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
   const row = screen.getByText('Search by meaning').closest('li')!;
   expect(within(row).getByRole('alert').textContent).toBe('Message index build interrupted.');
   if (recovery === 'manual') {
-    await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Message search' }));
+    await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   } else {
     running = true;
@@ -820,7 +820,7 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
     await operationsController.refreshStatus();
   }
   await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
-  expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull();
+  expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull();
 });
 
 it('retries a failed initial local status read through Refresh feature status and displays the server activation refusal', async () => {
@@ -832,7 +832,7 @@ it('retries a failed initial local status read through Refresh feature status an
     return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
   });
   render(SettingsWorkspace, { client, operationsController });
-  await screen.findByRole('button', { name: 'Set up Message search' });
+  await screen.findByRole('button', { name: 'Set up Search by meaning' });
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));

@@ -14,7 +14,7 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
     status: 'unavailable', actions: ['build_index']
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: 'Build index, Message search' }).click();
+  await page.getByRole('button', { name: 'Build index, Search by meaning' }).click();
   await expect(page.getByRole('button', { name: 'Confirm full rebuild' })).toBeVisible();
   const rows = page.getByRole('list', { name: 'Features' }).locator('li');
   for (const row of await rows.all()) {

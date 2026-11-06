@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, EmptyState, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, MEDIA, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type {
     EntryRow,
@@ -11,7 +12,7 @@
   import { EXPLORE_COLUMNS } from '../../explore/labels';
   import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
-  import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes, formatShortDate as formatTime } from '../../util/format';
   import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
   import IdentityBadge from './IdentityBadge.svelte';
@@ -69,6 +70,7 @@
     onRetry = undefined
   }: Props = $props();
 
+  const compact = new MediaQuery(MEDIA.compact);
   const geometry = new RowGeometry();
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
@@ -98,9 +100,7 @@
     scrollIntent += 1;
     const preservedKey = activeKey;
     const focusedIndex = activeKey ? rows.findIndex((row) => row.key === activeKey) : -1;
-    const rebased = focusedIndex >= 0
-      ? focusedIndex * nextHeight
-      : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, focusedIndex, untrack(() => viewport));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey
@@ -126,7 +126,7 @@
     const index = rows.findIndex((row) => row.key === scrollAnchor.key);
     if (index < 0) return;
     const element = gridElement;
-    const target = index * height + scrollAnchor.offset;
+    const target = index * height + Math.min(scrollAnchor.offset, height - 1);
     const intent = scrollIntent;
     restoredAnchor = signature;
     afterVirtualLayout(element, rows.length * height, () => {
@@ -275,6 +275,7 @@
       suppressedScrollTop = rebased;
       element.scrollTop = rebased;
       scrollTop = element.scrollTop;
+      if (!restoring) persistAnchor(height);
       suppressedScrollTop = element.scrollTop;
       if (preservedKey && rows.some((row) => row.key === preservedKey)) {
         activeKey = preservedKey;
@@ -376,20 +377,26 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
+    const { index } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
     if (row && !restoring) {
       const lastVisible = Math.min(
         rows.length - 1,
         Math.ceil((scrollTop + viewport) / height) - 1
       );
-      if (activeIndex < first || activeIndex > lastVisible) {
+      if (activeIndex < index || activeIndex > lastVisible) {
         activeKey = row.key;
         onActiveKey?.(row.key);
       }
-      onScrollAnchor?.(row.key, scrollTop - first * height);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
+  }
+
+  function persistAnchor(height: number): void {
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
+    if (row) onScrollAnchor?.(row.key, offset);
   }
 
   function toggleLoadedSelection(): void {
@@ -413,7 +420,7 @@
     onkeydown={handleKeydown}
     onscroll={handleScroll}
   >
-    <div class="table-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
+    <div class="table-header" bind:this={headerElement} role="row" style:--row-template={template}>
       {#if selection}<span role="columnheader" class="selection-header">
         <SelectionCheckbox
           checked={allLoadedSelected}
@@ -426,7 +433,7 @@
       {#each visibleColumns as column (column)}
         <span
           role="columnheader"
-          class={`header-cell header-cell--${column}`}
+          class={['header-cell', `header-cell--${column}`, compact.current && 'kit-sr-only']}
           aria-label={column === 'attachments' ? 'Attachments' : undefined}
         >
           {column === 'attachments' ? '⌕' : EXPLORE_COLUMNS.find((entry) => entry.id === column)?.label}
@@ -469,7 +476,7 @@
               class="skeleton-row"
               data-testid="everything-skeleton"
               role="row"
-              style:grid-template-columns={template}
+              style:--row-template={template}
             >
               {#if selection}<span class="skeleton-cell selection-cell" role="gridcell"><i></i></span>{/if}
               {#each visibleColumns as column (column)}
@@ -502,7 +509,7 @@
                 aria-rowindex={index + 2}
                 aria-selected={selection?.isSelected(row.key)}
                 aria-current={inspectedKey === row.key ? 'true' : undefined}
-                style:grid-template-columns={template}
+                style:--row-template={template}
                 onpointerdown={() => {
                   activeKey = row.key;
                   onActiveKey?.(row.key);
@@ -528,7 +535,11 @@
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
                       {@const label = people(row)}
-                      <Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip>
+                      {#if compact.current}
+                        <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label || label}</span>
+                      {:else}
+                        <span class="desktop-people"><Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip></span>
+                      {/if}
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}
@@ -548,7 +559,7 @@
                       {#if row.has_attachments}
                         <span class="attachment" aria-label={`${row.attachment_count} attachments`}>⌕</span>
                       {:else}
-                        <span aria-label="No attachments">—</span>
+                        <span class="no-attachments" aria-label="No attachments">—</span>
                       {/if}
                     {:else if column === 'size'}
                       <span data-mono>{formatBytes(row.attachment_size)}</span>
@@ -603,6 +614,7 @@
   .data-row {
     display: grid;
     align-items: center;
+    grid-template-columns: var(--row-template);
   }
 
   .table-grid {
@@ -687,7 +699,7 @@
 
   .data-row,
   .skeleton-row {
-    height: var(--row-height);
+    height: var(--table-row-height);
     border-bottom: 1px solid var(--border-muted);
   }
 
@@ -780,6 +792,7 @@
   }
 
   .skeleton-row {
+    grid-template-columns: var(--row-template);
     display: grid;
     align-items: center;
   }
@@ -863,5 +876,36 @@
     *::after {
       scroll-behavior: auto !important;
     }
+  }
+  @media (max-width: 640px) {
+    .virtual-spacer { min-width: 0; }
+    .data-row {
+      grid-template-columns: 16px minmax(0, 1fr) auto auto auto;
+      grid-template-areas: 'kind people att size time' 'title title title title title' 'excerpt excerpt excerpt excerpt excerpt';
+      align-content: center;
+      column-gap: var(--control-gap);
+      row-gap: var(--space-1);
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .cell, .selection-cell { padding: 0; }
+    .data-row:not(:has(.cell--size)) {
+      grid-template-columns: 16px minmax(0, 1fr) auto auto;
+      grid-template-areas: 'kind people att time' 'title title title title' 'excerpt excerpt excerpt excerpt';
+    }
+    .selection-cell { grid-area: kind; z-index: 1; }
+    .data-row:hover .selection-cell ~ .cell--kind, .data-row:focus-within .selection-cell ~ .cell--kind, .selection-mode .selection-cell ~ .cell--kind { visibility: hidden; }
+    .cell--kind { grid-area: kind; justify-self: center; color: var(--artifact-ink); }
+    .cell--kind :global(.row-kind__label) { display: none; }
+    .cell--people { grid-area: people; font-weight: 500; }
+    .cell--time { grid-area: time; font-size: var(--font-size-xs); }
+    .cell--attachments { grid-area: att; }
+    .no-attachments { display: none; }
+    .cell--size { grid-area: size; font-size: var(--font-size-xs); }
+    .cell--title { grid-area: title; }
+    .cell--excerpt { grid-area: excerpt; color: var(--text-muted); font-size: var(--font-size-xs); }
+    .table-header { grid-template-columns: 16px; padding: 0 var(--pane-pad-x); box-shadow: none; }
+    .table-header .selection-header { padding: 0; }
+    .skeleton-row { grid-template-columns: minmax(0, 1fr); }
+    .skeleton-cell:not(:first-child) { display: none; }
   }
 </style>
