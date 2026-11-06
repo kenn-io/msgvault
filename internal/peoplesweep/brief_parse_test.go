@@ -71,7 +71,7 @@ func briefHighlightJSON(text string, speaker BriefSpeaker, observedAt string, id
 		observed = `"` + observedAt + `"`
 	}
 	return fmt.Sprintf(
-		`{"text":%q,"speaker":%q,"evidence_ids":[%s],"observed_at":%s,"confidence_basis_points":800}`,
+		`{"text":%q,"speaker":%q,"evidence_ids":[%s],"observed_at":%s,"confidence_basis_points":800,"life_event":null}`,
 		text, string(speaker), quotedList(ids), observed)
 }
 
@@ -295,7 +295,7 @@ func TestParseBriefTreatsSchemaViolationsAsValidationFailures(t *testing.T) {
 	for name, output := range map[string]string{
 		"unknown speaker": `{"last_meaningful_interaction":null,"highlights":[{"text":"x",` +
 			`"speaker":"vendor","evidence_ids":["` + self + `"],"observed_at":null,` +
-			`"confidence_basis_points":0}],"follow_ups":[],"appreciations":[],` +
+			`"confidence_basis_points":0,"life_event":null}],"follow_ups":[],"appreciations":[],` +
 			`"uncertainties":[],"possible_attributes":[]}`,
 		"missing key": `{"highlights":[],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
 		"trailing json": `{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],` +

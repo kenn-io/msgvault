@@ -91,6 +91,11 @@ func (s *Store) PersonSweepBriefEligibility(
 			"decode person %d brief boundary: %w", personID, err)
 	}
 	eligibility.Boundary = &boundary
+	eligibility.ProgramVersion = versions[0].ProgramVersion
+	eligibility.Version = versions[0].Version
+	eligibility.Status = versions[0].Status
+	generated := versions[0].GeneratedAt
+	eligibility.GeneratedAt = &generated
 	return eligibility, true, nil
 }
 
@@ -131,4 +136,38 @@ func (s *Store) HasPersonSweepChangesAfter(
 		return false, fmt.Errorf("read person %d sweep change activity: %w", personID, err)
 	}
 	return exists, nil
+}
+
+// RetirePersonSweepBrief removes unsupported event prose from current reads,
+// preserving its history and admission watermark. A stale worker cannot retire
+// a replacement version or write after losing its person lease.
+func (s *Store) RetirePersonSweepBrief(
+	ctx context.Context, lease peoplesweep.Lease, expectedVersion int, at time.Time,
+) error {
+	if expectedVersion <= 0 || at.IsZero() {
+		return errors.New("retire person brief requires a version and timestamp")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		current, err := s.lockPersonSweepWorkRowTx(ctx, tx, lease)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return peoplesweep.ErrLeaseLost
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE person_briefs SET status = ?, superseded_at = ?
+			WHERE person_id = ? AND version = ? AND status = ?`,
+			PersonBriefStatusSuperseded, at.UTC(), lease.PersonID, expectedVersion, PersonBriefStatusCurrent)
+		if err != nil {
+			return fmt.Errorf("retire person brief: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return errors.New("current person brief changed before event retirement")
+		}
+		return nil
+	})
 }

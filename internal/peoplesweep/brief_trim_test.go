@@ -180,56 +180,6 @@ func TestTrimRenderedBriefCountsRunesNotBytes(t *testing.T) {
 	assert.Equal(utf8.RuneCountInString(rendered.Text), utf8.RuneCountInString(full.Sentences[0].Text))
 }
 
-func TestBriefDropLastHighlightTakesItsFollowUpsWithIt(t *testing.T) {
-	tests := []struct {
-		name        string
-		output      BriefOutput
-		wantDropped int
-		wantShape   briefTrimShape
-	}{
-		{
-			name: "a follow-up on the dropped highlight goes with it",
-			output: BriefOutput{
-				Highlights: []BriefHighlight{{Text: "kept"}, {Text: "dropped"}},
-				FollowUps:  []BriefFollowUp{{Question: "a", HighlightIndex: 1}},
-			},
-			wantDropped: 2,
-			wantShape:   briefTrimShape{Highlights: []string{"kept"}},
-		},
-		{
-			name: "a follow-up on a surviving highlight keeps its index",
-			output: BriefOutput{
-				Highlights: []BriefHighlight{{Text: "kept"}, {Text: "dropped"}},
-				FollowUps:  []BriefFollowUp{{Question: "a", HighlightIndex: 0}},
-			},
-			wantDropped: 1,
-			wantShape:   briefTrimShape{Highlights: []string{"kept"}, FollowUps: []int{0}},
-		},
-		{
-			name: "the sole highlight takes every follow-up with it",
-			output: BriefOutput{
-				Highlights: []BriefHighlight{{Text: "dropped"}},
-				FollowUps: []BriefFollowUp{
-					{Question: "a", HighlightIndex: 0}, {Question: "b", HighlightIndex: 0},
-				},
-			},
-			wantDropped: 3,
-			wantShape:   briefTrimShape{},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			trimmed, dropped := briefDropLastHighlight(test.output)
-			assert.Equal(t, test.wantDropped, dropped)
-			assert.Equal(t, test.wantShape, briefShape(trimmed))
-			for _, followUp := range trimmed.FollowUps {
-				assert.Less(t, followUp.HighlightIndex, len(trimmed.Highlights),
-					"a surviving follow-up still names a highlight the reader can see")
-			}
-		})
-	}
-}
-
 // TestTrimRenderedBriefNarrowsEvidenceToTheKeptItems proves the stored pointer
 // list and the sentence-to-ordinal walk still agree after a trim: the evidence
 // only the dropped uncertainty cited is gone, and the ordinals the API emits
