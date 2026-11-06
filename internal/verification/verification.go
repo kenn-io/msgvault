@@ -261,7 +261,7 @@ func credentialLink(raw string, cue bool) bool {
 	for key, vals := range values {
 		for _, value := range vals {
 			// Fragment values can include an escaped prefix before the token.
-			for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == '&' || r == '=' }) {
+			for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == '&' || r == '=' || r == '/' || r == '+' }) {
 				if tokenValue(part) {
 					hasToken = true
 					key = strings.ToLower(key)
