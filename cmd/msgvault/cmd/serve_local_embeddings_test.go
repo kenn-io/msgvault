@@ -610,6 +610,42 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 	}
 }
 
+func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
+	for _, model := range []string{"", "different-model"} {
+		t.Run("startup model="+model, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, model, "")
+			f.start(t)
+			f.enableThroughAPI(t)
+			require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+			require.Empty(f.localStatus(t).Error)
+			vf := f.handle.vf
+			generation, err := vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
+			require.NoError(err)
+			result, err := vf.Runner.RunOnce(f.ctx, generation, testCLIEmbeddingPassScope())
+			require.NoError(err)
+			require.Equal(1, result.Succeeded)
+
+			// Saved edits remain pending until their runtime is explicitly activated.
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"document_prefix": "pending-prefix: "}}})
+			require.NoError(err)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var plan api.CLIEmbeddingsPlanResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &plan))
+			require.True(plan.NeedsConfirmation)
+			require.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
+		})
+	}
+}
+
 func TestLocalEmbeddingsRequiresPeopleConsentForSelectedProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name, model string

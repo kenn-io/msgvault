@@ -1885,12 +1885,24 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+// publishedConfig applies a live vector activation without adopting other
+// saved edits that remain pending until their runtime is activated.
+func (a *storeAPIAdapter) publishedConfig(ctx context.Context) *config.Config {
+	vectorCfg, ok := api.PublishedVectorConfig(ctx)
+	if !ok || a.config == nil {
+		return a.config
+	}
+	cfg := *a.config
+	cfg.Vector = vectorCfg
+	return &cfg
+}
+
 func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
 	if a == nil {
 		return ctx
 	}
 	state := newInvocation()
-	state.cfg = a.config
+	state.cfg = a.publishedConfig(ctx)
 	state.options = a.options
 	if a.logger != nil {
 		state.logger = a.logger
