@@ -746,12 +746,6 @@
     </div>
   {/if}
 
-  {#if localSearchOff && localSetup}
-    <div class="local-search-hint">
-      <SearchByMeaningHint labels={localSearchHintLabels(localSetup)} onturnon={() => void turnOnSearchByMeaning()} />
-      {#if localSetupError}<p role="alert">{localSetupError}{(/[.!?]$/.test(localSetupError)) ? '' : '.'}</p>{/if}
-    </div>
-  {/if}
   {#if session.coverage || loader.result?.searchDeletionScope === 'active'}
     <div class="search-notes">
       {#if session.coverage}
@@ -930,6 +924,13 @@
       {/snippet}
     </SplitPane>
   </div>
+
+  {#if localSearchOff && localSetup}
+    <div class="local-search-hint">
+      <SearchByMeaningHint labels={localSearchHintLabels(localSetup)} onturnon={() => void turnOnSearchByMeaning()} />
+      {#if localSetupError}<p role="alert">{localSetupError}{(/[.!?]$/.test(localSetupError)) ? '' : '.'}</p>{/if}
+    </div>
+  {/if}
 
 </svelte:element>
 

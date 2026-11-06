@@ -82,7 +82,7 @@ for (const width of [1280, 390]) {
   }
 }
 
-test('local search hint groups its setup error with matching note type', async ({ page }) => {
+test('local search hint follows results and groups its setup error with matching note type', async ({ page }) => {
   await installOperations(page);
   await page.route('**/api/v1/embeddings/local', route => route.request().method() === 'POST'
     ? route.fulfill({ status: 503, json: { error: 'unavailable', message: 'Local search setup is unavailable' } })
@@ -97,9 +97,10 @@ test('local search hint groups its setup error with matching note type', async (
     return {
       hintFont: getComputedStyle(hint).fontSize, errorFont: getComputedStyle(error).fontSize,
       relatedGap: error.getBoundingClientRect().y - hint.getBoundingClientRect().bottom,
-      tableGap: table.getBoundingClientRect().y - error.getBoundingClientRect().bottom
+      tableGap: element.getBoundingClientRect().y - table.getBoundingClientRect().bottom
     };
   });
+  expect(geometry.tableGap).toBeGreaterThanOrEqual(8);
   expect(geometry.hintFont).toBe(geometry.errorFont);
   expect(geometry.relatedGap).toBeLessThanOrEqual(geometry.tableGap / 2);
 });
