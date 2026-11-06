@@ -36,22 +36,21 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 		return meetingarchive.Snapshot{}, false, nil
 	}
 	var calendarFields struct {
-		StartsAt string `json:"startsAt"`
-		Title    string `json:"title"`
-		ICalUID  string `json:"iCalUid"`
+		Title string `json:"title"`
 	}
 	if calendar != nil {
 		if err := json.Unmarshal(calendar.Raw, &calendarFields); err != nil {
 			return meetingarchive.Snapshot{}, false, errors.New("invalid Twenty calendar evidence")
 		}
 	}
-	var started time.Time
-	for _, value := range []string{recording.StartedAt, calendarFields.StartsAt, recording.CreatedAt} {
-		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value)); err == nil {
-			started = parsed.UTC()
-			break
-		}
+	started, _ := time.Parse(time.RFC3339Nano, strings.TrimSpace(recording.StartedAt))
+	if started.IsZero() && content.LinkEvidence.ScheduledAt != nil {
+		started = *content.LinkEvidence.ScheduledAt
 	}
+	if started.IsZero() {
+		started, _ = time.Parse(time.RFC3339Nano, strings.TrimSpace(recording.CreatedAt))
+	}
+	started = started.UTC()
 	if started.IsZero() {
 		return meetingarchive.Snapshot{}, false, errors.New("twenty recording has no valid occurrence time")
 	}
@@ -98,10 +97,10 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 	if recording.ApplicationID != "" {
 		metadata["application_id"] = recording.ApplicationID
 	}
-	if uid := strings.TrimSpace(calendarFields.ICalUID); uid != "" {
+	if uid := content.LinkEvidence.ICalUID; uid != "" {
 		metadata["calendar_ical_uid"] = uid
 	}
-	if scheduled, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(calendarFields.StartsAt)); err == nil {
+	if scheduled := content.LinkEvidence.ScheduledAt; scheduled != nil {
 		metadata["scheduled_start"] = scheduled.UTC().Format(time.RFC3339Nano)
 	}
 	snapshot.Metadata, err = json.Marshal(metadata, json.Deterministic(true))

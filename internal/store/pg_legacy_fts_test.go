@@ -72,3 +72,17 @@ func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
 	// And the dialect now reports FTS available.
 	require.True(st.FTS5Available(), "FTS must be available after legacy upgrade")
 }
+
+func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("MSGVAULT_TEST_DB"), "postgres") {
+		t.Skip("requires PostgreSQL")
+	}
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at CASCADE`)
+	require.NoError(err)
+	require.NoError(st.InitSchemaContext(t.Context()))
+	var valid bool
+	require.NoError(st.DB().QueryRow(`SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('idx_messages_meeting_start')`).Scan(&valid))
+	require.True(valid)
+}

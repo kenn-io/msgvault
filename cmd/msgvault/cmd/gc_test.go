@@ -112,6 +112,13 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	seedGCAttachmentRow(t, cfg, activeID, strings.Repeat("0b", 32))
 
 	require.NoError(runGCLocal(cmd, gcOptions{yes: true}))
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err, "open compacted archive")
+	defer func() { _ = st.Close() }()
+	var freelist int64
+	require.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist),
+		"read compacted freelist")
+	assert.Zero(freelist)
 	assert.Contains(output.String(), "Source-deleted messages to purge: 1")
 	assert.Contains(output.String(), "Dedup-hidden messages retained: 1")
 	assert.Contains(output.String(), "Deleted 1 source-deleted message(s).")
@@ -126,19 +133,11 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert.FileExists(sharedBlob,
 		"a blob still referenced by an active message must survive")
 
-	backups, err := filepath.Glob(cfg.DatabaseDSN() + ".gc-backup-*")
+	backupPaths, err := filepath.Glob(cfg.DatabaseDSN() + ".gc-backup-*")
 	require.NoError(err, "glob GC backups")
-	require.Len(backups, 1, "default GC must create one backup")
-	assert.True(gcMessageExists(t, backups[0], deletedID),
+	require.Len(backupPaths, 1, "default GC must create one backup")
+	assert.True(gcMessageExists(t, backupPaths[0], deletedID),
 		"backup must capture the source-deleted row before purge")
-
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err, "open compacted archive")
-	defer func() { _ = st.Close() }()
-	var freelist int64
-	require.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist),
-		"read compacted freelist")
-	assert.Zero(freelist)
 }
 
 func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {

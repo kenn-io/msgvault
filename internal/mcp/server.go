@@ -77,6 +77,10 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
@@ -177,8 +181,9 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings     MeetingBackend
+	MeetingLinks bool
+	Calendar     CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly

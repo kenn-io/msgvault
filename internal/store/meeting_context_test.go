@@ -12,7 +12,6 @@ import (
 )
 
 func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	_, err := fixture.store.db.Exec(`UPDATE participants SET email_address = ? WHERE id = ?`,
@@ -22,8 +21,11 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 		"merged-organizer@example.test", fixture.organizer)
 	requirements.NoError(err)
 
+	ids := []int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]}
+	wantIDs := []int64{fixture.meetingIDs[0], fixture.meetingIDs[2]}
+	assertions := assert.New(t)
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
-		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]})},
+		MeetingQueryScope{MessageIDs: &ids},
 		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
 	requirements.NoError(err)
 	assertions.Equal(len([]byte(result.Content)), result.ContentBytes)
@@ -35,8 +37,8 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 	var packet meetingcontent.Packet
 	requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
 	assertions.NotEmpty(packet.ArchiveUID)
-	assertions.Equal([]int64{fixture.meetingIDs[0], fixture.meetingIDs[2]}, packet.RequestedMessageIDs)
-	requirements.Len(packet.Meetings, 2)
+	assertions.Equal(wantIDs, packet.RequestedMessageIDs)
+	requirements.Len(packet.Meetings, len(wantIDs))
 	entry := packet.Meetings[0]
 	assertions.Equal(fixture.meetingIDs[0], entry.Meeting.MessageID)
 	assertions.Equal(fixture.sourceOne, entry.Meeting.SourceID)
@@ -45,8 +47,12 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 	assertions.Equal("/api/v1/messages/"+jsonNumberForMeetingTest(fixture.meetingIDs[0]), entry.Meeting.ArchivePath)
 	assertions.Equal(meetingcontent.StateOmittedByRequest, entry.Content.Transcript.State)
 
+	var organizerRoles []string
 	var archivedAddress, archivedSender, unresolvedName bool
 	for _, participant := range entry.Participants {
+		if participant.ParticipantID != nil && *participant.ParticipantID == fixture.organizer {
+			organizerRoles = append(organizerRoles, participant.Role)
+		}
 		if participant.Role == "to" && participant.Email == "Alias@Example.test" {
 			archivedAddress = true
 			assertions.Equal("Archived Attendee", participant.Name)
@@ -65,6 +71,7 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 	assertions.True(archivedAddress)
 	assertions.True(archivedSender)
 	assertions.True(unresolvedName)
+	assertions.ElementsMatch([]string{"from", "to"}, organizerRoles)
 }
 
 func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {

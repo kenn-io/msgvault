@@ -12,7 +12,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -28,6 +30,9 @@ const (
 // meeting surfaces. Generated request DTOs preserve the public wire contract;
 // stable meetingcontent results preserve nil and empty response semantics.
 type MeetingBackend interface {
+	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
+	SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error)
+	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error
 	GetMeetingContext(ctx context.Context, request generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error)
 	ListMeetingActionItems(ctx context.Context, request generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error)
 	GetMeetingMetrics(ctx context.Context, request generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error)
@@ -319,4 +324,87 @@ func boundedIntegerWithDefault(description string, minimum, maximum, defaultValu
 
 func validateMeetingTextArg(value string, limit int) bool {
 	return utf8.RuneCountInString(strings.TrimSpace(value)) <= limit
+}
+
+func (h *handlers) getMeetingRecord(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ref, _ := req.GetArguments()["ref"].(string)
+	if ref == "" {
+		return toolErrorResult("ref is required"), nil
+	}
+	record, err := h.meetings.MeetingRecord(ctx, ref)
+	if err != nil {
+		return meetingLinkError("get meeting record", err)
+	}
+	return jsonResult(record)
+}
+
+func (h *handlers) suggestMeetingLinks(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ref, _ := req.GetArguments()["ref"].(string)
+	if ref == "" {
+		return toolErrorResult("ref is required"), nil
+	}
+	page, err := h.meetings.SuggestMeetingLinks(ctx, ref)
+	if err != nil {
+		return meetingLinkError("suggest meeting links", err)
+	}
+	return jsonResult(page)
+}
+
+func (h *handlers) linkMeeting(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "link")
+}
+
+func (h *handlers) unlinkMeeting(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "unlink")
+}
+
+func (h *handlers) decideMeetingLink(ctx context.Context, req toolRequest, decision string) (*toolResult, error) {
+	args := req.GetArguments()
+	id, err := positiveInt64Arg(args, toolArgMessageID)
+	event, _ := args["event"].(string)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	if id == 0 || event == "" {
+		return toolErrorResult("message_id and event are required"), nil
+	}
+	if err := h.meetings.DecideMeetingLink(ctx, id, event, decision); err != nil {
+		return meetingLinkError("decide meeting link", err)
+	}
+	return jsonResult(generated.MeetingLinkDecisionResponse{MessageID: id, Event: event, Decision: decision})
+}
+
+func getMeetingRecordDefinition() toolDefinition {
+	definition := readDefinition(ToolGetMeetingRecord, "Read a meeting's calendar occurrence and linked note IDs.",
+		closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]")}, "ref"),
+		outputSchemaFor[store.MeetingRecord](), (*handlers).getMeetingRecord)
+	definition.availability = meetingLinksAvailable
+	return definition
+}
+
+func suggestMeetingLinksDefinition() toolDefinition {
+	definition := readDefinition(ToolSuggestMeetingLinks, "Suggest archived notes or calendar occurrences to link.",
+		closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]")}, "ref"),
+		outputSchemaFor[store.MeetingSuggestionPage](), (*handlers).suggestMeetingLinks)
+	definition.availability = meetingLinksAvailable
+	return definition
+}
+
+func meetingLinkDecisionDefinition(unlink bool) toolDefinition {
+	name, description, handler := ToolLinkMeeting, "Link an archived meeting note to a calendar occurrence.", catalogToolHandler((*handlers).linkMeeting)
+	if unlink {
+		name, description, handler = ToolUnlinkMeeting, "Unlink an archived meeting note from a calendar occurrence and its copies.", (*handlers).unlinkMeeting
+	}
+	definition := writeDefinition(name, description,
+		closedObject(map[string]*jsonschema.Schema{toolArgMessageID: safeIDSchema("Meeting note message ID"), "event": stringSchema("evt:<id>[@occurrence key]")}, toolArgMessageID, "event"),
+		outputSchemaFor[generated.MeetingLinkDecisionResponse](), handler)
+	definition.availability = meetingLinksAvailable
+	return definition
+}
+
+func meetingLinkError(operation string, err error) (*toolResult, error) {
+	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
+		return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
+	}
+	return nil, newInternalError(operation, err)
 }

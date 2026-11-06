@@ -33,7 +33,9 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 3)
 	assertions.Empty(page.Unexpandable)
 	assertions.Equal(master, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal(single, page.Occurrences[1].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d", single), page.Occurrences[1].Ref)
 	assertions.Equal("cancelled", page.Occurrences[2].Status)
 	assertions.Equal(master, page.Occurrences[2].SeriesMessageID)
 	assertions.Equal(cancelled, page.Occurrences[2].MessageID)
@@ -45,8 +47,10 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
+
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -598,7 +602,7 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 		calendarFixture(t, st, fmt.Sprintf("cancelled-%d", i), fmt.Sprintf(`{"id":"cancelled-%d","status":"cancelled"}`, i))
 	}
 	from := time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)
-	rows, err := calendarEventRowsInWindow(t.Context(), st.db, st.dialect, from, from.AddDate(0, 0, 1))
+	rows, err := calendarEventRowsInWindow(t.Context(), st.meetingReader(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	assertions.Empty(rows, "tombstones must consume no request budget")
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
@@ -690,7 +694,7 @@ func TestListCalendarOccurrencesDeletedSeriesKeepsOnlyExceptions(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(err)
 	defer release()
-	rows, err := calendarEventRowsInWindow(ctx, st.db, st.dialect, later, later.AddDate(0, 0, 14))
+	rows, err := calendarEventRowsInWindow(ctx, st.meetingReader(), later, later.AddDate(0, 0, 14))
 	require.NoError(err)
 	assert.Empty(rows)
 	page, err = st.ListCalendarOccurrencesContext(t.Context(), later, later.AddDate(0, 0, 14))
