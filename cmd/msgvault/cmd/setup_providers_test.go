@@ -2072,7 +2072,7 @@ func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
 	}
 }
 
-func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
+func TestSetupProvidersSelectsDefaultOllamaEmbeddingEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name, server string
 		models       []string
@@ -2106,17 +2106,18 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 
 func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *testing.T) {
 	for _, tc := range []struct {
+		name             string
 		fields           string
 		unavailable      string
 		wantCron         string
 		wantRunAfterSync bool
 	}{
-		{fields: "", wantCron: setupEmbedCron, wantRunAfterSync: true},
-		{fields: "cron = \"\"", wantCron: "", wantRunAfterSync: true},
-		{fields: "run_after_sync = false", wantCron: setupEmbedCron, wantRunAfterSync: false},
-		{unavailable: "archive vector backend unavailable"},
+		{name: "unspecified schedule", fields: "", wantCron: setupEmbedCron, wantRunAfterSync: true},
+		{name: "cron disabled", fields: "cron = \"\"", wantCron: "", wantRunAfterSync: true},
+		{name: "sync disabled", fields: "run_after_sync = false", wantCron: setupEmbedCron, wantRunAfterSync: false},
+		{name: "unavailable backend", unavailable: "archive vector backend unavailable"},
 	} {
-		t.Run(tc.fields+tc.unavailable, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+tc.fields)

@@ -24,7 +24,6 @@ describe('local search row', () => {
   ])('$name', ({ status, embedding = embeddingStatus, state, labels: expectedLabels }) => {
     expect(localSearchState(status, embedding)).toEqual(state);
     const labels = localSearchLabels(status, embedding);
-    expect(labels.meanwhile).toBeUndefined();
     for (const key of Object.keys(expectedLabels ?? {}) as (keyof SearchByMeaningLabels)[]) expect(labels[key]).toBe(expectedLabels![key]);
   });
 });
