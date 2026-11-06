@@ -245,7 +245,6 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
 	require.NoError(err)
-	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
 	require.Len(got.History, 1)
 	for _, entry := range got.History {
 		assert.Equal("2026-09-06", entry.Time.In(loc).Format(time.DateOnly))

@@ -244,7 +244,7 @@ func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
 	assertions.Empty(next.Cursor)
 }
 
-func TestRelationshipCuratedProfileFreshnessAndUnavailablePerson(t *testing.T) {
+func TestRelationshipFreshnessWithoutLinkedContactsAndPersonLookupFailure(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)

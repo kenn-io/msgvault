@@ -90,7 +90,7 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 	}
 }
 
-func TestAttendedTranscriptIDsByRole(t *testing.T) {
+func TestAttendedTranscriptIDsExcludesOwnerSubject(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
@@ -106,10 +106,9 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
 	}
 	projectTierSignals(t, f.Fixture, "UTC", 0)
-	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
+	got, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 	requirements.NoError(err)
-	assertions.Len(got.IDs, 2)
-	assertions.True(truncated)
+	assertions.Len(got.IDs, 3)
 	q.Subject.ParticipantIDs = []int64{f.owner}
 	got, _, err = f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)

@@ -199,6 +199,10 @@ func leaveAndReenterPeople(t *testing.T, model Model) (Model, tea.Cmd) {
 
 func TestNextModeIncludesPeople(t *testing.T) {
 	assert := assert.New(t)
+	assert.Equal(modeTimeline, nextMode(modePeople, true, true, true))
+	assert.Equal(modeTimeline, nextMode(modeMeetings, false, false, true))
+	assert.Equal(modePeople, nextMode(modeMeetings, false, true, true))
+	assert.Equal(modeEmail, nextMode(modeTimeline, true, true, true))
 	assert.Equal(modeTexts, nextMode(modeEmail, true, true, false))
 	assert.Equal(modeMeetings, nextMode(modeTexts, true, true, false))
 	assert.Equal(modePeople, nextMode(modeMeetings, true, true, false))

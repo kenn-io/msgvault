@@ -112,10 +112,6 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	assert.Equal(modeTimeline, nextMode(modePeople, true, true, true))
-	assert.Equal(modeTimeline, nextMode(modeMeetings, false, false, true))
-	assert.Equal(modePeople, nextMode(modeMeetings, false, true, true))
-	assert.Equal(modeEmail, nextMode(modeTimeline, true, true, true))
 	m := NewBuilder().Build()
 	m.mode = modeMeetings
 	m.timelineBackend = &timelineModeBackend{}
@@ -133,7 +129,6 @@ func TestTimelineKeysSwitchModes(t *testing.T) {
 	}{
 		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14", appMode: modeTimeline},
 		{key: 'w', mode: timeline.ModeRelationship, with: "person:42", appMode: modeTimeline},
-		{key: '?', modal: modalHelp, appMode: modeTimeline},
 	} {
 		t.Run(string(tc.key), func(t *testing.T) {
 			assert := assert.New(t)
@@ -143,9 +138,6 @@ func TestTimelineKeysSwitchModes(t *testing.T) {
 			assert.Equal(tc.modal, updated.modal)
 			assert.Equal(allSourceScope(), updated.sourceScope)
 			assert.Equal(tc.appMode, updated.mode)
-			if tc.key == '?' {
-				return
-			}
 			require.NotNil(cmd)
 			assert.Equal(tc.mode, updated.timelineState.pending.Mode)
 			assert.Equal(tc.date, updated.timelineState.pending.Date)

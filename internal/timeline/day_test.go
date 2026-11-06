@@ -198,12 +198,15 @@ func TestBuildDayOmitsColdMessages(t *testing.T) {
 }
 func TestBuildDayUpcomingNext48h(t *testing.T) {
 	f := newTimelineFixture(t)
-	for i, at := range []string{"2026-10-23T11:00:00Z", "2026-10-24T11:00:00Z", "2026-10-24T13:00:00Z"} {
+	for i, at := range []string{"2026-10-23T11:00:00Z", "2026-10-24T11:59:59Z", "2026-10-24T12:00:00Z", "2026-10-24T12:00:01Z"} {
 		f.calendar(strconv.Itoa(i), fmt.Sprintf(`{"id":%q,"start":{"dateTime":%q},"end":{"dateTime":%q}}`, strconv.Itoa(i), at, at))
 	}
 	got, err := Build(t.Context(), f.src, dayRequest())
 	require.NoError(t, err)
-	assert.Len(t, got.Upcoming, 2)
+	require.Len(t, got.Upcoming, 3)
+	assert.Equal(t, "2026-10-23T11:00:00Z", got.Upcoming[0].Time.Format(time.RFC3339))
+	assert.Equal(t, "2026-10-24T11:59:59Z", got.Upcoming[1].Time.Format(time.RFC3339))
+	assert.Equal(t, "2026-10-24T12:00:00Z", got.Upcoming[2].Time.Format(time.RFC3339))
 }
 func TestBuildDayReportsUnexpandableSeries(t *testing.T) {
 	f := newTimelineFixture(t)

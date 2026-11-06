@@ -78,7 +78,7 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 	q.Filters.IncludeNoise = true
 	all, err := f.Store.ListColdActivityMessagesContext(t.Context(), q)
 	requirements.NoError(err)
-	assertions.Len(all, 10, "noise applies to the whole conversation-day, not each listed message")
+	assertions.Len(all, 10, "include-noise restores the four list messages across both days")
 	for _, allowed := range [][]int64{{}, {hidden.ID}} {
 		scoped, err := f.Store.ListColdActivityMessagesContext(sourcescope.WithSourceIDs(t.Context(), allowed), q)
 		requirements.NoError(err)

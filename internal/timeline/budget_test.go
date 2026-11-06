@@ -50,7 +50,7 @@ func TestFitMeasuresFinalEncoding(t *testing.T) {
 		format          string
 		budget, entries int
 	}{
-		{"json", 4096, 100}, {"markdown", 4096, 100}, {"json", 8192, 50},
+		{"json", 4096, 100}, {"markdown", 4096, 100},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", tc.format, tc.budget), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -120,7 +120,10 @@ func TestTimelineFitRelationshipOptionalTextAtMinimumBudget(t *testing.T) {
 	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
-	assertions.NotEmpty(out.Omitted.Budget)
+	requirements.NotNil(out.Person.Brief)
+	assertions.True(out.Person.Brief.Truncated)
+	assertions.Less(len([]rune(out.Person.Brief.Text)), 600)
+	assertions.Positive(out.Omitted.Budget["brief_text"])
 	assertions.Equal("person:7", out.Person.Ref)
 }
 

@@ -55,7 +55,7 @@ func TestTimelinePeopleIdentityPrecedence(t *testing.T) {
 		want   int
 	}{
 		{"saved aliases", []Person{{PersonID: 1, ParticipantID: 2}, {PersonID: 1, ParticipantID: 3}}, 1},
-		{"different people", []Person{{PersonID: 1, ParticipantID: 2}, {PersonID: 3, ParticipantID: 2}}, 2},
+		{"different people", []Person{{PersonID: 1, ParticipantID: 2}, {PersonID: 3, ParticipantID: 4}}, 2},
 		{"participant", []Person{{ParticipantID: 2}, {ParticipantID: 2}}, 1},
 		{"email", []Person{{email: " Guest@example.com "}, {email: "guest@example.com"}}, 1},
 		{"unknown", []Person{{Name: "Guest"}, {Name: "Guest"}}, 2},

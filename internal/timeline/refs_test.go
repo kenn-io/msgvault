@@ -43,6 +43,8 @@ func TestParseAnchorRejectsSkippedCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ParseAnchor("2011-12-30", loc)
 	require.ErrorIs(t, err, ErrInvalidRequest)
+	_, err = ParseAnchor("2011-12-31", loc)
+	require.NoError(t, err)
 }
 
 func TestParseAnchorRejectsNonexistentLocalDatetime(t *testing.T) {

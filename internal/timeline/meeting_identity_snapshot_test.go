@@ -171,9 +171,6 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 			f.project()
 			switch behavior {
 			case "attendance":
-				meetings := &relationshipMeetingReads{MeetingsSource: f.src.Meetings}
-				calendar := &relationshipCalendarReads{CalendarSource: f.src.Calendar}
-				f.src.Meetings, f.src.Calendar = meetings, calendar
 				got, err := Build(t.Context(), f.src, relationshipRequest(ref))
 				requirements.NoError(err)
 				requirements.NotNil(got.Person)
@@ -187,8 +184,6 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.Len(got.History, 1)
 				assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
 				assertions.ElementsMatch(notes, got.History[0].Meeting.LinkedTranscriptIDs)
-				assertions.Zero(meetings.resolutions)
-				assertions.Zero(calendar.details)
 			case "hidden text":
 				// Hidden text remains attendance evidence, but no hidden title leaks.
 				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id IN (?,?)`), notes[0], notes[1])

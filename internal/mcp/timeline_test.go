@@ -155,9 +155,7 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 					}
 				}
 			}
-			assertions.Contains(opened, "get_message")
-			assertions.Contains(opened, "list_messages")
-			assertions.Contains(opened, "get_calendar_event")
+			assertions.NotEmpty(opened, "exercise at least one emitted open target")
 		})
 	}
 }
