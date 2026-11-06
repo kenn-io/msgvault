@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -294,6 +295,18 @@ func TestLineServeSignedReceiptsDoNotStarveLaterText(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, freeze)
 	must.Equal(http.StatusOK, response.Code, response.Body.String())
+	var frozen struct {
+		Token string `json:"token"`
+	}
+	must.NoError(json.Unmarshal(response.Body.Bytes(), &frozen))
+	defer func() {
+		end := httptest.NewRequest(http.MethodPost, "/api/v1/backup/freeze/end", strings.NewReader(fmt.Sprintf(`{"token":%q}`, frozen.Token)))
+		end.RemoteAddr = "127.0.0.1:54321"
+		end.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, end)
+		must.Equal(http.StatusOK, response.Code, response.Body.String())
+	}()
 	checks.Equal(http.StatusServiceUnavailable, receive(2, `{"id":"2","type":"text","text":"frozen text"}`))
 	var count int
 	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id='event-2'").Scan(&count))

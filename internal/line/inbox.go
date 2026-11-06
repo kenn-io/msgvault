@@ -88,14 +88,23 @@ type Processor struct {
 	botID                     string
 	messagesAdded             int64
 	messagesUpdated           int64
+	interrupt                 chan struct{}
 }
 
 func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, attachmentsDir string, options ...ProcessorOption) *Processor {
-	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
+	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, interrupt: make(chan struct{}, 1), mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
 	for _, option := range options {
 		option(p)
 	}
 	return p
+}
+
+// Interrupt yields provider enrichment to a queued pass for newly received events.
+func (p *Processor) Interrupt() {
+	select {
+	case p.interrupt <- struct{}{}:
+	default:
+	}
 }
 
 func (p *Processor) recordMutation(ctx context.Context, added, updated int64) {
@@ -225,49 +234,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err != nil {
 		return err
 	}
-	for _, row := range rows {
-		if err = ctx.Err(); err != nil {
-			return err
-		}
-		// A late original can settle a mutation earlier in this same batch.
-		if _, reconciled := pass.reconciledEvents[row.ID]; reconciled {
-			continue
-		}
-		var event Event
-		eventErr := json.Unmarshal([]byte(row.RawJSON), &event)
-		conversationKey := ""
-		if eventErr == nil {
-			switch event.Type {
-			case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave":
-				if key, _, keyErr := event.Source.ConversationID(); keyErr == nil {
-					conversationKey = key
-				}
-			}
-		}
-		if conversationKey != "" {
-			if event.Message != nil {
-				messageIDs[conversationKey] = append(messageIDs[conversationKey], event.Message.ID)
-			}
-			if _, seen := touched[conversationKey]; !seen {
-				touched[conversationKey] = struct{}{}
-				touchedConversations = append(touchedConversations, conversationKey)
-			}
-		}
-		state := "processed"
-		if row.State == "retry" && p.now().Sub(row.ReceivedAt) >= retryHorizon {
-			if err = pass.expireMedia(ctx, row.TargetMessageID); err != nil {
-				return err
-			}
-			message := row.LastError
-			if message == "" {
-				message = "LINE retry window expired"
-			}
-			eventErr = invalidEvent(message)
-		} else if eventErr != nil {
-			eventErr = invalidEvent("invalid archived LINE event")
-		} else {
-			state, eventErr = pass.apply(ctx, event)
-		}
+	finishEvent := func(row store.LineWebhookEvent, event Event, state string, eventErr error) error {
 		if eventErr != nil {
 			if ctx.Err() != nil {
 				if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "pending", "LINE processing interrupted", pass.retryAt(row, ctx.Err())); err != nil {
@@ -286,7 +253,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 				if resultErr == nil {
 					resultErr = fmt.Errorf("process LINE inbox event: %w", eventErr)
 				}
-				continue
+				return nil
 			}
 			if state == "retry" && p.now().Sub(row.ReceivedAt) >= retryHorizon {
 				state = "failed"
@@ -315,6 +282,104 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 			checkpoint.MessagesProcessed++
 		}
 		jobctx.RecordProgress(ctx)
+		return nil
+	}
+	type eventEnrichment struct {
+		event Event
+		run   func(context.Context) error
+	}
+	enrichments := make([]eventEnrichment, len(rows))
+	for i, row := range rows {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		// A late original can settle a mutation earlier in this same batch.
+		if _, reconciled := pass.reconciledEvents[row.ID]; reconciled {
+			continue
+		}
+		var event Event
+		eventErr := json.Unmarshal([]byte(row.RawJSON), &event)
+		conversationKey := ""
+		if eventErr == nil {
+			switch event.Type {
+			case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave":
+				if key, _, keyErr := event.Source.ConversationID(); keyErr == nil {
+					conversationKey = key
+				}
+			}
+		}
+		if conversationKey != "" {
+			if event.Message != nil {
+				messageIDs[conversationKey] = append(messageIDs[conversationKey], event.Message.ID)
+			}
+			if _, seen := touched[conversationKey]; !seen {
+				touched[conversationKey] = struct{}{}
+				touchedConversations = append(touchedConversations, conversationKey)
+			}
+		}
+		state := "processed"
+		var enrich func(context.Context) error
+		if row.State == "retry" && p.now().Sub(row.ReceivedAt) >= retryHorizon {
+			if err = pass.expireMedia(ctx, row.TargetMessageID); err != nil {
+				return err
+			}
+			message := row.LastError
+			if message == "" {
+				message = "LINE retry window expired"
+			}
+			eventErr = invalidEvent(message)
+		} else if eventErr != nil {
+			eventErr = invalidEvent("invalid archived LINE event")
+		} else {
+			state, enrich, eventErr = pass.apply(ctx, event)
+		}
+		if eventErr == nil && enrich != nil {
+			enrichments[i] = eventEnrichment{event, enrich}
+			continue
+		}
+		if err = finishEvent(row, event, state, eventErr); err != nil {
+			return err
+		}
+	}
+	if err = settle(ctx); err != nil {
+		return err
+	}
+	// Clear stale interrupts before enrichment.
+	select {
+	case <-p.interrupt:
+	default:
+	}
+	for i, row := range rows {
+		work := enrichments[i]
+		if work.run == nil {
+			continue
+		}
+		enrichCtx, cancel := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			select {
+			case <-p.interrupt:
+				cancel()
+			case <-enrichCtx.Done():
+			}
+		}()
+		eventErr := work.run(enrichCtx)
+		interrupted := enrichCtx.Err()
+		cancel()
+		<-stopped
+		if interrupted != nil {
+			if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "pending", "LINE processing interrupted", pass.retryAt(row, interrupted)); err != nil {
+				return errors.Join(ctx.Err(), err)
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			break
+		}
+		if err = finishEvent(row, work.event, "processed", eventErr); err != nil {
+			return err
+		}
 	}
 	if err = settle(ctx); err != nil {
 		return err
@@ -368,18 +433,33 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func (p *Processor) apply(ctx context.Context, e Event) (string, error) {
+func (p *Processor) apply(ctx context.Context, e Event) (string, func(context.Context) error, error) {
 	switch e.Type {
 	case "message":
-		return "processed", p.message(ctx, e)
+		key, kind, err := e.Source.ConversationID()
+		if err != nil {
+			return "processed", nil, invalidEvent("invalid LINE message source")
+		}
+		previous, err := p.store.LineMessageContext(ctx, p.sourceID, e.Message.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "processed", nil, err
+		}
+		messageID, err := p.message(ctx, e, previous, key, kind)
+		if err != nil || messageID == 0 {
+			return "processed", nil, err
+		}
+		return "processed", func(ctx context.Context) error {
+			return p.enrichMessage(ctx, e, messageID, previous, key, kind)
+		}, nil
 	case "messageEdited":
-		return "processed", p.edit(ctx, e)
+		return "processed", nil, p.edit(ctx, e)
 	case "unsend":
-		return "processed", p.unsend(ctx, e)
+		return "processed", nil, p.unsend(ctx, e)
 	case "memberJoined", "memberLeft", "join", "leave":
-		return "processed", p.membership(ctx, e)
+		enrich, err := p.membership(ctx, e)
+		return "processed", enrich, err
 	default:
-		return "ignored", nil
+		return "ignored", nil, nil
 	}
 }
 
@@ -398,7 +478,7 @@ func (p *Processor) reconcileMutations(ctx context.Context, messageID string) er
 		if err = json.Unmarshal([]byte(row.RawJSON), &e); err != nil {
 			err = invalidEvent("invalid LINE lifecycle evidence")
 		} else {
-			_, err = p.apply(ctx, e)
+			_, _, err = p.apply(ctx, e)
 		}
 		if err != nil {
 			if _, ok := errors.AsType[*invalidEventError](err); !ok {
@@ -444,26 +524,26 @@ func (p *Processor) unsend(ctx context.Context, e Event) error {
 	return p.finishUnstoredMedia(ctx, row.ID, attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 }
 
-func (p *Processor) membership(ctx context.Context, e Event) error {
+func (p *Processor) membership(ctx context.Context, e Event) (func(context.Context) error, error) {
 	key, kind, err := e.Source.ConversationID()
 	if err != nil {
-		return invalidEvent("invalid LINE membership source")
+		return nil, invalidEvent("invalid LINE membership source")
 	}
 	conversationID, err := p.store.EnsureConversationWithTypeContext(ctx, p.sourceID, key, kind, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	joined := e.Type == "memberJoined" || e.Type == "join"
 	var users []string
 	switch e.Type {
 	case "join", "leave":
 		if p.botID == "" {
-			return invalidEvent("LINE bot identity missing")
+			return nil, invalidEvent("LINE bot identity missing")
 		}
 		users = []string{p.botID}
 	case "memberJoined":
 		if e.Joined == nil {
-			return invalidEvent("LINE joined members missing")
+			return nil, invalidEvent("LINE joined members missing")
 		}
 		for _, member := range e.Joined.Members {
 			if member.UserID != "" {
@@ -472,7 +552,7 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 		}
 	case "memberLeft":
 		if e.Left == nil {
-			return invalidEvent("LINE left members missing")
+			return nil, invalidEvent("LINE left members missing")
 		}
 		for _, member := range e.Left.Members {
 			if member.UserID != "" {
@@ -483,22 +563,26 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 	for _, userID := range users {
 		pid, err := p.participant(ctx, key, userID, "")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err = p.store.SetLineMembershipContext(ctx, conversationID, pid, UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC()); err != nil {
-			return err
+			return nil, err
 		}
 		p.recordMutation(ctx, 0, 1)
 	}
-	// Persist every member transition before the first optional provider request.
-	// A failed lookup may delay presentation, never another member's membership.
+	if !joined {
+		return nil, nil //nolint:nilnil // Departures need no provider enrichment.
+	}
+	return func(ctx context.Context) error { return p.enrichMembership(ctx, e, users) }, nil
+}
+
+// Every member transition commits before the first optional provider request.
+func (p *Processor) enrichMembership(ctx context.Context, e Event, users []string) error {
 	var enrichmentErr error
-	if joined {
-		for _, userID := range users {
-			if userID != p.botID {
-				_, err = p.profile(ctx, e.Source, userID)
-				enrichmentErr = errors.Join(enrichmentErr, err)
-			}
+	for _, userID := range users {
+		if userID != p.botID {
+			_, err := p.profile(ctx, e.Source, userID)
+			enrichmentErr = errors.Join(enrichmentErr, err)
 		}
 	}
 	return enrichmentErr

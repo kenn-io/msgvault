@@ -31,10 +31,11 @@ func runLineProcessor(ctx context.Context, channelID string, process func(contex
 }
 
 type lineRuntime struct {
-	receiver  *line.Receiver
-	scheduler *scheduler.Scheduler
-	jobs      []string
-	logger    *slog.Logger
+	receiver   *line.Receiver
+	scheduler  *scheduler.Scheduler
+	processors map[string]*line.Processor
+	jobs       []string
+	logger     *slog.Logger
 }
 
 // Construct only from local registration and daemon environment. No provider
@@ -44,7 +45,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 	if state == nil || state.cfg == nil {
 		return nil, errors.New("LINE configuration is unavailable")
 	}
-	runtime := &lineRuntime{scheduler: sched, logger: repairLogger(logger)}
+	runtime := &lineRuntime{scheduler: sched, logger: repairLogger(logger), processors: make(map[string]*line.Processor)}
 	cfg := state.cfg
 	var channels []line.ReceiverChannel
 	for _, profile := range cfg.Line {
@@ -82,6 +83,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 		if err := sched.AddJob(scheduler.Job{Name: name, Interval: 30 * time.Second, Preemptible: true, Background: true, Run: run}); err != nil {
 			return nil, fmt.Errorf("schedule LINE inbox: %w", err)
 		}
+		runtime.processors[channelID] = processor
 		runtime.jobs = append(runtime.jobs, name)
 		channels = append(channels, line.ReceiverChannel{ChannelID: channelID, SourceID: source.ID, BotUserID: botID, Secret: os.Getenv(profile.SecretEnv)})
 	}
@@ -91,8 +93,13 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 
 func (r *lineRuntime) wake(channelID string) {
 	name, _ := api.SchedulerJobNameForSource(line.SourceType, channelID)
-	if _, err := r.scheduler.StartJob(name, false); err != nil {
+	disposition, err := r.scheduler.StartJob(name, false)
+	if err != nil {
 		r.logger.Warn("LINE inbox wake could not be queued", "channel", channelID, "error", err)
+		return
+	}
+	if disposition == scheduler.JobPending || disposition == scheduler.JobCoalesced {
+		r.processors[channelID].Interrupt()
 	}
 }
 

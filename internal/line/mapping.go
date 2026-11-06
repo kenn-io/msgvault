@@ -83,37 +83,31 @@ func metadataFor(e Event, prior sql.NullString) (sql.NullString, error) {
 	return sql.NullString{String: string(raw), Valid: true}, err
 }
 
-func (p *Processor) message(ctx context.Context, e Event) error {
-	key, kind, err := e.Source.ConversationID()
-	if err != nil {
-		return invalidEvent("invalid LINE message source")
-	}
-	previous, err := p.store.LineMessageContext(ctx, p.sourceID, e.Message.ID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
+// message returns zero when a deleted message needs no provider enrichment.
+func (p *Processor) message(ctx context.Context, e Event, previous store.MessageMetadataRecord, key, kind string) (int64, error) {
 	var messageID int64
-	if err == nil {
+	var err error
+	if previous.ID != 0 {
 		if !previous.SourceConversationID.Valid || previous.SourceConversationID.String != key {
-			return invalidEvent("LINE message identity belongs to a different chat")
+			return 0, invalidEvent("LINE message identity belongs to a different chat")
 		}
 		messageID = previous.ID
 	} else {
 		name := ""
 		if e.Source.UserID != "" {
 			if cached, fresh, err := p.cachedProfile(ctx, e.Source.UserID); err != nil {
-				return err
+				return 0, err
 			} else if fresh {
 				name = cached.DisplayName
 			}
 		}
 		pid, err := p.participant(ctx, key, e.Source.UserID, name)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		metadata, err := metadataFor(e, sql.NullString{})
 		if err != nil {
-			return err
+			return 0, err
 		}
 		text := bodyText(*e.Message)
 		data := &store.MessagePersistData{
@@ -123,7 +117,7 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 		}
 		recipient, err := p.store.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(p.channelID, p.botID), "")
 		if err != nil {
-			return err
+			return 0, err
 		}
 		data.Recipients = append(data.Recipients, store.RecipientSet{Type: "to", ParticipantIDs: []int64{recipient}})
 		if e.Source.Type == "group" || e.Source.Type == "room" {
@@ -133,23 +127,26 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 			messageID, err = p.store.PersistMessageContext(ctx, data)
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		p.recordMutation(ctx, 1, 0)
 	}
-	if err = p.reconcileMutations(ctx, e.Message.ID); err != nil {
-		return err
+	if err := p.reconcileMutations(ctx, e.Message.ID); err != nil {
+		return 0, err
 	}
 	deleted, err := p.store.LineMessageDeletedContext(ctx, messageID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if deleted {
-		return p.media(ctx, messageID, e, true)
+		return 0, p.media(ctx, messageID, e, true)
 	}
+	return messageID, nil
+}
+
+func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64, previous store.MessageMetadataRecord, key, kind string) error {
 	mediaErr := p.media(ctx, messageID, e, false)
-	// Only local writes occur above this point. Profile/group fetches are retryable
-	// enrichment; they never stand between a webhook message and its archived text.
+	// Provider requests run after the whole batch has committed its local writes.
 	profile, profileErr := p.profile(ctx, e.Source, e.Source.UserID)
 	var senderSnapshotErr error
 	if profileErr == nil && profile.DisplayName != "" {
@@ -174,7 +171,7 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 		}
 	}
 	if title != "" {
-		if _, err = p.store.EnsureConversationWithTypeContext(ctx, p.sourceID, key, kind, title); err != nil {
+		if _, err := p.store.EnsureConversationWithTypeContext(ctx, p.sourceID, key, kind, title); err != nil {
 			return err
 		}
 	}
