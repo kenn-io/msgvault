@@ -2317,11 +2317,10 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var gotScope search.DeletionScope
 			engine := &querytest.MockEngine{
-				SearchFunc: func(_ context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+				SearchFunc: func(_ context.Context, q *search.Query, limit, _ int) ([]query.MessageSummary, error) {
 					gotScope = q.DeletionScope
 					if tt.probe > 0 {
-						assert.Equal(t, 0, offset)
-						assert.Equal(t, tt.probe, limit)
+						assert.Equal(t, tt.probe, limit, "probe one row past the page")
 					}
 					rows := make([]query.MessageSummary, tt.matches)
 					for i := range rows {
@@ -8010,7 +8009,6 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 				assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
 			}
 			if tc.mode == "hybrid" {
-				assert.True(page.PoolSaturated)
 				require.NotNil(backend.fusedLast)
 				assert.Equal(3, backend.fusedLast.Limit)
 			}

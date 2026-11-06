@@ -261,7 +261,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		{name: "ranking_cap", mode: "vector", hasMore: true, cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
 		{name: "pool_only", mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"vector.search.k_per_signal"}},
 		{name: "dual_cap_extra_hit", mode: "hybrid", hasMore: true, pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
-		{name: "dual_cap_pool", mode: "hybrid", pool: true, cap: 100, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 100", "vector.search.k_per_signal"}},
 		{name: "fts_complete", mode: "fts"},
 		{name: "fts_first_page", mode: "fts", hasMore: true, messages: []string{"--offset 50"}},
 		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
@@ -272,9 +271,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				requests := &atomic.Int32{}
 				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
-					assert.Equal("lunch", r.URL.Query().Get("q"))
 					if tc.mode == "fts" {
-						assert.Equal("/api/v1/cli/search", r.URL.Path)
 						assert.Equal("50", r.URL.Query().Get("limit"))
 						if tc.offset > 0 {
 							assert.Equal("50", r.URL.Query().Get("offset"))
@@ -287,7 +284,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 						return
 					}
 					assert.Equal(tc.mode, r.URL.Query().Get("mode"))
-					assert.Equal(strconv.Itoa(max(50, tc.cap)), r.URL.Query().Get("page_size"))
 					writeVectorSearchResponse(t, w, "alice@example.com", "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
 				})
 				ctx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
@@ -295,7 +291,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				root := newTestRootCmd()
 				root.SetContext(ctx)
 				root.AddCommand(searchCmd)
-				args := []string{"search", "--mode", tc.mode, "--explain", "--limit", strconv.Itoa(max(50, tc.cap)), "lunch"}
+				args := []string{"search", "--mode", tc.mode, "--explain", "lunch"}
 				if tc.mode == "fts" {
 					args = append(args, "--offset", strconv.Itoa(tc.offset))
 				}

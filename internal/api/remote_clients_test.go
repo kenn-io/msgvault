@@ -188,10 +188,11 @@ func TestRemoteClientLimits(t *testing.T) {
 		assert.Equal(tc.want, w.Code, "attachment size %d", tc.size)
 	}
 
+	var err error
 	// Latin-1 doubles when decoded, so the body fallback exceeds the limit while the raw MIME fits.
 	raw := []byte("From: owner@example.com\r\nSubject: Original\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\n" +
 		strings.Repeat("\xe9", int(remoteMessageBytes)/2+1))
-	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, f.withRaw)
+	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, f.withRaw)
 	require.NoError(err)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE message_bodies SET body_text = NULL, body_html = NULL WHERE message_id = ?`), f.withRaw)
 	require.NoError(err)

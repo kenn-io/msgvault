@@ -65,7 +65,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
 	vectorCfg := vector.Config{}
-	vectorCfg.Search.MaxPageSizeHybrid = new(vector.DefaultMaxPageSizeHybrid)
 	fingerprint := vectorCfg.GenerationFingerprint()
 	gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, fingerprint)
 	require.NoError(err)
@@ -86,7 +85,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	home := filepath.Join(root, "cli-home")
 	require.NoError(os.MkdirAll(home, 0700))
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0600))
-	runWithStderr := func(args ...string) (string, string) {
+	run := func(args ...string) string {
 		t.Helper()
 		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // G702: the opt-in test operator supplies the built CLI; argv is passed without a shell.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
@@ -94,12 +93,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		command.Stdout = &out
 		command.Stderr = &stderr
 		require.NoError(command.Run(), "CLI %v: %s", args, stderr.String())
-		return out.String(), stderr.String()
-	}
-	run := func(args ...string) string {
-		t.Helper()
-		out, _ := runWithStderr(args...)
-		return out
+		return out.String()
 	}
 	decode := func(raw string, value any) {
 		decoder := json.NewDecoder(strings.NewReader(raw))
@@ -196,14 +190,15 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	raised := vectorCfg
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
-	assert.Contains(stderr, "vector.search.max_page_size_hybrid above 100")
-	assert.Contains(stderr, "vector.search.k_per_signal")
 	var page struct {
-		Results []map[string]any `json:"results"`
+		Results []map[string]any    `json:"results"`
+		Hints   []map[string]string `json:"hints"`
 	}
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &page)
 	assert.Len(page.Results, 100)
+	require.Len(page.Hints, 2)
+	assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
+	assert.Contains(page.Hints[1]["message"], "vector.search.k_per_signal")
 	raised.Search.MaxPageSizeHybrid = new(200)
 	raised.Search.KPerSignal = 200
 	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
