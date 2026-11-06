@@ -42,15 +42,15 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		o.Direction = tc.direction
 		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
-		var subject, title string
-		var snippet sql.NullString
+		var title string
+		var subject, snippet sql.NullString
 		var count int
 		var latest sql.NullTime
 		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title, c.message_count, c.last_message_at FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title, &count, &latest))
 		assert.Equal(1, count)
 		assert.True(latest.Valid)
 		assert.True(o.OccurredAt.Equal(latest.Time))
-		assert.Equal(tc.text, subject)
+		assert.False(subject.Valid, "the call summary belongs in the body, not a duplicate subject")
 		assert.Equal(tc.text, snippet.String)
 		assert.Equal(tc.text, title)
 		body, err := st.GetMessageBodyTextContext(t.Context(), id)
