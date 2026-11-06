@@ -122,6 +122,8 @@ One toolbar sits above the results:
 - **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
+On a phone-width window, **View** holds Show as, Group by, and Sort.
+
 Each active search, filter, and grouping appears as a removable chip below the
 toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
@@ -213,8 +215,12 @@ Click an entry in Messages to open its preview below the results. On wide
 windows, choose **Display → Reader position → Right** to read beside the results.
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
-choice and each layout's size. Narrow windows use the preview below the results
-and restore your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
+choice and each layout's size. In windows 640 pixels wide or less, the reader
+fills the results area, and **Back to results** or Escape returns to the list.
+Above 640 pixels, the preview appears below the results when the results area is
+narrower than 960 pixels and restores your right-side layout when there is room
+again. Escape closes the reader. Next/previous result shortcuts move between
+ordinary message previews and are inactive while a recording match is open.
 
 HTML email follows the app's dark theme by replacing sender-defined text,
 background, and border colors. Images keep their original colors. Choose
@@ -273,6 +279,9 @@ PNG, or WebP query image. The UI discloses that the query goes to the
 configured provider. It requires the separate
 [visual index](/docs/usage/vector-search/#visual-attachment-search); ordinary
 filename browsing does not use that provider.
+
+On a phone-width window, Visual search is in **Filter**.
+**Clear filters** also clears the visual query and query image there.
 
 ### Images in email
 

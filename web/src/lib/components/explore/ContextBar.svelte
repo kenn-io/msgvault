@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, Chip, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, MEDIA, SelectDropdown } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
@@ -10,6 +11,7 @@
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
   import FilterMenu from './FilterMenu.svelte';
+  import ViewMenu from './ViewMenu.svelte';
 
   interface ExtraChip {
     key: string;
@@ -31,6 +33,7 @@
     lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
+    extraActive = false,
     query,
     searchMode,
     filters,
@@ -42,6 +45,7 @@
     onAddGroup,
     onRemoveGroup,
     onClearFilters,
+    onClearExtra = undefined,
     onFiltersChange,
     onRemoveQuery = undefined,
     onRemoveFilter = undefined,
@@ -52,6 +56,7 @@
     lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
+    extraActive?: boolean;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -63,6 +68,7 @@
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
     onClearFilters: () => void;
+    onClearExtra?: () => void;
     onFiltersChange: (filters: ExploreFilter[]) => void;
     onRemoveQuery?: () => void;
     onRemoveFilter?: (index: number) => void;
@@ -70,6 +76,8 @@
   } = $props();
 
   let filtersOpen = $state(false);
+  const compact = new MediaQuery(MEDIA.compact);
+  const extraInPopover = $derived(compact.current && Boolean(extraControls));
   const groupOptions = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
   const canGroup = $derived(groupOptions.some((option) => !option.disabled));
   // The triggers carry their own names (no kit `title`), so the visible text says what each control is.
@@ -98,12 +106,27 @@
   function selectGrouping(value: string): void {
     if (isGroupingDimension(value)) onAddGroup(value);
   }
+
+  function selectPresentation(value: string): void {
+    onPresentationChange?.(value as ExploreURLState['presentation']);
+  }
+
+  function selectSort(value: string): void {
+    sort?.onchange?.(value);
+  }
 </script>
+
+{#snippet popoverExtra()}
+  {@render filterExtra?.()}
+  <div class="popover-extra">
+    {@render extraControls?.()}
+  </div>
+{/snippet}
 
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -114,11 +137,14 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
+    {#if compact.current && !lockedFilter}
+      <ViewMenu {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
+    {:else}
     {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
-      onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
+      onchange={selectPresentation}
     />
     <div class="group-picker" data-group-picker>
       <SelectDropdown
@@ -134,11 +160,12 @@
         <SelectDropdown
           value={sort.value}
           options={sortOptions}
-          onchange={(value) => sort.onchange?.(value)}
+          onchange={selectSort}
         />
       </div>
     {/if}
-    {@render extraControls?.()}
+    {/if}
+    {#if !extraInPopover}{@render extraControls?.()}{/if}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 
@@ -230,6 +257,21 @@
 
   .group-picker {
     width: 172px;
+  }
+
+  .popover-extra {
+    min-width: 0;
+    overflow-wrap: anywhere;
+
+    :global(.file-controls > label:has(.kit-search-input, input[type="file"])) {
+      display: grid;
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    :global(.file-controls > label > .kit-search-input) {
+      width: 100%;
+    }
   }
 
   .context-chips :global(.chip) {

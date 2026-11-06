@@ -9,6 +9,7 @@ import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
+import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
@@ -2017,7 +2018,7 @@ describe('AppShell', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/groups')) return Response.json({
-        rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        rows: [sourceGroup],
         total_count: 1, cache_revision: 'cache-1', search_provenance: {}
       });
       if (path.endsWith('/files/search')) return Response.json({
@@ -2059,7 +2060,7 @@ describe('AppShell', () => {
       if (path.endsWith('/groups')) {
         groupRequests.push(request);
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1, cache_revision: 'cache-1', search_provenance: {}
         });
       }
