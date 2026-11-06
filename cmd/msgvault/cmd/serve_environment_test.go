@@ -104,14 +104,22 @@ func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint
 	require.NoError(err)
 	require.NoError(initial.Close())
 
-	contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(0)})
-	require.NoError(err)
-	contenderCommand := &cobra.Command{Use: "serve"}
-	contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
-	err = runServe(contenderCommand, nil)
-	require.ErrorAs(err, &daemonOwnerLockHeldError{})
-	_, err = os.Stat(contender.ServerKeyFilePath())
-	require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	status, stdout, _ := lifecycleTestCommand(t)
+	require.NoError(runServeStatus(status, running.Data.DataDir))
+	assert.Contains(t, stdout.String(), "msgvault running at "+url)
+
+	for _, contenderPort := range []int{0, port} {
+		contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(contenderPort)})
+		require.NoError(err)
+		contenderCommand := &cobra.Command{Use: "serve"}
+		contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
+		err = runServe(contenderCommand, nil)
+		require.ErrorAs(err, &daemonOwnerLockHeldError{})
+		assert.Equal(t, "msgvault running at "+url+"; open this URL in your browser; to run in the foreground, run msgvault daemon stop first", err.Error())
+		_, err = os.Stat(contender.ServerKeyFilePath())
+		require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	}
 
 	fresh, err := config.Load(path, home)
 	require.NoError(err)

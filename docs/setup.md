@@ -438,18 +438,21 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon:
+Find the running daemon's URL:
 
 ```bash
-msgvault serve
+msgvault daemon status
 ```
 
-The daemon builds a missing or stale analytical cache during startup. Open the
-`API server` URL it prints. With the default loopback bind,
+Open the URL it prints in your browser. The daemon builds a missing or stale
+analytical cache during startup. With the default loopback bind,
 the browser is trusted locally. A daemon bound to another interface must use an
 API key; the browser presents a login screen and stores only an in-memory
 daemon session. The release binary contains the complete UI, so no frontend
 runtime or separately installed web files are required.
+
+To run in the foreground, stop the daemon with `msgvault daemon stop`, then run
+`msgvault serve`.
 
 For a server or NAS, prefer HTTPS at a reverse proxy and configure only that
 proxy in `server.trusted_proxies`. Plain HTTP is an explicit private-network
