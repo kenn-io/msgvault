@@ -371,9 +371,10 @@ func (s *ServerConfig) ValidateSecure() error {
 
 // AccountSchedule defines sync schedule for a single account.
 type AccountSchedule struct {
-	Email    string `toml:"email"`    // Gmail account email
-	Schedule string `toml:"schedule"` // Cron expression (e.g., "0 2 * * *" for 2am daily)
-	Enabled  bool   `toml:"enabled"`  // Whether scheduled sync is active
+	Email        string        `toml:"email"`                   // Gmail account email
+	Schedule     string        `toml:"schedule"`                // Cron expression (e.g., "0 2 * * *" for 2am daily)
+	Enabled      bool          `toml:"enabled"`                 // Whether scheduled sync is active
+	PollInterval time.Duration `toml:"poll_interval,omitempty"` // Optional rapid reconciliation interval.
 }
 
 // CardDAVConfig contains non-secret connection settings for the external
@@ -1284,6 +1285,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.deferDaemonError(cfg.Sync.Validate())
+	cfg.deferDaemonError(cfg.ValidateAccountPolling())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
