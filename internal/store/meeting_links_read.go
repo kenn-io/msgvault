@@ -208,17 +208,11 @@ func meetingIdentityUIDMemberClauses(ctx context.Context, r reboundReader, o lin
 	}
 	starts := []any{o.Start.UTC()}
 	if _, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok {
-		if original.AllDay {
-			zone, err := calendarEventZone(o.Row.Event)
-			if err != nil {
-				return nil, nil, err
-			}
-			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
-			if err != nil {
-				return nil, nil, err
-			}
+		start, err := meetingOccurrenceStart(o.Row, original)
+		if err != nil {
+			return nil, nil, err
 		}
-		starts = append(starts, original.Instant)
+		starts = append(starts, start)
 	}
 	for _, copy := range copies {
 		uids = append(uids, copy.Row.ICalUID)
