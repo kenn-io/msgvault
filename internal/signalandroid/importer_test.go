@@ -351,6 +351,31 @@ func TestImportLimitStopsAfterWrites(t *testing.T) {
 	assert.Equal(4, len(importedMessages(t, st)))
 }
 
+func TestImportPre191DuplicateMessage(t *testing.T) {
+	for name, limit := range map[string]int{"unlimited": 0, "limit_seven": 7} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.V185, 0)
+			changeFixture(t, dir, `INSERT INTO message
+				(_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+				SELECT 99, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body
+				FROM message WHERE _id = 100`)
+			opts := DefaultOptions()
+			opts.Phone = signalfixture.OwnPhone
+			opts.Limit = limit
+			opts.AttachmentFilesDir = dir
+			opts.AttachmentsDir = t.TempDir()
+			st := testutil.NewTestStore(t)
+			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			require.NoError(t, err)
+			assert.Zero(t, summary.Errors)
+			assert.Equal(t, int64(7), summary.MessagesAdded)
+			assert.Equal(t, int64(1), summary.MessagesUpdated)
+			assert.Equal(t, 7, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE source_id = ?`, summary.SourceID))
+		})
+	}
+}
+
 func TestSkipReason(t *testing.T) {
 	tests := []struct {
 		name string
