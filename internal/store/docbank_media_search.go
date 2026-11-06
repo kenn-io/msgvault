@@ -124,7 +124,7 @@ func (s *Store) documentSearchVisible() string {
 // DocumentSearchVersions returns visible delivered document versions, newest message first.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, error) {
 	with, query, args := s.documentSearchRows(destination, scope, documentSearchFormats, nil)
-	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id ORDER BY MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) DESC NULLS LAST, d.version_id`
+	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id ORDER BY MAX(` + s.loopTimeKey("COALESCE(m.sent_at,m.received_at,m.internal_date)") + `) DESC NULLS LAST, d.version_id`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search versions: %w", err)
