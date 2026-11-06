@@ -121,7 +121,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	reader := s.messageRecordings
 	if reader == nil || reader.Client == nil {
-		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure the Docbank integration to search transcripts")
+		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure Docbank to search transcripts and attachment text")
 		return
 	}
 	reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}

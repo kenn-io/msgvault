@@ -30,7 +30,9 @@ type MediaAttachmentSearch struct {
 
 // SearchAttachments searches delivered attachment versions in bounded batches.
 // Results from each batch of 4,096 are interleaved by their position within
-// that batch, so order across batches is approximate. Only visible messages appear.
+// that batch, so order across batches is approximate. Versions enter batches
+// newest message first, so equal-rank hits from older batches are dropped first
+// at the result limit. Only visible messages appear.
 // A failed later batch keeps earlier batches' hits and marks the search truncated.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}

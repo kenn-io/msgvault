@@ -75,7 +75,7 @@ func TestMediaSearchStatus(t *testing.T) {
 				code, _, raw := searchMediaFor(t, server, "q=words")
 				assert.Equal(http.StatusServiceUnavailable, code, raw)
 				assert.Contains(raw, "media_search_unavailable")
-				assert.Contains(raw, "Configure the Docbank integration to search transcripts")
+				assert.Contains(raw, "Configure Docbank to search transcripts and attachment text")
 				assert.Empty(f.requests)
 			}
 		})
@@ -973,6 +973,48 @@ func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMediaSearchDocumentsBatchesNewestFirst(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	server := f.server(false)
+	first, second := f.document(t, server)
+	oldDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL WHERE id IN (?,?)`), oldDate, first, second)
+	require.NoError(err)
+	var documents []storetest.DocumentAttachment
+	for i := 2; i <= 4096; i++ {
+		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+	}
+	f.f.SeedDocumentAttachments(first, documents)
+	newest := f.message(t, "newest-document")
+	newestVersion := "00000000-0000-4000-8000-000000001001"
+	hash := strings.Repeat("b", 64)
+	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), newest, store.AttachmentWrite{ContentHash: hash, Filename: "newest.pdf", StoragePath: "bb/" + hash, State: "stored"}))
+	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: newestVersion}, ""))
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sent_at=NULL,received_at=?,internal_date=NULL WHERE id=?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), newest)
+	require.NoError(err)
+	newHit := f.documentReport.Results[0]
+	newHit.ContentVersionID = newestVersion
+	newHit.Excerpt = "quartz in the newest PDF"
+	oldHit := newHit
+	oldHit.ContentVersionID = "00000000-0000-4000-8000-000000001000"
+	oldHit.Excerpt = "quartz in the oldest batch"
+	f.documentReport.Results = []docbankmedia.SearchHit{newHit, oldHit}
+
+	status, response, raw := searchMediaFor(t, server, "q=quartz&limit=1")
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Nil(response.Attachments.Error)
+	require.Len(response.Attachments.Results, 1)
+	assert.Equal(newest, response.Attachments.Results[0].MessageID)
+	assert.Equal("quartz in the newest PDF", response.Attachments.Results[0].Excerpt)
+	assert.True(response.Attachments.Truncated)
+	require.Len(f.documentRequests, 2)
+	assert.Len(f.documentRequests[0].Fence.ContentVersionIDs, 4096)
+	assert.Equal([]string{oldHit.ContentVersionID}, f.documentRequests[1].Fence.ContentVersionIDs)
 }
 
 func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
