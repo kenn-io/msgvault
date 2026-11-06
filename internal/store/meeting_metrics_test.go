@@ -92,6 +92,56 @@ func TestReviewMeetingMetricsCountsLinkedCopiesOnce(t *testing.T) {
 	}
 }
 
+func TestReviewMetricsDateWindowsCountOnce(t *testing.T) {
+	requirements := require.New(t)
+	f := newMeetingQueryFixture(t)
+	_, event := calendarFixture(t, f.store, "series", linkSeriesRaw)
+	ids := f.meetingIDs[:2]
+	january := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	february := january.AddDate(0, 1, 0)
+	march := february.AddDate(0, 1, 0)
+	januaryCopy, februaryCopy := february.Add(-time.Hour), february.Add(time.Hour)
+	for i, at := range []time.Time{januaryCopy, februaryCopy} {
+		_, err := f.store.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, at, ids[i])
+		requirements.NoError(err)
+		requirements.NoError(f.store.LinkMeetingContext(t.Context(), ids[i], OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}))
+	}
+	for _, tc := range []struct {
+		name          string
+		after, before *time.Time
+		sources       []int64
+		count         int64
+		seconds       float64
+		at            *time.Time
+		month         string
+	}{
+		{"all history", nil, nil, nil, 1, 3600, &februaryCopy, "2026-02"},
+		{"January", &january, &february, nil, 0, 0, nil, ""},
+		{"February", &february, &march, nil, 1, 3600, &februaryCopy, "2026-02"},
+		{"before February", nil, &february, nil, 0, 0, nil, ""},
+		{"after January", &february, nil, nil, 1, 3600, &februaryCopy, "2026-02"},
+		{"January source", &january, &february, []int64{f.sourceOne}, 1, 1800, &januaryCopy, "2026-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			metrics, err := f.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids, SourceIDs: tc.sources, After: tc.after, Before: tc.before})
+			requirements.NoError(err)
+			assertions.Equal(tc.count, metrics.Totals.MeetingCount)
+			assertions.Equal(tc.count, metrics.Totals.KnownDurationCount)
+			assertions.Equal(tc.seconds, metrics.Totals.TotalKnownSeconds)
+			assertions.Equal(tc.at, metrics.FirstMeetingAt)
+			assertions.Equal(tc.at, metrics.LastMeetingAt)
+			if tc.count == 0 {
+				assertions.Empty(metrics.Months)
+			} else {
+				requirements.Len(metrics.Months, 1)
+				assertions.Equal(tc.month, metrics.Months[0].Month)
+				assertions.Equal(metrics.Totals, metrics.Months[0].Totals)
+			}
+		})
+	}
+}
+
 func TestMeetingMetricsUnavailableOccurrenceKeepsLinkedCopiesTogether(t *testing.T) {
 	for _, recurrence := range []string{"FREQ=WEEKLY;COUNT=1", "FREQ=HOURLY;COUNT=6"} {
 		t.Run(recurrence, func(t *testing.T) {

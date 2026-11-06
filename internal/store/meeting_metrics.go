@@ -14,7 +14,9 @@ import (
 func (s *Store) GetMeetingMetricsContext(
 	ctx context.Context, scope MeetingQueryScope,
 ) (*meetingcontent.Metrics, error) {
-	statement, err := s.buildMeetingScopeStatement(scope)
+	candidateScope := scope
+	candidateScope.After, candidateScope.Before = nil, nil
+	statement, err := s.buildMeetingScopeStatement(candidateScope)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +97,7 @@ func (s *Store) GetMeetingMetricsContext(
 				taken[occurrence.Identity.countKey()] = true
 			}
 		}
-		if len(kept) != len(candidates) {
+		if len(kept) != len(candidates) || scope.After != nil || scope.Before != nil {
 			countScope := scope
 			countScope.MessageIDs = &kept
 			statement, readErr = s.buildMeetingScopeStatement(countScope)
