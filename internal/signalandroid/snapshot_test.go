@@ -24,6 +24,7 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 
 func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 	for _, tc := range []struct{ name, change, wantError string }{
+		{"attachment table", `DROP TABLE attachment`, "attachment details are missing"},
 		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
 		{"mentions", `UPDATE mention SET range_start = 'invalid' WHERE message_id = 200`, "read Signal mentions"},
 	} {
@@ -42,9 +43,8 @@ func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 			changeFixture(t, dir, tc.change)
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			require.ErrorContains(err, tc.wantError)
-			assert.Zero(summary.MessagesUpdated)
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Alice'`))

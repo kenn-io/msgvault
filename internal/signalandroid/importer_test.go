@@ -258,7 +258,11 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 	for _, tc := range []struct{ name, change, want string }{
+		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
+		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
+		{"chat contacts", `ALTER TABLE thread DROP COLUMN recipient_id`, "chat contacts are missing"},
 		{"contacts", `ALTER TABLE recipient DROP COLUMN group_id`, "contact details are missing"},
+		{"attachment table", `DROP TABLE attachment`, "attachment details are missing"},
 		{"attachments", `ALTER TABLE attachment DROP COLUMN content_type`, "attachment details are missing"},
 		{"reaction table", `DROP TABLE reaction`, "reaction details are missing"},
 		{"reaction message", `ALTER TABLE reaction DROP COLUMN message_id`, "reaction details are missing"},

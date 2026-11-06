@@ -119,10 +119,10 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	}
 
 	if s.recipientACI = firstColumn(recipient, "aci", "uuid"); s.recipientACI == "" {
-		return nil, fmt.Errorf("%w: recipient.aci is missing", ErrUnsupportedDatabase)
+		return nil, fmt.Errorf("%w: account IDs are missing", ErrUnsupportedDatabase)
 	}
 	if s.recipientE164 = firstColumn(recipient, "e164", "phone"); s.recipientE164 == "" {
-		return nil, fmt.Errorf("%w: recipient.e164 is missing", ErrUnsupportedDatabase)
+		return nil, fmt.Errorf("%w: phone numbers are missing", ErrUnsupportedDatabase)
 	}
 	if !recipient["_id"] || !recipient["group_id"] {
 		return nil, fmt.Errorf("%w: contact details are missing", ErrUnsupportedDatabase)
@@ -131,7 +131,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	s.recipientPNI = firstColumn(recipient, "pni")
 
 	if s.threadRecipient = firstColumn(thread, "recipient_id", "thread_recipient_id"); s.threadRecipient == "" {
-		return nil, fmt.Errorf("%w: thread.recipient_id is missing", ErrUnsupportedDatabase)
+		return nil, fmt.Errorf("%w: chat contacts are missing", ErrUnsupportedDatabase)
 	}
 
 	for _, table := range []string{"attachment", "part"} {
@@ -143,12 +143,10 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 			break
 		}
 	}
-	if s.attachmentTable != "" {
-		s.attachmentMessage = firstColumn(s.attachmentColumns, "message_id", "mid")
-		s.attachmentType = firstColumn(s.attachmentColumns, "content_type", "ct")
-		if s.attachmentMessage == "" || s.attachmentType == "" {
-			return nil, fmt.Errorf("%w: attachment details are missing", ErrUnsupportedDatabase)
-		}
+	s.attachmentMessage = firstColumn(s.attachmentColumns, "message_id", "mid")
+	s.attachmentType = firstColumn(s.attachmentColumns, "content_type", "ct")
+	if s.attachmentMessage == "" || s.attachmentType == "" {
+		return nil, fmt.Errorf("%w: attachment details are missing", ErrUnsupportedDatabase)
 	}
 
 	groups, err := sqliteutil.TableColumns(ctx, db, "groups")

@@ -289,14 +289,6 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	return pid, pid != 0, err
 }
 
-// token returns the identity token of a recipient for message IDs.
-func (r *run) token(recipientID int64, direct bool) string {
-	if tokens := r.tokens(recipientID, direct); len(tokens) > 0 {
-		return tokens[0]
-	}
-	return ""
-}
-
 // tokens returns a recipient's identity tokens, preferred first, followed by
 // the PNI and phone tokens a message may have been archived under before the
 // recipient's ACI was known.
@@ -725,8 +717,8 @@ func (r *run) quotedMessageID(ctx context.Context, chatID string, direct bool, m
 	if m.QuoteID <= 0 || m.QuoteAuthor <= 0 {
 		return "", nil
 	}
-	token := r.token(m.QuoteAuthor, direct)
-	if token == "" {
+	tokens := r.tokens(m.QuoteAuthor, direct)
+	if len(tokens) == 0 {
 		return "", nil
 	}
 	timestamp := m.QuoteID
@@ -739,7 +731,14 @@ func (r *run) quotedMessageID(ctx context.Context, chatID string, direct bool, m
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("resolve quoted revision: %w", err)
 	}
-	return messageID(chatID, token, timestamp), nil
+	candidates := messageIDs(chatID, tokens, timestamp)
+	existing, err := r.imp.store.MessageExistsBatchContext(ctx, r.sourceID, candidates)
+	if err != nil {
+		return "", fmt.Errorf("look up archived Signal quote: %w", err)
+	}
+	p := pendingMessage{id: candidates[0], aliases: candidates[1:]}
+	keepArchivedID(existing, &p)
+	return p.id, nil
 }
 
 func (r *run) resolveReplies(ctx context.Context) error {

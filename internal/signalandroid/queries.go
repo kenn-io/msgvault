@@ -173,7 +173,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 // copy an attachment of the quoted message.
 func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []int64) (map[int64][]sigAttachment, error) {
 	out := make(map[int64][]sigAttachment)
-	if s.attachmentTable == "" || len(messageIDs) == 0 {
+	if len(messageIDs) == 0 {
 		return out, nil
 	}
 	query := fmt.Sprintf(`

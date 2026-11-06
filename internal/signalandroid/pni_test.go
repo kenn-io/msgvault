@@ -118,6 +118,39 @@ func TestReimportGroupPhoneAuthorGainsACI(t *testing.T) {
 	assert.Equal(int64(1), summary.MessagesUpdated)
 }
 
+func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
+	for _, tc := range []struct{ name, change, parentID string }{
+		{"phone", `UPDATE recipient SET aci = NULL, pni = NULL, e164 = '+15555550102' WHERE _id = 3`, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000"},
+		{"PNI", `UPDATE recipient SET aci = NULL, pni = '0f0f0f0f-0000-4000-8000-000000000005' WHERE _id = 3`, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:pni:0f0f0f0f-0000-4000-8000-000000000005:1700000240000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			dir := t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, tc.change, `DELETE FROM message WHERE _id <> 200`)
+			st, attachments := testutil.NewTestStore(t), t.TempDir()
+			runImport(t, st, dir, attachments)
+			before := importedMessages(t, st)
+			require.Contains(before, tc.parentID)
+
+			changeFixture(t, dir,
+				`UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, quote_id, quote_author)
+				 VALUES (202, 1700000241000, 1700000241001, 11, 1, 5, `+ms(signalfixture.TypeOutgoing)+`, 'Group reply', 1700000240000, 3)`)
+			summary := runImport(t, st, dir, attachments)
+
+			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Zero(summary.RepliesUnresolved)
+			assert.Equal(map[string]importedMessage{
+				tc.parentID: before[tc.parentID],
+				"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:self:1700000241000": {
+					conversation: "signal:group:" + signalfixture.GroupB64, body: "Group reply", fromMe: true, replyTo: tc.parentID,
+				},
+			}, importedMessages(t, st))
+		})
+	}
+}
+
 func TestReimportPNIChatGainsACI(t *testing.T) {
 	for name, updates := range map[string][]string{
 		"number changes after the ACI is learned": {`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`},
