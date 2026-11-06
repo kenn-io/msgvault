@@ -27,8 +27,12 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	if !ok {
 		return nil
 	}
+	knownConditions, knownArgs := appendSourceFilter([]string{"LOWER(p.email_address) = LOWER(?)"}, []any{sender}, "m.", nil, q.AccountIDs)
+	knownConditions, knownArgs = appendSourceFilter(knownConditions, knownArgs, "m.", nil, sourcescope.IDs(ctx))
 	var known bool
-	if err := e.queryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE LOWER(email_address) = LOWER(?))`, sender).Scan(&known); err != nil {
+	if err := e.queryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants p
+ CROSS JOIN message_recipients mr CROSS JOIN messages m
+ WHERE mr.participant_id = p.id AND mr.recipient_type = 'from' AND m.id = mr.message_id AND `+strings.Join(knownConditions, " AND ")+`)`, knownArgs...).Scan(&known); err != nil {
 		return senderHintFailure(err)
 	}
 	if known {

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -147,6 +148,48 @@ func TestSenderNameHintKnownAddress(t *testing.T) {
 	hints := env.Engine.MatchSenderName(env.Ctx, search.Parse("from:al@example.co subject:hintfixture"))
 	require.Len(t, hints, 1)
 	assert.Equal(t, "from:sal@example.com subject:hintfixture", hints[0].RetryWith.Query)
+}
+
+func TestSenderNameHintKnownAddressScope(t *testing.T) {
+	env := newTestEnv(t)
+	visible := env.AddSource(dbtest.SourceOpts{Type: "gmail", Identifier: "visible@example.com"})
+	hidden := env.AddSource(dbtest.SourceOpts{Type: "gmail", Identifier: "hidden@example.com"})
+	conversation := env.AddConversation(dbtest.ConversationOpts{SourceID: visible})
+	otherConversation := env.AddConversation(dbtest.ConversationOpts{SourceID: hidden})
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("sal@example.com")})
+	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture", SourceID: visible, ConversationID: conversation})
+	known := env.AddParticipant(dbtest.ParticipantOpts{Email: new("Al@Example.com")})
+	env.AddMessage(dbtest.MessageOpts{FromID: known, Subject: "other", SourceID: hidden, ConversationID: otherConversation})
+	for _, tc := range []struct {
+		name              string
+		accounts, granted []int64
+	}{
+		{"account", []int64{visible}, nil},
+		{"context", nil, []int64{visible}},
+		{"intersection", []int64{visible, hidden}, []int64{visible}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := env.Ctx
+			if tc.granted != nil {
+				ctx = sourcescope.WithSourceIDs(ctx, tc.granted)
+			}
+			q := search.Parse("from:al@example.com subject:hintfixture")
+			q.AccountIDs = tc.accounts
+			results, err := env.Engine.Search(ctx, q, 10, 0)
+			require.NoError(t, err)
+			assert.Empty(t, results)
+			hints := env.Engine.MatchSenderName(ctx, q)
+			require.Len(t, hints, 1)
+			assert.Equal(t, "from:sal@example.com subject:hintfixture", hints[0].RetryWith.Query)
+			assert.Equal(t, `from: matches addresses; senders matching "al@example.com": try from:sal@example.com subject:hintfixture (1 message)`, hints[0].Message)
+			retry := search.Parse(hints[0].RetryWith.Query)
+			retry.AccountIDs = tc.accounts
+			results, err = env.Engine.Search(ctx, retry, 10, 0)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			assert.Equal(t, id, results[0].ID)
+		})
+	}
 }
 
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
