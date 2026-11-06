@@ -32,6 +32,46 @@ function row(index: number, overrides: Partial<EntryRow> = {}): EntryRow {
 }
 
 describe('EverythingTable', () => {
+  it('omits provider status already stated by a single-value filter', async () => {
+    const email = row(1, {
+      kind: 'email',
+      inbox_state: 'inbox',
+      read_state: 'unread'
+    });
+    const selection = new ExploreSelectionState();
+    const rendered = render(EverythingTable, { rows: [email], selection });
+
+    expect(screen.getByText('In Inbox · Unread at provider')).toBeDefined();
+    await rendered.rerender({
+      rows: [email], selection,
+      filters: [{ dimension: 'inbox_state', values: ['inbox'] }]
+    });
+    expect(screen.getByText('Unread at provider')).toBeDefined();
+
+    await rendered.rerender({
+      rows: [email], selection,
+      filters: [
+        { dimension: 'inbox_state', values: ['inbox'] },
+        { dimension: 'read_state', values: ['unread'] }
+      ]
+    });
+    expect(screen.queryByText('In Inbox · Unread at provider')).toBeNull();
+    expect(screen.queryByText('Unread at provider')).toBeNull();
+  });
+
+  it('keeps provider status when filter chips contain multiple values', () => {
+    render(EverythingTable, {
+      rows: [row(1, { kind: 'email', inbox_state: 'inbox', read_state: 'unread' })],
+      selection: new ExploreSelectionState(),
+      filters: [
+        { dimension: 'inbox_state', values: ['inbox', 'unknown'] },
+        { dimension: 'read_state', values: ['unread', 'read'] }
+      ]
+    });
+
+    expect(screen.getByText('In Inbox · Unread at provider')).toBeDefined();
+  });
+
   it('owns headers, virtual rows, and named states in one focusable grid', () => {
     const { rerender } = render(EverythingTable, {
       rows: [row(1)], selection: new ExploreSelectionState()

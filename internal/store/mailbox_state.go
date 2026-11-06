@@ -90,13 +90,14 @@ func observeIMAPMailboxTx(q querier, sourceID, messageID int64, o IMAPMembership
 }
 
 // ObserveMicrosoftMailboxContext saves the fields returned by a delta or lookup
-// for one exact immutable provider ID. Missing isRead stays Unknown.
+// for one exact immutable provider ID. A missing isRead leaves a new row
+// Unknown, but does not erase a value learned from an earlier complete response.
 func (s *Store) ObserveMicrosoftMailboxContext(ctx context.Context, sourceID int64, providerID string, inbox, read *bool) error {
 	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
 		_, err := q.Exec(`INSERT INTO provider_mailbox_observations(message_id,source_id,provider_id,is_inbox,provider_read)
  SELECT m.id,m.source_id,m.source_message_id,?,? FROM messages m JOIN sources s ON s.id=m.source_id
  WHERE m.source_id=? AND m.source_message_id=? AND s.source_type='msmail'
- ON CONFLICT(message_id,mailbox,uidvalidity,uid) DO UPDATE SET source_id=excluded.source_id,provider_id=excluded.provider_id,is_inbox=excluded.is_inbox,provider_read=excluded.provider_read`, inbox, read, sourceID, providerID)
+ ON CONFLICT(message_id,mailbox,uidvalidity,uid) DO UPDATE SET source_id=excluded.source_id,provider_id=excluded.provider_id,is_inbox=excluded.is_inbox,provider_read=COALESCE(excluded.provider_read,provider_mailbox_observations.provider_read)`, inbox, read, sourceID, providerID)
 		return err
 	})
 }

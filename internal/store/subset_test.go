@@ -5427,6 +5427,62 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 	}, copiedIdentities(true), "--include-identity copies every confirmed address of an included source")
 }
 
+func TestCopySubsetPreservesProviderMailboxObservations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 3)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = source.Close() })
+	for _, statement := range []string{
+		`INSERT INTO sources (id, source_type, identifier) VALUES
+			(2, 'imap', 'imap://subset@example.test'),
+			(3, 'msmail', 'msmail://subset@example.test')`,
+		`UPDATE conversations SET source_id=2 WHERE id=2`,
+		`INSERT INTO conversations (id, source_id, conversation_type, title, message_count, participant_count)
+			VALUES (3, 3, 'email_thread', 'Thread 3', 1, 2)`,
+		`UPDATE messages SET source_id=2 WHERE id=2`,
+		`UPDATE messages SET source_id=3, conversation_id=3 WHERE id=3`,
+		`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags)
+			VALUES (2, 'INBOX', 7, 2, 2, '[]')`,
+		`INSERT INTO provider_mailbox_observations
+			(message_id, source_id, provider_id, mailbox, uidvalidity, uid, is_inbox, provider_read)
+			VALUES
+			(1, 1, 'msg_1', '', 0, 0, TRUE, FALSE),
+			(2, 2, 'msg_2', 'INBOX', 7, 2, TRUE, FALSE),
+			(3, 3, 'msg_3', '', 0, 0, FALSE, TRUE)`,
+	} {
+		_, err = source.DB().Exec(statement)
+		require.NoError(err, statement)
+	}
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 3, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	for _, tc := range []struct {
+		id                  int64
+		wantInbox, wantRead string
+	}{{1, "inbox", "unread"}, {2, "inbox", "unread"}, {3, "outside", "read"}} {
+		state, err := destination.ProviderMailboxStateContext(t.Context(), tc.id)
+		require.NoError(err)
+		assert.Equal(tc.wantInbox, state.InboxState)
+		assert.Equal(tc.wantRead, state.ReadState)
+	}
+
+	legacyPath := createTestSourceDB(t, t.TempDir(), 1)
+	legacy, err := sql.Open(sqliteutil.DriverName(), legacyPath+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = legacy.Exec("DROP TABLE provider_mailbox_observations")
+	require.NoError(err)
+	require.NoError(legacy.Close())
+	_, err = CopySubset(legacyPath, filepath.Join(t.TempDir(), "legacy-subset"), 1, false)
+	require.NoError(err, "legacy sources without provider observations remain copyable")
+}
+
 func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

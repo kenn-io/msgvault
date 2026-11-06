@@ -7,6 +7,7 @@
     EntryRow,
     ExploreCacheUnavailable,
     ExploreColumn,
+    ExploreFilter,
     ExploreScrollAnchor
   } from '../../explore/models';
   import { EXPLORE_COLUMNS } from '../../explore/labels';
@@ -21,6 +22,7 @@
   interface Props {
     rows: EntryRow[];
     selection?: ExploreSelectionState;
+    filters?: ExploreFilter[];
     columns?: ExploreColumn[];
     columnWidths?: Partial<Record<ExploreColumn, number>>;
     loading?: boolean;
@@ -47,6 +49,7 @@
   let {
     rows,
     selection,
+    filters = [],
     columns: providedColumns = DEFAULT_EXPLORE_COLUMNS,
     columnWidths = {},
     loading = false,
@@ -538,7 +541,8 @@
                       {/if}
                     {:else if column === 'title'}
                       <strong>{row.title || '(untitled)'}</strong>
-                      {#if providerMailboxStatus(row)}<span class="mailbox-status">{providerMailboxStatus(row)}</span>{/if}
+                      {@const mailboxStatus = providerMailboxStatus(row, filters)}
+                      {#if mailboxStatus}<span class="mailbox-status">{mailboxStatus}</span>{/if}
                     {:else if column === 'excerpt'}
                       {row.match.strongest_excerpt || row.preview}
                       {#if row.match.lexical_match_count !== undefined}

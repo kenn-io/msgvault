@@ -41,21 +41,22 @@ type fakeGraph struct {
 	categories map[string][]string // present entries are authoritative category snapshots
 	read       map[string]bool
 
-	withAttachment map[string]bool   // message IDs whose MIME carries a file
-	shifted        map[string]bool   // message IDs whose file moves to another part
-	attachmentBody map[string]string // message ID -> base64 file content
-	broken         map[string]bool   // message IDs whose MIME does not parse
-	goneOnValue    map[string]bool   // message IDs deleted just before their $value
-	badLookup      map[string]bool   // message IDs whose metadata lookup answers 400
-	badValue       map[string]bool   // message IDs whose $value answers 400
-	attachDir      string            // attachments directory; a fresh one when empty
-	throttle       bool              // answer the next $value with 429 once
-	denied         bool              // answer move and permanentDelete with 403
-	pageSize       int
-	stopAt         int    // fail the delta page at this skip offset, when non-zero
-	stopStatus     int    // HTTP status returned by stopAt
-	stopInDelta    bool   // stopAt applies to incremental pages instead of a walk
-	changeOnWalk   string // change this message's MIME when the next walk starts
+	withAttachment  map[string]bool   // message IDs whose MIME carries a file
+	shifted         map[string]bool   // message IDs whose file moves to another part
+	attachmentBody  map[string]string // message ID -> base64 file content
+	broken          map[string]bool   // message IDs whose MIME does not parse
+	goneOnValue     map[string]bool   // message IDs deleted just before their $value
+	badLookup       map[string]bool   // message IDs whose metadata lookup answers 400
+	badValue        map[string]bool   // message IDs whose $value answers 400
+	attachDir       string            // attachments directory; a fresh one when empty
+	throttle        bool              // answer the next $value with 429 once
+	denied          bool              // answer move and permanentDelete with 403
+	pageSize        int
+	stopAt          int    // fail the delta page at this skip offset, when non-zero
+	stopStatus      int    // HTTP status returned by stopAt
+	stopInDelta     bool   // stopAt applies to incremental pages instead of a walk
+	omitReadInDelta bool   // emulate legacy delta responses that did not select isRead
+	changeOnWalk    string // change this message's MIME when the next walk starts
 
 	mimeCalls     atomic.Int32
 	walkStarts    atomic.Int32 // delta requests with no token and no nextLink
@@ -292,7 +293,7 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 				if categories, ok := f.categories[id]; ok {
 					item["categories"] = categories
 				}
-				if read, ok := f.read[id]; ok {
+				if read, ok := f.read[id]; ok && !f.omitReadInDelta {
 					item["isRead"] = read
 				}
 				out = append(out, item)
@@ -1120,14 +1121,17 @@ func TestProviderMailboxUpgradeCategoryCursors(t *testing.T) {
 	requirements.NoError(st.ScopedToSync(initial.SourceID, syncID).CompleteSyncAndPreserveSourceCursorContext(t.Context(), syncID, initial.SourceID, legacy))
 	_, err = st.DB().Exec("DELETE FROM provider_mailbox_observations")
 	requirements.NoError(err)
+	f.read["old-mail"] = true
+	f.put("old-mail", "inbox") // pending on the legacy cursor after the replacement walk
+	f.omitReadInDelta = true
 	downloads := f.mimeCalls.Load()
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	assertions.Equal(downloads, f.mimeCalls.Load(), "metadata upgrade does not redownload MIME")
+	assertions.Equal(downloads+1, f.mimeCalls.Load(), "only the pending legacy delta refreshes MIME")
 	ids, err := st.MessageExistsBatch(initial.SourceID, []string{"old-mail"})
 	requirements.NoError(err)
 	got, err := st.ProviderMailboxStateContext(t.Context(), ids["old-mail"])
 	requirements.NoError(err)
 	assertions.Equal("inbox", got.InboxState)
-	assertions.Equal("unread", got.ReadState)
+	assertions.Equal("read", got.ReadState, "the legacy response must not erase isRead from the replacement walk")
 }

@@ -1,4 +1,4 @@
-import type { EntryRow } from "./models";
+import type { EntryRow, ExploreFilter } from "./models";
 
 export const MAILBOX_STATE_FILTERS = [
   {
@@ -29,14 +29,28 @@ export function mailboxStateLabel(dimension: string, value: string): string {
   );
 }
 
-export function providerMailboxStatus(row: EntryRow): string {
+export function providerMailboxStatus(
+  row: EntryRow,
+  filters: readonly ExploreFilter[] = [],
+): string {
   if (
     row.kind !== "email" ||
     !["", "gmail", "imap", "msmail"].includes(row.source_type)
   )
     return "";
-  return [
-    mailboxStateLabel("inbox_state", row.inbox_state ?? "unknown"),
-    mailboxStateLabel("read_state", row.read_state ?? "unknown"),
-  ].join(" · ");
+  const inboxState = row.inbox_state ?? "unknown";
+  const readState = row.read_state ?? "unknown";
+  const isSingleValueFilter = (dimension: string, value: string) => {
+    const filter = filters.find((candidate) => candidate.dimension === dimension);
+    return filter?.values.length === 1 && filter.values[0] === value;
+  };
+  const labels = [
+    !isSingleValueFilter("inbox_state", inboxState)
+      ? mailboxStateLabel("inbox_state", inboxState)
+      : "",
+    !isSingleValueFilter("read_state", readState)
+      ? mailboxStateLabel("read_state", readState)
+      : "",
+  ].filter(Boolean);
+  return labels.join(" · ");
 }

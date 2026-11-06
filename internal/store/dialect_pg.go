@@ -2356,11 +2356,11 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 // exclusiveLockTables is the table list BeginExclusive locks IN EXCLUSIVE
 // MODE. It mirrors every INSERT/UPDATE/DELETE the sync/import pipeline emits
 // (verified against internal/store/messages.go, internal/store/sync.go,
-// internal/store/account_identities.go, internal/store/migrations.go, and
-// internal/sync/*.go) PLUS every table reached by ON DELETE CASCADE when
-// RemoveSourceSerialized deletes a source. The list also includes the
-// identity candidate/evidence tables reached by explicit polymorphic endpoint
-// cleanup before the source cascade.
+// internal/store/account_identities.go, internal/store/mailbox_state.go,
+// internal/store/migrations.go, and internal/sync/*.go) PLUS every table
+// reached by ON DELETE CASCADE when RemoveSourceSerialized deletes a source.
+// The list also includes identity candidate/evidence tables reached by
+// explicit polymorphic endpoint cleanup before the source cascade.
 //
 // Invariant: every table with an ON DELETE CASCADE foreign-key chain to
 // sources(id) MUST appear here, otherwise the cascade DELETE can race a
@@ -2374,6 +2374,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     cascade-reachable from sources.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
+//   - provider_mailbox_observations: written by provider syncs and
+//     cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -2382,7 +2384,7 @@ var exclusiveLockTables = []string{
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
-	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"messages", "provider_mailbox_observations", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",

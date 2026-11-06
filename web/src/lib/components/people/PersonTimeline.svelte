@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EntryRow, ExploreCacheUnavailable } from '../../explore/models';
+  import type { EntryRow, ExploreCacheUnavailable, ExploreFilter } from '../../explore/models';
   import { untrack } from 'svelte';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import type { ExploreScrollAnchor } from '../../explore/models';
@@ -7,6 +7,7 @@
 
   interface Props {
     rows: EntryRow[];
+    filters?: ExploreFilter[];
     totalCount?: number;
     loading?: boolean;
     loadingMore?: boolean;
@@ -29,7 +30,7 @@
     onVisibleRows?: (keys: string[]) => void;
   }
 
-  let { rows, totalCount = undefined, loading = false, loadingMore = false, hasMore = false,
+  let { rows, filters = [], totalCount = undefined, loading = false, loadingMore = false, hasMore = false,
     generation = 0, error = '', pageError = '', unavailable = undefined, onOpen = undefined, onRetry = undefined,
     onLoadMore = undefined, onLoadThroughEnd = undefined, selection: providedSelection = undefined,
     focusedKey = null, inspectedKey = null, scrollAnchor = null, restoring = false,
@@ -42,7 +43,7 @@
     <h2>Activity</h2>
     <span>{totalCount === undefined ? 'Bounded timeline' : `${totalCount.toLocaleString()} items`}</span>
   </header>
-  <EverythingTable {rows} {selection} {loading} {loadingMore} {hasMore} {generation} {error}
+  <EverythingTable {rows} {filters} {selection} {loading} {loadingMore} {hasMore} {generation} {error}
     {pageError} {unavailable} {totalCount} {onOpen} {onRetry} {onLoadMore} {onLoadThroughEnd}
     {focusedKey} {inspectedKey} {scrollAnchor} {restoring} {onActiveKey} {onScrollAnchor} {onVisibleRows} />
 </section>

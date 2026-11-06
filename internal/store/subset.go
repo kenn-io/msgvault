@@ -999,6 +999,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy IMAP memberships: %w", err)
 		}
 	}
+	if present, err := sourceTableExists(tx, "provider_mailbox_observations"); err != nil {
+		return nil, fmt.Errorf("inspect provider mailbox observations: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "provider_mailbox_observations",
+			`message_id IN (SELECT id FROM selected_messages) AND source_id IN (SELECT id FROM sources)`); err != nil {
+			return nil, fmt.Errorf("copy provider mailbox observations: %w", err)
+		}
+	}
 
 	preservedLabels, err := preserveSubsetDraftEvidence(tx)
 	if err != nil {

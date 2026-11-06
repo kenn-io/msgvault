@@ -776,6 +776,7 @@
             {#if exploreState.current.presentation === 'timeline'}
               <PersonTimeline
                 rows={loader.rows}
+                filters={exploreState.current.filters}
                 {selection}
                 loading={loader.loading}
                 loadingMore={loader.loadingMore}
@@ -802,6 +803,7 @@
             {:else}
               <EverythingTable
                 rows={loader.rows}
+                filters={exploreState.current.filters}
                 selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}
                 columnWidths={exploreState.current.columnWidths}

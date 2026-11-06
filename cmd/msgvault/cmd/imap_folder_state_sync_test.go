@@ -579,6 +579,37 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 	}}, states)
 }
 
+func TestApplyIMAPMailboxDeltas_PreservesEmptyFlagsAsUnread(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://alice@example.com")
+	require.NoError(err)
+	seedIMAPMessage(t, st, src, "INBOX|1", "unknown-flags@example.com")
+	seedIMAPMessage(t, st, src, "INBOX|2", "empty-flags@example.com")
+	summary := completedIMAPSyncSummary(t, st, src)
+
+	err = applyIMAPMailboxDeltas(context.Background(), st, src, summary.SyncRunID, []imaplib.MailboxDelta{{
+		Mailbox: "INBOX",
+		State:   imaplib.FolderState{UIDValidity: 17, UIDNext: 3, KnownUIDs: []uint32{1, 2}},
+	}}, []imaplib.MembershipObservation{
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "INBOX|1", Flags: nil},
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 2, SourceMessageID: "INBOX|2", Flags: []string{}},
+	})
+	require.NoError(err)
+
+	for _, tc := range []struct {
+		id, wantRead string
+	}{{"INBOX|1", "unknown"}, {"INBOX|2", "unread"}} {
+		ids, err := st.MessageExistsBatch(src.ID, []string{tc.id})
+		require.NoError(err)
+		state, err := st.ProviderMailboxStateContext(t.Context(), ids[tc.id])
+		require.NoError(err)
+		assert.Equal("inbox", state.InboxState)
+		assert.Equal(tc.wantRead, state.ReadState)
+	}
+}
+
 // TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists is the durable half
 // of the expunge race. The sync treats a message that left the mailbox between
 // enumeration and fetch as handled, so the run finishes without errors and
