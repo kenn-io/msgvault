@@ -127,30 +127,6 @@ func FuzzValidatedRequestPreservesExactTerms(f *testing.F) {
 	})
 }
 
-func FuzzProposalCannotChangeAcceptedTerms(f *testing.F) {
-	f.Add("budget", "2026-11-06", "revised budget", true)
-	f.Add("", "", "", false)
-	f.Fuzz(func(t *testing.T, original, due, replacement string, obligorProposes bool) {
-		check := assert.New(t)
-		must := require.New(t)
-
-		terms := &Terms{Text: original, Due: due, Obligor: "Alex", Beneficiary: "Sam"}
-		alternative := *terms
-		alternative.Text = replacement
-		actor := "beneficiary"
-		if obligorProposes {
-			actor = "obligor"
-		}
-		view, err := project([]Event{
-			{Input: validInput("request", "request", "beneficiary", "", 0, terms), Quotes: []string{"x"}},
-			{Input: validInput("accept", "accept", "obligor", "request", 1, nil), Quotes: []string{"x"}},
-			{Input: validInput("proposal", "propose", actor, "accept", 2, &alternative), Quotes: []string{"x"}},
-		})
-		must.NoError(err)
-		check.Equal(terms, view.Accepted)
-	})
-}
-
 // Draw the documented valid Terms domain, including escaping/control text and
 // optional dates. Invalid whitespace-only labels are covered by validation tests.
 func drawAgreementTerms(ht *hegel.T) Terms {

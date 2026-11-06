@@ -356,6 +356,9 @@ func TestAgreementSourceAndRevisionFailuresLeaveHistoryUnchanged(t *testing.T) {
 			if failure == "changed" {
 				must.ErrorIs(err, kataevidence.ErrChanged)
 			}
+			if failure == "foreign-project" {
+				must.ErrorIs(err, kataissues.ErrOutsideProject)
+			}
 		})
 	}
 }

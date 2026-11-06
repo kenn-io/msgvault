@@ -27,7 +27,7 @@ func newKataAgreementCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writePersonAgendaJSON(cmd, view)
+			return writeJSONOutput(cmd, view)
 		},
 	}
 	var inputFile string
@@ -51,7 +51,7 @@ func newKataAgreementCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writePersonAgendaJSON(cmd, view)
+			return writeJSONOutput(cmd, view)
 		},
 	}
 	record.Flags().StringVar(&inputFile, "input", "-", "Reviewed event JSON file, or - for stdin")

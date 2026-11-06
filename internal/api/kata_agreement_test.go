@@ -60,6 +60,7 @@ func TestKataAgreementHTTP(t *testing.T) {
 	unlinked := serveKataIssue(server, path, `{"evidence":[]}`, nil)
 	check.Equal(http.StatusUnprocessableEntity, unlinked.Code)
 	check.Contains(unlinked.Body.String(), "agreement_evidence_unlinked")
-	oversize := serveKataIssue(server, path, strings.Repeat(" ", (512<<10)+1), nil)
+	valid := `{"id":"a","action":"accept","actor":"obligor","target":"r","expected_events":1,"reviewed":true,"evidence":[]}`
+	oversize := serveKataIssue(server, path, valid+strings.Repeat(" ", (512<<10)+1-len(valid)), nil)
 	check.Equal(http.StatusBadRequest, oversize.Code)
 }
