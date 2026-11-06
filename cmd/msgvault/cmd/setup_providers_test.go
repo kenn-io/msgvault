@@ -2047,6 +2047,8 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 }
 
 func TestPlanTextSearchLeavesPausedProviderDisabledWithoutBackend(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
 [vector]
 enabled = false
@@ -2057,12 +2059,12 @@ dimension = 4
 `)
 	cfg := fixture.load(t)
 	snapshot, err := config.ReadConfigFile(fixture.path)
-	require.NoError(t, err)
+	require.NoError(err)
 	lane := planTextSearch(cfg, setupDetection{resumeLocalText: true, backendUnavailable: "archive vector backend unavailable"})
-	assert.Equal(t, planActionPending, lane.Action)
-	assert.Equal(t, "archive vector backend unavailable", lane.Reason)
+	assert.Equal(planActionPending, lane.Action)
+	assert.Equal("archive vector backend unavailable", lane.Reason)
 	next, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
-	require.NoError(t, err)
-	assert.False(t, next.Vector.Enabled)
-	assert.Equal(t, cfg.Vector.Embeddings, next.Vector.Embeddings)
+	require.NoError(err)
+	assert.False(next.Vector.Enabled)
+	assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
 }
