@@ -58,7 +58,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		}
 		r := reboundReader{loggedReader: tx, dialect: s.dialect}
 		budget := calrecur.RequestReadBudget
-		decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
+		decisions, err := s.boundedMeetingLinkDecisions(ctx, r, memberID)
 		if err != nil {
 			return err
 		}
@@ -91,6 +91,15 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		_, err = tx.ExecContext(ctx, meetingDecisionUpsert, memberID, target.Ref.MessageID, target.Ref.Key, decision)
 		return err
 	})
+}
+
+// A saved choice must fit the record reader's automatic discovery bounds.
+func (s *Store) boundedMeetingLinkDecisions(ctx context.Context, r reboundReader, memberID int64) ([]meetingLinkDecision, error) {
+	budget := calrecur.RequestReadBudget
+	if _, err := s.memberAutomaticOccurrences(ctx, r, memberID, &budget); err != nil {
+		return nil, err
+	}
+	return readMeetingLinkDecisions(ctx, r, memberID)
 }
 
 func storedMeetingIdentity(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (meetingIdentity, error) {

@@ -486,11 +486,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		}
 		out = append(out, o)
 	}
-	key, err := memberLinkKey(ctx, r, memberID)
-	if err != nil {
-		return nil, err
-	}
-	matches, err := s.automaticMeetingOccurrences(ctx, r, key, budget)
+	matches, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -498,6 +494,14 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		return splits[o.Identity]
 	})
 	return uniqueMeetingOccurrences(out), nil
+}
+
+func (s *Store) memberAutomaticOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+	key, err := memberLinkKey(ctx, r, memberID)
+	if err != nil {
+		return nil, err
+	}
+	return s.automaticMeetingOccurrences(ctx, r, key, budget)
 }
 
 func (s *Store) meetingReader() reboundReader {
