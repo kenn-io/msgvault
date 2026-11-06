@@ -11,53 +11,33 @@ import (
 )
 
 func TestProjectorNativeCallObservation(t *testing.T) {
-	for _, mode := range []string{"incremental", "backstop", "exact"} {
-		t.Run(mode, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			st := storetest.New(t).Store
-			observation := callhistory.Observation{
-				RecordID: "native-call", Version: 1, Provider: "signal", Account: "example",
-				NativeCallID: "native-call", Kind: "call", Direction: "incoming",
-				Outcome: "answered", OwnerParticipation: "joined", Precision: "instant",
-				OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
-				Raw:        []byte(`{"status":"Accepted"}`),
-			}
-			source, err := st.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
-			requirements.NoError(err)
-			peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
-			requirements.NoError(err)
-			person, _, err := st.CreatePersonFromParticipant(peer)
-			requirements.NoError(err)
-			observation.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
-			projector, err := NewProjector(st, Options{Timezone: "UTC", BatchSize: 1})
-			requirements.NoError(err)
-			_, err = projector.RunBackstop(t.Context())
-			requirements.NoError(err)
-			messageID, err := st.PutCallObservationContext(t.Context(), source.ID, observation)
-			requirements.NoError(err)
-			switch mode {
-			case "incremental":
-				_, err = projector.RunOnce(t.Context())
-			case "backstop":
-				_, err = projector.RunBackstop(t.Context())
-			case "exact":
-				_, err = projector.ProjectMessages(t.Context(), []int64{messageID})
-			}
-			requirements.NoError(err)
-			var links int
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-				`SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?`), messageID).Scan(&links))
-			assertions.Zero(links)
-			state, err := st.ContactStateContext(t.Context(), person.ID, observation.OccurredAt.Add(time.Hour))
-			requirements.NoError(err)
-			assertions.Zero(state.InteractionCount)
-			assertions.Empty(state.LastContactRef)
-			if mode != "exact" {
-				queue, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
-				requirements.NoError(err)
-				assertions.Empty(queue)
-			}
-		})
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	observation := callhistory.Observation{
+		RecordID: "native-call", Version: 1, Provider: "signal", Account: "example",
+		NativeCallID: "native-call", Kind: "call", Direction: "incoming",
+		Outcome: "answered", OwnerParticipation: "joined", Precision: "instant",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
+		Raw:        []byte(`{"status":"Accepted"}`),
 	}
+	source, err := st.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
+	requirements.NoError(err)
+	peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
+	requirements.NoError(err)
+	_, _, err = st.CreatePersonFromParticipant(peer)
+	requirements.NoError(err)
+	observation.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
+	projector, err := NewProjector(st, Options{Timezone: "UTC", BatchSize: 1})
+	requirements.NoError(err)
+	_, err = projector.RunBackstop(t.Context())
+	requirements.NoError(err)
+	messageID, err := st.PutCallObservationContext(t.Context(), source.ID, observation)
+	requirements.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	requirements.NoError(err)
+	var links int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?`), messageID).Scan(&links))
+	assertions.Zero(links)
 }

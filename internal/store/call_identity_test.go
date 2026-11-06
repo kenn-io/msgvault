@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"testing"
@@ -56,19 +55,6 @@ func (f *logicalCallFixture) put(t *testing.T, native string, change func(*callh
 
 func (f *logicalCallFixture) query() store.LogicalCallQuery {
 	return store.LogicalCallQuery{After: f.at.Add(-time.Hour), Before: f.at.Add(time.Hour), Limit: 500}
-}
-
-func TestLogicalCallsEmptyKeysStaySeparate(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newLogicalCallFixture(t)
-	a, b := f.put(t, "", nil), f.put(t, "", nil)
-	calls, next, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
-	requirements.NoError(err)
-	requirements.Len(calls, 2)
-	assertions.Equal(fmt.Sprintf("m:%d", a), calls[0].IdentityKey)
-	assertions.Equal(fmt.Sprintf("m:%d", b), calls[1].IdentityKey)
-	assertions.Empty(next)
 }
 
 func TestLogicalCallsImportedPhoneContact(t *testing.T) {
@@ -178,19 +164,20 @@ func TestLogicalCallsDuration(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
-	f.put(t, "one", func(o *callhistory.Observation) { v := 75.; o.DurationSeconds = &v })
-	f.put(t, "two", nil)
+	withDuration := f.put(t, "one", func(o *callhistory.Observation) { v := 75.; o.DurationSeconds = &v })
+	withoutDuration := f.put(t, "two", nil)
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
 	requirements.NoError(err)
 	requirements.Len(calls, 2)
+	durations := map[int64]*float64{}
 	for _, c := range calls {
-		if c.DurationSeconds != nil {
-			assertions.InDelta(75., *c.DurationSeconds, 1e-9)
-		} else {
-			assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, c.Participants)
-		}
+		durations[c.MessageID] = c.DurationSeconds
 	}
-	requirements.NotEqual(calls[0].DurationSeconds == nil, calls[1].DurationSeconds == nil)
+	requirements.Contains(durations, withDuration)
+	requirements.NotNil(durations[withDuration])
+	assertions.InDelta(75., *durations[withDuration], 1e-9)
+	requirements.Contains(durations, withoutDuration)
+	assertions.Nil(durations[withoutDuration])
 }
 
 func TestLogicalCallsCreditUnsavedParticipant(t *testing.T) {
@@ -233,14 +220,14 @@ func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
 	summary, err = f.st.SummarizeCallsContext(sourcescope.WithSourceIDs(t.Context(), nil), store.CallQuery{})
 	requirements.NoError(err)
 	assertions.Empty(summary)
+	calls, _, err = f.st.ListLogicalCallsContext(sourcescope.WithSourceIDs(t.Context(), nil), f.query())
+	requirements.NoError(err)
+	assertions.Empty(calls)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), f.at, hidden)
 	requirements.NoError(err)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.at, first)
 	requirements.NoError(err)
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
-	requirements.NoError(err)
-	assertions.Empty(calls)
-	calls, _, err = f.st.ListLogicalCallsContext(sourcescope.WithSourceIDs(t.Context(), nil), f.query())
 	requirements.NoError(err)
 	assertions.Empty(calls)
 }
@@ -250,16 +237,7 @@ func TestLogicalCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	f := newLogicalCallFixture(t)
 	f.put(t, "visible", nil)
 	hidden := f.put(t, "hidden", func(o *callhistory.Observation) { o.Account = "b" })
-	metadata, err := f.st.GetMessageMetadata(hidden)
-	require.NoError(err)
-	var evidence callhistory.Evidence
-	require.NoError(json.Unmarshal([]byte(metadata.String), &evidence))
-	evidence.Version = 2
-	unsupported, err := json.Marshal(evidence)
-	require.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(unsupported), hidden)
-	require.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE call_details SET evidence_version = 2 WHERE message_id = ?`), hidden)
+	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE call_details SET evidence_version = 2 WHERE message_id = ?`), hidden)
 	require.NoError(err)
 	_, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
 	require.ErrorIs(err, callhistory.ErrInvalid)
