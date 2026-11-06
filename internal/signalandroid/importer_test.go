@@ -181,6 +181,48 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 	}
 }
 
+func TestImportDirectChatRecipients(t *testing.T) {
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	st := testutil.NewTestStore(t)
+	runImport(t, st, dir, t.TempDir())
+
+	for _, tc := range []struct {
+		role string
+		want []string
+	}{
+		{"to", []string{
+			"signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TReply),
+			"signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TEditOld),
+		}},
+		{"from", []string{
+			"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1),
+			"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TQuoteDraft),
+		}},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			rows, err := st.DB().Query(st.Rebind(`
+				SELECT m.source_message_id FROM messages m
+				JOIN message_recipients mr ON mr.message_id = m.id
+				JOIN participants p ON p.id = mr.participant_id
+				JOIN conversations c ON c.id = m.conversation_id
+				WHERE mr.recipient_type = ? AND p.phone_number = ? AND c.source_conversation_id = ?`),
+				tc.role, signalfixture.AlicePhone, "signal:aci:"+signalfixture.AliceACI)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var got []string
+			for rows.Next() {
+				var id string
+				require.NoError(rows.Scan(&id))
+				got = append(got, id)
+			}
+			require.NoError(rows.Err())
+			assert.ElementsMatch(tc.want, got)
+		})
+	}
+}
+
 func TestImportSenderSharedName(t *testing.T) {
 	for _, tc := range []struct{ name, given, family, system, profile, nickname, want string }{
 		{name: "given only", given: "Bob", want: "Bob"},

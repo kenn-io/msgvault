@@ -388,9 +388,11 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 	r.imp.progress.OnChatStart(sourceConvID, progressTitle, 0)
 
 	members := []int64{r.selfRecipientID}
+	membersRead := true
 	if convType == "group_chat" {
 		groupMembers, err := fetchGroupMembers(ctx, r.db, r.schema, chat.GroupID)
 		if err != nil {
+			membersRead = false
 			r.summary.Errors++
 			r.imp.progress.OnError(fmt.Errorf("group members of %s: %w", sourceConvID, err))
 		}
@@ -402,6 +404,9 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 		if pid, ok, _ := r.participant(ctx, member); ok {
 			_ = r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, pid, "member")
 		}
+	}
+	if !membersRead {
+		members = nil
 	}
 
 	var chatAdded int64
@@ -424,7 +429,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 			break
 		}
 		afterRowID = messages[len(messages)-1].RowID
-		added, err := r.importBatch(ctx, conversationID, sourceConvID, messages, conversation)
+		added, err := r.importBatch(ctx, conversationID, sourceConvID, messages, conversation, members)
 		if err != nil {
 			return err
 		}
@@ -485,7 +490,7 @@ type pendingMessage struct {
 	senderID int64
 }
 
-func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvID string, messages []sigMessage, conversation store.ConversationPersistData) (int64, error) {
+func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvID string, messages []sigMessage, conversation store.ConversationPersistData, members []int64) (int64, error) {
 	var pending []pendingMessage
 	var ids []string
 	var lookupRows []int64
@@ -558,7 +563,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
 		}
-		messageID, err := r.writeMessage(ctx, conversationID, archivedID, conversation, p, rowAttachments,
+		messageID, err := r.writeMessage(ctx, conversationID, archivedID, conversation, members, p, rowAttachments,
 			reactionsRead, rowReactions, mentions[p.row.RowID])
 		if err != nil {
 			if ctx.Err() != nil {
@@ -615,7 +620,7 @@ func keepArchivedID(existing map[string]int64, p *pendingMessage) (int64, bool) 
 }
 
 func (r *run) writeMessage(
-	ctx context.Context, conversationID, archivedID int64, conversation store.ConversationPersistData, p pendingMessage,
+	ctx context.Context, conversationID, archivedID int64, conversation store.ConversationPersistData, members []int64, p pendingMessage,
 	attachments []sigAttachment, reactionsRead bool, reactions []sigReaction, mentions []sigMention,
 ) (int64, error) {
 	m := p.row
@@ -726,6 +731,32 @@ func (r *run) writeMessage(
 		RawMIME: raw, RawFormat: rawFormat, Edited: m.OriginalRowID.Valid,
 		Attachments: writes, PreserveLabels: true,
 		FTS: &store.FTSDoc{Body: body, FromAddr: senderAddr},
+	}
+	if senderID.Valid {
+		data.Recipients = append(data.Recipients, store.RecipientSet{
+			Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{r.displayName(p.senderID)},
+		})
+	}
+	to := store.RecipientSet{Type: "to"}
+	seen := make(map[int64]bool)
+	if senderID.Valid {
+		seen[senderID.Int64] = true
+	}
+	for _, member := range members {
+		pid, ok, _ := r.participant(ctx, member)
+		if !ok {
+			// Preserve archived recipients when the backup's set is incomplete.
+			to.ParticipantIDs = nil
+			break
+		}
+		if !seen[pid] {
+			seen[pid] = true
+			to.ParticipantIDs = append(to.ParticipantIDs, pid)
+			to.DisplayNames = append(to.DisplayNames, r.displayName(member))
+		}
+	}
+	if len(to.ParticipantIDs) > 0 {
+		data.Recipients = append(data.Recipients, to)
 	}
 	parentID, err := r.quotedMessageID(ctx, p.chatID, conversation.ConversationType == "direct_chat", m)
 	if err != nil {
