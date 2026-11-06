@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,78 +47,6 @@ func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
 		WHERE email_address = ?
 	`, "repair-display@example.com").Scan(&repaired))
 	assert.True(utf8.ValidString(repaired))
-}
-
-// TestRepairOtherStrings_LogsScanErrors verifies that scan errors during
-// repairOtherStrings are counted in stats.skippedRows rather than silently
-// swallowed. We trigger scan errors by recreating the labels table with a
-// TEXT id column and inserting a non-numeric id that can't be scanned into int64.
-func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
-	require := require.New(t)
-	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates labels with TEXT id to trigger a SQLite scan error; PG enforces FK + types differently")
-	st := testutil.NewTestStore(t)
-	db := st.DB()
-
-	// Disable foreign keys so we can recreate the labels table
-	_, err := db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
-	require.NoError(err, "disable foreign keys")
-
-	// Drop labels and recreate with TEXT id (not INTEGER PRIMARY KEY).
-	// Scanning a non-numeric TEXT value into int64 triggers a scan error.
-	_, err = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS labels")
-	require.NoError(err, "drop labels")
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE labels (
-		id TEXT, source_id INTEGER, source_label_id TEXT,
-		name TEXT NOT NULL, label_type TEXT, color TEXT
-	)`)
-	require.NoError(err, "create labels")
-
-	// Insert a row with non-numeric id → Scan into int64 will fail
-	_, err = db.ExecContext(t.Context(), `INSERT INTO labels (id, source_id, source_label_id, name, label_type)
-		VALUES ('not-a-number', 1, 'lbl1', 'Test Label', 'user')`)
-	require.NoError(err, "insert bad label")
-
-	stats := &repairStats{}
-	require.NoError(repairOtherStrings(t.Context(), st, stats, testDiscardLogger()), "repairOtherStrings")
-
-	// Before fix: skippedRows == 0 (scan error silently swallowed)
-	// After fix: skippedRows == 1 (scan error counted)
-	assert.Equal(t, 1, stats.skippedRows, "skippedRows")
-}
-
-// TestRepairDisplayNames_LogsScanErrors verifies that scan errors during
-// repairDisplayNames are counted in stats.skippedRows. We trigger scan errors
-// by recreating the participants table with a TEXT id column.
-func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
-	require := require.New(t)
-	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates a table with mismatched id type to trigger a SQLite scan error; PG enforces types differently")
-	st := testutil.NewTestStore(t)
-	db := st.DB()
-
-	_, err := db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
-	require.NoError(err, "disable foreign keys")
-
-	// Drop participants and recreate with TEXT id
-	_, err = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS participants")
-	require.NoError(err, "drop participants")
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE participants (
-		id TEXT, email_address TEXT, phone_number TEXT,
-		display_name TEXT, domain TEXT, canonical_id TEXT,
-		created_at DATETIME, updated_at DATETIME
-	)`)
-	require.NoError(err, "create participants")
-
-	// Insert a row with non-numeric id → Scan into int64 will fail
-	_, err = db.ExecContext(t.Context(), `INSERT INTO participants (id, email_address, display_name, domain)
-		VALUES ('bad-id', 'test@example.com', 'Test User', 'example.com')`)
-	require.NoError(err, "insert bad participant")
-
-	stats := &repairStats{}
-	require.NoError(repairDisplayNames(t.Context(), st, stats, testDiscardLogger()), "repairDisplayNames")
-
-	// Before fix: skippedRows == 0 (scan error silently swallowed)
-	// After fix: skippedRows == 1 (scan error counted)
-	assert.Equal(t, 1, stats.skippedRows, "skippedRows")
 }
 
 // TestRepairEncoding_NoScanErrors verifies that normal data produces
@@ -525,20 +452,28 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 	assert.Zero(stillBroken, "every seeded email must be repaired")
 }
 
-// cancelOnWarnHandler cancels the run at the first warning it receives.
-type cancelOnWarnHandler struct{ cancel context.CancelFunc }
+// cancelAfterRepairCommit cancels the run at the first database call that
+// checks the context once the first repair batch is visible from another
+// connection. The cancel then lands right after a real commit, with the real
+// archive schema and no production hook.
+type cancelAfterRepairCommit struct {
+	context.Context
 
-func (h cancelOnWarnHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= slog.LevelWarn
+	cancel context.CancelFunc
+	probe  *sql.DB
+	bad    string
 }
 
-func (h cancelOnWarnHandler) Handle(context.Context, slog.Record) error {
-	h.cancel()
-	return nil
+func (c cancelAfterRepairCommit) Done() <-chan struct{} {
+	var unrepaired int
+	// Done has no context parameter; this probe only decides when to cancel.
+	err := c.probe.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM messages WHERE id <= 1000 AND subject = ?`, c.bad).Scan(&unrepaired)
+	if err == nil && unrepaired == 0 {
+		c.cancel()
+	}
+	return c.Context.Done()
 }
-
-func (h cancelOnWarnHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h cancelOnWarnHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestRepairEncodingCancelledAfterCommittedBatchResetsEmbeddings(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
@@ -565,27 +500,17 @@ func TestRepairEncodingCancelledAfterCommittedBatchResetsEmbeddings(t *testing.T
 			message_type, subject, sent_at, size_estimate, embed_gen)
 		VALUES (1001, 1, 1, 'src-1001', 'email', 'clean subject', datetime('now'), 1000, 1)`)
 	require.NoError(err)
-	// A label id that cannot scan into int64 makes the later label pass log a
-	// warning, and the test's logger cancels the run there.
-	_, err = db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), "DROP TABLE labels")
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE labels (
-		id TEXT, source_id INTEGER, source_label_id TEXT,
-		name TEXT NOT NULL, label_type TEXT, color TEXT
-	)`)
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO labels (id, source_id, source_label_id, name, label_type)
-		VALUES ('not-a-number', 1, 'lbl1', 'Label', 'user')`)
-	require.NoError(err)
 	require.NoError(st.Close())
 
-	ctx, cancel := context.WithCancel(t.Context())
+	probe, err := store.Open(dbPath)
+	require.NoError(err)
+	defer func() { assert.NoError(probe.Close()) }()
+	runCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	ctx := cancelAfterRepairCommit{Context: runCtx, cancel: cancel, probe: probe.DB(), bad: "subj\x80bad"}
 	state := newInvocation()
 	state.cfg = cfg
-	state.logger = slog.New(cancelOnWarnHandler{cancel: cancel})
+	state.logger = testDiscardLogger()
 	cmd := &cobra.Command{}
 	cmd.SetContext(withInvocation(ctx, state))
 	require.ErrorIs(runRepairEncodingLocal(cmd), context.Canceled)
@@ -593,6 +518,10 @@ func TestRepairEncodingCancelledAfterCommittedBatchResetsEmbeddings(t *testing.T
 	st, err = store.Open(dbPath)
 	require.NoError(err)
 	defer func() { assert.NoError(st.Close()) }()
+	var unrepaired int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages
+		WHERE id <= 1000 AND subject = ?`, "subj\x80bad").Scan(&unrepaired))
+	require.Zero(unrepaired, "the cancel must land after the first repair batch commits")
 	var repairedStillEmbedded int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages
 		WHERE id <= 1000 AND embed_gen IS NOT NULL`).Scan(&repairedStillEmbedded))

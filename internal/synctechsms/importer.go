@@ -45,7 +45,15 @@ func (i *Importer) ImportPath(ctx context.Context, path string) (ImportSummary, 
 	scoped.store = i.store.ScopedToSync(src.ID, syncID)
 	i = &scoped
 	summary, importErr := i.ImportPathIntoSource(ctx, src.ID, path)
+	// Messages written before a failure or cancel stay committed, so their
+	// conversations need current statistics either way.
+	refreshCtx := context.WithoutCancel(ctx)
 	if importErr != nil {
+		if len(summary.MessageIDs) > 0 {
+			if err := i.store.RecomputeConversationStatsContext(refreshCtx, src.ID); err != nil {
+				importErr = errors.Join(importErr, fmt.Errorf("recompute conversation stats: %w", err))
+			}
+		}
 		_ = i.store.FailSync(syncID, importErr.Error())
 		return summary, importErr
 	}
@@ -57,7 +65,7 @@ func (i *Importer) ImportPath(ctx context.Context, path string) (ImportSummary, 
 		_ = i.store.FailSync(syncID, err.Error())
 		return summary, fmt.Errorf("update sync checkpoint: %w", err)
 	}
-	if err := i.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
+	if err := i.store.RecomputeConversationStatsContext(refreshCtx, src.ID); err != nil {
 		_ = i.store.FailSync(syncID, err.Error())
 		return summary, fmt.Errorf("recompute conversation stats: %w", err)
 	}

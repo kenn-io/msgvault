@@ -541,17 +541,18 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		imp.progress.OnChatComplete(chat.RawString, chatAdded)
 	}
+	// Update denormalised conversation counts for the WhatsApp source. Chats
+	// written before a cancel stay committed, so refresh them even when the
+	// import is stopping.
+	if err := imp.store.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
+		imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
+	}
 	// A cancel during the last chat's queries or writes ends its loops as
 	// errors, past the cancellation checks above. Report it so the run is
 	// not recorded as completed.
 	if err := ctx.Err(); err != nil {
 		syncErr = err
 		return nil, err
-	}
-
-	// Update denormalised conversation counts for the WhatsApp source.
-	if err := imp.store.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
-		imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
 	}
 
 	summary.Duration = time.Since(startTime)

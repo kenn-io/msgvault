@@ -12,7 +12,8 @@ import (
 // A cancel after the last message commits fails that message's remaining
 // writes and ends the last chat's loops. The import must still report the
 // cancellation and mark its sync run failed, since the cancelled writes left
-// that message without its body and search entry.
+// that message without its body and search entry. The committed messages
+// still need current conversation statistics.
 // Not parallel: it replaces the process-wide slog default and SQL log options.
 func TestImportCancelAfterLastMessageCommitFailsSync(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
@@ -39,4 +40,9 @@ func TestImportCancelAfterLastMessageCommitFailsSync(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(),
 		`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 	assert.NotEqual("completed", status, "an interrupted import must not be recorded as completed")
+	var counted, stored int
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		`SELECT COALESCE(SUM(message_count), 0) FROM conversations`).Scan(&counted))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&stored))
+	assert.Equal(stored, counted, "conversation message counts must cover every committed message")
 }

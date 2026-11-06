@@ -139,6 +139,9 @@ func runEMLPostImportMigrations(
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is required")
 	}
+	// The import committed. A stop request that lands now must not skip
+	// recording the owner or the migration that follows.
+	ctx = context.WithoutCancel(ctx)
 	// Establish the source identifier before retrying the legacy migration,
 	// including after a partial import. Otherwise migrated legacy identities
 	// can suppress the source's own identifier on the next resume.

@@ -240,6 +240,15 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		summary.WasResumed = false
 	}
 
+	// Threads written before a failure or cancel stay committed, so refresh
+	// their conversation statistics on every return from here, even when the
+	// import is stopping. This runs before the sync run is finalized.
+	defer func() {
+		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
+			logger.Warn("fbmessenger: recompute stats", "err", err)
+		}
+	}()
+
 	for threadIdx, td := range threads {
 		if threadIdx < startThreadIdx {
 			continue
@@ -306,9 +315,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 	}
 
-	if err := st.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
-		logger.Warn("fbmessenger: recompute stats", "err", err)
-	}
 	summary.Duration = time.Since(start)
 	return summary, nil
 }
