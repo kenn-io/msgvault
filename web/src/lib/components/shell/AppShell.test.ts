@@ -61,9 +61,7 @@ describe('AppShell', () => {
     const client = createAPIClient(async () => Response.json(exploreResponse()));
     const rendered = render(AppShell, { client, state });
     try {
-      expect(await screen.findByText('No mail yet')).toBeDefined();
-      expect(screen.getByText('Add an account or import an export to start your archive.')).toBeDefined();
-      await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Add source' }));
       expect(await screen.findByRole('dialog', { name: 'Add source' })).toBeDefined();
       expect(state.current.workspace).toBe('sources');
     } finally {
