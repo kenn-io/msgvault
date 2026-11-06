@@ -204,7 +204,8 @@ func meetingOccurrenceMaster(ctx context.Context, r reboundReader, row CalendarE
 				row.Event.Status = meetingCancelledStatus
 			}
 			if row.Event.Original != nil {
-				row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
+				master := masters[0]
+				row, ref = master, OccurrenceRef{MessageID: master.MessageID, Key: row.Event.Original.Key()}
 			}
 		}
 	}
