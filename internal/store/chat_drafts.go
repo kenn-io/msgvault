@@ -193,15 +193,7 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
-		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE line_reply_attempts SET body='',quote_token='',source_conversation_id=''
-			WHERE draft_id=? AND state IN (?,?)`, draftID, LineReplyProviderRejected, LineReplyRemoteUnknownExpired)
-		if err != nil {
-			return fmt.Errorf("clear deleted LINE draft payload: %w", err)
-		}
-		return nil
+		return chatDraftWriteResult(ctx, tx, draftID, result, err)
 	})
 }
 

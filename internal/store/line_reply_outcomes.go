@@ -73,10 +73,8 @@ func (s *Store) changeLineReply(ctx context.Context, id string, change func(*log
 		if err := change(tx, &current); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state=?,admitted_at=?,retry_until=?,next_retry_at=?,status_code=?,request_id=?,remote_message_id=?,remote_quote_token=? WHERE draft_id=?`,
-			current.State, current.AdmittedAt, current.RetryUntil, current.NextRetryAt, current.StatusCode, current.RequestID, current.RemoteMessageID, current.RemoteQuoteToken, id)
-		if err != nil {
-			return fmt.Errorf("record LINE reply state: %w", err)
+		if err := writeLineReplyTx(ctx, tx, &current); err != nil {
+			return err
 		}
 		a = current
 		return nil
@@ -85,6 +83,21 @@ func (s *Store) changeLineReply(ctx context.Context, id string, change func(*log
 		return committed, err
 	}
 	return a, err
+}
+
+// writeLineReplyTx records a state change. A state that can no longer send
+// drops its unsent payload; acceptance evidence keeps it for the archive.
+func writeLineReplyTx(ctx context.Context, tx *loggedTx, a *LineReplyAttempt) error {
+	if a.State == LineReplyProviderRejected || a.State == LineReplyRemoteUnknownExpired {
+		a.Body, a.QuoteToken, a.SourceConversationID = "", "", ""
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state=?,admitted_at=?,retry_until=?,next_retry_at=?,status_code=?,request_id=?,remote_message_id=?,remote_quote_token=?,
+ body=?,quote_token=?,source_conversation_id=? WHERE draft_id=?`, a.State, a.AdmittedAt, a.RetryUntil, a.NextRetryAt, a.StatusCode, a.RequestID, a.RemoteMessageID, a.RemoteQuoteToken,
+		a.Body, a.QuoteToken, a.SourceConversationID, a.DraftID)
+	if err != nil {
+		return fmt.Errorf("record LINE reply state: %w", err)
+	}
+	return nil
 }
 
 // StartLineReplyRequestContext commits possible submission before provider I/O.
