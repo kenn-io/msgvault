@@ -549,6 +549,7 @@
     exploreState.commitSearchIn('everything', query, mode);
   }
   let paletteOpen = $state(false);
+  let paletteQuery = $state('');
   let keyboardHelpOpen = $state(false);
   let keyboardHelpReturnFocus: HTMLElement | undefined;
   let keyboardHelpScopeCleanup: (() => void) | undefined;
@@ -720,7 +721,7 @@
     }
   }
   function syncEditableShortcutScope(target: EventTarget | null): void {
-    const focused = editableTarget(target);
+    const focused = editableTarget(target) && !keyboardHelpOpen;
     if (focused && appShortcuts.activeScope() === 'everything-editable') return;
     if (!focused && !editableScopeCleanup) return;
     editableScopeCleanup?.();
@@ -980,7 +981,10 @@
     'reverse-sort': fixedSortNotice,
     'open-keyboard-help': openKeyboardHelp,
     'open-command-palette': (event) => {
-      if (!editableTarget(event?.target ?? null)) paletteOpen = true;
+      if (!editableTarget(event?.target ?? null)) {
+        paletteQuery = '';
+        paletteOpen = true;
+      }
     },
   };
   const groupingCommands = $derived(
@@ -1061,6 +1065,11 @@
     keyboardHelpReturnFocus = undefined;
     target?.focus();
   }
+  async function openCommandsFromHelp(query = ''): Promise<void> {
+    await closeKeyboardHelp();
+    paletteQuery = query;
+    paletteOpen = true;
+  }
   function openRow(row: EntryRow): void {
     // Single-click selects AND opens; re-opening the already-open row must
     // not push a duplicate history entry.
@@ -1085,7 +1094,20 @@
   }
   $effect(() => {
     keyboardHelpScopeCleanup?.();
-    keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
+    if (!keyboardHelpOpen) {
+      keyboardHelpScopeCleanup = undefined;
+      return;
+    }
+    const scope = 'everything-keyboard-help';
+    const popScope = appShortcuts.pushScope(scope);
+    const palette = commandRegistry.find(({ id }) => id === 'open-command-palette')!;
+    const unregister = palette.combos.map(combo => appShortcuts.register(combo, () => {
+      void openCommandsFromHelp();
+    }, { scope }));
+    keyboardHelpScopeCleanup = () => {
+      unregister.forEach(remove => remove());
+      popScope();
+    };
   });
   // AppShell owns the People controller and opens the URL target on initial
   // load and Back/Forward navigation.
@@ -1583,13 +1605,15 @@
 {/if}
 
 
-<CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
+<CommandPalette bind:open={paletteOpen} commands={paletteCommands} initialQuery={paletteQuery} ariaLabel="Messages commands" onrun={runPalette} />
 
 {#if keyboardHelpOpen}
   <KeyboardHelp
     commands={commandRegistry}
     onclose={() => void closeKeyboardHelp()}
-    onOpenCommands={() => { void closeKeyboardHelp().then(() => { paletteOpen = true; }); }}
+    onOpenCommands={(query) => {
+      void openCommandsFromHelp(query);
+    }}
   />
 {/if}
 

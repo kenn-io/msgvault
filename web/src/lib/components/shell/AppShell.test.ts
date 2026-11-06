@@ -145,6 +145,32 @@ describe('AppShell', () => {
   }
 
 
+  it('carries the Help search into the command palette', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' }), { target: { value: 'sources' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('sources');
+    rendered.unmount(); state.destroy();
+  });
+
+  it('opens the command palette with Ctrl K while typing in Help', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    const search = screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' });
+    await fireEvent.input(search, { target: { value: 'shift' } });
+    await fireEvent.keyDown(search, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull();
+    rendered.unmount(); state.destroy();
+  });
+
   it.each([
     { filtered: false, direct: false }, { filtered: true, direct: false }, { filtered: false, direct: true }
   ])('continues deep Messages restoration after closing Past runs with a later page pending, filtered=$filtered direct=$direct', async ({ filtered, direct }) => {
