@@ -58,6 +58,9 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, OperationHistoryReader: history, Logger: testLogger()})
 				defer func() { _ = srv.Shutdown(context.Background()) }()
 				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
+				if behavior == "request lifetime" {
+					controller.builtin.Store(true)
+				}
 				if behavior == "installation failure" {
 					controller.failurePhase = "downloading"
 				}
