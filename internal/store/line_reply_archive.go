@@ -134,7 +134,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_drafts WHERE draft_id=? AND revision=?`, a.DraftID, a.Revision); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='sent',message_id=? WHERE draft_id=? AND state='remote_accepted' AND remote_message_id=?`, messageID, a.DraftID, a.RemoteMessageID)
+		result, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='sent',message_id=?,body='',quote_token='',remote_quote_token='',source_conversation_id='' WHERE draft_id=? AND state='remote_accepted' AND remote_message_id=?`, messageID, a.DraftID, a.RemoteMessageID)
 		if err != nil {
 			return err
 		}
@@ -156,6 +156,9 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		// The transaction may have rolled back at COMMIT. Only a fresh read
 		// can prove that a local message ID and the sent receipt are durable.
 		a.State, a.MessageID = LineReplyRemoteAccepted, 0
+	}
+	if err == nil {
+		a.Body, a.QuoteToken, a.RemoteQuoteToken, a.SourceConversationID = "", "", "", ""
 	}
 	return a, err
 }

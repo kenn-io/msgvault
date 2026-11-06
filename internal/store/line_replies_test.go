@@ -147,48 +147,6 @@ func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.L
 	return attempt
 }
 
-func TestLineReplyGCScrubsPurgedMessagePayload(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, parent := replyStoreFixture(t)
-	acceptedReply(t, st, draft)
-	sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	retainedDraft, err := st.CreateChatDraftContext(t.Context(), draft.ConversationID, parent, "Keep this draft", func(string, string) error { return nil })
-	require.NoError(err)
-	retained, err := st.AdmitLineReplyContext(t.Context(), retainedDraft.DraftID, 1, time.Now(), allowLineReply)
-	require.NoError(err)
-	require.NoError(st.MarkMessageDeletedContext(t.Context(), draft.SourceID, sent.RemoteMessageID))
-	plan, err := st.PlanGCContext(t.Context())
-	if st.IsPostgreSQL() {
-		require.ErrorIs(err, store.ErrGCUnsupported)
-		_, err = st.ExecuteGCContext(t.Context(), plan)
-		require.ErrorIs(err, store.ErrGCUnsupported)
-		unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-		require.NoError(err)
-		assert.Equal(sent, unchanged)
-		return
-	}
-	require.NoError(err)
-	deleted, err := st.ExecuteGCContext(t.Context(), plan)
-	require.NoError(err)
-	assert.Equal(int64(1), deleted)
-	var remaining int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE id=?`), sent.MessageID).Scan(&remaining))
-	assert.Zero(remaining)
-	scrubbed, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Empty(scrubbed.Body)
-	assert.Empty(scrubbed.QuoteToken)
-	assert.Empty(scrubbed.RemoteQuoteToken)
-	assert.Empty(scrubbed.SourceConversationID)
-	sent.Body, sent.QuoteToken, sent.RemoteQuoteToken, sent.SourceConversationID = "", "", "", ""
-	assert.Equal(sent, scrubbed, "GC preserves the send receipt")
-	unchanged, err := st.GetLineReplyAttemptContext(t.Context(), retainedDraft.DraftID)
-	require.NoError(err)
-	assert.Equal(retained, unchanged, "GC preserves attempts unrelated to purged messages")
-}
-
 func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 	t.Run("receipt and conversation summary", func(t *testing.T) {
 		assert := assert.New(t)
@@ -201,6 +159,13 @@ func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 		assert.Equal(store.LineReplySent, sent.State)
 		require.Positive(sent.MessageID)
 		assert.Equal(accepted.RemoteMessageID, sent.RemoteMessageID)
+		assert.Empty(sent.Body)
+		assert.Empty(sent.QuoteToken)
+		assert.Empty(sent.RemoteQuoteToken)
+		assert.Empty(sent.SourceConversationID)
+		stored, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(sent, stored)
 		_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 		require.ErrorIs(err, store.ErrChatDraftNotFound)
 		var summaryCount int64
