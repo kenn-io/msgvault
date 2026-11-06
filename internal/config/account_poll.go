@@ -39,7 +39,7 @@ func (c *Config) ValidateAccountPolling() error {
 		if strings.TrimSpace(account.Email) == "" {
 			return fmt.Errorf("poll_interval requires a canonical account identifier")
 		}
-		if _, err := cronexpr.Parser.Parse(account.Schedule); err != nil {
+		if err := cronexpr.Validate(account.Schedule); err != nil {
 			return fmt.Errorf("poll_interval requires a valid five-field schedule: %w", err)
 		}
 	}

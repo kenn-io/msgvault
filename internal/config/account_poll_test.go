@@ -36,7 +36,7 @@ poll_interval = %q
 }
 
 func TestAccountPollingRequiresCronBackstop(t *testing.T) {
-	for _, schedule := range []string{"", "@every 30s", "* * * * * *", "invalid"} {
+	for _, schedule := range []string{"", "@every 30s", "* * * * * *", ", * * * *", "invalid"} {
 		t.Run(schedule, func(t *testing.T) {
 			_, err := loadPollFixture(t, fmt.Sprintf(`[[accounts]]
 email = "sample@example.test"

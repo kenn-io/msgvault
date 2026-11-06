@@ -1171,13 +1171,5 @@ func NormalizeCronExpr(expr string) string {
 // preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
 // field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
-	for field := range strings.FieldsSeq(expr) {
-		if strings.Trim(field, ",") == "" {
-			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
-		}
-	}
-	if _, err := cronexpr.Parser.Parse(expr); err != nil {
-		return fmt.Errorf("invalid cron expression: %w", err)
-	}
-	return nil
+	return cronexpr.Validate(expr)
 }
