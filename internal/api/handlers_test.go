@@ -2313,12 +2313,13 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			var gotScope search.DeletionScope
 			engine := &querytest.MockEngine{
 				SearchFunc: func(_ context.Context, q *search.Query, limit, _ int) ([]query.MessageSummary, error) {
 					gotScope = q.DeletionScope
 					if tt.probe > 0 {
-						assert.Equal(t, tt.probe, limit, "probe one row past the page")
+						assert.Equal(tt.probe, limit, "probe one row past the page")
 					}
 					rows := make([]query.MessageSummary, tt.matches)
 					for i := range rows {
@@ -2341,12 +2342,12 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 			}
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
-			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
-			assert.Equal(t, tt.wantScope, gotScope)
+			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			assert.Equal(tt.wantScope, gotScope)
 			var page cliSearchResponse
-			require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &page))
-			assert.Len(t, page.Results, tt.wantRows)
-			assert.Equal(t, tt.wantMore, page.HasMore)
+			require.NoError(json.Unmarshal(resp.Body.Bytes(), &page))
+			assert.Len(page.Results, tt.wantRows)
+			assert.Equal(tt.wantMore, page.HasMore)
 		})
 	}
 }
