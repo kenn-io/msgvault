@@ -2344,7 +2344,10 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 			assert.Equal(tt.wantScope, gotScope)
-			var page cliSearchResponse
+			var page struct {
+				Results []json.RawMessage `json:"results"`
+				HasMore bool              `json:"has_more"`
+			}
 			require.NoError(json.Unmarshal(resp.Body.Bytes(), &page))
 			assert.Len(page.Results, tt.wantRows)
 			assert.Equal(tt.wantMore, page.HasMore)

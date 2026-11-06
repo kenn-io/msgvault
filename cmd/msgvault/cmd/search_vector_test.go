@@ -307,7 +307,10 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				assert.Equal(int32(1), requests.Load())
 				if asJSON && tc.mode != "fts" {
 					var page struct {
-						Hints []struct{ Code, Message string } `json:"hints"`
+						Hints []struct {
+							Code    string `json:"code"`
+							Message string `json:"message"`
+						} `json:"hints"`
 					}
 					require.NoError(json.Unmarshal([]byte(out), &page))
 					require.Len(page.Hints, len(tc.codes))
