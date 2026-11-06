@@ -162,7 +162,7 @@ WITH logical_people AS (
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
-	FROM (`+DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind <> 'meeting')", meetingKeys, "anchor_message_id")+`) p
+	FROM (`+DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", meetingKeys, "anchor_message_id")+`) p
 	WHERE NOT p.is_owner
 )
 SELECT canonical_id,

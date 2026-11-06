@@ -647,6 +647,30 @@ func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
 		"LastAt must reflect the email, not the later owner-absent meeting")
 }
 
+func TestRelationshipsOwnerAbsentCalendarEventPreservesLastInteraction(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.org")
+	owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
+	person := b.AddParticipant("person@example.org", "example.org", "Person")
+	b.AddOwnerParticipant(source, owner)
+	lastContact := time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC)
+	email := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true, SentAt: lastContact})
+	b.AddFrom(email, owner, "Owner")
+	b.AddTo(email, person, "Person")
+	event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: lastContact.Add(24 * time.Hour)})
+	b.AddFrom(event, person, "Person")
+	b.AddTo(event, person, "Person")
+	engine := b.BuildEngine()
+	for _, scope := range []Context{{}, {SourceIDs: []int64{source}}} {
+		rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{Context: scope, ShowAll: true, Now: lastContact.Add(48 * time.Hour)})
+		requirements.Len(rows, 1)
+		assertions.Equal(person, rows[0].CanonicalID)
+		assertions.Equal(lastContact, rows[0].LastAt)
+		assertions.Equal(lastContact, rows[0].Signals.LastInteractionAt)
+	}
+}
+
 func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
