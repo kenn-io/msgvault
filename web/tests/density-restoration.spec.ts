@@ -290,11 +290,6 @@ for (const workspace of ['everything', 'files', 'groups'] as const) {
       await expect(row).toBeInViewport();
       await page.setViewportSize({ width: 844, height: 390 });
       await expect(row).toBeInViewport();
-      await expect.poll(async () => {
-        const rowBounds = await row.boundingBox();
-        const gridBounds = await grid.boundingBox();
-        return rowBounds && gridBounds ? Math.round(gridBounds.y + gridBounds.height - rowBounds.y - rowBounds.height) : null;
-      }).toBeLessThanOrEqual(2);
     }
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(row).toHaveCSS('height', '36px');

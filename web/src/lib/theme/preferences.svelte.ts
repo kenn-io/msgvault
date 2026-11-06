@@ -166,11 +166,11 @@ export function scrollPositionAnchor(scrollTop: number, height: number, count: n
   return { index, offset: scrollTop - index * height };
 }
 
-export function rebaseVirtualScroll(scrollTop: number, previousHeight: number, nextHeight: number, focusedIndex = -1, viewportHeight = 0, nextViewportHeight = viewportHeight): number {
+export function rebaseVirtualScroll(scrollTop: number, previousHeight: number, nextHeight: number, focusedIndex = -1, viewportHeight = 0): number {
   if (previousHeight <= 0 || nextHeight <= 0 || previousHeight === nextHeight) return scrollTop;
   const focusedOffset = focusedIndex * previousHeight - scrollTop;
   if (focusedIndex >= 0 && focusedOffset >= 0 && focusedOffset < viewportHeight) {
-    return Math.max(0, focusedIndex * nextHeight - Math.min(focusedOffset, nextViewportHeight - nextHeight));
+    return focusedIndex * nextHeight;
   }
   const anchorIndex = Math.floor(scrollTop / previousHeight);
   const offset = Math.min(scrollTop - anchorIndex * previousHeight, nextHeight - 1);
