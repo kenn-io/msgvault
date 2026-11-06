@@ -1,11 +1,13 @@
 package timeline
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -14,10 +16,7 @@ import (
 )
 
 func (c *composer) resolvePerson() (store.PersonCandidate, error) {
-	kind, value := personReference(c.req.With)
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.PersonCandidate, error) {
-		return c.src.People.ResolvePersonReferenceContext(ctx, kind, value, nil, 11)
-	})
+	r := readWithin(c.ctx, requestTimeout, c.personCandidates)
 	switch {
 	case errors.Is(r.err, store.ErrInvalidActivityRequest):
 		return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
@@ -37,6 +36,17 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 		return store.PersonCandidate{}, &ErrAmbiguousReference{Candidates: c.t.Candidates}
 	}
 	return r.value[0], nil
+}
+
+// personCandidates refuses the owner's own account address: it is no relationship.
+func (c *composer) personCandidates(ctx context.Context) ([]store.PersonCandidate, error) {
+	kind, value := personReference(c.req.With)
+	if kind == store.PersonRefKind(store.ContactAddressEmail) {
+		if owner, err := c.src.Meetings.IsAccountIdentityAddressContext(ctx, strings.TrimSpace(value)); err != nil || owner {
+			return nil, cmp.Or(err, fmt.Errorf("%w: owner account address", store.ErrInvalidActivityRequest))
+		}
+	}
+	return c.src.People.ResolvePersonReferenceContext(ctx, kind, value, nil, 11)
 }
 func (c *composer) setSubject(p store.PersonCandidate) {
 	c.subject = store.ActivitySubject{PersonID: p.PersonID}

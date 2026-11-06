@@ -32,7 +32,6 @@ func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
 }
 
 func TestRelationshipRejectsOwnerAddress(t *testing.T) {
-	t.Skip("Sonnet P3: reject the owner's own address in resolvePerson")
 	f := newTimelineFixture(t)
 	f.add(f.now.Add(-time.Hour), false)
 	f.project()
