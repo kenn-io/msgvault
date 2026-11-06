@@ -27,6 +27,8 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		personApproved   = `{"person_uid":"person-example","revision":4,"stored_policy":"send_allowed","effective_policy":"send_allowed","inheritance_source":"person_default","reason":"explicit_person_default"}`
 		personRestricted = `{"person_uid":"person-example","revision":4,"stored_policy":"draft_only","effective_policy":"draft_only","inheritance_source":"person_default","reason":"draft_required"}`
 		personCleared    = `{"person_uid":"person-example","revision":4,"effective_policy":"draft_only","inheritance_source":"system_default","reason":"draft_required"}`
+		bindingChanged   = `{"person_uid":"person-example","endpoint":"alice@example.test","revision":4,"stored_policy":"send_allowed","effective_policy":"draft_only","inheritance_source":"contact_method","reason":"binding_changed"}`
+		ambiguousAddress = `{"person_uid":"person-example","endpoint":"alice@example.test","revision":4,"stored_policy":"send_allowed","effective_policy":"draft_only","inheritance_source":"contact_method","reason":"ambiguous_endpoint"}`
 	)
 	for _, test := range []struct {
 		name, operation   string
@@ -34,10 +36,14 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		want              store.DeliveryPolicyWrite
 		schema, wantError string
 		human             bool
+		wantReason        string
 		before, after     string
 	}{
 		{name: "read JSON", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, after: addressSend},
 		{name: "read human", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: addressSend},
+		{name: "read human person default", operation: "read", args: []string{"person-example"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, human: true, after: personSend},
+		{name: "read human changed binding", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: bindingChanged, wantReason: "binding_changed"},
+		{name: "read human ambiguous endpoint", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: ambiguousAddress, wantReason: "ambiguous_endpoint"},
 		{name: "read person default", operation: "read", args: []string{"person-example", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, after: personDraft},
 		{name: "set address", operation: "set", args: []string{"person-example", "send_allowed", "--endpoint", "alice@example.test", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, Reason: "Owner approval"}, before: addressDraft, after: addressApproved},
 		{name: "set person default", operation: "set", args: []string{"person-example", "send_allowed", "--person-all-routes", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, ScopeAcknowledgement: "person_all_routes", Reason: "Owner approval"}, before: personDraft, after: personApproved},
@@ -95,14 +101,20 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(1, requests)
 			if test.human {
-				assert.Contains(output.String(), "EFFECTIVE POLICY")
+				header := "PERSON UID ENDPOINT REVISION STORED POLICY EFFECTIVE POLICY SOURCE"
+				if test.wantReason != "" {
+					header += " REASON"
+				}
+				lines := strings.SplitN(output.String(), "\n", 2)
+				require.Len(lines, 2)
+				assert.Equal(strings.Fields(header), strings.Fields(lines[0]))
 				var after store.DeliveryPolicyState
 				require.NoError(json.Unmarshal([]byte(test.after), &after))
 				stored := "-"
 				if after.StoredPolicy != nil {
 					stored = string(*after.StoredPolicy)
 				}
-				assert.Equal(strings.Fields(fmt.Sprintf("%s %s %d %s %s %s %s", after.PersonUID, after.Endpoint, after.Revision, stored, after.EffectivePolicy, after.InheritanceSource, after.Reason)), strings.Fields(strings.SplitN(output.String(), "\n", 2)[1]))
+				assert.Equal(strings.Fields(fmt.Sprintf("%s %s %d %s %s %s %s", after.PersonUID, after.Endpoint, after.Revision, stored, after.EffectivePolicy, after.InheritanceSource, test.wantReason)), strings.Fields(lines[1]))
 			} else {
 				assert.JSONEq(payload, output.String())
 			}

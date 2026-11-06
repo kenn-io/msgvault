@@ -82,8 +82,16 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 				stored = string(*state.StoredPolicy)
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(writer, "PERSON UID\tENDPOINT\tREVISION\tSTORED POLICY\tEFFECTIVE POLICY\tSOURCE\tREASON")
-			_, _ = fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(state.InheritanceSource), textutil.SanitizeTerminal(state.Reason))
+			header := "PERSON UID\tENDPOINT\tREVISION\tSTORED POLICY\tEFFECTIVE POLICY\tSOURCE"
+			row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(state.InheritanceSource))
+			switch state.Reason {
+			case "draft_required", "explicit_approval", "explicit_person_default":
+			default:
+				header += "\tREASON"
+				row += "\t" + textutil.SanitizeTerminal(state.Reason)
+			}
+			_, _ = fmt.Fprintln(writer, header)
+			_, _ = fmt.Fprintln(writer, row)
 			return writer.Flush()
 		},
 	}
