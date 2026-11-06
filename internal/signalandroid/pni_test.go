@@ -108,14 +108,27 @@ func TestReimportGroupPhoneAuthorGainsACI(t *testing.T) {
 	before := importedMessages(t, st)
 	require.Len(before, 1)
 	require.Contains(before, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000")
+	var archivedID int64
+	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&archivedID))
 
 	changeFixture(t, dir, `UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`)
 	summary := runImport(t, st, dir, attachments)
 
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(before, importedMessages(t, st))
 	assert.Zero(summary.MessagesAdded)
 	assert.Equal(int64(1), summary.MessagesUpdated)
+	preferredID := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":1700000240000"
+	assert.Equal(map[string]importedMessage{
+		preferredID: before["signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000"],
+	}, importedMessages(t, st))
+
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550103' WHERE _id = 3`)
+	summary = runImport(t, st, dir, attachments)
+
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(1), summary.MessagesUpdated)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ? AND source_message_id = ?`, archivedID, preferredID))
 }
 
 func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
@@ -141,10 +154,11 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Zero(summary.RepliesUnresolved)
+			preferredID := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":1700000240000"
 			assert.Equal(map[string]importedMessage{
-				tc.parentID: before[tc.parentID],
+				preferredID: before[tc.parentID],
 				"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:self:1700000241000": {
-					conversation: "signal:group:" + signalfixture.GroupB64, body: "Group reply", fromMe: true, replyTo: tc.parentID,
+					conversation: "signal:group:" + signalfixture.GroupB64, body: "Group reply", fromMe: true, replyTo: preferredID,
 				},
 			}, importedMessages(t, st))
 		})

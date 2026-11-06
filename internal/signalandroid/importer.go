@@ -519,7 +519,20 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			break
 		}
 		rowAttachments := attachments[p.row.RowID]
+		preferredID := p.id
 		archivedID, isExisting := keepArchivedID(existing, &p)
+		if isExisting && p.id != preferredID {
+			rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
+			if err != nil {
+				return added, fmt.Errorf("rekey archived Signal message: %w", err)
+			}
+			if !rekeyed {
+				return added, fmt.Errorf("rekey archived Signal message %s: archived ID changed", p.id)
+			}
+			delete(existing, p.id)
+			existing[preferredID] = archivedID
+			p.id = preferredID
+		}
 		var rowReactions []sigReaction
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
