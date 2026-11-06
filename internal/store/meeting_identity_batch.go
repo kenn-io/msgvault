@@ -190,18 +190,15 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		if _, ok := r.batch.occurrences[OccurrenceRef{MessageID: ref.row.MessageID, Key: ref.id.Key()}]; ok {
 			continue
 		}
-		at, err := meetingOccurrenceStart(ref.row, ref.id)
+		row, window, bounded, err := planMeetingOccurrence(ctx, r, ref.row, ref.id, budget)
 		if err != nil {
 			return err
 		}
-		predicate, args := meetingMovedExceptionPredicate(ref.row, ref.id)
-		moved := r.batch.events[meetingQueryKey(predicate, args)]
-		window, bounded := meetingOccurrenceWindow(at, moved)
 		if bounded != nil {
 			continue
 		}
 		id := ref.row.MessageID
-		masters[id] = ref.row
+		masters[id] = row
 		windows[id] = append(windows[id], window)
 	}
 	for id, master := range masters {

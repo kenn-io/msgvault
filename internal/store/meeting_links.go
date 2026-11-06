@@ -226,6 +226,24 @@ func meetingOccurrenceWindow(at time.Time, moved []CalendarEventRow) ([2]time.Ti
 	return [2]time.Time{at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)}, nil
 }
 
+// Plan identity and bounds once for scalar resolution and batch expansion.
+func planMeetingOccurrence(ctx context.Context, r reboundReader, row CalendarEventRow, id calrecur.Identity, budget *int) (CalendarEventRow, [2]time.Time, *CalendarEventRow, error) {
+	at, err := meetingOccurrenceStart(row, id)
+	if err != nil {
+		return row, [2]time.Time{}, nil, err
+	}
+	predicate, args := meetingMovedExceptionPredicate(row, id)
+	moved, err := meetingEventRows(ctx, r, predicate, args, budget)
+	if err != nil {
+		return row, [2]time.Time{}, nil, err
+	}
+	for _, x := range moved {
+		row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
+	}
+	window, bounded := meetingOccurrenceWindow(at, moved)
+	return row, window, bounded, nil
+}
+
 func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
 	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
@@ -254,20 +272,11 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if !ok {
 		return linkOccurrence{}, fmt.Errorf("invalid occurrence key %q", ref.Key)
 	}
-	at, err := meetingOccurrenceStart(row, id)
+	row, window, bounded, err := planMeetingOccurrence(ctx, r, row, id, budget)
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	// A moved exception is expanded at its effective start, retaining Original.
-	predicate, args := meetingMovedExceptionPredicate(row, id)
-	moved, err := meetingEventRows(ctx, r, predicate, args, budget)
-	if err != nil {
-		return linkOccurrence{}, err
-	}
-	for _, x := range moved {
-		row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
-	}
-	window, bounded := meetingOccurrenceWindow(at, moved)
+
 	if bounded != nil {
 		o := occurrenceFromRow(row, ref.Key)
 		o.Start, o.End, err = seriesExceptionBounds(row, *bounded)
