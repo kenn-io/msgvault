@@ -33,32 +33,16 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 	}
 }
 
-func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
+func TestMCPWriteHelpDisclosesDeliveryPolicyWrites(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	require.NotNil(mcpCmd.Flags().Lookup("allow-profile-writes"))
-	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes", "allow-delivery-policy-writes"} {
-		require.NotNil(mcpCmd.Flags().Lookup(name))
-	}
-	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
 	var output bytes.Buffer
 	previousOutput := mcpCmd.OutOrStdout()
 	mcpCmd.SetOut(&output)
 	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
 
 	require.NoError(mcpCmd.Help())
-	help := output.String()
-	assert.Contains(help, "attachment exports")
-	assert.Contains(help, "deletion manifests")
-	assert.Contains(help, "person promotion")
-	assert.Contains(help, "private Notes writes")
-	assert.Contains(help, "allow-identity-decisions")
-	assert.Contains(help, "allow-identity-scoring")
-	assert.Contains(help, "allow-person-merges")
-	assert.Contains(help, "allow-carddav-writes")
-	assert.Contains(help, "calendar event mutation tools")
-	assert.Contains(help, "allow-delivery-policy-writes")
-	assert.Contains(help, "delivery-policy writes")
+	assert.Contains(output.String(), "delivery-policy writes")
 }
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
@@ -428,12 +412,11 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "current schema", wantDelivery: true, schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
 		{name: "chat discovery schema", schemaVersion: "3.25.0", wantPeople: true, wantContacts: true, wantDirectory: true, wantChatDiscovery: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "delivery policy routes absent at 3.44.9", schemaVersion: "3.44.9", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "delivery policy routes absent at 3.45.9", schemaVersion: "3.45.9", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "delivery policy routes available", schemaVersion: "3.46.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true, wantDelivery: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},

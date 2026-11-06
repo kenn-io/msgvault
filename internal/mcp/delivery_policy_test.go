@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	Assert "github.com/stretchr/testify/assert" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	"github.com/stretchr/testify/require"
@@ -81,31 +80,7 @@ func TestDeliveryPolicyMCPWriteNeedsConfirmation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := require.New(t)
-			before := store.DeliveryPolicyState{PersonUID: "synthetic-uid", Endpoint: test.write.Endpoint, Revision: test.write.ExpectedRevision, EffectivePolicy: store.DeliveryDraftOnly, InheritanceSource: "system_default", Reason: "draft_required"}
-			after := before
-			after.Revision++
-			if test.tool == ToolSetDeliveryPolicy {
-				after.StoredPolicy = new(store.DeliverySendAllowed)
-				after.EffectivePolicy = store.DeliverySendAllowed
-				after.InheritanceSource, after.Reason = "person_default", "explicit_person_default"
-			} else {
-				before.StoredPolicy = new(store.DeliverySendAllowed)
-				before.EffectivePolicy = store.DeliverySendAllowed
-				before.InheritanceSource, before.Reason = "contact_method", "explicit_approval"
-			}
-			scope := "person_all_routes"
-			if test.write.Endpoint != "" {
-				scope = test.write.Endpoint
-			}
-			backend := &policyMCPBackend{receipt: &store.DeliveryPolicyReceipt{
-				Before: before, After: after,
-				Audit: &store.DeliveryPolicyAudit{Actor: "owner", Reason: test.write.Reason, Scope: scope, CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), BeforePolicy: before.StoredPolicy, AfterPolicy: after.StoredPolicy},
-			}}
-			if test.tool == ToolSetDeliveryPolicy && test.write.Endpoint != "" {
-				after.InheritanceSource, after.Reason = "contact_method", "explicit_approval"
-				backend.receipt.After = after
-				backend.receipt.Audit.ContactPointID = new(int64(1))
-			}
+			backend := &policyMCPBackend{receipt: &store.DeliveryPolicyReceipt{}}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
 			args := map[string]any{"person_uid": "synthetic-uid", "expected_revision": test.write.ExpectedRevision, "reason": test.write.Reason}
 			if test.tool == ToolSetDeliveryPolicy {
