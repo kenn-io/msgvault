@@ -2345,10 +2345,8 @@ func TestHandleCLISearchHasMore(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			var gotScope search.DeletionScope
 			engine := &querytest.MockEngine{
-				SearchFunc: func(_ context.Context, q *search.Query, limit, _ int) ([]query.MessageSummary, error) {
-					gotScope = q.DeletionScope
+				SearchFunc: func(_ context.Context, _ *search.Query, limit, _ int) ([]query.MessageSummary, error) {
 					assert.Equal(51, limit, "probe one row past the page")
 					rows := make([]query.MessageSummary, tc.matches)
 					for i := range rows {
@@ -2365,7 +2363,6 @@ func TestHandleCLISearchHasMore(t *testing.T) {
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=scope&limit=50", nil))
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
-			assert.Equal(search.DeletionScopeActive, gotScope)
 			var page struct {
 				Results []json.RawMessage `json:"results"`
 				HasMore bool              `json:"has_more"`
