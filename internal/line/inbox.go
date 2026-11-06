@@ -271,6 +271,9 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		}
 		if eventErr != nil {
 			if ctx.Err() != nil {
+				if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "pending", "LINE processing interrupted", pass.retryAt(row, ctx.Err())); err != nil {
+					return errors.Join(ctx.Err(), err)
+				}
 				return ctx.Err()
 			}
 			if _, ok := errors.AsType[*invalidEventError](eventErr); ok {

@@ -48,8 +48,7 @@ func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) l
 	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
 	channels := []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}
 	wakes := new(atomic.Int64)
-	receiver, err := line.NewReceiver(st, channels, func(string) { wakes.Add(1) })
-	require.NoError(t, err)
+	receiver := line.NewReceiver(st, channels, func(string) { wakes.Add(1) })
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = t.TempDir()
@@ -116,12 +115,11 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) { //nolint:paralleltest // 
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
 	gate := NewSerialOperationGate()
 	wakes := 0
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, func(string) {
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, func(string) {
 		_, _, held := gate.Holder()
 		checks.False(held, "release the receipt gate before waking processing")
 		wakes++
 	})
-	must.NoError(err)
 	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
 	t.Cleanup(func() { must.NoError(server.Shutdown(context.Background())) })
 	router := server.Router()

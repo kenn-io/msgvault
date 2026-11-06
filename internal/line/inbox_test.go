@@ -195,6 +195,7 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending, "an interrupted pass settles and finishes the events it completed")
 
+	f.now = f.now.Add(time.Minute)
 	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	f.run(t)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)

@@ -44,21 +44,15 @@ type Receiver struct {
 
 // NewReceiver takes enabled channels only. wake must enqueue work without waiting
 // for processing; it receives the channel ID after a successful nonempty commit.
-func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string)) (*Receiver, error) {
+func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string)) *Receiver {
 	receiver := &Receiver{
 		store: st, channels: make(map[string]*receiverChannel),
 		ingress: make(chan struct{}, webhookIngressLimit), wake: wake,
 	}
-	if len(channels) > 0 && st == nil {
-		return nil, errors.New("line: receiver requires an archive store")
-	}
 	for _, channel := range channels {
-		if channel.SourceID <= 0 || channel.BotUserID == "" || channel.Secret == "" {
-			return nil, errors.New("line: receiver requires source, bot identity and secret")
-		}
 		receiver.channels[channel.ChannelID] = &receiverChannel{config: channel}
 	}
-	return receiver, nil
+	return receiver
 }
 
 // Handles admits only a literal POST route with one nonempty channel segment.

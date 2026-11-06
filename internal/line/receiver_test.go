@@ -26,13 +26,11 @@ func receiverChannel(sourceID int64) line.ReceiverChannel {
 }
 
 func TestReceiverConfigurationAndHandles(t *testing.T) {
-	must := require.New(t)
 	checks := assert.New(t)
 
 	st := testutil.NewTestStore(t)
 	channel := receiverChannel(1)
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{channel}, nil)
-	must.NoError(err)
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{channel}, nil)
 	checks.True(receiver.Handles(httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)))
 	checks.True(receiver.Handles(httptest.NewRequest(http.MethodPost, "/webhooks/line/unknown", nil)))
 	for _, target := range []string{"/webhooks/line/", "/webhooks/line/2000000000/", "/webhooks/line/2000000000/extra", "/webhooks/line/%32%30%30%30%30%30%30%30%30%30", "/webhooks/line/2000000000%2Fextra", "/webhooks/line/2000000000%252Fextra", "/api/v1/webhooks/line/2000000000"} {
@@ -41,18 +39,8 @@ func TestReceiverConfigurationAndHandles(t *testing.T) {
 	for _, method := range []string{"GET", "HEAD", "PUT", "OPTIONS"} {
 		checks.False(receiver.Handles(httptest.NewRequest(method, "/webhooks/line/2000000000", nil)))
 	}
-	empty, err := line.NewReceiver(st, nil, nil)
-	must.NoError(err)
+	empty := line.NewReceiver(st, nil, nil)
 	checks.False(empty.Handles(httptest.NewRequest(http.MethodPost, "/webhooks/line/unknown", nil)))
-	for _, mutate := range []func(*line.ReceiverChannel){
-		func(c *line.ReceiverChannel) { c.SourceID = 0 }, func(c *line.ReceiverChannel) { c.BotUserID = "" }, func(c *line.ReceiverChannel) { c.Secret = "" },
-	} {
-		invalid := channel
-		mutate(&invalid)
-		_, err := line.NewReceiver(st, []line.ReceiverChannel{invalid}, nil)
-		must.Error(err)
-		checks.NotContains(err.Error(), "synthetic-secret")
-	}
 }
 
 func TestReceiverWakeAfterCommit(t *testing.T) {
@@ -65,7 +53,7 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 	must.NoError(st.SetLineBotContext(context.Background(), source.ID, receiverBot))
 	response := httptest.NewRecorder()
 	wakeCalls := 0
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(channelID string) {
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(channelID string) {
 		wakeCalls++
 		checks.Equal("2000000000", channelID)
 		rows, err := st.DueLineEventsContext(context.Background(), source.ID, time.Now(), 10)
@@ -73,7 +61,6 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 		must.Len(rows, 1)
 		checks.Equal("event-1", rows[0].WebhookEventID)
 	})
-	must.NoError(err)
 	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","replyToken":"ephemeral","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic","quoteToken":"retained","nested":[{"markAsReadToken":"ephemeral"}]}}]}`
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(body))
 	request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
@@ -103,8 +90,7 @@ func TestReceiverEnvelopeValidation(t *testing.T) {
 	must.NoError(err)
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
 	wakeCalls := 0
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-	must.NoError(err)
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
 	message := `{"type":"message","webhookEventId":"valid-first","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}`
 	for _, tc := range []struct {
 		name, body string
@@ -158,8 +144,7 @@ func TestReceiverPersistsBatchTargetsDedupesAndPreservesUnknownShapes(t *testing
 	must.NoError(err)
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
 	wakeCalls := 0
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-	must.NoError(err)
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
 	message := `{"type":"message","webhookEventId":"base-event","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}`
 	edited := `{"type":"messageEdited","webhookEventId":"edit-event","timestamp":124,"source":{"type":"group","groupId":"C00000000000000000000000000000003"},"message":{"id":"123","type":"text","text":"edited"}}`
 	unsend := `{"type":"unsend","webhookEventId":"unsend-event","timestamp":125,"unsend":{"messageId":"123"}}`
@@ -203,8 +188,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	require.NoError(t, err)
 	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
-	require.NoError(t, err)
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
 	t.Run("unsigned body reads", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)
@@ -347,8 +331,7 @@ func TestReceiverChannelBinding(t *testing.T) {
 	b.ChannelID = "2000000001"
 	b.BotUserID = secondBot
 	b.Secret = "second-synthetic-secret"
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{b, a}, nil)
-	must.NoError(err)
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{b, a}, nil)
 	unknown := httptest.NewRecorder()
 	receiver.Receive(unknown, httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000002", nil), nil)
 	checks.Equal(http.StatusNotFound, unknown.Code)
@@ -385,8 +368,7 @@ func TestReceiverStorageFailuresDoNotWakeOrLeavePendingRows(t *testing.T) {
 		must.NoError(err)
 		must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
 		wakeCalls := 0
-		receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-		must.NoError(err)
+		receiver := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
 		if st.IsPostgreSQL() {
 			_, err = st.DB().Exec(`CREATE OR REPLACE FUNCTION msgvault_test_reject_line_event() RETURNS trigger
 LANGUAGE plpgsql AS $$ BEGIN

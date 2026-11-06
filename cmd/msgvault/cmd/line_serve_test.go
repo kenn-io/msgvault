@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -152,4 +154,64 @@ func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 	status, err := st.LineInboxStatusContext(t.Context(), source.ID)
 	must.NoError(err)
 	assert.Zero(t, status.Pending)
+}
+
+func TestLineServeSignedReceiptsDoNotStarveLaterText(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+
+	cfg, st, fake := lineWiringFixture(t)
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	must.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	started := make(chan struct{}, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/profile/") {
+			select {
+			case started <- struct{}{}:
+			case <-r.Context().Done():
+				return
+			}
+			<-r.Context().Done()
+			return
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	defer provider.Close()
+	lineClientFactory = func(id, secret string) *line.Client {
+		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
+	}
+	gate := api.NewSerialOperationGate()
+	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "LINE inbox")).WithLogger(testLoggerValue())
+	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+	must.NoError(err)
+	sched.Start()
+	defer func() { <-sched.Stop().Done() }()
+	receive := func(id int) {
+		body := fmt.Sprintf(`{"destination":"%s","events":[{"type":"message","webhookEventId":"event-%d","timestamp":%d,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"%d","type":"text","text":"message %d"}}]}`, wiringBot, id, 1000+id, id, id)
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/webhooks/line/2000000001", strings.NewReader(body))
+		request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
+		response := httptest.NewRecorder()
+		runtime.receiver.Receive(response, request, func(ctx context.Context) (func(), error) {
+			done, ok := gate.BeginRequestWorkContext(ctx, "LINE webhook receipt")
+			must.True(ok)
+			return done, nil
+		})
+		must.Equal(http.StatusOK, response.Code)
+	}
+	receive(0)
+	for id := 1; id <= 3; id++ {
+		select {
+		case <-started:
+		case <-time.After(15 * time.Second):
+			must.FailNow("scheduled enrichment did not begin")
+		}
+		receive(id)
+	}
+	var count int
+	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id <> '0'").Scan(&count))
+	checks.Positive(count, "later signed messages must archive while enrichment repeatedly yields to receipts")
 }
