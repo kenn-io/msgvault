@@ -449,8 +449,9 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 	if statsGroupBy != query.ViewNoStats {
 		viewType = optionalString(viewTypeToString(statsGroupBy))
 	}
-	params := &generated.FastSearchQuery{
+	return &generated.FastSearchQuery{
 		Q:               queryStr,
+		IncludeHints:    optionalBool(filter.IncludeHints),
 		ViewType:        viewType,
 		Sender:          fields.Sender,
 		SenderName:      fields.SenderName,
@@ -475,8 +476,6 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		Sort:            optionalString(messageSortFieldToString(filter.Sorting.Field)),
 		Direction:       optionalString(sortDirectionToString(filter.Sorting.Direction)),
 	}
-	params.IncludeHints = optionalBool(filter.IncludeHints)
-	return params
 }
 
 func fastSearchScopedQueryString(q *search.Query, queryStr string, filter query.MessageFilter) (string, bool) {

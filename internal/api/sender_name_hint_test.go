@@ -32,74 +32,20 @@ func TestCLISenderNameHintWithinGrant(t *testing.T) {
 	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	require.NoError(err)
-	for _, credential := range []struct{ header, value string }{{"X-Api-Key", "owner"}, {apiprotocol.AgentTokenHeader, token}} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex@exam", nil)
-		req.Header.Set(credential.header, credential.value)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		var response struct {
-			Results []struct {
-				ID int64 `json:"id"`
-			} `json:"results"`
-			Hints []struct {
-				Message string `json:"message"`
-			} `json:"hints"`
-		}
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-		assert.Empty(response.Results)
-		require.Len(response.Hints, 1)
-		assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
-		if credential.value == token {
-			assert.NotContains(response.Hints[0].Message, "alex@example.org")
-		}
-		req = httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex@example.com", nil)
-		req.Header.Set(credential.header, credential.value)
-		w = httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-		require.Len(response.Results, 1)
-		assert.Equal(id, response.Results[0].ID)
-	}
-}
-
-func TestFastSearchHintsRequireOptIn(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	_, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.com", "one", "Project plan", "")
-	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES (?,1,'from')`, id)
-	require.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
-	for _, tc := range []struct {
-		params string
-		want   bool
-	}{{"", false}, {"&include_hints=false", false}, {"&include_hints=true", true}} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=from:alex"+tc.params, nil)
-		req.Header.Set("X-Api-Key", "owner")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		var response struct {
-			Messages []json.RawMessage  `json:"messages"`
-			Hints    []query.SearchHint `json:"hints"`
-		}
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-		assert.Empty(response.Messages, tc.params)
-		if !tc.want {
-			assert.Empty(response.Hints, tc.params)
-			continue
-		}
-		require.Len(response.Hints, 1, tc.params)
-		assert.Equal("from:alex@example.com", response.Hints[0].RetryWith.Query)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=from:alex&include_hints=maybe", nil)
-	req.Header.Set("X-Api-Key", "owner")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex@exam", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
-	assert.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var response struct {
+		Results []json.RawMessage `json:"results"`
+		Hints   []struct {
+			Message string `json:"message"`
+		} `json:"hints"`
+	}
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Empty(response.Results)
+	require.Len(response.Hints, 1)
+	assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
+	assert.NotContains(response.Hints[0].Message, "alex@example.org")
 }

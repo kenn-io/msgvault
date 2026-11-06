@@ -43,7 +43,7 @@ type deletionTargetsByMessageIDsResolver interface {
 	GetDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error)
 }
 
-func (e *pgEngine) MatchSenderName(ctx context.Context, q *search.Query) *SearchHint {
+func (e *pgEngine) MatchSenderName(ctx context.Context, q *search.Query) []SearchHint {
 	matcher, ok := e.Engine.(SenderNameMatcher)
 	if !ok {
 		return nil

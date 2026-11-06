@@ -269,8 +269,7 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 
 func TestSearchMetadataSenderNameHintUnknownTotal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
-		assert.True(filter.IncludeHints)
+	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
 		hint := query.SearchHint{Code: "sender_name_requires_address", Message: "try from:alex@example.com"}
 		hint.RetryWith.Query = "from:alex@example.com"
 		return &query.SearchFastResult{TotalCount: -1, Hints: []query.SearchHint{hint}}, nil

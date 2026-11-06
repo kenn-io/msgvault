@@ -24,12 +24,16 @@ func TestSenderNameHints(t *testing.T) {
 		}
 	}
 	q := search.Parse("from:alex subject:hintfixture")
-	hint := env.Engine.MatchSenderName(env.Ctx, q)
-	requirements.NotNil(hint)
-	assertions.Equal(`from: matches addresses; senders matching "alex": sender3@example.com (4 messages), sender2@example.com (3 messages), sender1@example.com (2 messages); try from:sender3@example.com subject:hintfixture`, hint.Message)
-	results, err := env.Engine.Search(env.Ctx, search.Parse(hint.RetryWith.Query), 20, 0)
+	hints := env.Engine.MatchSenderName(env.Ctx, q)
+	requirements.Len(hints, 1)
+	assertions.Equal(`from: matches addresses; senders matching "alex": sender3@example.com (4 messages), sender2@example.com (3 messages), sender1@example.com (2 messages); try from:sender3@example.com subject:hintfixture`, hints[0].Message)
+	results, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 20, 0)
 	requirements.NoError(err)
 	assertions.Len(results, 4)
+	// PostgreSQL wraps the SQL engine, so the wrapper must forward the optional matcher.
+	matcher, ok := Engine(&pgEngine{Engine: env.Engine}).(SenderNameMatcher)
+	requirements.True(ok)
+	assertions.Equal(hints, matcher.MatchSenderName(env.Ctx, q))
 	for _, tc := range []struct {
 		q             string
 		opt           bool
@@ -62,16 +66,14 @@ func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
 	other := env.AddParticipant(dbtest.ParticipantOpts{Email: new("other@example.com"), DisplayName: new("Alex Other")})
 	env.AddMessage(dbtest.MessageOpts{FromID: other, Subject: "hintfixture"})
 	q := search.Parse("from:alex_% subject:hintfixture")
-	hint := env.Engine.MatchSenderName(env.Ctx, q)
-	requirements.NotNil(hint)
-	assertions.Equal("from:special@example.com subject:hintfixture", hint.RetryWith.Query)
+	hints := env.Engine.MatchSenderName(env.Ctx, q)
+	requirements.Len(hints, 1)
+	assertions.Equal("from:special@example.com subject:hintfixture", hints[0].RetryWith.Query)
 	env.MarkDeletedByID(id)
 	q.DeletionScope = search.DeletionScopeActive
-	hint = env.Engine.MatchSenderName(env.Ctx, q)
-	assertions.Nil(hint)
+	assertions.Nil(env.Engine.MatchSenderName(env.Ctx, q))
 	q.DeletionScope = search.DeletionScopeAny
-	hint = env.Engine.MatchSenderName(env.Ctx, q)
-	requirements.NotNil(hint)
+	assertions.Len(env.Engine.MatchSenderName(env.Ctx, q), 1)
 }
 
 func TestSenderHintCandidatesRespectScope(t *testing.T) {

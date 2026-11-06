@@ -11,29 +11,23 @@ import (
 
 // SenderNameMatcher is optional on engines with exact sender-address search.
 type SenderNameMatcher interface {
-	MatchSenderName(ctx context.Context, q *search.Query) *SearchHint
+	MatchSenderName(ctx context.Context, q *search.Query) []SearchHint
 }
 
 // MatchSenderName counts corrected queries within the same search scope.
 // The hint is best effort: it is nil when none applies or the lookup fails.
-func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query) *SearchHint {
-	return e.matchSenderName(ctx, q, MessageFilter{}, false)
+func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query) []SearchHint {
+	return e.matchSenderName(ctx, q, MessageFilter{}, e.buildFilteredDeepSearchQueryParts)
 }
 
-func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, filter MessageFilter, metadata bool) *SearchHint {
+func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, filter MessageFilter,
+	buildParts func(context.Context, *search.Query, MessageFilter) ([]string, []any, string)) []SearchHint {
 	if q.HasOR() || len(q.FromAddrs) != 1 {
 		return nil
 	}
 	scoped := *q
 	scoped.FromAddrs = nil
-	var conditions []string
-	var args []any
-	var join string
-	if metadata {
-		conditions, args, join = e.buildFilteredMetadataSearchQueryParts(ctx, &scoped, filter)
-	} else {
-		conditions, args, join = e.buildFilteredDeepSearchQueryParts(ctx, &scoped, filter)
-	}
+	conditions, args, join := buildParts(ctx, &scoped, filter)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	// First find addresses with matching sender metadata. Count all scoped
 	// messages at each address, but require a matching label within that scope.
@@ -69,15 +63,14 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, fil
 	}
 	defer func() { _ = rows.Close() }()
 	var labels []string
-	var first string
 	for rows.Next() {
 		var address string
 		var count int64
 		if err := rows.Scan(&address, &count); err != nil {
 			return nil
 		}
-		if first == "" {
-			first = address
+		if labels == nil {
+			scoped.FromAddrs = []string{address}
 		}
 		unit := "messages"
 		if count == 1 {
@@ -85,17 +78,16 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, fil
 		}
 		labels = append(labels, fmt.Sprintf("%s (%d %s)", address, count, unit))
 	}
-	if rows.Err() != nil || first == "" {
+	if rows.Err() != nil || labels == nil {
 		return nil
 	}
-	scoped.FromAddrs = []string{first}
 	retry := search.Format(&scoped)
-	hint := &SearchHint{Code: "sender_name_requires_address", Message: fmt.Sprintf("from: matches addresses; senders matching %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry)}
+	hint := SearchHint{Code: "sender_name_requires_address", Message: fmt.Sprintf("from: matches addresses; senders matching %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry)}
 	hint.RetryWith.Query = retry
-	return hint
+	return []SearchHint{hint}
 }
 
-func (e *DuckDBEngine) MatchSenderName(ctx context.Context, q *search.Query) *SearchHint {
+func (e *DuckDBEngine) MatchSenderName(ctx context.Context, q *search.Query) []SearchHint {
 	if e.sqliteEngine == nil {
 		return nil
 	}
