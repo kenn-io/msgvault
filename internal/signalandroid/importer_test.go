@@ -181,6 +181,35 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 	}
 }
 
+func TestImportSenderSharedName(t *testing.T) {
+	for _, tc := range []struct{ name, given, family, profile, want string }{
+		{name: "given only", given: "Bob", want: "Bob"},
+		{name: "family only", family: "Example", want: "Example"},
+		{name: "full name", given: "Bob", family: "Example", want: "Bob Example"},
+		{name: "profile takes precedence", given: "Shared", family: "Name", profile: "Bob Example", want: "Bob Example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			dir := t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir,
+				`ALTER TABLE recipient ADD COLUMN shared_given_name TEXT DEFAULT NULL`,
+				`ALTER TABLE recipient ADD COLUMN shared_family_name TEXT DEFAULT NULL`,
+				`UPDATE recipient SET system_joined_name = NULL, profile_joined_name = '`+tc.profile+`', shared_given_name = '`+tc.given+`', shared_family_name = '`+tc.family+`' WHERE aci = '`+signalfixture.BobACI+`'`,
+			)
+			st := testutil.NewTestStore(t)
+			runImport(t, st, dir, t.TempDir())
+
+			var name string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT COALESCE(p.display_name, '') FROM messages m
+				JOIN participants p ON p.id = m.sender_id
+				WHERE m.source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&name))
+			assert.Equal(tc.want, name)
+		})
+	}
+}
+
 func TestReimportAddsNothingAfterRestore(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
