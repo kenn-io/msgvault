@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-06"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1391,7 +1391,8 @@ and may be duplicated.
 |---|---|---|
 | `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
-| `enabled` | `true` | Whether scheduled sync is active for this account |
+| `enabled` | `false` | Whether scheduled sync is active for this account |
+| `poll_interval` | `0` (off) | Unreleased: optional email polling duration, in whole seconds from `15s` through `120s`; omitted or `"0s"` disables polling |
 
 For example, schedule one previously registered Discord guild independently:
 
@@ -1401,6 +1402,35 @@ email = "123456789012345678"
 schedule = "*/30 * * * *"
 enabled = true
 ```
+
+#### Rapid email polling (unreleased)
+
+This branch adds `poll_interval` for existing Gmail API (`gmail`), IMAP
+(`imap`), and Microsoft Graph mail (`msmail`) sources. Runtime verification
+is pending. It requires `enabled = true` and a valid, nonempty
+[five-field cron schedule](#cron-schedules) as an independent recovery
+backstop. Polling does not add seconds fields or `@every` syntax to cron.
+Invalid explicit intervals, including negative, fractional-second, or
+out-of-range values, are configuration errors even on disabled entries.
+Disabled entries do not poll.
+
+With polling enabled, `email` must be the exact stored canonical account
+identifier from the **ACCOUNT** column of `msgvault list-accounts`. It must
+resolve to exactly one active `gmail`, `imap`, or `msmail` source. Display
+names and archive aliases are not selectors. A missing, merged, or ambiguous
+target fails without creating a source or syncing multiple providers. This
+stricter selection also applies to cron and manual scheduler runs for the
+opted-in entry. Duplicate enabled entries for the same key are rejected when
+one enables polling.
+
+Rapid IMAP requires unfiltered coverage. A saved folder allow list or an
+effective folder/date filter, including `[sync].imap_skip_folders`, rejects
+rapid acquisition before ingestion. Keep ordinary sync for filtered accounts.
+
+Edit `config.toml` and restart the daemon to apply a polling change. Existing
+schedule API updates do not configure the polling interval. See
+[Keep email current](usage/email-freshness.md) for activation, credentials,
+provider limits, metadata costs, and status.
 
 ### SyncTech SMS Sources
 
