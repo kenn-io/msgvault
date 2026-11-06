@@ -6,6 +6,15 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- [Open loops](usage/open-loops.md) list conversations waiting on your reply
+  and replies you are waiting on, with separate results for each person and
+  decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
+  `reopen` manage them, and the HTTP API has matching routes. Each request
+  computes evidence for up to 1,000 uncached messages; repeated requests
+  continue using retained evidence. They need HTTP API schema 3.44.0.
+
 ## 0.23.0
 <small>2026-11-04</small>
 

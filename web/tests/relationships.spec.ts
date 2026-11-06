@@ -401,8 +401,15 @@ for (const facet of ['person', 'domain'] as const) {
       await page.keyboard.press('Enter');
       const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
       await expect(reader.getByText('Synthetic preview 1200', { exact: true })).toBeVisible();
-      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
-      expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      if (width <= 640) {
+        await expect(grid).toBeHidden();
+        await reader.getByRole('button', { name: 'Back to results' }).click();
+        await expect(grid).toBeVisible();
+        await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      } else {
+        expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+        expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      }
     });
   }
 }
@@ -693,9 +700,10 @@ for (const close of ['Escape', 'Back to People']) {
     await page.keyboard.press('Enter');
     const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
     if (close === 'Escape') {
-      await reading.getByRole('button', { name: 'Close reading pane', exact: true }).focus();
+      await reading.getByRole('button', { name: 'Back to results', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(reading).toBeHidden();
+      await expect(messages).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(list).toBeVisible();
       await expect(list).toBeFocused();
