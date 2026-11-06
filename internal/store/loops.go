@@ -495,9 +495,9 @@ func (s *Store) loopMessages(ctx context.Context, ids []int64, owners loopOwners
 			_, ownerPerson := owners.persons[p.PersonID]
 			p.IsOwner = ownerLinked(cp) || ownerParticipant || ownerPerson
 			switch {
-			case cp.RecipientType == messageSenderRole && cp.ParticipantID == m.Sender.ParticipantID:
+			case cp.RecipientType == meetingSenderRole && cp.ParticipantID == m.Sender.ParticipantID:
 				m.Sender = p
-			case cp.RecipientType != messageSenderRole:
+			case cp.RecipientType != meetingSenderRole:
 				recipientIsOwner = recipientIsOwner || p.IsOwner
 				m.Recipients = append(m.Recipients, LoopRecipient{LoopParticipant: p, Type: cp.RecipientType})
 			}
@@ -534,7 +534,7 @@ func resolvedLoopSenderID(senderID int64, counterparts []ActivityCounterpart) in
 	}
 	var fromID int64
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != messageSenderRole {
+		if counterpart.RecipientType != meetingSenderRole {
 			continue
 		}
 		if fromID != 0 && fromID != counterpart.ParticipantID {

@@ -459,7 +459,7 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		require := require.New(t)
 		f := newReplyFixture(t, "user", nil)
 		initial := f.now()
-		f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
+		f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			response, err := http.DefaultTransport.RoundTrip(request)
 			if request.URL.Path == "/v2/bot/message/push" {
 				f.setNow(f.now().Add(time.Minute))
@@ -652,17 +652,13 @@ func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
 	})
 }
 
-type replyRoundTrip func(*http.Request) (*http.Response, error)
-
-func (f replyRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
-
 func TestReplyAcceptanceSurvivesCallerCancellation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newReplyFixture(t, "user", nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
+	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		response, err := http.DefaultTransport.RoundTrip(request)
 		if err == nil && request.URL.Path == "/v2/bot/message/push" {
 			response.Body = replyClosingBody{ReadCloser: response.Body, closed: cancel}
@@ -692,7 +688,7 @@ func TestReplyKnownRemoteIDSurvivesReceiptStoreFailure(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "receipt.db")
 	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
-	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
+	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(f.now), line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		response, err := http.DefaultTransport.RoundTrip(request)
 		if err == nil && request.URL.Path == "/v2/bot/message/push" {
 			response.Body = replyClosingBody{ReadCloser: response.Body, closed: func() { require.NoError(f.st.Close()) }}

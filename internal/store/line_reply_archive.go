@@ -108,7 +108,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		return s.setLineMembershipClockTx(ctx, tx, a.SourceID, a.SourceConversationID, lineidentity.UserIdentifier(a.ChannelID, a.BotUserID), true, a.AdmittedAt)
 	}
 	build := func([]int64) *MessagePersistData {
-		recipients := []RecipientSet{{Type: messageSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}}
+		recipients := []RecipientSet{{Type: meetingSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}}
 		if recipient != 0 {
 			recipients = append(recipients, RecipientSet{Type: "to", ParticipantIDs: []int64{recipient}, DisplayNames: []string{recipientName}})
 		}

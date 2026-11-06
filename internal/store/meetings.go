@@ -16,6 +16,7 @@ import (
 )
 
 const meetingResultSchemaVersion = 1
+const meetingSenderRole = "from"
 
 var (
 	ErrMeetingNotFound              = errors.New("meeting not found")
@@ -362,7 +363,7 @@ func loadMeetingContextParticipants(
 	}
 	if err == nil {
 		sender.ParticipantID = new(senderID)
-		sender.Role = messageSenderRole
+		sender.Role = meetingSenderRole
 		key := meetingParticipantKey(sender)
 		_, archived := seenRoleID[meetingParticipantRoleIDKey(sender.Role, senderID)]
 		if _, exists := seen[key]; !exists && !archived {

@@ -54,8 +54,6 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-const messageSenderRole = "from"
-
 // RecipientSet groups participant IDs, display names, and envelope
 // addresses for one recipient type (from, to, cc, bcc). EmailAddresses
 // carries the address as it appeared in the message envelope; unlike the
