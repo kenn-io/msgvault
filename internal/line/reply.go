@@ -186,7 +186,7 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	first := a.State == store.LineReplyAdmitted
 	var result PushReceipt
 	var pushErr error
-	if first {
+	if first && s.now().Before(a.RetryUntil) {
 		if s.now().Before(a.NextRetryAt) {
 			return replyReceipt(a), nil
 		}
