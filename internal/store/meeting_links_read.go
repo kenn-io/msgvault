@@ -90,18 +90,18 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		values = append(values, target.Row.ICalUID)
 	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
-	starts, resolvedIDs, err := meetingCopyStarts(ctx, r, target, copies, budget)
+	starts, resolvedRows, err := meetingCopyStarts(ctx, r, target, copies, budget)
 	if err != nil {
 		return membersOut, err
 	}
-	targets = append(targets, resolvedIDs...)
+	copies = append(copies, resolvedRows...)
 	for _, row := range copies {
 		targets = append(targets, row.MessageID)
 		value := row.Event.ProviderEventID
-		if row.Event.Kind == meetingSeriesKind && target.Identity.OccurrenceKey != "" {
+		if row.Event.Kind != meetingExceptionKind && target.Identity.OccurrenceKey != "" {
 			value += "_" + target.Identity.OccurrenceKey
 		}
-		values = append(values, value)
+		values = append(values, value, row.ICalUID)
 	}
 	args := slices.Concat(values, []any{target.Row.Event.Kind}, starts, []any{target.Ref.Key, target.Identity.OccurrenceKey}, targets)
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
@@ -147,10 +147,10 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 }
 
 // meetingCopyStarts lists the occurrence's effective and original starts plus
-// each calendar copy's start and resolved exception ID, resolving series copies in their own zones.
-func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, []any, error) {
+// each calendar copy's start and resolved exception row, resolving series copies in their own zones.
+func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, []CalendarEventRow, error) {
 	starts := []any{target.Start}
-	var resolvedIDs []any
+	var resolvedRows []CalendarEventRow
 	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
 		if original.AllDay {
 			zone, err := calendarEventZone(target.Row.Event)
@@ -178,11 +178,11 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 			}
 			starts = append(starts, copied.Start)
 			if copied.Row.MessageID != row.MessageID {
-				resolvedIDs = append(resolvedIDs, copied.Row.MessageID)
+				resolvedRows = append(resolvedRows, copied.Row)
 			}
 		}
 	}
-	return starts, resolvedIDs, nil
+	return starts, resolvedRows, nil
 }
 
 // Gather only notes scheduled at the occurrence's original or copied starts,
