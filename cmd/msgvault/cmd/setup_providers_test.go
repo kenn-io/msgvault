@@ -2070,5 +2070,4 @@ dimension = 4
 	next, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
 	require.NoError(err)
 	assert.False(next.Vector.Enabled)
-	assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
 }

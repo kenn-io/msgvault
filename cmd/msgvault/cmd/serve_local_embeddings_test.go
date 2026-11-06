@@ -225,17 +225,22 @@ func (f *localActivationFixture) start(t *testing.T) {
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name                     string
-		kit, configured, builtin bool
-		installs                 int
+		name                             string
+		kit, configured, builtin, remote bool
+		installs                         int
 	}{
 		{name: "built-in", builtin: true, installs: 1},
 		{name: "available Ollama", kit: true},
 		{name: "configured Ollama", configured: true},
+		{name: "paused configured provider", remote: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "", "")
 			f.ollamaTags = tc.configured
+			if tc.remote {
+				f.cfg.Vector.Embeddings.Endpoint = "https://api.example.test/v1"
+				f.cfg.Vector.Embeddings.Model = "configured-model"
+			}
 			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{OllamaAvailable: tc.kit}, nil
 			}
@@ -245,6 +250,10 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.kit || tc.configured, availability.OllamaAvailable)
 			assert.NotEmpty(t, availability.Host)
+			if tc.remote {
+				assert.Equal(t, "configured", availability.Provider)
+				return
+			}
 			require.NoError(t, f.controller.Enable(f.ctx, tc.builtin, func(api.LocalEmbeddingsStatus) {}))
 			assert.Equal(t, tc.installs, f.installs)
 			assert.Equal(t, 1, f.refreshes)
@@ -259,6 +268,25 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "nomic-embed-text", "")
+	f.ollamaTags = true
+	content, err := os.ReadFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	content = []byte(strings.Replace(string(content), "server = "+strconv.Quote(f.cfg.Chat.Server), "server = \"https://chat.example.test\"", 1))
+	require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), content, 0o600))
+	f.cfg.Chat.Server = "https://chat.example.test"
+	f.start(t)
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	require.Equal("ollama", status.Provider)
+	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+	status, err = f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	require.Equal("builtin", status.Provider)
 }
 
 func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
@@ -317,99 +345,67 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 }
 
 func TestLocalEmbeddingsRequiresPeopleConsentForSelectedProvider(t *testing.T) {
-	for _, consented := range []bool{true, false} {
-		t.Run(strconv.FormatBool(consented), func(t *testing.T) {
-			f := newLocalActivationFixture(t, "different-model", "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n")
-			participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
-			require.NoError(t, err)
-			_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
-			require.NoError(t, err)
-			if consented {
-				profile, err := f.cfg.Vector.SemanticPersonEmbeddingProfile()
-				require.NoError(t, err)
-				_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
-				require.NoError(t, err)
-				_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
-				require.NoError(t, err)
-			}
-			f.start(t)
-			if consented {
-				results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
-				require.NoError(t, err)
-				require.Len(t, results, 1)
-			}
-			require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-			_, err = f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
-			require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
-			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-			require.NoError(t, err)
-			require.Len(t, messages, 1)
-		})
-	}
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "different-model", "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n")
+	participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
+	require.NoError(err)
+	_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
+	require.NoError(err)
+	profile, err := f.cfg.Vector.SemanticPersonEmbeddingProfile()
+	require.NoError(err)
+	_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
+	require.NoError(err)
+	_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
+	require.NoError(err)
+	f.start(t)
+	results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+	require.NoError(err)
+	require.Len(results, 1)
+	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+	_, err = f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+	require.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(messages, 1)
 }
 
 func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T) {
-	for _, conflict := range []bool{false, true} {
-		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
-			f := newLocalActivationFixture(t, "different-model", "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n")
-			var id int64
-			require.NoError(t, f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
-			seedLocalSearchDocument(t, f.store, id)
-			spec, err := configuredDocumentVectorSpec(f.ctx, f.store)
-			require.NoError(t, err)
-			for _, purpose := range []string{"document_embedding", "query_embedding"} {
-				consent, err := configuredDocumentVectorConsentSpec(spec, f.state, purpose)
-				require.NoError(t, err)
-				_, _, err = f.store.RecordDocumentVectorConsent(f.ctx, consent, time.Now())
-				require.NoError(t, err)
-			}
-			f.start(t)
-			require.NoError(t, runScheduledDocumentVectorGeneration(jobctx.WithProgress(f.ctx), f.store, f.handle.vf, 100))
-			old, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
-			require.NoError(t, err)
-			require.NotNil(t, old)
-			if conflict {
-				install := f.controller.install
-				f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-					file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0o600)
-					require.NoError(t, err)
-					_, err = file.WriteString("\n[web]\ntheme = \"dark\"\n")
-					require.NoError(t, err)
-					require.NoError(t, file.Close())
-					return install(ctx, opts)
-				}
-			}
-			err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-			if conflict {
-				require.Error(t, err)
-				var consents int
-				require.NoError(t, f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
-				assert.Equal(t, 2, consents)
-				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-				require.NoError(t, err)
-				saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
-				require.NoError(t, err)
-				assert.Equal(t, "different-model", saved.Vector.Embeddings.Model)
-				return
-			}
-			require.NoError(t, err)
-			var consents int
-			require.NoError(t, f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
-			assert.Equal(t, 2, consents)
-			generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
-			require.NoError(t, err)
-			assert.Equal(t, old.ID, generation.ID)
-			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
-			request.Header.Set("Authorization", "Bearer owner")
-			f.server.Router().ServeHTTP(response, request)
-			require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), "semantic_search_unavailable")
-			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-			require.NoError(t, err)
-			require.Len(t, messages, 1)
-		})
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newLocalActivationFixture(t, "different-model", "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n")
+	var id int64
+	require.NoError(f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+	seedLocalSearchDocument(t, f.store, id)
+	spec, err := configuredDocumentVectorSpec(f.ctx, f.store)
+	require.NoError(err)
+	for _, purpose := range []string{"document_embedding", "query_embedding"} {
+		consent, err := configuredDocumentVectorConsentSpec(spec, f.state, purpose)
+		require.NoError(err)
+		_, _, err = f.store.RecordDocumentVectorConsent(f.ctx, consent, time.Now())
+		require.NoError(err)
 	}
+	f.start(t)
+	require.NoError(runScheduledDocumentVectorGeneration(jobctx.WithProgress(f.ctx), f.store, f.handle.vf, 100))
+	old, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
+	require.NoError(err)
+	require.NotNil(old)
+	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+	require.NoError(err)
+	var consents int
+	require.NoError(f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
+	assert.Equal(2, consents)
+	generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
+	require.NoError(err)
+	assert.Equal(old.ID, generation.ID)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
+	request.Header.Set("Authorization", "Bearer owner")
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "semantic_search_unavailable")
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(messages, 1)
 }
 
 func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
@@ -488,24 +484,34 @@ func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
 	})
 }
 
-func TestLocalEmbeddingsDownloadFailureKeepsSavedSettings(t *testing.T) {
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	cfg := fixture.load(t)
-	before, err := os.ReadFile(fixture.path)
-	require.NoError(t, err)
-	handle := &vectorInitHandle{done: make(chan struct{})}
-	close(handle.done)
-	controller := &localEmbeddingsController{state: &invocation{cfg: cfg, logger: testDiscardLogger()}, handle: handle,
-		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil },
-		install: func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
-			return embedlocal.Installation{}, errors.New("connection interrupted")
-		},
+func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
+	for _, failure := range []string{"download", "config conflict"} {
+		t.Run(failure, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, "", "")
+			f.start(t)
+			expected, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			install := f.controller.install
+			f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+				if failure == "download" {
+					return embedlocal.Installation{}, errors.New("connection interrupted")
+				}
+				expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
+				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
+				return install(ctx, opts)
+			}
+			err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+			if failure == "download" {
+				require.ErrorContains(err, "connection interrupted")
+			} else {
+				require.ErrorIs(err, config.ErrConfigConflict)
+			}
+			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			require.Equal(expected, actual)
+		})
 	}
-	err = controller.Enable(t.Context(), true, func(api.LocalEmbeddingsStatus) {})
-	require.ErrorContains(t, err, "connection interrupted")
-	actual, err := os.ReadFile(fixture.path)
-	require.NoError(t, err)
-	assert.Equal(t, before, actual)
 }
 
 func TestLocalEmbeddingsPreservesPausedConfiguredProviders(t *testing.T) {
@@ -529,9 +535,6 @@ api_key_env = "EXAMPLE_EMBEDDING_KEY"
 					return embedlocal.Status{DownloadBytes: 290000000}, nil
 				},
 			}
-			status, err := controller.Inspect(t.Context())
-			require.NoError(t, err)
-			assert.Equal(t, "configured", status.Provider)
 			controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{}, errors.New("local activation reached for a remote provider")
 			}
