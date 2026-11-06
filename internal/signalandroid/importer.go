@@ -754,21 +754,10 @@ func (r *run) writeMessage(
 			Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{r.displayName(p.senderID)},
 		})
 	}
-	to := store.RecipientSet{Type: "to"}
-	seen := make(map[int64]bool)
-	if senderID.Valid {
-		seen[senderID.Int64] = true
-	}
-	for _, member := range members {
-		pid, ok, _ := r.participant(ctx, member)
-		if !ok {
-			continue
-		}
-		if !seen[pid] {
-			seen[pid] = true
-			to.ParticipantIDs = append(to.ParticipantIDs, pid)
-			to.DisplayNames = append(to.DisplayNames, r.displayName(member))
-		}
+	to, err := r.toRecipients(ctx, members, senderID)
+	if err != nil {
+		// Recipients are written only once, so archiving now would lose them.
+		return 0, err
 	}
 	if len(to.ParticipantIDs) > 0 && archivedID == 0 {
 		data.Recipients = append(data.Recipients, to)
@@ -831,6 +820,28 @@ func (r *run) writeMessage(
 		r.summary.RepliesUnresolved++
 	}
 	return messageID, nil
+}
+
+// toRecipients lists the members other than the sender, skipping members
+// without a participant and failing when a participant cannot be written.
+func (r *run) toRecipients(ctx context.Context, members []int64, senderID sql.NullInt64) (store.RecipientSet, error) {
+	to := store.RecipientSet{Type: "to"}
+	seen := make(map[int64]bool)
+	if senderID.Valid {
+		seen[senderID.Int64] = true
+	}
+	for _, member := range members {
+		pid, ok, err := r.participant(ctx, member)
+		if err != nil {
+			return to, err
+		}
+		if ok && !seen[pid] {
+			seen[pid] = true
+			to.ParticipantIDs = append(to.ParticipantIDs, pid)
+			to.DisplayNames = append(to.DisplayNames, r.displayName(member))
+		}
+	}
+	return to, nil
 }
 
 // quotedMessageID resolves quotes to an edit's original identity before writing.
