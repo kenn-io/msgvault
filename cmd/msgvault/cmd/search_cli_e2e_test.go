@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,9 +21,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -161,6 +162,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
 	// Semantic pages use the measured extra result and keep a runnable scoped retry.
+	executable, err := agenthook.BuildCommand(binary)
+	require.NoError(err)
 	for _, mode := range []string{"vector", "hybrid"} {
 		out, stderr := runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "1", "--json", "--snippet", "--sort", "date")
 		var page struct {
@@ -177,7 +180,11 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		assert.Contains(page.Hints[0].Next, "--account=archive@example.com")
 		assert.Contains(page.Hints[0].Next, "--home="+home)
 		// Execute the advertised command, including its quoting and connection flags.
-		retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Runs the CLI-generated command against isolated test state.
+		shell, args := "sh", []string{"-c", strings.Replace(page.Hints[0].Next, "msgvault", executable.POSIX, 1)}
+		if runtime.GOOS == "windows" {
+			shell, args = "pwsh", []string{"-NoProfile", "-NonInteractive", "-Command", strings.Replace(page.Hints[0].Next, "& 'msgvault'", executable.PowerShell, 1)}
+		}
+		retry := exec.CommandContext(t.Context(), shell, args...)
 		retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		var retryOut, retryErr bytes.Buffer
 		retry.Stdout, retry.Stderr = &retryOut, &retryErr

@@ -102,10 +102,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 			maxLimit = api.RemoteSearchLimit
 		}
 		if nextLimit := min(searchLimit*2, maxLimit); resp.HasMore && nextLimit > searchLimit {
-			next, err = semanticMoreResultsCommand(cmd, queryStr, nextLimit)
-			if err != nil {
-				return err
-			}
+			next = semanticMoreResultsCommand(cmd, queryStr, nextLimit)
 		}
 		return outputHybridResultsJSON(resp, explain, next)
 	}
@@ -269,7 +266,7 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 	})
 }
 
-func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string, nextLimit int) (string, error) {
+func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string, nextLimit int) string {
 	args := []string{"msgvault", "search"}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		if flag.Name != "limit" {
@@ -277,14 +274,11 @@ func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string, nextLimit i
 		}
 	})
 	args = append(args, "--limit", strconv.Itoa(nextLimit), "--", queryStr)
-	commands, err := agenthook.BuildCommand(args[0], args[1:]...)
-	if err != nil {
-		return "", fmt.Errorf("build search retry: %w", err)
-	}
+	commands, _ := agenthook.BuildCommand(args[0], args[1:]...)
 	if runtime.GOOS == "windows" {
-		return commands.PowerShell, nil
+		return commands.PowerShell
 	}
-	return commands.POSIX, nil
+	return commands.POSIX
 }
 
 func semanticMoreResultsMessage(resp *daemonclient.CLIHybridSearch) string {
