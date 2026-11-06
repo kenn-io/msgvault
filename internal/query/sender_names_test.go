@@ -90,6 +90,44 @@ func TestSenderNameHintSpecialFragments(t *testing.T) {
 	}
 }
 
+func TestSenderNameHintParsedAddressRetry(t *testing.T) {
+	env := newTestEnv(t)
+	upper := env.AddParticipant(dbtest.ParticipantOpts{Email: new("École@example.com"), DisplayName: new("Alex Kim")})
+	env.AddMessage(dbtest.MessageOpts{FromID: upper, Subject: "hintfixture"})
+	q := search.Parse("from:alex")
+	hints := env.Engine.MatchSenderName(env.Ctx, q)
+	for _, hint := range hints {
+		results, err := env.Engine.Search(env.Ctx, search.Parse(hint.RetryWith.Query), 10, 0)
+		require.NoError(t, err)
+		assert.Len(t, results, 1, "the advertised count must match the parsed retry: %s", hint.Message)
+	}
+	assert.Empty(t, hints, "an address that the parsed exact retry cannot match must be excluded")
+
+	for range 3 {
+		env.AddMessage(dbtest.MessageOpts{FromID: upper, Subject: "hintfixture"})
+	}
+	lower := env.AddParticipant(dbtest.ParticipantOpts{Email: new("école@example.com"), DisplayName: new("Alex Kim")})
+	var wantIDs []int64
+	for range 3 {
+		wantIDs = append(wantIDs, env.AddMessage(dbtest.MessageOpts{FromID: lower, Subject: "hintfixture"}))
+	}
+	for _, address := range []string{"first@example.org", "second@example.org", "third@example.org"} {
+		sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new(address), DisplayName: new("Alex Kim")})
+		env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
+	}
+	hints = env.Engine.MatchSenderName(env.Ctx, q)
+	require.Len(t, hints, 1)
+	assert.Equal(t, `from: matches addresses; senders matching "alex": try from:école@example.com (3 messages); other matching senders: first@example.org (1 message), second@example.org (1 message)`, hints[0].Message)
+	assert.Equal(t, "from:école@example.com", hints[0].RetryWith.Query)
+	results, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
+	require.NoError(t, err)
+	var gotIDs []int64
+	for _, result := range results {
+		gotIDs = append(gotIDs, result.ID)
+	}
+	assert.ElementsMatch(t, wantIDs, gotIDs)
+}
+
 func TestSenderNameHintKnownAddress(t *testing.T) {
 	env := newTestEnv(t)
 	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("sal@example.com"), DisplayName: new("Sal Example")})

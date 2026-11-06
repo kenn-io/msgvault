@@ -64,14 +64,14 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
  CROSS JOIN participants p_hint
  CROSS JOIN message_recipients mr_hint
  CROSS JOIN messages m %s
- WHERE LOWER(p_hint.email_address) = c.address
+ WHERE LOWER(p_hint.email_address) = c.address AND c.address = %s
  AND mr_hint.participant_id = p_hint.id AND mr_hint.recipient_type = 'from'
  AND m.id = mr_hint.message_id AND %s
  GROUP BY c.address
  HAVING MAX(CASE WHEN %s OR %s THEN 1 ELSE 0 END) = 1
  ORDER BY COUNT(DISTINCT m.id) DESC, c.address LIMIT 3`,
 		metadataContainsExpression(e.dialect, "p.display_name"), metadataContainsExpression(e.dialect, "p.email_address"),
-		participantIndex, metadataContainsExpression(e.dialect, "mr.display_name"), recipientIndex, join, strings.Join(conditions, " AND "),
+		participantIndex, metadataContainsExpression(e.dialect, "mr.display_name"), recipientIndex, join, e.dialect.UnicodeLowerExpression("c.address"), strings.Join(conditions, " AND "),
 		metadataContainsExpression(e.dialect, recipientNameExpr("mr_hint", "p_hint")), metadataContainsExpression(e.dialect, "p_hint.email_address"))
 	args = append(append(candidateArgs, args...), pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
