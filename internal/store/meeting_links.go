@@ -202,8 +202,8 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	}
 	if len(moved) > 0 {
 		x := moved[len(moved)-1]
+		row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
 		if x.Event.Start != nil && x.Event.End != nil {
-			row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
 			if err != nil {
