@@ -65,7 +65,7 @@ func TestSearchFTSPagingPreservesDetails(t *testing.T) {
 func TestSearchCommonWordExcludesCutoffTies(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+	_, err := env.DB.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
 		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3014
 	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
 	SELECT 100+x, 'window-' || x, 1, 1, 'email',
@@ -98,7 +98,7 @@ func TestSearchCommonWordExcludesCutoffTies(t *testing.T) {
 func TestSearchCommonWordPreservesPages(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+	_, err := env.DB.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
 		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3000
 	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject, deleted_at, deleted_from_source_at)
 	SELECT 100+x, 'window-' || x, 1, 1, 'email',

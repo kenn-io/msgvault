@@ -214,7 +214,7 @@ func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(page.Occurrences)
 	requirements.NoError(st.Close())
-	reopened, err := OpenForTest(st.dbPath)
+	reopened, err := OpenForTest(t.Context(), st.dbPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
 	requirements.NoError(reopened.InitSchemaContext(t.Context()))

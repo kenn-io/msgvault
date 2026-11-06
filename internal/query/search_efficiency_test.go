@@ -30,7 +30,7 @@ func observedSearchEngine(t *testing.T) (*SQLiteEngine, *sqlobserve.Observer) {
 func TestSearchCommonWordUsesDateWindow(t *testing.T) {
 	t.Parallel()
 	engine, observer := observedSearchEngine(t)
-	_, err := engine.db.Exec(`WITH RECURSIVE seq(x) AS (
+	_, err := engine.db.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
 		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3000
 	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
 	SELECT 100+x, 'window-' || x, 1, 1, 'email', datetime('2025-01-01', '+' || x || ' minutes'),
