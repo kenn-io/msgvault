@@ -42,6 +42,7 @@ const (
 	OpDraftsDelete     // 10 units
 	OpSendAsList       // 1 unit
 	OpMessagesModify   // 5 units
+	OpWatch            // 100 units
 )
 
 // Cost returns the quota cost for an operation.
@@ -53,6 +54,8 @@ func (o Operation) Cost() int {
 		return 10
 	case OpMessagesBatchDelete:
 		return 50
+	case OpWatch:
+		return 100 // https://developers.google.com/workspace/gmail/api/reference/quota
 	case OpHistoryList:
 		return 2
 	case OpDraftsCreate, OpDraftsDelete:

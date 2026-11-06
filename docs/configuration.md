@@ -1403,9 +1403,12 @@ enabled = true
 
 ### `[email_push]`
 
-Opt selected IMAP sources into prompt INBOX catchup using a separate read-only
-IDLE connection. Push is off by default. Register and sync each mailbox normally,
-then use its numeric source ID from `msgvault list-accounts`:
+Use IMAP INBOX hints or mailbox-wide Gmail notifications to prompt the existing
+incremental sync. Push is off by default and still requires an enabled polling
+schedule for every selected source. Register and sync each mailbox normally,
+then use its numeric source ID from `msgvault list-accounts`.
+
+For IMAP, enable a separate read-only IDLE connection:
 
 ```toml
 [email_push]
@@ -1435,6 +1438,60 @@ backoff; unsupported IDLE or an authentication/configuration failure stops the
 listener and logs polling fallback. Sources removed, retired, or replaced after
 startup cannot receive a pending push sync. Embeddings keep their existing
 asynchronous post-sync behavior. Restart the daemon after changing push settings.
+
+#### Gmail notifications
+
+Assign one existing Pub/Sub Pull subscription exclusively to each selected Gmail
+source. Keep its exact archive identifier in the enabled account schedule:
+
+```toml
+[[email_push.gmail]]
+source_id = 23
+topic = "projects/example/topics/mail"
+subscription = "projects/example/subscriptions/mail"
+credentials_file = "/operator/path/subscriber.json"
+
+[[accounts]]
+email = "reader@example.com"
+schedule = "*/30 * * * *"
+enabled = true
+```
+
+The topic must belong to the Google developer project used by the source's OAuth
+application. Grant topic publishing permission to
+`gmail-api-push@system.gserviceaccount.com`, as described in
+[Google's Gmail push setup](https://developers.google.com/workspace/gmail/api/guides/push).
+msgvault uses the source's existing Gmail credentials and verifies the
+authenticated profile before watch setup and archive catchup. It does not start
+a new authorization flow or change the source's grant.
+
+Supply the subscriber's service-account or authorized-user JSON at the explicit
+`credentials_file` path. These credentials must be able to read the subscription,
+pull messages and acknowledge them. They are separate from the Gmail account
+credentials; default credential discovery is not used. Resources and permissions
+are configured by the operator. msgvault does not create them or expose a public
+webhook.
+
+The subscription must be active, use ordinary at-least-once Pull delivery, and
+reference the exact configured topic. Push/export delivery, exactly-once mode,
+filters, message transforms and dead-letter policies are rejected. Source IDs
+and full subscription names must be unique. No other consumer may use a
+configured subscription; different subscriptions may share a topic.
+
+Startup, successful watch renewal and recovered Pull connections request
+catchup. Renewal runs independently of a busy archive sync, daily or sooner when
+the provider reports a shorter watch lifetime. Valid notifications are
+acknowledged only after complete catchup and a fresh source check. Failed or
+partial acquisition leaves them unacknowledged. Duplicates and out-of-order hints
+request catchup again; notification and watch history IDs never replace the
+committed archive cursor. Malformed or foreign deliveries may be acknowledged
+only on the validated, exclusively assigned subscription.
+
+Broker retention is finite and notifications can be missed. Keep the enabled
+polling schedule; startup catchup also covers time spent offline. Temporary
+failures retry with bounded backoff. Source retirement or replacement stops its
+listener. Embeddings remain asynchronous. Restart the daemon after changing push
+configuration.
 
 ### SyncTech SMS Sources
 

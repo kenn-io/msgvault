@@ -6,7 +6,8 @@ import "errors"
 // lists disable listeners. Every selected source still needs an enabled account
 // polling schedule, checked against the archive when the daemon starts.
 type EmailPushConfig struct {
-	IMAPSourceIDs []int64 `toml:"imap_source_ids"`
+	IMAPSourceIDs []int64           `toml:"imap_source_ids"`
+	Gmail         []GmailPushConfig `toml:"gmail"`
 }
 
 func (c EmailPushConfig) Validate() error {
@@ -20,5 +21,5 @@ func (c EmailPushConfig) Validate() error {
 		}
 		seen[id] = true
 	}
-	return nil
+	return ValidateGmailPushConfigs(c.Gmail)
 }

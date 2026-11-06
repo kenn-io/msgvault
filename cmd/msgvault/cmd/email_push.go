@@ -99,14 +99,26 @@ func emailPushBindings(ctx context.Context, cfg *config.Config, st *store.Store,
 	if err := cfg.EmailPush.Validate(); err != nil {
 		return nil, err
 	}
-	bindings := make(map[string]emailPushBinding, len(cfg.EmailPush.IMAPSourceIDs))
+	type selection struct {
+		id         int64
+		sourceType string
+	}
+	selected := make([]selection, 0, len(cfg.EmailPush.IMAPSourceIDs)+len(cfg.EmailPush.Gmail))
 	for _, id := range cfg.EmailPush.IMAPSourceIDs {
+		selected = append(selected, selection{id, sourceTypeIMAP})
+	}
+	for _, entry := range cfg.EmailPush.Gmail {
+		selected = append(selected, selection{entry.SourceID, sourceTypeGmail})
+	}
+	bindings := make(map[string]emailPushBinding, len(selected))
+	for _, item := range selected {
+		id := item.id
 		src, token, err := st.BindEmailPushSource(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("email push source %d: %w", id, errors.Join(errEmailPushBinding, err))
 		}
-		if src.SourceType != sourceTypeIMAP {
-			return nil, fmt.Errorf("email push source %d is not IMAP: %w", id, errEmailPushBinding)
+		if src.SourceType != item.sourceType {
+			return nil, fmt.Errorf("email push source %d has the wrong provider type: %w", id, errEmailPushBinding)
 		}
 		if src.HistoryOnly || src.MergedIntoSourceID != 0 {
 			return nil, fmt.Errorf("email push source %d is retired: %w", id, errEmailPushBinding)
@@ -192,11 +204,14 @@ func runEmailPushSource(ctx context.Context, src *store.Source, st *store.Store,
 	if src.SourceType != sourceTypeGmail {
 		return nil, errEmailPushBinding
 	}
-	client, _, err := newDaemonGmailClient(ctx, src.Identifier, src, getOAuthMgr, state, oauth.Scopes)
+	client, serviceAccount, err := newDaemonGmailClient(ctx, src.Identifier, src, getOAuthMgr, state, oauth.Scopes)
 	if err != nil {
 		return nil, emailPushFailure(src.ID, "initializing Gmail client failed", err)
 	}
 	defer func() { _ = client.Close() }()
+	if err := verifyGmailPushIngestionProfile(ctx, src, client, serviceAccount); err != nil {
+		return nil, emailPushFailure(src.ID, "Gmail profile verification failed", err)
+	}
 	opts := messagesync.DefaultOptions()
 	opts.AttachmentsDir = state.cfg.AttachmentsDir()
 	syncer := newMessageSyncer(client, st, opts, state).WithLogger(state.logger)
@@ -262,9 +277,21 @@ func startEmailPush(ctx context.Context, cfg *config.Config, st *store.Store, sc
 	}
 	sched.WithAccountWakeSyncFunc(emailPushWakeSync(bindings, st, run))
 	for _, binding := range bindings {
-		runtime.wg.Go(func() {
-			runIMAPPushListener(listenerCtx, binding, st, sched, state)
-		})
+		if binding.sourceType == sourceTypeIMAP {
+			runtime.wg.Go(func() {
+				runIMAPPushListener(listenerCtx, binding, st, sched, state)
+			})
+		}
+	}
+	for _, entry := range cfg.EmailPush.Gmail {
+		for _, binding := range bindings {
+			if binding.sourceID == entry.SourceID {
+				runtime.wg.Go(func() {
+					runGmailPushListener(listenerCtx, entry, binding, st, sched, state, getOAuthMgr)
+				})
+				break
+			}
+		}
 	}
 	return runtime, nil
 }
