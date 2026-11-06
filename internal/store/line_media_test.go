@@ -28,7 +28,7 @@ func TestLineMediaPreservesDerivedRevision(t *testing.T) {
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	must.NoError(err)
 	must.NoError(st.UpsertLineAttachmentContext(t.Context(), id, store.AttachmentWrite{
-		SourceAttachmentID: "line:1", Filename: "example.bin", ContentHash: "synthetic-hash", StoragePath: "synthetic-path", Size: 12,
+		SourceAttachmentID: "line:1", Filename: "example.bin", ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", StoragePath: "01/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Size: 12,
 		State: attachmentpolicy.StateStored,
 	}))
 	after, err := st.DerivedDataRevisionContext(t.Context())

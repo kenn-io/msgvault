@@ -60,7 +60,7 @@ handle, rather than merged into a shared anonymous direct chat.
 | `401` | Missing/invalid signature or a destination that differs from the registered bot |
 | `404` | Unknown or disabled channel on a mounted receiver; empty response body, distinct from the `401` for a bad signature |
 | `413` | Request body exceeds 1 MiB |
-| `503` | Receiver concurrency bound reached, operation gate unavailable, or inbox transaction failed; delivery can be retried |
+| `503` | Receiver concurrency bound reached, backup freeze active, or inbox transaction failed; delivery can be retried |
 
 With no enabled channels, the route is not mounted and ordinary server
 protections apply. Valid batches remove `replyToken` and `markAsReadToken`

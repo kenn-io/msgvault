@@ -43,15 +43,29 @@ func TestGroupSummaryPermanentErrorPreservesArchivedMessage(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newInboxFixture(t)
-			f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: status})
-			f.enqueue(t, f.message("1", "archived text", f.now.UnixMilli()), time.Time{})
+			path := "/v2/bot/group/" + testGroup + "/summary"
+			permanent := status == http.StatusForbidden || status == http.StatusNotFound
+			count := 1
+			if permanent {
+				count = 3
+			}
+			for i := range count {
+				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: status})
+				f.enqueue(t, f.message(strconv.Itoa(i+1), "archived text", f.now.UnixMilli()+int64(i)), time.Time{})
+			}
 			f.run(t)
-			checks.Equal("archived text", f.archived(t, "1").body)
+			for i := range count {
+				checks.Equal("archived text", f.archived(t, strconv.Itoa(i+1)).body)
+			}
 			var state string
 			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-			want := "processed"
-			if status == http.StatusTooManyRequests || status == http.StatusInternalServerError {
-				want = "retry"
+			want := "retry"
+			if permanent {
+				want = "processed"
+				checks.Equal(1, f.api.Count(http.MethodGet, path))
+				inbox, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
+				must.NoError(err)
+				checks.Zero(inbox.Pending)
 			}
 			checks.Equal(want, state)
 		})
@@ -1296,29 +1310,6 @@ func TestProcessorArchivesLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
 	var count int
 	require.NoError(t, f.st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
 	assert.Equal(t, 1, count, "the text in an acknowledged batch must be available while earlier optional media is downloading")
-}
-
-func TestGroupSummaryUnavailableRequestedOncePerPass(t *testing.T) {
-	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			path := "/v2/bot/group/" + testGroup + "/summary"
-			for i := range 3 {
-				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: status})
-				f.enqueue(t, f.message(strconv.Itoa(i+1), "group text", f.now.UnixMilli()+int64(i)), time.Time{})
-			}
-			f.run(t)
-			checks.Equal(1, f.api.Count(http.MethodGet, path))
-			for i := range 3 {
-				checks.Equal("group text", f.archived(t, strconv.Itoa(i+1)).body)
-			}
-			inbox, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
-			must.NoError(err)
-			checks.Zero(inbox.Pending)
-		})
-	}
 }
 
 func TestProcessorCooperativeStopAfterEnrichment(t *testing.T) {

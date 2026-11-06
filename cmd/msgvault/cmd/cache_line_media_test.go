@@ -43,7 +43,7 @@ func TestLineMediaCacheAppend(t *testing.T) {
 	})
 	must.NoError(err)
 	must.NoError(st.UpsertLineAttachmentContext(t.Context(), id, store.AttachmentWrite{
-		SourceAttachmentID: "line:3", Filename: "example.bin", ContentHash: "synthetic-hash", StoragePath: "synthetic-path", Size: 12,
+		SourceAttachmentID: "line:3", Filename: "example.bin", ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", StoragePath: "01/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Size: 12,
 		State: attachmentpolicy.StateStored,
 	}))
 	result, err := buildCacheAuto(dbPath, analyticsDir)
