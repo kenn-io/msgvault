@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,6 +94,36 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
 	}
 	assertions.Equal(400, do("GET", "/api/v1/calls/summary?after=invalid", "").Code)
+	t.Run("normalized nanosecond timestamps", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"nanoseconds","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00.123456789Z","ended_at":"2026-10-01T09:01:00.987654321Z","precision":"instant","participants":[{"participant_id":%d,"participation":"joined"}],"raw":{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}}}`, peer)
+		out := do("POST", "/api/v1/import/calls", body)
+		require.Equal(200, out.Code, out.Body.String())
+		var imported CallImportResponse
+		require.NoError(json.Unmarshal(out.Body.Bytes(), &imported))
+		const window = "?after=2026-10-01T09:00:00.123456Z&before=2026-10-01T09:00:00.123457Z"
+		out = do("GET", "/api/v1/calls"+window, "")
+		require.Equal(200, out.Code, out.Body.String())
+		var evidence CallEvidenceResponse
+		require.NoError(json.Unmarshal(out.Body.Bytes(), &evidence))
+		require.Len(evidence.Items, 1)
+		assert.Equal(imported.MessageID, evidence.Items[0].MessageID)
+		assert.Equal(time.Date(2026, 10, 1, 9, 0, 0, 123456000, time.UTC), evidence.Items[0].OccurredAt)
+		require.NotNil(evidence.Items[0].EndedAt)
+		assert.Equal(time.Date(2026, 10, 1, 9, 1, 0, 987654000, time.UTC), *evidence.Items[0].EndedAt)
+		out = do("GET", "/api/v1/calls/summary"+window, "")
+		require.Equal(200, out.Code, out.Body.String())
+		var summary CallSummaryResponse
+		require.NoError(json.Unmarshal(out.Body.Bytes(), &summary))
+		require.Len(summary.Items, 1)
+		assert.Equal(person.ID, summary.Items[0].PersonID)
+		assert.Equal(1, summary.Items[0].Answered)
+		assert.Equal(imported.MessageID, summary.Items[0].ExampleMessageID)
+		raw, err := archive.GetMessageRawContext(t.Context(), imported.MessageID)
+		require.NoError(err)
+		assert.JSONEq(`{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}`, string(raw))
+	})
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {
