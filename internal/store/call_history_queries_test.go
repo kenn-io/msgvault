@@ -139,7 +139,7 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 		o := callhistory.Observation{
 			RecordID: native,
 
-			Version: 1, Provider: "signal", Account: account, NativeCallID: native,
+			Version: 1, Provider: "signal", Account: account,
 			Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
 			OccurredAt: at,
 

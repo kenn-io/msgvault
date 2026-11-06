@@ -10,7 +10,6 @@ export interface CallObservationView {
   duration_seconds: number | null;
   ended_at?: string;
   message_id: number;
-  native_call_id?: string;
   occurred_at: string;
   outcome: string;
   owner_participation: string;

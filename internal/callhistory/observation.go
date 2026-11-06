@@ -26,7 +26,6 @@ type Evidence struct {
 	Version            int        `json:"version"`
 	Provider           string     `json:"provider"`
 	Account            string     `json:"account"`
-	NativeCallID       string     `json:"native_call_id,omitempty"`
 	Direction          string     `json:"direction"`
 	Outcome            string     `json:"outcome"`
 	OwnerParticipation string     `json:"owner_participation"`
@@ -63,8 +62,7 @@ func validID(s string) bool {
 }
 
 func (e Evidence) Validate() error {
-	if e.Version != 1 || !validID(e.Provider) || !validID(e.Account) ||
-		(e.NativeCallID != "" && !validID(e.NativeCallID)) {
+	if e.Version != 1 || !validID(e.Provider) || !validID(e.Account) {
 		return invalid("version or provenance")
 	}
 	if !slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
@@ -86,10 +84,7 @@ func (o Observation) Validate() error {
 	if err := o.Evidence.Validate(); err != nil {
 		return err
 	}
-	if o.NativeCallID != "" && o.RecordID != o.NativeCallID {
-		return invalid("record_id must equal native_call_id")
-	}
-	if (o.NativeCallID == "" && !validID(o.RecordID)) || len(o.Raw) == 0 {
+	if !validID(o.RecordID) || len(o.Raw) == 0 {
 		return invalid("record_id or raw")
 	}
 	seen := make(map[int64]string, len(o.Participants))

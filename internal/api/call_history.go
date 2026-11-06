@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"mime"
 	"net/http"
 	"reflect"
 	"time"
@@ -89,11 +88,6 @@ func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
-	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != applicationJSONMediaType {
-		writeError(w, 415, "unsupported_media_type", "Content-Type must be application/json")
-		return
-	}
 	o, err := callhistory.DecodeImport(r.Body)
 	if err != nil {
 		s.writeCallError(w, err)

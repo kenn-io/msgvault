@@ -3,7 +3,7 @@
 Import call observations and inspect how often you called each person. The
 daemon keeps original evidence, explicit participant bindings and uncertain
 fields. Synced Google Calendar events stay in the calendar archive; invitations never count as calls.
-These commands require daemon API schema 3.46.0 or newer.
+These commands require daemon API schema 3.47.0 or newer.
 
 ## Import a supplied record
 
@@ -44,7 +44,7 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. When `native_call_id` is set, `record_id` must equal it; reimporting that record replaces its evidence. See the example below. |
+| `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. Reimporting the same `record_id` replaces its evidence. See the example below. |
 
 This normalized request binds the call to existing archive participant `42`. Timestamps use RFC3339; `ended_at` is optional.
 
@@ -56,7 +56,6 @@ This normalized request binds the call to existing archive participant `42`. Tim
     "version": 1,
     "provider": "signal",
     "account": "example-signal-account",
-    "native_call_id": "example-call",
     "record_id": "example-call",
     "direction": "outgoing",
     "outcome": "answered",
