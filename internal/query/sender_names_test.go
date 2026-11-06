@@ -88,6 +88,22 @@ func TestSenderNameHintDottedPartial(t *testing.T) {
 	assertions.Equal(id, retry[0].ID)
 }
 
+func TestSenderNameHintAtSign(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.com"), DisplayName: new("Alex Kim")})
+	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "atsignfixture"})
+	other := env.AddParticipant(dbtest.ParticipantOpts{Email: new("chat-handle"), DisplayName: new("Jordan Lee")})
+	env.AddMessage(dbtest.MessageOpts{FromID: other, Subject: "atsignfixture"})
+	hints := env.Engine.MatchSenderName(env.Ctx, search.Parse("from:@ subject:atsignfixture"))
+	requirements.Len(hints, 1)
+	assertions.Equal(`from: matches addresses; senders matching "@": try from:alex@example.com subject:atsignfixture (1 message)`, hints[0].Message)
+	retry, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
+	requirements.NoError(err)
+	requirements.Len(retry, 1)
+	assertions.Equal(id, retry[0].ID)
+}
+
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)

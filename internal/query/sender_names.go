@@ -56,6 +56,9 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		metadataContainsExpression(e.dialect, "mr.display_name"), join, strings.Join(conditions, " AND "),
 		metadataContainsExpression(e.dialect, recipientNameExpr("mr_hint", "p_hint")), metadataContainsExpression(e.dialect, "p_hint.email_address"))
 	senderText := strings.TrimPrefix(q.FromAddrs[0], "@")
+	if senderText == "" {
+		senderText = q.FromAddrs[0]
+	}
 	pattern := "%" + escapeSQLiteLike(senderText) + "%"
 	args = append([]any{pattern, pattern, pattern}, args...)
 	args = append(args, pattern, pattern)
