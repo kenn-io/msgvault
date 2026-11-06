@@ -220,3 +220,16 @@ func TestMeetingUnlinkCanonicalRefSuppressesAliasLink(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(t, links)
 }
+
+func TestMeetingGranolaSupersededExceptionKeepsOwnerCalendar(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	raw := `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	calendarFixture(t, st, "exception", raw)
+	calendarFixture(t, st, "replacement", strings.Replace(raw, `"id":"edited"`, `"id":"replacement"`, 1))
+	note := granolaLinkFixture(t, st, "edited")
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	assert.Equal(t, fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
+}

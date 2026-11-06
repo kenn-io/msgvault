@@ -407,7 +407,7 @@ candidatesLoop:
 	if key.Kind == "google_event_id" {
 		out = slices.DeleteFunc(out, func(o linkOccurrence) bool {
 			return !slices.ContainsFunc(ownerRows, func(row CalendarEventRow) bool {
-				return row.MessageID == o.Ref.MessageID || row.MessageID == o.Row.MessageID
+				return row.SourceID == o.Row.SourceID
 			})
 		})
 	}
