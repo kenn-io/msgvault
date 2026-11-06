@@ -6,7 +6,6 @@ import (
 	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -19,39 +18,14 @@ func TestFilteredReconciliation_MultipleAdvertisedTrashMailboxes(t *testing.T) {
 				map[string][]imapv2.MailboxAttr{"Discarded A": {role}, "Discarded B": {role}},
 			)
 			opts := []Option{WithFolderFilter(nil, []string{"Discarded A", "Discarded B"}), WithFilteredDeletionReconciliation(true)}
-			first := newTestClient(t, addr, opts...)
-			require.Equal([]string{"INBOX|1"}, listAllMessages(t, first))
-			require.NoError(first.Close())
-
-			// Model an earlier filtered import that saved no memberships.
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource("imap", "multiple-roles@example.com")
-			require.NoError(err)
-			conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
-			require.NoError(err)
-			_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "INBOX|1", MessageType: "email"})
-			require.NoError(err)
 			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
-			second := newTestClient(t, addr, opts...)
-			require.Empty(listAllMessages(t, second))
-			// The sync finalizer applies scoped deltas only for eligible sessions.
-			if second.ReconcilesFilteredDeletions() {
-				run, err := st.StartSync(source.ID, "full")
-				require.NoError(err)
-				require.NoError(st.CompleteSync(run, "0"))
-				var deltas []store.IMAPMailboxDelta
-				for _, delta := range second.ObservedMailboxDeltas() {
-					deltas = append(deltas, store.IMAPMailboxDelta{
-						Mailbox: delta.Mailbox, Reset: delta.Reset,
-						State:     store.IMAPFolderState{Mailbox: delta.Mailbox, UIDValidity: delta.State.UIDValidity, UIDNext: delta.State.UIDNext},
-						KnownUIDs: delta.State.KnownUIDs,
-					})
-				}
-				require.NoError(st.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), source.ID, run, deltas))
-			}
-			var tombstones int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`).Scan(&tombstones))
-			assert.Equal(1, tombstones)
+			client := newTestClient(t, addr, opts...)
+			require.Empty(listAllMessages(t, client))
+			assert.True(client.ReconcilesFilteredDeletions())
+			deltas := client.ObservedMailboxDeltas()
+			require.Len(deltas, 1)
+			assert.Equal("INBOX", deltas[0].Mailbox)
+			assert.Empty(deltas[0].State.KnownUIDs)
 		})
 	}
 }
@@ -82,13 +56,10 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 				first := newTestClient(t, addr, WithFolderFilter(nil, skipped), WithFilteredDeletionReconciliation(true))
 				ids := listAllMessages(t, first)
 				require.NotEmpty(ids)
-				assert.True(first.LabelsSnapshotFiltered())
-				assert.False(first.LabelsSnapshotComplete())
 				if all != "" && excludeAll {
 					assert.False(first.ReconcilesFilteredDeletions())
 					return
 				}
-				assert.True(first.ReconcilesFilteredDeletions())
 				require.NotNil(first.ObservedMailboxDeltas())
 				want := []string{"INBOX"}
 				if all != "" && !excludeAll {

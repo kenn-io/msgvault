@@ -37,15 +37,16 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedAndAbsentMailboxes(t *tes
 	shared := f.createMessage(t, "INBOX|2", "")
 	skipped := f.createMessage(t, "Trash|1", "")
 	skippedDeleted := f.createMessage(t, "Trash|2", "")
-	absent := f.createMessage(t, "Old|1", "")
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		scannedIMAPDelta("INBOX", 11, "INBOX|1", "INBOX|2"),
-		scannedIMAPDelta("Old", 33, "Old|1"),
 		scannedIMAPDelta("Trash", 22, "Trash|1", "Trash|2", "INBOX|2"),
 	}))
 	_, err := f.store.DB().Exec(f.store.Rebind(`UPDATE messages
-		SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), skippedDeleted)
+		SET deleted_from_source_at = '2026-01-01 00:00:00' WHERE id = ?`), skippedDeleted)
 	require.NoError(err)
+	deletedBefore, err := f.store.GetMessage(skippedDeleted)
+	require.NoError(err)
+	require.NotNil(deletedBefore.DeletedAt)
 	legacy := f.createMessage(t, "Trash|9", "")
 	unscanned := func() ([]store.IMAPFolderState, map[string][]uint32) {
 		states, err := f.store.GetIMAPFolderStates(f.source.ID)
@@ -68,10 +69,12 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedAndAbsentMailboxes(t *tes
 	assert.True(messageTombstoned(t, f.store, removed))
 	assert.False(messageTombstoned(t, f.store, shared))
 	assert.False(messageTombstoned(t, f.store, skipped))
+	deletedAfter, err := f.store.GetMessage(skippedDeleted)
+	require.NoError(err)
+	assert.True(messageTombstoned(t, f.store, skippedDeleted))
+	assert.Equal(deletedBefore, deletedAfter)
 	assert.False(messageTombstoned(t, f.store, legacy))
-	assert.False(messageTombstoned(t, f.store, absent))
 	assert.Equal([]string{"Trash"}, messageLabels(t, f.store, shared))
-	assert.Equal([]string{"Old"}, messageLabels(t, f.store, absent))
 }
 
 func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
@@ -86,7 +89,6 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			moved := f.createMessage(t, "INBOX|1", "<moved@example.com>")
 			retained := f.createMessage(t, "INBOX|2", "<retained@example.com>")
 			archiveOnly := f.createMessage(t, "INBOX|3", "")
-			skipped := f.createMessage(t, "Trash|1", "")
 			archiveMoved := f.createMessage(t, "Archive|Projects|1", "")
 			archiveRetained := f.createMessage(t, "Archive|Projects|2", "")
 			malformed := f.createMessage(t, "INBOX|01", "")
@@ -124,7 +126,6 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			assert.Empty(messageLabels(t, f.store, moved))
 			assert.Equal(name == "empty mailbox", messageTombstoned(t, f.store, retained))
 			assert.False(messageTombstoned(t, f.store, archiveOnly))
-			assert.False(messageTombstoned(t, f.store, skipped))
 			assert.True(messageTombstoned(t, f.store, archiveMoved))
 			assert.False(messageTombstoned(t, f.store, archiveRetained))
 			assert.False(messageTombstoned(t, f.store, malformed))

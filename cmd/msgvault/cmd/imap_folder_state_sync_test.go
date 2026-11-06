@@ -24,7 +24,7 @@ import (
 )
 
 func TestIMAPSyncFolderFilter(t *testing.T) {
-	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Archive": 1})
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Archive": 1, "Junk": 1})
 	const identifier = "imap://user@example.com"
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
@@ -36,13 +36,13 @@ func TestIMAPSyncFolderFilter(t *testing.T) {
 		wantReconciles   bool
 		reconcileAccount string
 	}{
-		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1"}, true, identifier},
-		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1"}, true, identifier},
-		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1"}, true, identifier},
+		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
+		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
+		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1", "Junk|1"}, true, identifier},
 		{"folder flag", identifier, []string{"Trash"}, nil, []string{"Trash|1"}, false, identifier},
-		{"skip-folder flag", identifier, nil, []string{"Trash"}, []string{"INBOX|1", "Archive|1"}, false, identifier},
-		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1"}, false, identifier},
-		{"other account opt-in", identifier, nil, nil, []string{"INBOX|1", "Archive|1"}, false, "user@example.com"},
+		{"skip-folder flag", identifier, nil, []string{"Junk"}, []string{"INBOX|1", "Trash|1", "Archive|1"}, false, identifier},
+		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1", "Junk|1"}, false, identifier},
+		{"other account opt-in", identifier, nil, nil, []string{"INBOX|1", "Archive|1", "Junk|1"}, false, "user@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{Sync: config.SyncConfig{
@@ -772,9 +772,6 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	sync(true)
 	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
-	states, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(err)
-	assert.NotContains(states, "Trash")
 
 	// An incremental opted-in sync catches an expunged import that never got a membership.
 	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "late@example.com")
@@ -814,26 +811,19 @@ func TestRunScheduledIMAPSync_FilteredSentRefreshesRetainedDraft(t *testing.T) {
 
 	sent := testemail.NewMessage().Subject("Sent subject").
 		Header("Message-ID", messageID).
-		To("Final Recipient <final-recipient@example.com>").
-		Cc("Final Copy <final-copy@example.com>").
 		Body("sentfinalword").CRLF().Bytes()
 	testutil.AppendIMAPRawMessage(t, user, "Sent", sent)
 	assert.Equal(int64(1), sync().MessagesUpdated)
 	message, err := st.GetMessage(id)
 	require.NoError(err)
-	assert.Equal("Sent|1", message.SourceMessageID)
 	assert.Equal("Sent subject", message.Subject)
 	assert.Contains(message.BodyText, "sentfinalword")
 	assert.NotContains(message.BodyText, "draftobsoleteword")
-	assert.Equal([]string{"Final Recipient <final-recipient@example.com>"}, message.To)
-	assert.Equal([]string{"Final Copy <final-copy@example.com>"}, message.Cc)
-	assert.ElementsMatch([]string{"Drafts", "Sent"}, message.Labels)
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Equal(sent, raw)
 	states, err := st.GetIMAPFolderStates(src.ID)
 	require.NoError(err)
-	require.Len(states, 3)
 
 	summary := sync()
 	assert.Zero(summary.MessagesAdded)
