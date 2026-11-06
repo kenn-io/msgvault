@@ -287,7 +287,7 @@ func TestLineServeSignedReceiptsDoNotStarveLaterText(t *testing.T) {
 		var state string
 		var next time.Time
 		require.NoError(c, st.DB().QueryRow("SELECT state,next_attempt_at FROM line_webhook_events WHERE webhook_event_id='event-0'").Scan(&state, &next))
-		assert.Equal(c, "pending", state)
+		assert.Equal(c, "retry", state)
 		assert.True(c, next.After(time.Now()), "interrupted media must wait for backoff")
 	}, 5*time.Second, 20*time.Millisecond)
 	freeze := httptest.NewRequest(http.MethodPost, "/api/v1/backup/freeze/begin", nil)
