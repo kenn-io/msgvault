@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
@@ -161,14 +159,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.Len(semantic.Results, 1)
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
-	// Semantic pages use the measured extra result and keep a runnable scoped retry.
-	executable, err := agenthook.BuildCommand(binary)
-	require.NoError(err)
+	// Semantic pages use the measured extra result to advise a larger limit.
 	for _, mode := range []string{"vector", "hybrid"} {
 		out, stderr := runWithStderr("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "1", "--json", "--snippet", "--sort", "date")
 		var page struct {
-			Results []map[string]any                       `json:"results"`
-			Hints   []struct{ Code, Message, Next string } `json:"hints"`
+			Results []map[string]any                 `json:"results"`
+			Hints   []struct{ Code, Message string } `json:"hints"`
 		}
 		decode(out, &page)
 		require.Len(page.Results, 1)
@@ -176,21 +172,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		assert.Equal("more_available", page.Hints[0].Code)
 		assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
 		assert.NotContains(stderr, "Hint:")
-		assert.Contains(page.Hints[0].Next, "--mode="+mode)
-		assert.Contains(page.Hints[0].Next, "--account=archive@example.com")
-		assert.Contains(page.Hints[0].Next, "--home="+home)
-		// Execute the advertised command, including its quoting and connection flags.
-		shell, args := "sh", []string{"-c", strings.Replace(page.Hints[0].Next, "msgvault", executable.POSIX, 1)}
-		if runtime.GOOS == "windows" {
-			shell, args = "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", strings.Replace(page.Hints[0].Next, "& 'msgvault'", executable.PowerShell, 1)}
-		}
-		retry := exec.CommandContext(t.Context(), shell, args...)
-		retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
-		var retryOut, retryErr bytes.Buffer
-		retry.Stdout, retry.Stderr = &retryOut, &retryErr
-		require.NoError(retry.Run(), retryErr.String())
 		page.Hints = nil
-		decode(retryOut.String(), &page)
+		decode(run("search", "project plan filename:plan.pdf", "--mode", mode, "--account", "archive@example.com", "--limit", "2", "--json", "--snippet", "--sort", "date"), &page)
 		assert.Len(page.Results, 2)
 		assert.Empty(page.Hints)
 	}
@@ -208,13 +191,18 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			year = 2027
 		}
 		message := storetest.NewMessage(source.ID, conv).WithSubject(subject).WithSentAt(time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)).Build()
-		address := fmt.Sprintf("sender-%02d@example.com", i%51)
-		sender, err := st.EnsureParticipant(address, "", "example.com")
+		domain := fmt.Sprintf("sender-%02d.example.com", i%51)
+		address := "sender@" + domain
+		sender, err := st.EnsureParticipant(address, "", domain)
 		require.NoError(err)
 		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := st.UpsertMessage(message)
 		require.NoError(err)
 		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+		label := fmt.Sprintf("label-%02d", i%51)
+		labelID, err := st.EnsureLabel(source.ID, label, label, "user")
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageLabels(id, []int64{labelID}))
 		require.NoError(st.UpsertFTS(id, subject, "", address, "", ""))
 		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
 	}
@@ -244,28 +232,40 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 				assert.Contains(stderr, "Hint: more messages match; use "+tc.hint+" for the next page or raise --limit")
 			}
 		}
-		for _, exact := range []bool{false, true} {
-			args := []string{"list-senders"}
-			if exact {
-				args = append(args, "--before", "2027-01-01")
-			}
-			if jsonMode {
-				args = append(args, "--json")
-			}
-			out, stderr := runWithStderr(args...)
-			if jsonMode {
-				var rows []map[string]any
-				decode(out, &rows)
-				assert.Len(rows, 50)
-			} else {
-				assert.Contains(out, "Showing 50 results")
-			}
-			if exact {
-				assert.NotContains(stderr, "Hint:")
-			} else {
-				assert.Contains(stderr, "Hint: more senders exist; raise -n")
+		for _, list := range []string{"senders", "domains", "labels"} {
+			for _, exact := range []bool{false, true} {
+				args := []string{"list-" + list}
+				if exact {
+					args = append(args, "--before", "2027-01-01")
+				}
+				if jsonMode {
+					args = append(args, "--json")
+				}
+				out, stderr := runWithStderr(args...)
+				if jsonMode {
+					var rows []map[string]any
+					decode(out, &rows)
+					assert.Len(rows, 50)
+				} else {
+					assert.Contains(out, "Showing 50 results")
+				}
+				if exact {
+					assert.NotContains(stderr, "Hint:")
+				} else {
+					assert.Contains(stderr, "Hint: more "+list+" exist; raise -n")
+				}
 			}
 		}
+	}
+	for _, args := range [][]string{{"search", "overflowboundary"}, {"list-senders"}, {"list-domains"}, {"list-labels"}} {
+		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+		combined, err := command.CombinedOutput()
+		require.NoError(err, string(combined))
+		footer := bytes.Index(combined, []byte("Showing 50 results"))
+		hint := bytes.Index(combined, []byte("Hint:"))
+		require.GreaterOrEqual(footer, 0)
+		assert.Greater(hint, footer, "the hint follows the results footer")
 	}
 	// Default semantic cap still reports a measured match beyond the returned page.
 	for _, mode := range []string{"vector", "hybrid"} {
@@ -299,15 +299,41 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	raised := vectorCfg
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
-	assert.Contains(stderr, "vector.search.k_per_signal")
+	// An extra ranked row can be returned by raising --limit alone.
+	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10")
+	assert.Contains(stderr, "Hint: more messages match; raise --limit")
+	assert.NotContains(stderr, "vector.search.k_per_signal")
 	var poolPage struct {
+		Results       []map[string]any    `json:"results"`
 		PoolSaturated bool                `json:"pool_saturated"`
 		Hints         []map[string]string `json:"hints"`
 	}
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10", "--json"), &poolPage)
 	assert.True(poolPage.PoolSaturated)
 	require.Len(poolPage.Hints, 1)
+	assert.Equal("more messages match; raise --limit", poolPage.Hints[0]["message"])
+	// At both caps, widening the pool and the page is needed to return more.
+	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
+	assert.Contains(stderr, "vector.search.max_page_size_hybrid above 100")
+	assert.Contains(stderr, "vector.search.k_per_signal")
+	poolPage.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
+	assert.True(poolPage.PoolSaturated)
+	assert.Len(poolPage.Results, 100)
+	require.Len(poolPage.Hints, 1)
+	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
 	assert.Contains(poolPage.Hints[0]["message"], "vector.search.k_per_signal")
 	assert.NotContains(poolPage.Hints[0], "next")
+	// A wider page alone exposes the pool limit.
+	raised.Search.MaxPageSizeHybrid = new(200)
+	server.SetVectorFeatures(engine, nil, backend, raised)
+	_, stderr = runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200")
+	assert.Contains(stderr, "vector.search.k_per_signal")
+	assert.NotContains(stderr, "vector.search.max_page_size_hybrid")
+	raised.Search.KPerSignal = 200
+	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
+	server.SetVectorFeatures(engine, nil, backend, raised)
+	poolPage.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
+	assert.Len(poolPage.Results, 200)
 }

@@ -6,15 +6,12 @@ import (
 	"io"
 	"math"
 	"os"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -95,11 +92,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", kind, &result)
 	}
 	if searchJSON {
-		next := ""
-		if resp.HasMore {
-			next = semanticMoreResultsCommand(cmd, queryStr)
-		}
-		return outputHybridResultsJSON(resp, explain, next)
+		return outputHybridResultsJSON(resp, explain)
 	}
 	if message := semanticMoreResultsMessage(resp); message != "" {
 		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+message) }()
@@ -179,7 +172,7 @@ func outputHybridTimings(resp *daemonclient.CLIHybridSearch, explain bool) {
 		resp.TookMS, resp.Timings.QueryEmbeddingMS, resp.Timings.RetrievalMS, resp.Timings.HydrationMS)
 }
 
-func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, next string) error {
+func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) error {
 	rows := make([]map[string]any, len(resp.Results))
 	for i, r := range resp.Results {
 		row := map[string]any{
@@ -231,9 +224,6 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, n
 	}
 	if message := semanticMoreResultsMessage(resp); message != "" {
 		hint := map[string]string{"code": "more_available", "message": message}
-		if next != "" {
-			hint["next"] = next
-		}
 		output["hints"] = []map[string]string{hint}
 	}
 	return printJSON(output)
@@ -261,24 +251,9 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 	})
 }
 
-func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) string {
-	args := []string{"msgvault", "search"}
-	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		if flag.Name != "limit" {
-			args = appendDaemonCLIFlag(args, flag)
-		}
-	})
-	args = append(args, "--limit", strconv.Itoa(searchLimit*2), "--", queryStr)
-	commands, _ := agenthook.BuildCommand(args[0], args[1:]...)
-	if runtime.GOOS == "windows" {
-		return commands.PowerShell
-	}
-	return commands.POSIX
-}
-
 func semanticMoreResultsMessage(resp *daemonclient.CLIHybridSearch) string {
 	switch {
-	case resp.Mode == "hybrid" && resp.PoolSaturated:
+	case resp.Mode == "hybrid" && resp.PoolSaturated && !resp.HasMore:
 		capSetting := ""
 		if resp.RankingLimitReached > 0 {
 			capSetting = fmt.Sprintf("vector.search.max_page_size_hybrid above %d and ", resp.RankingLimitReached)

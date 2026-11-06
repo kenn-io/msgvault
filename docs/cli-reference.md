@@ -2766,7 +2766,7 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
-Search prints a stderr hint when another full-text result exists, with the next `--offset` or a suggestion to raise `--limit`. Vector and hybrid text suggest raising `--limit`; their JSON objects gain a `hints` entry with `code` and `message`, plus a runnable `next` command when a larger page needs no server configuration change. Full-text JSON stays a bare array. Exactly full final pages add no hint. At the default semantic cap of 50, the hint first asks you to raise `vector.search.max_page_size_hybrid` on the server and restart the daemon, then raise `--limit`. A saturated hybrid candidate pool also requires raising `vector.search.k_per_signal` on the server and restarting, or narrowing the query.
+Search prints a stderr hint when another full-text result exists, with the next `--offset` or a suggestion to raise `--limit`. Vector and hybrid text suggest raising `--limit`; their JSON objects gain a `hints` entry with `code` and `message`. Full-text JSON stays a bare array. Exactly full final pages add no hint. At the default semantic cap of 50, the hint first asks you to raise `vector.search.max_page_size_hybrid` on the server and restart the daemon, then raise `--limit`. When no extra ranked row is available, a saturated hybrid candidate pool requires raising `vector.search.k_per_signal` on the server and restarting, or narrowing the query.
 
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
