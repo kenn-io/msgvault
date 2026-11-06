@@ -77,6 +77,19 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	ctx := t.Context()
 
+	t.Run("sender_retry", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		matcher, ok := eng.(query.SenderNameMatcher)
+		requirements.True(ok)
+		hints := matcher.MatchSenderName(ctx, search.Parse("from:alice@exam"))
+		requirements.Len(hints, 1)
+		assertions.Contains(hints[0].Message, "alice@example.com (4 messages)")
+		assertions.Equal("from:alice@example.com", hints[0].RetryWith.Query)
+		messages, err := eng.Search(ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
+		requirements.NoError(err)
+		assertions.Len(messages, 4)
+	})
+
 	t.Run("sender_name_label_page", func(t *testing.T) {
 		msgs, err := eng.ListMessages(ctx, query.MessageFilter{
 			Sender: "alice@example.com", SenderName: "Alice", Label: "Important",
