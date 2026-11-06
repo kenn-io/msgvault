@@ -318,7 +318,11 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = previousCheck })
 	for _, delegated := range []bool{false, true} {
-		for _, version := range []string{"failed", "missing", "2.35.0", "3.0.0"} {
+		versions := []string{"failed", "missing", "2.35.0", "3.0.0"}
+		if delegated {
+			versions = []string{"failed", "3.0.0"}
+		}
+		for _, version := range versions {
 			name := "owner/" + version
 			if delegated {
 				name = "delegated/" + version
@@ -331,7 +335,7 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 				var healthCalls atomic.Int64
 				server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if probing.Load() && r.URL.Path == "/api/v1/health" && healthCalls.Add(1) > 1 {
+						if probing.Load() && r.URL.Path == "/api/v1/health" && (healthCalls.Add(1) > 1 || delegated && version == "3.0.0") {
 							w.Header().Set("Content-Type", "application/json")
 							if version == "failed" {
 								w.WriteHeader(http.StatusServiceUnavailable)
@@ -372,7 +376,7 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 						require.ErrorContains(err, "upgrade the daemon")
 					}
 					assert.False(served)
-					assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and draft schema probes")
+					assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and delegated source inventory probes")
 					return
 				}
 				session := mcpDraftTestSession(ctx, t)

@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -272,11 +273,25 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			checks := assert.New(t)
 			must := require.New(t)
-			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", BindAddr: "0.0.0.0", TrustedProxies: []string{"127.0.0.1/32"}}}
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Server.APIKey = "owner"
+			cfg.Server.BindAddr = "0.0.0.0"
+			cfg.Server.APIPort = 0
+			cfg.Server.TrustedProxies = []string{"127.0.0.1/32"}
 			if mode == "families" {
 				cfg.Server.TrustedProxies = nil
 			}
-			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}}})
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+			must.NoError(err)
+			cfg.CardDAV = config.CardDAVConfig{BaseURL: "https://carddav.example.com", Username: "person@example.com"}
+			cfg.Integrations.Kata = config.TaskIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com"}
+			must.NoError(cfg.Save())
+			cardDAV, err := api.NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
+			must.NoError(err)
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, CardDAV: cardDAV, Logger: slog.New(slog.DiscardHandler), Engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}}})
 			defer func() { must.NoError(server.Shutdown(t.Context())) }()
 			daemon := httptest.NewServer(server.Router())
 			defer daemon.Close()
@@ -314,7 +329,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 					checks.Contains(response.Body.String(), `"stage_deletion"`)
 				}
 				for _, tool := range families {
-					if path == "/mcp/writes" && mode == "families" && tool != "approve_carddav_publication" && tool != "calendar_create" && tool != "create_kata_issue" {
+					if path == "/mcp/writes" && mode == "families" {
 						checks.Contains(response.Body.String(), `"`+tool+`"`)
 					} else {
 						checks.NotContains(response.Body.String(), `"`+tool+`"`)

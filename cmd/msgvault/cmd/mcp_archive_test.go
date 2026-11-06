@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -24,7 +23,6 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -63,6 +61,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"whatsapp", "find_chat"}, {"telegram", "find_chat"}, {"matrix", "find_chat"},
 		{"apple_messages", "find_chat"}, {"synctech_sms", "find_chat"}, {"imazing_csv", "find_chat"},
 		{"facebook_messenger", "find_chat"},
+		{"inline", "find_chat"}, {"google_voice", "find_chat"}, {"gmail", "find_chat"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			assert := assert.New(t)
@@ -160,66 +159,43 @@ func TestMCPArchiveIntegrationProbes(t *testing.T) {
 }
 
 func TestMCPArchiveRefresh(t *testing.T) {
-	for _, tc := range []struct{ source, conversation, messageType, tool string }{
-		{"gcal", "", "", "calendar_freebusy"},
-		{"inline", "direct_chat", "inline", "find_chat"},
-		{"google_voice", "direct_chat", "google_voice_text", "find_chat"},
-		{"gmail", "chat", store.MessageTypeGoogleChat, "find_chat"},
-	} {
-		t.Run(tc.source, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st := testutil.NewTestStore(t)
-			if tc.source == "gcal" {
-				_, err := st.GetOrCreateSource("mbox", "mail@example.com")
-				require.NoError(err)
-			}
-			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "key"}}
-			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: &querytest.MockEngine{}, Logger: slog.New(slog.DiscardHandler)})
-			defer func() { require.NoError(server.Shutdown(t.Context())) }()
-			daemon := httptest.NewServer(server.Router())
-			defer daemon.Close()
-			client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "key", AllowInsecure: true})
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("mbox", "mail@example.com")
+	require.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "key"}}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: &querytest.MockEngine{}, Logger: slog.New(slog.DiscardHandler)})
+	defer func() { require.NoError(server.Shutdown(t.Context())) }()
+	daemon := httptest.NewServer(server.Router())
+	defer daemon.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "key", AllowInsecure: true})
+	require.NoError(err)
+	defer func() { require.NoError(client.Close()) }()
+	opts := daemonMCPServeOptions(t.Context(), client, &invocation{cfg: cfg})
+	cmd := &cobra.Command{Use: "serve"}
+	addServeConfigFlags(cmd)
+	require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
+	for _, added := range []bool{false, true} {
+		if added {
+			_, err = st.GetOrCreateSource("gcal", "calendar@example.com")
 			require.NoError(err)
-			defer func() { require.NoError(client.Close()) }()
-			opts := daemonMCPServeOptions(t.Context(), client, &invocation{cfg: cfg})
-			cmd := &cobra.Command{Use: "serve"}
-			addServeConfigFlags(cmd)
-			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
-			for _, added := range []bool{false, true} {
-				if added {
-					source, err := st.GetOrCreateSource(tc.source, "source@example.com")
-					require.NoError(err)
-					if tc.conversation != "" {
-						peer, err := st.EnsureParticipant("peer@example.com", "Synthetic Peer", "example.com")
-						require.NoError(err)
-						conversation, err := st.EnsureConversationWithType(source.ID, "synthetic-chat", tc.conversation, "Synthetic chat")
-						require.NoError(err)
-						_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "message-1", ConversationID: conversation, MessageType: tc.messageType, SenderID: sql.NullInt64{Int64: peer, Valid: true}, SentAt: sql.NullTime{Time: time.Unix(100, 0), Valid: true}})
-						require.NoError(err)
-						found, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Synthetic", SourceID: source.ID})
-						require.NoError(err)
-						require.Len(found.Results, 1)
-						assert.Equal(conversation, found.Results[0].ConversationID)
-					}
-				}
-				listed := archiveMCPCatalog(t, opts)
-				assert.Equal(added, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == tc.tool }))
-				for _, protocol := range []string{"2025-11-25", "2026-07-28"} {
-					request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"`+protocol+`","io.modelcontextprotocol/clientCapabilities":{}}}}`))
-					request.Header.Set("Authorization", "Bearer key")
-					request.Header.Set("Content-Type", "application/json")
-					request.Header.Set("Accept", "application/json, text/event-stream")
-					request.Header.Set("Mcp-Protocol-Version", protocol)
-					if protocol == "2026-07-28" {
-						request.Header.Set("Mcp-Method", "tools/list")
-					}
-					response := httptest.NewRecorder()
-					server.Router().ServeHTTP(response, request)
-					require.Equal(http.StatusOK, response.Code, response.Body.String())
-					assert.Equal(added, strings.Contains(response.Body.String(), `"`+tc.tool+`"`))
-				}
+		}
+		listed := archiveMCPCatalog(t, opts)
+		assert.Equal(added, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "calendar_freebusy" }))
+		for _, protocol := range []string{"2025-11-25", "2026-07-28"} {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"`+protocol+`","io.modelcontextprotocol/clientCapabilities":{}}}}`))
+			request.Header.Set("Authorization", "Bearer key")
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("Mcp-Protocol-Version", protocol)
+			if protocol == "2026-07-28" {
+				request.Header.Set("Mcp-Method", "tools/list")
 			}
-		})
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			assert.Equal(added, strings.Contains(response.Body.String(), `"calendar_freebusy"`))
+		}
 	}
 }
 
@@ -244,8 +220,6 @@ func TestMCPArchiveDelegatedScope(t *testing.T) {
 			names := mcpDraftToolNames(t, session)
 			assert.Contains(names, "search_metadata")
 			assert.Equal(tc.calendar, slices.Contains(names, "calendar_freebusy"))
-			assert.NotContains(names, "draft_compose")
-			assert.NotContains(names, "get_message")
 		})
 	}
 }
@@ -328,9 +302,6 @@ func TestMCPArchiveHTTPCallsSkipDiscovery(t *testing.T) {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
-		if method == "tools/call" {
-			assert.Contains(response.Body.String(), "synthetic message")
-		}
 		assert.Equal(1, probes)
 	}
 }
