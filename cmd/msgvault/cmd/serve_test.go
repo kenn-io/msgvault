@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
@@ -3430,9 +3431,15 @@ func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
 	require.NoError(err)
 	imap, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://reader@example.test:993")
 	require.NoError(err)
+	teams, err := st.Store.GetOrCreateSource(sourceTypeTeams, "teams-reader@example.test")
+	require.NoError(err)
 
-	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier, testDiscardLogger()))
+	assert.False(scheduledSyncPreemptible(st.Store, gmail.Identifier, testDiscardLogger()), "archive repair restarts from row zero and must finish before yielding")
+	_, _, err = rederive.RunIfStale(t.Context(), st.Store, gmail.SourceType, gmail.Identifier, gmail.ID, nil)
+	require.NoError(err)
+	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier, testDiscardLogger()), "Gmail history sync is resumable after repair")
 	assert.False(scheduledSyncPreemptible(st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
+	assert.True(scheduledSyncPreemptible(st.Store, teams.Identifier, testDiscardLogger()), "Teams sync does not run archive repair")
 	assert.True(scheduledSyncPreemptible(st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
 }
 

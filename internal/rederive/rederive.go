@@ -184,3 +184,19 @@ func run(ctx context.Context, s *store.Store, sourceType, identifier string, sou
 	}
 	return sum, ran, nil
 }
+
+// Pending reports whether a source still needs an archive repair pass. These
+// passes restart their walk after interruption, so scheduled sync must let
+// them finish before enabling cooperative preemption.
+func Pending(ctx context.Context, s *store.Store, sourceType, identifier string) (bool, error) {
+	for _, pass := range passes(sourceType, identifier, true) {
+		applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
+		if err != nil {
+			return false, err
+		}
+		if !applied {
+			return true, nil
+		}
+	}
+	return false, nil
+}
