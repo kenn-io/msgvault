@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -30,24 +29,13 @@ var stableDeliveryPolicyDefinitions = []toolDefinition{
 	explicitlyConfirmedWriteDefinition(ToolClearDeliveryPolicy, "Clear an address policy to inheritance after explicit owner confirmation. Omit endpoint to reset the person-wide default to draft_only. Requires expected_revision, the delivery policy revision from get_delivery_policy, and a reason. Never sends or changes existing drafts.", outputSchemaFor[store.DeliveryPolicyWrite](), outputSchemaFor[store.DeliveryPolicyReceipt](), (*handlers).clearDeliveryPolicy, toolSecurityDeliveryPolicyWrite),
 }
 
-func decodeDeliveryArguments(req toolRequest, dst any) error {
-	b, err := json.Marshal(req.GetArguments())
-	if err != nil {
-		return store.ErrDeliveryPolicyInvalid
-	}
-	if err := json.Unmarshal(b, dst); err != nil {
-		return store.ErrDeliveryPolicyInvalid
-	}
-	return nil
-}
-
 func (h *handlers) getDeliveryPolicy(ctx context.Context, req toolRequest) (*toolResult, error) {
 	var query store.DeliveryPolicyQuery
-	if err := decodeDeliveryArguments(req, &query); err != nil {
-		return toolErrorResult("invalid_policy: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	if err := decodeToolArguments(req, &query); err != nil {
+		return toolErrorResult("invalid_policy: " + store.ErrDeliveryPolicyInvalid.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
 	state, err := h.deliveryPolicies.GetDeliveryPolicy(ctx, query)
-	return mcpDeliveryPolicyResult(state, err)
+	return mcpDaemonResult(state, err)
 }
 
 func (h *handlers) setDeliveryPolicy(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -60,8 +48,8 @@ func (h *handlers) clearDeliveryPolicy(ctx context.Context, req toolRequest) (*t
 
 func (h *handlers) writeDeliveryPolicy(ctx context.Context, req toolRequest, reset bool) (*toolResult, error) {
 	var write store.DeliveryPolicyWrite
-	if err := decodeDeliveryArguments(req, &write); err != nil {
-		return toolErrorResult("invalid_policy: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+	if err := decodeToolArguments(req, &write); err != nil {
+		return toolErrorResult("invalid_policy: " + store.ErrDeliveryPolicyInvalid.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
 	// Bind confirmation to the full exact request, including revision and scope.
 	details, err := json.Marshal(write)
@@ -81,12 +69,5 @@ func (h *handlers) writeDeliveryPolicy(ctx context.Context, req toolRequest, res
 	} else {
 		receipt, err = h.deliveryPolicies.SetDeliveryPolicy(ctx, write)
 	}
-	return mcpDeliveryPolicyResult(receipt, err)
-}
-
-func mcpDeliveryPolicyResult[T any](value *T, err error) (*toolResult, error) {
-	if err != nil {
-		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
-	}
-	return jsonResult(value)
+	return mcpDaemonResult(receipt, err)
 }

@@ -91,16 +91,6 @@ func getCardDAVSyncStatusDefinition() toolDefinition {
 	return personCardDAVDefinition(ToolGetCardDAVSyncStatus, "Read current and latest CardDAV sync state, including pending, failed, and successful runs.", nil, nil, outputSchemaFor[generated.CardDAVStatusResponse](), false, false, (*handlers).getCardDAVSyncStatus)
 }
 
-func mcpPersonCardDAVResult(value any, err error) (*toolResult, error) {
-	if err != nil {
-		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
-	}
-	if value == nil {
-		return nil, newInternalError("person/CardDAV daemon response", errors.New("empty response"))
-	}
-	return jsonResult(value)
-}
-
 func requiredMCPText(args map[string]any, key string) (string, error) {
 	value, ok := args[key].(string)
 	if !ok || strings.TrimSpace(value) == "" {
@@ -123,7 +113,7 @@ func (h *handlers) getPersonMergeContext(ctx context.Context, req toolRequest) (
 		return toolErrorResult("people must differ"), nil
 	}
 	value, err := h.personCardDAV.GetPersonMergeContext(ctx, survivor, absorbed)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) mergePerson(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -168,7 +158,7 @@ func (h *handlers) mergePerson(ctx context.Context, req toolRequest) (*toolResul
 		return confirmationToolError(err)
 	}
 	value, err := h.personCardDAV.MergePerson(ctx, survivor, absorbed, survivorETag, absorbedETag, key)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) getCardDAVPublication(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -177,7 +167,7 @@ func (h *handlers) getCardDAVPublication(ctx context.Context, req toolRequest) (
 		return toolErrorResult(err.Error()), nil
 	}
 	value, err := h.personCardDAV.GetCardDAVPublication(ctx, id)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) previewCardDAVPublication(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -186,7 +176,7 @@ func (h *handlers) previewCardDAVPublication(ctx context.Context, req toolReques
 		return toolErrorResult(err.Error()), nil
 	}
 	value, err := h.personCardDAV.PreviewCardDAVPublication(ctx, id)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) approveCardDAVPublication(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -220,7 +210,7 @@ func (h *handlers) approveCardDAVPublication(ctx context.Context, req toolReques
 	if err != nil {
 		return toolErrorResult(daemonclient.SafeMCPErrorForPerson(err, id).Error()), nil
 	}
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) syncCardDAV(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -239,10 +229,10 @@ func (h *handlers) syncCardDAV(ctx context.Context, req toolRequest) (*toolResul
 		return confirmationToolError(err)
 	}
 	value, err := h.personCardDAV.SyncCardDAV(ctx, full)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
 
 func (h *handlers) getCardDAVSyncStatus(ctx context.Context, _ toolRequest) (*toolResult, error) {
 	value, err := h.personCardDAV.GetCardDAVSyncStatus(ctx)
-	return mcpPersonCardDAVResult(value, err)
+	return mcpDaemonResult(value, err)
 }
