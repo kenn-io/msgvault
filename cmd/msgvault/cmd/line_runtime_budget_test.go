@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -93,5 +94,83 @@ func TestLineMaxRuntimeHandsGateToSecondChannel(t *testing.T) {
 		refs, err := st.MessageProviderAttachments(row.ID, "line:")
 		must.NoError(err)
 		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State, "the first bounded download must finish before the pass budget")
+	})
+}
+
+func TestLineSlowMediaCompletesWithRecurringSync(t *testing.T) {
+	must := require.New(t)
+	cfg, st, fake := lineWiringFixture(t)
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	must.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	must.NoError(err)
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "slow-media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"slow-media","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`}}))
+	synctest.Test(t, func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		var contentRequests atomic.Int64
+		started := make(chan struct{}, 1)
+		lineClientFactory = func(id, secret string) *line.Client {
+			return line.NewClient(id, secret, line.WithHTTPClient(&http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/content") {
+					contentRequests.Add(1)
+					select {
+					case started <- struct{}{}:
+					default:
+					}
+					timer := time.NewTimer(2 * time.Minute)
+					defer timer.Stop()
+					select {
+					case <-r.Context().Done():
+						return nil, r.Context().Err()
+					case <-timer.C:
+					}
+				}
+				response := httptest.NewRecorder()
+				fake.ServeHTTP(response, r)
+				return response.Result(), nil
+			})}))
+		}
+		prior := rebuildLineCacheAfterScheduledSync
+		rebuildLineCacheAfterScheduledSync = func(context.Context, string) error { return nil }
+		defer func() { rebuildLineCacheAfterScheduledSync = prior }()
+		gate := api.NewSerialOperationGate()
+		sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "LINE inbox")).WithLogger(testLoggerValue())
+		runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+		must.NoError(err)
+		var otherRuns atomic.Int64
+		var ranAfterMedia atomic.Bool
+		must.NoError(sched.AddJob(scheduler.Job{Name: "recurring sync", Interval: time.Minute, Run: func(ctx context.Context) error {
+			otherRuns.Add(1)
+			row, err := st.LineMessageContext(ctx, source.ID, "1")
+			if err != nil {
+				return err
+			}
+			refs, err := st.MessageProviderAttachments(row.ID, "line:")
+			if err == nil && refs["line:1"].State == attachmentpolicy.StateStored {
+				ranAfterMedia.Store(true)
+			}
+			return err
+		}}))
+		sched.Start()
+		defer func() { <-sched.Stop().Done() }()
+		runtime.wake(source.Identifier)
+		select {
+		case <-started:
+		case <-time.After(time.Minute):
+			must.FailNow("LINE did not start downloading")
+		}
+		time.Sleep(6 * time.Minute)
+		synctest.Wait()
+		row, err := st.LineMessageContext(t.Context(), source.ID, "1")
+		must.NoError(err)
+		refs, err := st.MessageProviderAttachments(row.ID, "line:")
+		must.NoError(err)
+		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State)
+		checks.Equal(int64(1), contentRequests.Load())
+		checks.Positive(otherRuns.Load())
+		checks.True(ranAfterMedia.Load(), "queued sync must run after LINE records the completed download")
 	})
 }

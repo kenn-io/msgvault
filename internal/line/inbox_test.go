@@ -1323,3 +1323,31 @@ func TestGroupSummaryUnavailableRequestedOncePerPass(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessorCooperativeStopAfterEnrichment(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	first := f.fileEvent()
+	second := f.fileEvent()
+	second.WebhookEventID = "event-2"
+	second.Message.ID = "2"
+	second.Timestamp++
+	f.enqueue(t, first, time.Time{})
+	f.enqueue(t, second, time.Time{})
+	before, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	must.NoError(err)
+	must.Len(before, 2)
+	ctx, request := jobctx.WithPreemption(t.Context())
+	request()
+	checks.ErrorIs(f.processor.Process(ctx), jobctx.ErrYieldedToWaiter)
+	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/2/content"))
+	after, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	must.NoError(err)
+	must.Len(after, 1)
+	checks.Equal(before[1].ID, after[0].ID)
+	checks.Equal(before[1].State, after[0].State)
+	checks.Equal(before[1].Attempts, after[0].Attempts)
+	checks.Equal(before[1].NextAttemptAt, after[0].NextAttemptAt)
+}
