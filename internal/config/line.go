@@ -42,7 +42,7 @@ func (c *Config) validateLineSources() error {
 			return fmt.Errorf("line[%d].channel_id is duplicate", index)
 		}
 		if !validMaxMediaMB(source.MaxMediaMB) {
-			return fmt.Errorf("line[%d].max_media_mb must fit a nonnegative byte limit", index)
+			return fmt.Errorf("line[%d].max_media_mb: 0–%d", index, maxMediaMBLimit)
 		}
 		seen[source.ChannelID] = true
 		source.SecretEnv = strings.TrimSpace(source.SecretEnv)
