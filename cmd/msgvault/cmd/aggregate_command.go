@@ -26,15 +26,12 @@ func runAggregateListCommand(
 	}
 	defer cleanup()
 
-	limit := opts.Limit
-	opts.Limit++
 	results, err := engine.Aggregate(cmd.Context(), view, opts)
 	if err != nil {
 		return query.HintRepairEncoding(fmt.Errorf("aggregate by %s: %w", errorLabel, err))
 	}
 
-	if len(results) > limit {
-		results = results[:limit]
+	if len(results) > 0 && results[0].TotalUnique > int64(opts.Limit) {
 		defer func() {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more %ss exist; raise -n\n", errorLabel)
 		}()
