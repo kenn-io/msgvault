@@ -27,7 +27,14 @@ func (c *Client) RetryNotBefore() time.Time {
 }
 
 func (c *Client) recordRetryFloor(header string, attempt int) time.Duration {
-	delay := httpretry.RetryAfter(header, attempt, math.MaxInt64)
+	maximum := httpretry.ProviderMaxRetryAfter
+	if c.deferProviderRetry {
+		maximum = math.MaxInt64
+	}
+	delay := httpretry.RetryAfter(header, attempt, maximum)
+	if !c.deferProviderRetry {
+		return delay // preserve ordinary in-call bounds and first-request admission
+	}
 	candidate := time.Now().Add(delay)
 	c.quota.mu.Lock()
 	if candidate.After(c.quota.notBefore) {

@@ -270,10 +270,10 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
-			fullDelay := c.recordRetryFloor(retryAfter, attempt)
+			providerDelay := c.recordRetryFloor(retryAfter, attempt)
 			if resp.StatusCode == http.StatusTooManyRequests {
 				lastErr = fmt.Errorf("%w: %w", lastErr, &ThrottledError{
-					RetryAfter: fullDelay, NotBefore: c.RetryNotBefore(),
+					RetryAfter: providerDelay, NotBefore: c.RetryNotBefore(),
 				})
 				if mode == retryNone {
 					return nil, lastErr
