@@ -110,13 +110,14 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		requirements.NoError(err)
 		tokens[mode] = token
 	}
-	for _, tc := range []struct{ name, subject, text, html, filename string }{
-		{"code", "Account", "Your code is 482913", "", ""},
-		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", ""},
-		{"filename", "Ordinary", "", "", "code-482913.png"},
-		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", ""},
-		{"ordinary", "Project update", "Project update", "<p>Project update</p>", ""},
-		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", ""},
+	for _, tc := range []struct{ name, subject, text, html, filename, url string }{
+		{"code", "Account", "Your code is 482913", "", "", ""},
+		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", "", ""},
+		{"filename", "Ordinary", "", "", "code-482913.png", ""},
+		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", "", ""},
+		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "", ""},
+		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", "", ""},
+		{"attachment URL", "Account", "Your code is 482913", "", "image.png", "https://example.test/reset?token=abcDEF1234567890"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -129,7 +130,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 				requirements.NoError(err)
 			}
 			if tc.filename != "" {
-				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
+				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", tc.url, strings.Repeat("a", 64), 1))
 			}
 
 			for _, withEngine := range []bool{true, false} {
@@ -156,8 +157,9 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 						responses[mode] = w.Body.String()
 						var body struct {
-							BodyText string `json:"body_text"`
-							BodyHTML string `json:"body_html"`
+							BodyText    string           `json:"body_text"`
+							BodyHTML    string           `json:"body_html"`
+							Attachments []AttachmentInfo `json:"attachments"`
 						}
 						requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 						if mode == "masked" && tc.name != "ordinary" {
@@ -165,11 +167,19 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 							assertions.Empty(body.BodyHTML)
 							assertions.NotContains(w.Body.String(), "4829")
 							assertions.NotContains(w.Body.String(), "abcDEF1234567890")
+							if tc.url != "" {
+								requirements.Len(body.Attachments, 1)
+								assertions.Empty(body.Attachments[0].URL)
+							}
 						} else {
 							assertions.Equal(tc.text, body.BodyText)
 							assertions.Equal(tc.html, body.BodyHTML)
 							if tc.filename != "" {
 								assertions.Contains(w.Body.String(), tc.filename)
+							}
+							if tc.url != "" {
+								requirements.Len(body.Attachments, 1)
+								assertions.Equal(tc.url, body.Attachments[0].URL)
 							}
 						}
 					}
