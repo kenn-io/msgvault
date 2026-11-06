@@ -6,11 +6,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -575,10 +577,10 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			r.imp.progress.OnError(fmt.Errorf("write Signal message %s: %w", p.id, err))
 			continue
 		}
-		r.written++
 		if isExisting {
 			r.summary.MessagesUpdated++
 		} else {
+			r.written++
 			r.summary.MessagesAdded++
 			added++
 		}
@@ -604,6 +606,18 @@ func (r *run) writeMessage(
 ) error {
 	m := p.row
 	st := r.imp.store
+	var previous sigMessage
+	var archivedBody string
+	var previousValid bool
+	if archivedID != 0 {
+		var archivedRaw []byte
+		var err error
+		archivedBody, archivedRaw, err = st.GetMessageBodyAndRawContext(ctx, archivedID)
+		if err != nil {
+			return fmt.Errorf("read archived Signal revision: %w", err)
+		}
+		previousValid = json.Unmarshal(archivedRaw, &previous) == nil
+	}
 	var found, missing int64
 	body, preservedBody := "", false
 	if m.Body.Valid {
@@ -625,13 +639,8 @@ func (r *run) writeMessage(
 			}
 			missing++
 			if archivedID != 0 {
-				archived, archivedRaw, err := st.GetMessageBodyAndRawContext(ctx, archivedID)
-				if err != nil {
-					return fmt.Errorf("read archived long text: %w", err)
-				}
-				var prev sigMessage
-				if json.Unmarshal(archivedRaw, &prev) == nil && prev.RevisionDateSent == m.RevisionDateSent && prev.Body == m.Body {
-					body, preservedBody = archived, true
+				if previousValid && previous.RevisionDateSent == m.RevisionDateSent && previous.Body == m.Body {
+					body, preservedBody = archivedBody, true
 				}
 			}
 		}
@@ -737,7 +746,7 @@ func (r *run) writeMessage(
 	}
 	r.summary.AttachmentsFound += found + mediaFound
 	r.summary.AttachmentsMissing += missing + mediaMissing
-	if data.Edited {
+	if data.Edited && (archivedID == 0 || previous.RevisionDateSent != m.RevisionDateSent) {
 		r.summary.MessagesEdited++
 	}
 	if data.Reactions != nil {
@@ -829,8 +838,7 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 			missing++
 			continue
 		}
-		storagePath, contentHash, size, err := export.StoreAttachmentFromPath(
-			r.opts.AttachmentsDir, filepath.Join(r.opts.AttachmentFilesDir, name), r.opts.MaxAttachmentSize)
+		storagePath, contentHash, size, err := r.storeAttachment(ctx, filepath.Join(r.opts.AttachmentFilesDir, name))
 		if err != nil {
 			r.summary.Errors++
 			r.imp.progress.OnError(fmt.Errorf("store attachment %d: %w", a.ID, err))
@@ -859,6 +867,30 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 			Role: role, RoleSource: roleSource, SourcePartKey: key})
 	}
 	return writes, found, missing, nil
+}
+
+func (r *run) storeAttachment(ctx context.Context, source string) (string, string, int64, error) {
+	hash, size, err := export.HashAttachmentSource(ctx, source, r.opts.MaxAttachmentSize)
+	if err != nil {
+		return "", "", 0, err
+	}
+	blobs, err := attachmentstore.New(store.NewPackCatalog(r.imp.store), r.opts.AttachmentsDir)
+	if err != nil {
+		return "", hash, size, err
+	}
+	defer func() { _ = blobs.Close() }()
+	reader, _, err := blobs.OpenStream(ctx, hash)
+	if err == nil {
+		_, readErr := io.Copy(io.Discard, reader)
+		if err := errors.Join(readErr, reader.Close()); err != nil {
+			return "", hash, size, err
+		}
+		return hash[:2] + "/" + hash, hash, size, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", hash, size, err
+	}
+	return export.StoreAttachmentFromPathVerified(ctx, r.opts.AttachmentsDir, source, hash, size, r.opts.MaxAttachmentSize)
 }
 
 func millisTime(ms int64) sql.NullTime {

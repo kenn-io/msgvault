@@ -328,6 +328,16 @@ func StoreAttachmentFromPathVerified(ctx context.Context, attachmentsDir, srcPat
 	return path.Join(expectedHash[:2], expectedHash), expectedHash, size, nil
 }
 
+// HashAttachmentSource hashes a regular source file without staging a loose copy.
+func HashAttachmentSource(ctx context.Context, srcPath string, maxSize int64) (string, int64, error) {
+	f, err := OpenAttachmentSource(srcPath, maxSize)
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = f.Close() }()
+	return hashSourceFileContext(ctx, f, srcPath, maxSize)
+}
+
 func hashSourceFileContext(ctx context.Context, f *os.File, srcPath string, maxSize int64) (string, int64, error) {
 	src := io.Reader(&ContextReader{Context: ctx, Reader: f})
 	if maxSize > 0 {

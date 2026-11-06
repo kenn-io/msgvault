@@ -120,7 +120,7 @@ func boundedIdentityField(value string, maxRunes int, truncated *bool) string {
 
 func scorableIdentifierType(kind string) bool {
 	switch kind {
-	case "email", "phone", "beeper", "apple_id", "whatsapp", "signal", "signal_aci", "imessage":
+	case "email", "phone", "beeper", "apple_id", "whatsapp", "signal", "imessage":
 		return true
 	default:
 		return false

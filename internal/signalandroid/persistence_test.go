@@ -7,9 +7,59 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
+
+func TestRerunAfterPackingKeepsMediaPacked(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	runImport(t, st, dir, storage)
+	var hash, storagePath string
+	require.NoError(st.DB().QueryRow(`SELECT content_hash, storage_path FROM attachments`).Scan(&hash, &storagePath))
+	layout, err := packstore.NewLayout(storage, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err)
+	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(maintainer.Close()) })
+	stats, err := maintainer.Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(err)
+	require.Equal(1, stats.BlobsPacked)
+	require.NoFileExists(filepath.Join(storage, storagePath))
+
+	summary := runImport(t, st, dir, storage)
+	assert.Zero(summary.Errors)
+	assert.Zero(summary.AttachmentsStored)
+	assert.NoFileExists(filepath.Join(storage, storagePath))
+	// Metadata changes also reuse the packed bytes.
+	changeFixture(t, dir, `UPDATE attachment SET file_name = 'renamed.jpg' WHERE _id = 500`)
+	summary = runImport(t, st, dir, storage)
+	assert.Zero(summary.Errors)
+	assert.Equal(int64(1), summary.AttachmentsStored)
+	assert.NoFileExists(filepath.Join(storage, storagePath))
+	blobs, err := attachmentstore.New(store.NewPackCatalog(st), storage)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(blobs.Close()) })
+	content, _, err := blobs.ReadBounded(hash, 100)
+	require.NoError(err)
+	assert.Equal("photo bytes", string(content))
+}
+
+func TestRerunCountsOnlyNewEdits(t *testing.T) {
+	assert := assert.New(t)
+	st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	assert.Equal(int64(1), runImport(t, st, dir, storage).MessagesEdited)
+	assert.Zero(runImport(t, st, dir, storage).MessagesEdited)
+	changeFixture(t, dir, `UPDATE message SET date_sent = date_sent + 1000, body = 'Another draft' WHERE _id = 106`)
+	assert.Equal(int64(1), runImport(t, st, dir, storage).MessagesEdited)
+	assert.Equal("Another draft", importedMessages(t, st)["signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TEditOld)].body)
+	assert.Zero(runImport(t, st, dir, storage).MessagesEdited)
+}
 
 func TestFailedWriteCounts(t *testing.T) {
 	assert := assert.New(t)

@@ -54,7 +54,7 @@ type ImportOptions struct {
 	// MaxAttachmentSize skips attachment files larger than this many bytes.
 	MaxAttachmentSize int64
 
-	// Limit stops after this many messages are written (0 = no limit; must be non-negative).
+	// Limit stops after this many new messages are written (0 = no limit; must be non-negative).
 	Limit int
 
 	// BatchSize is the number of messages read per query.

@@ -18,6 +18,10 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	require.NoError(err)
 	right, err := st.EnsureParticipantByIdentifier("beeper", "pair-right", "Pair Right")
 	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
+		(participant_id, identifier_type, identifier_value, display_value, is_primary)
+		VALUES (?, 'signal_aci', ?, ?, FALSE)`), left, "00000000-0000-4000-8000-000000000001", "Signal account")
+	require.NoError(err)
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
 	assert.Equal("Pair Left", summaries.Left.DisplayName)

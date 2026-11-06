@@ -344,6 +344,11 @@ func TestImportLimitStopsAfterWrites(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`),
 		summary.SourceID).Scan(&count))
 	assert.Equal(2, count)
+	// Existing messages precede the next new messages in the same backup.
+	summary, err = NewImporter(st, nil).Import(context.Background(), path, opts)
+	require.NoError(err)
+	assert.Equal(int64(2), summary.MessagesAdded)
+	assert.Equal(4, len(importedMessages(t, st)))
 }
 
 func TestSkipReason(t *testing.T) {

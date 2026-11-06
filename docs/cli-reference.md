@@ -2305,10 +2305,10 @@ msgvault import-signal <directory | database.sqlite> --phone <your-number>
 | `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
 | `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
 | `--display-name` | No | Display name for the phone owner |
-| `--limit` | No | Limit number of messages (for testing) |
+| `--limit` | No | Limit number of new messages (for testing) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
-Source and message type: `signal`. Chats: `signal:{aci|pni}:<UUID>` or
+Source and message type: `signal`. Chats: `signal:{aci|pni}:<UUID>`, `signal:tel:<E.164>`, or
 `signal:{group|group-v1}:<unpadded base64url ID>`. Messages:
 `<chat>:<author>:<original sent ms>`. Authors: `self`/`peer` in direct chats;
 `self`, ACI, `pni:<UUID>`, or `tel:<E.164>` in groups.

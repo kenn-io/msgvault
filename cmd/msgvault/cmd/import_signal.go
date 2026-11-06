@@ -57,7 +57,7 @@ Examples:
 	command.Flags().StringVar(&flags.displayName, "display-name", "", "display name for the phone owner")
 	command.Flags().StringVar(&flags.attachmentsDir, "attachments-dir", "",
 		"directory holding the Attachment_*.bin files (default: the database's directory)")
-	command.Flags().IntVar(&flags.limit, "limit", 0, "maximum messages to write, including updates (0 imports all)")
+	command.Flags().IntVar(&flags.limit, "limit", 0, "maximum new messages to import (0 imports all)")
 	command.Flags().BoolVar(&flags.noDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
 	_ = command.MarkFlagRequired("phone")
 	return command
