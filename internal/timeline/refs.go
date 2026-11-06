@@ -86,20 +86,16 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 		}
 	}
 	if m := fullRefPattern.FindStringSubmatch(s); m != nil {
-		id, err := strconv.ParseInt(m[2], 10, 64)
-		if err != nil {
-			return a, fmt.Errorf("%w: invalid ID", ErrUnknownReference)
-		}
+		var err error
 		if m[1] == "evt" {
-			if _, err := store.ParseMeetingIdentityRef(s); err != nil {
-				return a, ErrUnknownReference
-			}
+			var ref store.OccurrenceRef
+			ref, err = store.ParseMeetingIdentityRef(s)
+			a.ID = ref.MessageID
+		} else {
+			a.ID, err = strconv.ParseInt(m[2], 10, 64)
 		}
-		a.ID = id
-		if m[3] != "" {
-			if m[1] != "evt" {
-				return a, ErrUnknownReference
-			}
+		if err != nil || (m[3] != "" && m[1] != "evt") {
+			return a, ErrUnknownReference
 		}
 		a.Kind = map[string]string{"msg": "message", "conv": "conversation", "evt": "meeting"}[m[1]]
 		return a, nil

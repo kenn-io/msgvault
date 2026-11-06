@@ -300,6 +300,7 @@ TUI. In message lists and aggregate views, `s` continues to cycle the sort field
 Timeline is unreleased and requires daemon API schema `3.47.0` or newer.
 Press `m` to reach it. It combines archived messages, meetings, calls, open
 loops, and notes, using the day boundaries in `[activity].timezone`.
+Timeline ignores the account/source picker (`A`), as People mode does.
 See [Timeline](timeline.md) for filters, freshness, and continuation.
 
 | Key | Action |

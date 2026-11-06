@@ -55,8 +55,8 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	fmt.Fprintf(&b, "# %s · %s\n", heading, zone)
 	for _, s := range t.Freshness.Sources {
 		if s.Reason != "" || s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Scheduling == "disabled" || s.LastSyncErrors > 0 {
-			fmt.Fprintf(&b, "⚠ %s %s", singleLine(strings.TrimSuffix(s.SourceType+":"+s.Identifier, ":"), 80), singleLine(cmp.Or(s.Reason, "current"), 80))
-			if s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" {
+			fmt.Fprintf(&b, "⚠ %s %s", singleLine(strings.TrimSuffix(s.SourceType+":"+s.Identifier, ":"), 80), singleLine(cmp.Or(s.Reason, s.Outcome, "current"), 80))
+			if s.Reason != "" && (s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Outcome == "partial") {
 				fmt.Fprintf(&b, " %s", singleLine(s.Outcome, 80))
 			}
 			if s.SyncCommand != "" {

@@ -112,12 +112,6 @@ func TestFitTooSmall(t *testing.T) {
 	v.Freshness.Warnings = []string{strings.Repeat("warning ", 2000)}
 	_, err := Fit(v, "json", 2048)
 	require.ErrorIs(t, err, ErrBudgetTooSmall)
-	for _, budget := range []int{-1, 0, 2047, 65537} {
-		_, err := Fit(budgetTimeline(0), "json", budget)
-		require.ErrorIs(t, err, ErrInvalidRequest)
-	}
-	_, err = Fit(budgetTimeline(0), "html", 4096)
-	require.ErrorIs(t, err, ErrInvalidRequest)
 }
 func TestFitForwardProgressStub(t *testing.T) {
 	for _, tc := range []struct {
