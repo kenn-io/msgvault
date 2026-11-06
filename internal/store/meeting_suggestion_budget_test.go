@@ -10,6 +10,31 @@ import (
 )
 
 func TestMeetingChosenLinkRejectsBroadEvidence(t *testing.T) {
+	t.Run("combined budget", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		var targets []OccurrenceRef
+		for family := range 2 {
+			for copy := range 6 {
+				raw := fmt.Sprintf(`{"id":"series-%d","iCalUID":"family-%d@example.org","start":{"dateTime":"1900-01-01T10:00:00Z"},"end":{"dateTime":"1900-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, family, family)
+				_, event := calendarFixture(t, st, fmt.Sprintf("family-%d-copy-%d", family, copy), raw, fmt.Sprintf("copy-%d@example.com", copy))
+				if copy == 0 {
+					targets = append(targets, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"})
+				}
+			}
+		}
+		_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+		for _, target := range targets {
+			_, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: target.MessageID, Key: target.Key})
+			require.NoError(err, "each family is readable on its own")
+		}
+		require.NoError(st.LinkMeetingContext(t.Context(), note, targets[0]))
+		require.ErrorIs(st.LinkMeetingContext(t.Context(), note, targets[1]), ErrQueryTooBroad)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		require.NoError(err)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", targets[0].MessageID), record.Links[0].Ref)
+	})
 	for _, tc := range []struct {
 		name         string
 		targetCopies bool
@@ -29,10 +54,7 @@ func TestMeetingChosenLinkRejectsBroadEvidence(t *testing.T) {
 				}
 			}
 			raw := `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`
-			var readable int64
-			if tc.targetCopies {
-				_, readable = calendarFixture(t, st, "readable", singleLinkRaw("readable", "readable@example.org"))
-			} else {
+			if !tc.targetCopies {
 				_, chosen = calendarFixture(t, st, "chosen", singleLinkRaw("chosen", "chosen@example.org"))
 				raw = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`
 			}
@@ -41,16 +63,6 @@ func TestMeetingChosenLinkRejectsBroadEvidence(t *testing.T) {
 			var decisions int
 			require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&decisions))
 			assert.Zero(decisions, "a choice the reader cannot return must not be committed")
-			if tc.targetCopies {
-				page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 100)
-				require.NoError(err)
-				var refs []string
-				for _, suggestion := range page.Suggestions {
-					refs = append(refs, suggestion.Ref)
-				}
-				assert.Equal([]string{fmt.Sprintf("evt:%d", readable)}, refs)
-				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: readable}))
-			}
 		})
 	}
 }
@@ -70,17 +82,14 @@ func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
 }
 
-func TestMeetingSuggestionsWithOverBudgetEvidence(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
+func TestMeetingSuggestionsRejectOverBudgetEvidence(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	for i := range 201 {
 		raw := fmt.Sprintf(`{"id":"old-%d","iCalUID":"crowded@example.org","start":{"dateTime":"2020-01-01T10:00:00Z"},"end":{"dateTime":"2020-01-01T11:00:00Z"}}`, i)
 		calendarFixture(t, st, fmt.Sprintf("old-%d", i), raw)
 	}
-	_, event := calendarFixture(t, st, "readable", singleLinkRaw("readable", "readable@example.org"))
+	calendarFixture(t, st, "readable", singleLinkRaw("readable", "readable@example.org"))
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
-	requirements.NoError(err)
-	requirements.Len(page.Suggestions, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", event), page.Suggestions[0].Ref)
+	_, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	require.ErrorIs(t, err, ErrQueryTooBroad)
 }

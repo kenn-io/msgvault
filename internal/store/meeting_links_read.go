@@ -54,26 +54,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	r := s.meetingReader().withMeetingCache()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
-		var found int64
-		if err := r.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, ref.MessageID).Scan(&found); err != nil {
-			return record, err
-		}
-		record.MessageIDs = append(record.MessageIDs, ref.MessageID)
-		occurrences, err := s.meetingMemberOccurrences(ctx, r, ref.MessageID, &budget)
-		if err != nil {
-			return record, err
-		}
-		for _, occurrence := range occurrences {
-			record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(occurrence.Ref), Subject: occurrence.Row.Subject, Start: occurrence.Start, End: occurrence.End})
-			members, err := s.meetingOccurrenceMembers(ctx, r, occurrence, &budget)
-			if err != nil {
-				return record, err
-			}
-			record.MessageIDs = append(record.MessageIDs, members...)
-		}
-		slices.Sort(record.MessageIDs)
-		record.MessageIDs = slices.Compact(record.MessageIDs)
-		return record, nil
+		return s.meetingNoteRecord(ctx, r, ref.MessageID, &budget)
 	}
 	target, err := resolveMeetingOccurrence(ctx, r, ref.OccurrenceRef, &budget)
 	if err != nil {
@@ -82,6 +63,30 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(target.Ref), Subject: target.Row.Subject, Start: target.Start, End: target.End})
 	record.MessageIDs, err = s.meetingOccurrenceMembers(ctx, r, target, &budget)
 	return record, err
+}
+
+func (s *Store) meetingNoteRecord(ctx context.Context, r reboundReader, memberID int64, budget *int) (MeetingRecord, error) {
+	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
+	var found int64
+	if err := r.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, memberID).Scan(&found); err != nil {
+		return record, err
+	}
+	record.MessageIDs = append(record.MessageIDs, memberID)
+	occurrences, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	if err != nil {
+		return record, err
+	}
+	for _, occurrence := range occurrences {
+		record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(occurrence.Ref), Subject: occurrence.Row.Subject, Start: occurrence.Start, End: occurrence.End})
+		members, err := s.meetingOccurrenceMembers(ctx, r, occurrence, budget)
+		if err != nil {
+			return record, err
+		}
+		record.MessageIDs = append(record.MessageIDs, members...)
+	}
+	slices.Sort(record.MessageIDs)
+	record.MessageIDs = slices.Compact(record.MessageIDs)
+	return record, nil
 }
 
 func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, target linkOccurrence, budget *int) ([]int64, error) {

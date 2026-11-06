@@ -264,7 +264,7 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		refs := map[string]bool{}
 		matched := map[meetingIdentity]bool{}
 		occurrences, err := s.meetingMemberOccurrences(ctx, r, suggestion.MemberMessageID, budget)
-		if err != nil && !errors.Is(err, ErrQueryTooBroad) && !errors.Is(err, calrecur.ErrBudgetExceeded) {
+		if err != nil {
 			return nil, err
 		}
 		for _, o := range occurrences {
@@ -321,11 +321,7 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 			continue
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
-		if err == nil {
-			// Offer only targets whose record read fits the bounds the link writer enforces.
-			_, err = s.meetingOccurrenceMembers(ctx, r, o, budget)
-		}
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, ErrQueryTooBroad) || errors.Is(err, calrecur.ErrBudgetExceeded) {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			continue
 		}
 		if err != nil {
