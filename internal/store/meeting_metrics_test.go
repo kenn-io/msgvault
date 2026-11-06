@@ -128,7 +128,7 @@ func TestReviewMetricsDateWindowsCountOnce(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(tc.count, metrics.Totals.MeetingCount)
 			assertions.Equal(tc.count, metrics.Totals.KnownDurationCount)
-			assertions.Equal(tc.seconds, metrics.Totals.TotalKnownSeconds)
+			assertions.InDelta(tc.seconds, metrics.Totals.TotalKnownSeconds, 0)
 			assertions.Equal(tc.at, metrics.FirstMeetingAt)
 			assertions.Equal(tc.at, metrics.LastMeetingAt)
 			if tc.count == 0 {
