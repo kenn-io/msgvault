@@ -172,6 +172,9 @@ type Client struct {
 	connectRetryNotify          backoff.Notify
 	commandLimiter              *rate.Limiter
 	tlsConfig                   *tls.Config
+	watchHint                   func()
+	idleDoneTimeout             time.Duration
+	idleRenewInterval           time.Duration
 }
 
 // NewClient creates a new IMAP client.
@@ -299,6 +302,9 @@ func isRetryableTransportError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	if _, ok := errors.AsType[*retryableConnectError](err); ok {
+		return true
+	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
@@ -310,6 +316,14 @@ func isRetryableTransportError(err error) bool {
 		return errors.Is(err, errno)
 	})
 }
+
+// A greeting failure can hide the socket EOF in the IMAP library's error.
+// Preserve the transport probe's classification across retry exhaustion without
+// changing the error text or discarding its underlying cause.
+type retryableConnectError struct{ err error }
+
+func (e *retryableConnectError) Error() string { return e.err.Error() }
+func (e *retryableConnectError) Unwrap() error { return e.err }
 
 // connect establishes and authenticates the IMAP connection. Caller must hold mu.
 func (c *Client) connect(ctx context.Context) error {
@@ -379,6 +393,9 @@ func (c *Client) connectTransport(ctx context.Context) (*imapclient.Client, erro
 		if err != nil && (!retry || ctx.Err() != nil) {
 			return conn, backoff.Permanent(err)
 		}
+		if err != nil && retry {
+			err = &retryableConnectError{err: err}
+		}
 		return conn, err
 	}, backoff.WithBackOff(policy), backoff.WithMaxTries(4), backoff.WithMaxElapsedTime(0),
 		backoff.WithNotify(func(err error, delay time.Duration) {
@@ -407,11 +424,30 @@ func (c *Client) connectTransportOnce(ctx context.Context) (*imapclient.Client, 
 	addr := c.config.Addr()
 	c.logger.Debug("connecting to IMAP server", "addr", addr, "tls", c.config.TLS, "starttls", c.config.STARTTLS)
 
-	imapOpts := &imapclient.Options{
-		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
-			Vanished: c.captureQresyncVanished,
-		},
+	handler := &imapclient.UnilateralDataHandler{Vanished: c.captureQresyncVanished}
+	if c.watchHint != nil {
+		// Capture the callback, not the mutable client field: decoder handlers
+		// run until the dedicated transport has been closed and joined.
+		hint := c.watchHint
+		handler.Mailbox = func(*imapclient.UnilateralDataMailbox) { hint() }
+		handler.Expunge = func(uint32) { hint() }
+		handler.Fetch = func(msg *imapclient.FetchMessageData) {
+			hint()
+			// The IMAP decoder hands FETCH to this callback. Consume without
+			// retaining literals so it can keep decoding IDLE updates/DONE.
+			for {
+				// Next drains any unread literal before advancing to the next item.
+				if item := msg.Next(); item == nil {
+					break
+				}
+			}
+		}
+		handler.Vanished = func(uids imap.UIDSet, earlier bool) {
+			c.captureQresyncVanished(uids, earlier)
+			hint()
+		}
 	}
+	imapOpts := &imapclient.Options{UnilateralDataHandler: handler}
 	rawConn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, isRetryableTransportError(err), fmt.Errorf("dial IMAP %s: %w", addr, err)

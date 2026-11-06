@@ -129,6 +129,8 @@ type Scheduler struct {
 	logger                  *slog.Logger
 	work                    WorkTracker
 	accountPreemptionPolicy func(string) bool
+	accountWakeSync         SyncFunc
+	accounts                map[string]*accountRegistration
 
 	mu        sync.RWMutex
 	jobs      map[string]cron.EntryID // email -> cron entry ID
@@ -191,6 +193,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		cron:               cron.New(cron.WithParser(cronexpr.Parser)),
+		accounts:           make(map[string]*accountRegistration),
 		syncFunc:           syncFunc,
 		logger:             slog.Default(),
 		jobs:               make(map[string]cron.EntryID),
@@ -259,14 +262,17 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 		delete(s.schedules, email)
 	}
 
-	// Validate and add the cron job
+	// Capture registration identity, fencing callbacks from old schedules.
+	registration := &accountRegistration{}
 	entryID, err := s.cron.AddFunc(cronExpr, func() {
-		s.onAccountTick(email)
+		s.onAccountRegistrationTick(email, registration)
 	})
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 	}
 
+	s.retireAccountLocked(email)
+	s.accounts[email] = registration
 	s.jobs[email] = entryID
 	s.schedules[email] = cronExpr
 	s.logger.Info("scheduled sync",
@@ -278,24 +284,13 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 }
 
 // onAccountTick handles one cron firing for an account. A tick that finds
-// the previous run still waiting for the gate is redundant; one that finds it
-// executing is remembered as a single follow-up run instead of being lost.
+// the ordinary run still waiting for the gate is redundant. A tick during
+// provider work or a strict wake pass retains one ordinary follow-up.
 func (s *Scheduler) onAccountTick(email string) {
-	s.mu.Lock()
-	if s.stopped {
-		s.mu.Unlock()
-		return
-	}
-	if s.running[email] {
-		s.coalesceTickLocked("email", email, s.queuedAt, s.pending)
-		s.mu.Unlock()
-		return
-	}
-	s.running[email] = true
-	s.queuedAt[email] = time.Now()
-	s.wg.Add(1)
-	s.mu.Unlock()
-	s.runSync(email)
+	s.mu.RLock()
+	registration := s.accounts[email]
+	s.mu.RUnlock()
+	s.onAccountRegistrationTick(email, registration)
 }
 
 // coalesceTickLocked records a tick that arrived while its job was active.
@@ -432,6 +427,7 @@ func (s *Scheduler) RemoveJob(name string) {
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.retireAccountLocked(email)
 	delete(s.manual, email)
 
 	if entryID, exists := s.jobs[email]; exists {
@@ -536,6 +532,12 @@ func (s *Scheduler) Stop() context.Context {
 
 	s.mu.Lock()
 	s.stopped = true
+	for _, registration := range s.accounts {
+		settleAccountPassLocked(registration.active, errors.New("scheduler is stopped"))
+		for _, pass := range registration.pending {
+			settleAccountPassLocked(pass, errors.New("scheduler is stopped"))
+		}
+	}
 	s.mu.Unlock()
 
 	cronCtx := s.cron.Stop()
@@ -556,23 +558,34 @@ func (s *Scheduler) Stop() context.Context {
 	return ctx
 }
 
-// runSync executes sync for an account (called by cron or TriggerSync).
-// The caller must have already called wg.Add(1) and set running[email] = true.
-func (s *Scheduler) runSync(email string) {
+// runAccountPass executes an already reserved account pass.
+func (s *Scheduler) runAccountPass(email string, registration *accountRegistration, pass *accountPass) {
 	defer s.wg.Done()
-	defer s.finishAccountRun(email)
+	defer s.finishAccountPass(email, registration, pass)
 
 	done, ok := s.beginWork("scheduled sync of "+email, true)
 	s.mu.Lock()
-	delete(s.queuedAt, email)
-	if ok {
-		s.startedAt[email] = time.Now()
-	}
-	s.mu.Unlock()
-	if !ok {
-		s.logger.Info("scheduled sync skipped: daemon is draining", "email", email)
+	valid := s.accounts[email] == registration && registration.active == pass && !pass.settled && !s.stopped
+	if !ok || !valid {
+		if valid {
+			delete(s.queuedAt, email)
+		}
+		settleAccountPassLocked(pass, errors.New("wake reconciliation did not acquire an active account gate"))
+		s.mu.Unlock()
+		if ok {
+			done()
+		} else {
+			s.logger.Info("scheduled sync skipped: daemon is draining", "email", email)
+		}
 		return
 	}
+	delete(s.queuedAt, email)
+	s.startedAt[email] = time.Now()
+	run := s.syncFunc
+	if pass.wake && s.accountWakeSync != nil {
+		run = s.accountWakeSync
+	}
+	s.mu.Unlock()
 	release := sync.OnceFunc(done)
 	defer release()
 
@@ -584,13 +597,30 @@ func (s *Scheduler) runSync(email string) {
 	s.mu.RUnlock()
 	preemptible := preemptionPolicy == nil || preemptionPolicy(email)
 	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, 0)
-	err := s.syncFunc(runCtx, email)
+	err := run(runCtx, email)
+	// Capture before endRun: cleanup cancels the bookkeeping context on success.
+	receiptErr := err
+	if cause := context.Cause(runCtx); cause != nil {
+		receiptErr = errors.Join(receiptErr, cause)
+	}
+	if jobctx.PreemptionRequested(runCtx) {
+		receiptErr = errors.Join(receiptErr, ErrYieldedToWaiter)
+	}
 	endRun()
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 
 	s.mu.Lock()
+	if s.accounts[email] != registration || registration.active != pass {
+		settleAccountPassLocked(pass, errors.New("wake account registration changed during reconciliation"))
+		s.mu.Unlock()
+		return
+	}
+	if s.stopped {
+		receiptErr = errors.Join(receiptErr, errors.New("scheduler is stopped"))
+	}
+	settleAccountPassLocked(pass, receiptErr)
 	var completion func()
-	if !yielded || jobctx.ErrorAfterYield(runCtx, err) != nil {
+	if !pass.wake && (!yielded || jobctx.ErrorAfterYield(runCtx, err) != nil) {
 		if err == nil && !yielded && !s.stopped && s.ctx.Err() == nil && s.manual[email] {
 			completion = s.onCompletion
 		}
@@ -602,7 +632,7 @@ func (s *Scheduler) runSync(email string) {
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
 		if _, scheduled := s.jobs[email]; scheduled {
-			s.pending[email] = true
+			s.pendingAccountPassLocked(email, registration, pass.wake)
 		}
 		s.logger.Info("scheduled sync yielded to a waiting operation; queued follow-up",
 			"email", email,
@@ -656,25 +686,6 @@ func logScheduledSyncError(logger *slog.Logger, email string, duration time.Dura
 		"email", email,
 		"duration", duration,
 		"error", err)
-}
-
-// finishAccountRun releases an account run, or hands its reservation to the
-// single follow-up requested by a tick or yield. The follow-up is
-// reserved (running stays true, wg.Add) before the finishing run's wg.Done.
-func (s *Scheduler) finishAccountRun(email string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.startedAt, email)
-	if s.pending[email] && !s.stopped {
-		delete(s.pending, email)
-		s.queuedAt[email] = time.Now()
-		s.wg.Add(1)
-		go s.runSync(email)
-		return
-	}
-	delete(s.pending, email)
-	delete(s.manual, email)
-	s.running[email] = false
 }
 
 // startVisualPostSync queues hosted multimodal work after the source sync has
@@ -750,11 +761,8 @@ func (s *Scheduler) TriggerSync(email string, manual bool) error {
 		return fmt.Errorf("sync already running for %s", email)
 	}
 
-	s.running[email] = true
-	s.queuedAt[email] = time.Now()
 	s.manual[email] = manual
-	s.wg.Add(1)
-	go s.runSync(email)
+	s.startAccountPassLocked(email, s.accounts[email], newAccountPass(false))
 	return nil
 }
 
