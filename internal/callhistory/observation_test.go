@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,37 +49,6 @@ func TestObservationValidation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func FuzzCanonicalCallIdentity(f *testing.F) {
-	f.Add("signal", "a", "one", "signal", "b", "one")
-	f.Add("signal", "a", "one", "other", "a", "one")
-	f.Add("signal", "a", "one", "signal", "a", "two")
-	f.Add("signal", "a", "one", "signal", "a", "one")
-	f.Add("signal", "a", "", "signal", "a", "one")
-	f.Add("signal", "a", "one", "signal", "a", "")
-	f.Add("signal", "a", "", "signal", "b", "")
-	f.Fuzz(func(t *testing.T, providerA, accountA, idA, providerB, accountB, idB string) {
-		a := identityEvidence(providerA, accountA, idA)
-		b := identityEvidence(providerB, accountB, idB)
-		if a.Validate() != nil || b.Validate() != nil {
-			return
-		}
-		if idA == "" || idB == "" {
-			assert.Equal(t, idA == "", a.CanonicalKey() == "")
-			assert.Equal(t, idB == "", b.CanonicalKey() == "")
-		} else if providerA == providerB && accountA == accountB && idA == idB {
-			assert.Equal(t, a.CanonicalKey(), b.CanonicalKey())
-		} else {
-			assert.NotEqual(t, a.CanonicalKey(), b.CanonicalKey())
-		}
-	})
-}
-
-func identityEvidence(provider, account, nativeCallID string) Evidence {
-	o := exampleObservation()
-	o.Provider, o.Account, o.NativeCallID = provider, account, nativeCallID
-	return o.Evidence
 }
 
 func FuzzObservationDurationValidation(f *testing.F) {

@@ -32,7 +32,7 @@ type CallParticipant struct {
 	Credited                bool
 }
 
-// LogicalCall combines active records of one call and all its participants.
+// LogicalCall reports one call record and all its participants.
 type LogicalCall struct {
 	IdentityKey     string
 	MessageID       int64
@@ -43,9 +43,7 @@ type LogicalCall struct {
 	Participants    []CallParticipant
 }
 
-// ListLogicalCallsContext pages whole identities, ordered by time then key.
-// Candidate selection is window-bounded; all active records of a candidate are
-// then resolved before applying the identity's earliest timestamp.
+// ListLogicalCallsContext pages call records, ordered by time then key.
 func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery) ([]LogicalCall, string, error) {
 	if q.Limit < 1 || q.Limit > 500 || !validLogicalCallTime(q.After) || !validLogicalCallTime(q.Before) || !q.After.Before(q.Before) {
 		return nil, "", fmt.Errorf("%w: logical call bounds", callhistory.ErrInvalid)
@@ -65,7 +63,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 	if q.AfterKey != "" {
 		at, key, ok := strings.Cut(q.AfterKey, "|")
 		timestamp, err := time.Parse(time.RFC3339Nano, at)
-		if !ok || err != nil || !validLogicalCallTime(timestamp) || (!strings.HasPrefix(key, "n:") && !strings.HasPrefix(key, "m:")) || len(key) <= 2 {
+		if !ok || err != nil || !validLogicalCallTime(timestamp) || !strings.HasPrefix(key, "m:") || len(key) <= 2 {
 			return nil, "", fmt.Errorf("%w: logical call cursor", callhistory.ErrInvalid)
 		}
 		where += " AND (i.occurred_at > ? OR (i.occurred_at = ? AND i.identity_key > ?))"
@@ -172,8 +170,7 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q CallContactQu
 		candidateSubject, subjectArgs = messageExportInClause("r.participant_id", q.Subject.ParticipantIDs)
 		subject, _ = messageExportInClause("p.participant_id", q.Subject.ParticipantIDs)
 	}
-	// Select this subject's identities, then resolve every participant's credit
-	// from all their active records.
+	// Select this subject's calls, then resolve each participant's credit.
 	ctes, args := s.callScopedIdentityCTEs(ctx, `c.message_id IN (SELECT r.message_id FROM (`+s.callRolesSQL()+`) r
  WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
  AND `+candidateSubject+`)`, subjectArgs...)
@@ -233,20 +230,11 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q CallContactQu
 	return result, nil
 }
 
-// A window or participant predicate bounds candidates. Native identities then
-// use the canonical-key index; records without one use primary-key lookups.
+// A window or participant predicate bounds records before resolving participants.
 // Authorization applies to every evidence row.
 func (s *Store) callScopedIdentityCTEs(ctx context.Context, candidateWhere string, candidateArgs ...any) (string, []any) {
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	active := s.callActiveSQL(scope+` AND c.canonical_key IN (SELECT canonical_key FROM candidates WHERE canonical_key <> '')`) +
-		" UNION ALL " + s.callActiveSQL(scope+` AND c.message_id IN (SELECT message_id FROM candidates WHERE canonical_key = '')`)
-	ctes := `candidates AS (
- SELECT c.canonical_key, c.message_id FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
- WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + scope + `
- AND (` + candidateWhere + `)), ` + callIdentityCTEs(active) + `, ` + s.callParticipantsCTE()
-	args := append([]any{}, scopeArgs...)
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	active := s.callActiveSQL(scope + " AND (" + candidateWhere + ")")
 	args = append(args, candidateArgs...)
-	args = append(args, scopeArgs...)
-	args = append(args, scopeArgs...)
-	return ctes, args
+	return callIdentityCTEs(active) + ", " + s.callParticipantsCTE(), args
 }

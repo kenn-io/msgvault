@@ -125,7 +125,7 @@ func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
 	}
 }
 
-func TestCallSummaryRequiresWholeObservationPerIdentity(t *testing.T) {
+func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -204,14 +204,24 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(person.ID, got[0].PersonID)
-	assertions.Equal(1, got[0].Answered, "aliases count once per call")
+	assertions.Equal(2, got[0].Answered, "aliases count once per record")
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{Before: &at})
 	requirements.NoError(err)
-	assertions.Empty(got, "before excludes the call at the boundary")
+	assertions.Empty(got, "before excludes the record at the boundary")
+	end := at.Add(time.Hour)
+	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &end})
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assertions.Equal(1, got[0].Answered, "after includes the record at the boundary")
+	pastEnd := end.Add(time.Second)
+	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &pastEnd})
+	requirements.NoError(err)
+	assertions.Empty(got)
 	window := at.Add(time.Minute)
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &window})
 	requirements.NoError(err)
-	assertions.Empty(got, "calls use their earliest active occurrence time")
+	requirements.Len(got, 1)
+	assertions.Equal(1, got[0].Answered, "each record uses its own occurrence time")
 	requirements.NoError(st.DeletePersonContext(t.Context(), person.ID, person.Revision))
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)

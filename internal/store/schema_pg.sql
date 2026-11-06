@@ -4137,12 +4137,10 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
 
 CREATE TABLE IF NOT EXISTS call_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-    canonical_key TEXT NOT NULL,
     outcome TEXT NOT NULL,
     owner_participation TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_call_details_identity ON call_details(canonical_key, message_id);
 CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.

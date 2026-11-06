@@ -71,10 +71,9 @@ Multiple identities currently bound to one person count once per call.
 | `unknown` | Associated call evidence lacks sufficient outcome or attendance information. |
 | `example_message_id` | One associated observation to inspect, not proof that every counted event was answered. |
 
-Reimporting the same source record replaces its evidence. Records with the
-same provider, account and native call ID are one call, dated by its earliest
-active record. Time proximity, phone numbers and similar titles never merge
-calls. `--after` is inclusive and `--before` exclusive.
+Reimporting the same source record replaces its evidence. Time proximity,
+phone numbers and similar titles never merge calls. `--after` is inclusive and
+`--before` exclusive.
 
 ## Coverage and limitations
 
