@@ -82,7 +82,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 		})
 		// Allow one download plus token, profile, and group-summary requests.
 		maxRuntime := attachmentpolicy.DownloadTimeout(profile.MediaPolicy().MaxBytes) + 3*line.RequestTimeout
-		if err := sched.AddJob(scheduler.Job{Name: name, Interval: 30 * time.Second, Preemptible: true, Background: true, MaxRuntime: maxRuntime, Run: run}); err != nil {
+		if err := sched.AddJob(scheduler.Job{Name: name, Interval: 30 * time.Second, Preemptible: true, CooperativePreemption: true, Background: true, MaxRuntime: maxRuntime, Run: run}); err != nil {
 			return nil, fmt.Errorf("schedule LINE inbox: %w", err)
 		}
 		runtime.jobs = append(runtime.jobs, name)

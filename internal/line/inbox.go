@@ -332,6 +332,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err = settle(ctx); err != nil {
 		return err
 	}
+	enriched := false
 	for i, row := range rows {
 		work := enrichments[i]
 		if work.run == nil {
@@ -340,7 +341,11 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		if err = ctx.Err(); err != nil {
 			return err
 		}
+		if enriched && jobctx.PreemptionRequested(ctx) {
+			return jobctx.ErrYieldedToWaiter
+		}
 		eventErr := work.run(ctx)
+		enriched = true
 		if err = ctx.Err(); err != nil {
 			return err
 		}
