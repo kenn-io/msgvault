@@ -73,11 +73,9 @@ func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQue
 	boundaries := make([]time.Time, 13)
 	for i := range boundaries {
 		civil := firstMonth.AddDate(0, i, 0)
-		start := time.Date(civil.Year(), civil.Month(), 1, 0, 0, 0, 0, loc)
-		// A skipped midnight can normalize into the previous month. The
-		// transition ends that zone interval and starts the requested month.
-		if start.Year() != civil.Year() || start.Month() != civil.Month() {
-			_, start = start.ZoneBounds()
+		start, _, err := calrecur.CivilDateBoundary(civil.Format(time.DateOnly), loc)
+		if err != nil {
+			return result, fmt.Errorf("resolve contact month: %w", err)
 		}
 		boundaries[i] = start.UTC()
 	}

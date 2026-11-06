@@ -62,6 +62,7 @@ the command returns completed conversations and warns that more loops may be
 missing; JSON sets `coverage_incomplete`. An empty complete list prints
 `No open loops.` A message that is not an open loop, such as one you already
 answered, fails with `<id> isn't an open loop.`
+
 ## timeline
 
 Read day activity, relationship history, or the context around an archived

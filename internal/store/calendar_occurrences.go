@@ -84,7 +84,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	ids := sourcescope.IDs(ctx)
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	hash, err := readFilterHash(struct {
+	hash, err := ReadFilterHash(struct {
 		From       string  `json:"from"`
 		To         string  `json:"to"`
 		Restricted bool    `json:"restricted"`

@@ -78,6 +78,11 @@ func parseTimelineRequest(rawQuery string) (timeline.Request, error) {
 		}
 	}
 	req := timeline.Request{Mode: timeline.Mode(q.Get("mode")), Date: q.Get("date"), From: q.Get("from"), To: q.Get("to"), With: q.Get("with"), Around: q.Get("around"), Format: q.Get("format"), Cursor: q.Get("cursor")}
+	for _, name := range []string{"with", "around", "date", "from", "to", "cursor"} {
+		if q.Has(name) && q.Get(name) == "" {
+			return req, timeline.ErrInvalidRequest
+		}
+	}
 	req.BeforeSet, req.AfterSet = q.Has("before"), q.Has("after")
 	if req.Format == "" {
 		req.Format = "json"
@@ -259,11 +264,7 @@ func timelineSyncCommand(item *store.Source) string {
 	case "teams", "discord":
 		return "msgvault sync-" + item.SourceType + " " + arg
 	case "beeper", "matrix":
-		command := "msgvault sync-" + item.SourceType
-		if item.ID > 0 {
-			command += " --account " + arg
-		}
-		return command
+		return "msgvault sync-" + item.SourceType + " --account " + arg
 	case "slack":
 		return "msgvault sync-slack"
 	case "omi", "granola", "plaud", "circleback", "notion_meetings", "pocket", "inline", "twilio", "twenty", "muesli":

@@ -109,6 +109,31 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 		})
 	}
 }
+
+func TestTimelineReentryRefreshesDefaultDuringSameDay(t *testing.T) {
+	for _, mode := range []timeline.Mode{"", timeline.ModeDay} {
+		t.Run(string(mode), func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			m := timelineModeModel()
+			defer m.cancelTimelineRequest()
+			m.timelineState.request = timeline.Request{Mode: mode}
+			m.timelineState.result.Now = time.Now()
+			original := m.timelineState.result
+			cmd := m.activateTimeline()
+			requirements.NotNil(cmd)
+			assertions.Same(original, m.timelineState.result)
+			msg, ok := cmd().(timelineLoadedMsg)
+			requirements.True(ok)
+			msg.err = errors.New("daemon temporarily unavailable")
+			m = sendMsg(t, m, msg)
+			assertions.Same(original, m.timelineState.result)
+			cmd = m.activateTimeline()
+			requirements.NotNil(cmd)
+			m = sendMsg(t, m, cmd())
+			assertions.NotSame(original, m.timelineState.result)
+		})
+	}
+}
 func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

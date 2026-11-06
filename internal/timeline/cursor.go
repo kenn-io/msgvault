@@ -138,11 +138,10 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 		Window            Window
 		Timezone          string
 	}{b.SourceIDs != nil, b.Request.Scope.Owner && b.Request.Scope.OpenTools == nil, req, slices.Compact(slices.Sorted(slices.Values(b.SourceIDs))), b.Window, b.Timezone}
-	encoded, err := json.Marshal(payload)
+	filter, err := store.ReadFilterHash(payload)
 	if err != nil {
 		return "", "", err
 	}
 	archive := sha256.Sum256([]byte(b.ArchiveUID))
-	filter := sha256.Sum256(encoded)
-	return hex.EncodeToString(archive[:4]), hex.EncodeToString(filter[:6]), nil
+	return hex.EncodeToString(archive[:4]), filter[:12], nil
 }

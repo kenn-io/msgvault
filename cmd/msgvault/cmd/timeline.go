@@ -61,6 +61,11 @@ func newTimelineCommand() *cobra.Command {
 	flags.StringVar(&req.Cursor, "cursor", "", "Continue with the same filters and format")
 	flags.BoolVar(&jsonOutput, flagJSON, false, "Output compact JSON instead of Markdown")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
+		for _, name := range []string{"with", "around", "date", "from", "to", "cursor"} {
+			if cmd.Flags().Changed(name) && cmd.Flags().Lookup(name).Value.String() == "" {
+				return fmt.Errorf("--%s must not be empty", name)
+			}
+		}
 		if cmd.Flags().Changed("days") && req.Days == 0 {
 			return errors.New("--days must be between 1 and 31")
 		}

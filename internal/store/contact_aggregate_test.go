@@ -60,6 +60,7 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 		{"America/New_York", 2026, [12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
 		{"Asia/Tokyo", 2026, [12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
 		{"America/Asuncion", 2023, [12]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
+		{"Asia/Gaza", 2004, [12]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2}},
 	} {
 		t.Run(tc.zone, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -78,6 +79,9 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 			case "America/Asuncion":
 				// October starts at 01:00 after a midnight clock jump.
 				ats = []time.Time{time.Date(2023, 10, 1, 3, 30, 0, 0, time.UTC), time.Date(2023, 10, 1, 4, 30, 0, 0, time.UTC)}
+			case "Asia/Gaza":
+				// Midnight occurs twice. Both instants belong to October.
+				ats = []time.Time{time.Date(2004, 9, 30, 20, 59, 0, 0, time.UTC), time.Date(2004, 9, 30, 21, 30, 0, 0, time.UTC), time.Date(2004, 9, 30, 22, 30, 0, 0, time.UTC)}
 			}
 			for _, at := range ats {
 				f.add(t, f.ConvID, f.Source.ID, at, false, "")

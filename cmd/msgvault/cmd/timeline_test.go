@@ -51,6 +51,14 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 		requirements.ErrorContains(command.Execute(), "--"+flag+" must be between")
 	}
 	assertions.Zero(opens, "invalid explicit zeros fail before endpoint resolution")
+	for _, flag := range []string{"with", "around", "conversation", "date", "from", "to", "cursor"} {
+		command := newTimelineCommand()
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs([]string{"--" + flag + "="})
+		requirements.Error(command.Execute(), flag)
+	}
+	assertions.Zero(opens, "empty selectors fail before endpoint resolution")
 	command := newTimelineCommand()
 	var out bytes.Buffer
 	command.SetOut(&out)

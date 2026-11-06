@@ -326,7 +326,7 @@ func meetingActionsFilterHash(query MeetingActionsQuery) (string, error) {
 	if query.Scope.Before != nil {
 		filter.Before = query.Scope.Before.UTC().Format(time.RFC3339Nano)
 	}
-	return readFilterHash(filter)
+	return ReadFilterHash(filter)
 }
 
 func normalizedMeetingDeletion(value string) string {

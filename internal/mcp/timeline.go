@@ -61,6 +61,9 @@ func (h *handlers) timeline(ctx context.Context, request toolRequest) (*toolResu
 		"with": &req.With, "around": &req.Around, "format": &req.Format, "cursor": &req.Cursor,
 	} {
 		if value, ok := args[name].(string); ok {
+			if value == "" && name != "mode" && name != "format" {
+				return toolErrorResult(name + " must not be empty"), nil
+			}
 			*dst = value
 		}
 	}

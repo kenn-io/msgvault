@@ -241,7 +241,7 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 	require.NoError(t, err)
 	assertions.Zero(got.Days)
 	assertions.Zero(got.Budget)
-	for _, query := range []string{"days=0", "budget=0", "days=1&days=2", "include_cold=bad"} {
+	for _, query := range []string{"days=0", "budget=0", "days=1&days=2", "include_cold=bad", "with=", "around=", "conversation=", "date=", "from=", "to=", "cursor="} {
 		_, err := parseTimelineRequest(query)
 		assertions.ErrorIs(err, timeline.ErrInvalidRequest, query)
 	}

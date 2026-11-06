@@ -181,3 +181,15 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 		assertions.Zero(backend.req.After)
 	}
 }
+
+func TestTimelineToolRejectsEmptySelectors(t *testing.T) {
+	for _, name := range []string{"with", "around", "conversation", "date", "from", "to", "cursor"} {
+		t.Run(name, func(t *testing.T) {
+			backend := &timelineTestBackend{}
+			opts := ServeOptions{Engine: &querytest.MockEngine{}, Timeline: backend}
+			got := rawCallTool(t, opts, ToolTimeline, map[string]any{name: ""})
+			assert.Equal(t, true, got["isError"], fmt.Sprint(got))
+			assert.Empty(t, backend.req.Format, "invalid input must fail before calling the backend")
+		})
+	}
+}

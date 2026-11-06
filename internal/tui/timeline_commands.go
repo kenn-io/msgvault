@@ -180,7 +180,7 @@ func (m *Model) activateTimeline() tea.Cmd {
 		if err != nil {
 			loc = time.UTC
 		}
-		if req.Mode != "" && req.Mode != timeline.ModeDay || req.Date != "" || req.From != "" || result.Now.In(loc).Format(time.DateOnly) == time.Now().In(loc).Format(time.DateOnly) {
+		if req.Mode != "" && req.Mode != timeline.ModeDay || req.Date != "" || req.From != "" || req.Days != 0 && result.Now.In(loc).Format(time.DateOnly) == time.Now().In(loc).Format(time.DateOnly) {
 			m.loading = false
 			return nil
 		}

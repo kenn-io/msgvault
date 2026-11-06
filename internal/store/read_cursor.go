@@ -13,7 +13,8 @@ import (
 
 var errEncodedReadCursorTooLarge = errors.New("encoded position is too large")
 
-func readFilterHash(filter any) (string, error) {
+// ReadFilterHash hashes the JSON representation of a read filter.
+func ReadFilterHash(filter any) (string, error) {
 	encoded, err := json.Marshal(filter)
 	if err != nil {
 		return "", err
