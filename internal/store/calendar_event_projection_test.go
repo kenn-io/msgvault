@@ -233,11 +233,11 @@ func TestCalendarEventUpgradeRebuildsNameOnlyOrganizer(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	raw := `{"id":"name-only","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"organizer":{"displayName":"Example Host"}}`
 	_, archivedID := calendarFixture(t, st, "archived", raw)
-	// Version 1 omitted organizers without an email address.
+	// Version 2 omitted organizers without an email address.
 	for _, query := range []string{
 		`DELETE FROM calendar_event_attendees`,
-		`UPDATE calendar_events SET projection_version = 1`,
-		`UPDATE applied_migrations SET version = 1 WHERE name = 'calendar_event_projection_v1'`,
+		`UPDATE calendar_events SET projection_version = 2`,
+		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
 	} {
 		_, err := st.db.Exec(query)
 		require.NoError(err)
