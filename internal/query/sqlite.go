@@ -2224,7 +2224,6 @@ func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offse
 const (
 	// 128 messages per wanted result fills pages at about 0.8% recent density.
 	// Only try when the full sort would touch at least a window of hits.
-	// On a 1M fixture, invoice fell from 455 to 105 ms and a 5% word from 122 to 14.5 ms.
 	searchWalkWindow     = 128
 	searchWalkMaxResults = 1000
 )
