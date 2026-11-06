@@ -8,8 +8,8 @@ These commands require daemon API schema 3.45.0 or newer.
 ## Import a supplied record
 
 `calls import` reads consecutive JSON requests from a file or stdin, reports each result, and stops at the first error with the failed record number. It uses the
-selected local or remote daemon and owner authentication. Delegated agent
-tokens cannot import or read call history.
+selected local or remote daemon and owner authentication. The call import,
+list, and summary routes are owner-only.
 
 ```sh
 msgvault calls import observation.json

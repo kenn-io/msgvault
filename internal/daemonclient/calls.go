@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -12,9 +11,6 @@ import (
 
 func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (*generated.CallImportResponse, error) {
 	var body generated.CallImportRequest
-	if len(data) > callhistory.MaxRequestBytes {
-		return nil, callhistory.ErrImportTooLarge
-	}
 	if err := json.Unmarshal(data, &body, json.RejectUnknownMembers(true)); err != nil {
 		return nil, err
 	}
