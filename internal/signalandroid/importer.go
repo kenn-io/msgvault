@@ -755,7 +755,7 @@ func (r *run) writeMessage(
 			to.DisplayNames = append(to.DisplayNames, r.displayName(member))
 		}
 	}
-	if len(to.ParticipantIDs) > 0 {
+	if len(to.ParticipantIDs) > 0 && archivedID == 0 {
 		data.Recipients = append(data.Recipients, to)
 	}
 	parentID, err := r.quotedMessageID(ctx, p.chatID, conversation.ConversationType == "direct_chat", m)
@@ -808,7 +808,6 @@ func (r *run) writeMessage(
 	if data.Reactions != nil {
 		r.summary.ReactionsAdded += data.ReactionsAdded
 	}
-	r.summary.AttachmentsStored += int64(len(writes))
 	if msg.ReplyToMessageID.Valid {
 		r.summary.RepliesLinked++
 	} else if parentID != "" {
@@ -946,7 +945,11 @@ func (r *run) storeAttachment(ctx context.Context, source string) (string, strin
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", hash, size, err
 	}
-	return export.StoreAttachmentFromPathVerified(ctx, r.opts.AttachmentsDir, source, hash, size, r.opts.MaxAttachmentSize)
+	storagePath, hash, size, err := export.StoreAttachmentFromPathVerified(ctx, r.opts.AttachmentsDir, source, hash, size, r.opts.MaxAttachmentSize)
+	if err == nil {
+		r.summary.AttachmentsStored++
+	}
+	return storagePath, hash, size, err
 }
 
 func millisTime(ms int64) sql.NullTime {

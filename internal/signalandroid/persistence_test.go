@@ -1,6 +1,7 @@
 package signalandroid
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -38,7 +39,7 @@ func TestRerunAfterPackingKeepsMediaPacked(t *testing.T) {
 	changeFixture(t, dir, `UPDATE attachment SET file_name = 'renamed.jpg' WHERE _id = 500`)
 	summary = runImport(t, st, dir, storage)
 	assert.Zero(summary.Errors)
-	assert.Equal(int64(1), summary.AttachmentsStored)
+	assert.Zero(summary.AttachmentsStored)
 	assert.NoFileExists(filepath.Join(storage, storagePath))
 	blobs, err := attachmentstore.New(store.NewPackCatalog(st), storage)
 	require.NoError(err)
@@ -46,6 +47,28 @@ func TestRerunAfterPackingKeepsMediaPacked(t *testing.T) {
 	content, _, err := blobs.ReadBounded(hash, 100)
 	require.NoError(err)
 	assert.Equal("photo bytes", string(content))
+}
+
+func TestRerunRestoresMissingAttachmentFile(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	runImport(t, st, dir, storage)
+	var attachmentID int64
+	var storagePath string
+	require.NoError(st.DB().QueryRow(`SELECT id, storage_path FROM attachments`).Scan(&attachmentID, &storagePath))
+	path := filepath.Join(storage, storagePath)
+	require.NoError(os.Remove(path))
+
+	summary := runImport(t, st, dir, storage)
+	assert.Zero(summary.Errors)
+	assert.Equal(int64(1), summary.AttachmentsStored)
+	content, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal("photo bytes", string(content))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
+	assert.Zero(runImport(t, st, dir, storage).AttachmentsStored)
 }
 
 func TestRerunCountsOnlyNewEdits(t *testing.T) {

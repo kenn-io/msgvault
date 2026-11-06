@@ -308,7 +308,7 @@ func TestRerunRefreshesAttachmentMetadata(t *testing.T) {
 
 			changeFixture(t, dir, `UPDATE attachment SET `+tc.change+` WHERE _id = 500`)
 			summary := runImport(t, st, dir, storage)
-			assert.Equal(int64(1), summary.AttachmentsStored)
+			assert.Zero(summary.AttachmentsStored)
 			after, err := st.MessageMIMEAttachmentsContext(context.Background(), messageID)
 			require.NoError(err)
 			require.Len(after, 1)
@@ -353,9 +353,8 @@ func TestRerunAttachmentOrderKeepsOccurrences(t *testing.T) {
 	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type, display_order) VALUES (504, 200, 'image/jpeg', -2)`)
 	require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("photo bytes"), 0o600))
 	summary = runImport(t, st, dir, storage)
-	// The new first occurrence refreshes the old key's dimensions, and the
-	// original photo now occupies a second key.
-	assert.Equal(int64(2), summary.AttachmentsStored)
+	// Both occurrences reuse the photo's stored bytes.
+	assert.Zero(summary.AttachmentsStored)
 	assert.Equal(3, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
 	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE content_hash = '2a6927613ddc903379f3e02145f22074ccf048c7753cfa1ed8ee26c746682997'`))
 	summary = runImport(t, st, dir, storage)

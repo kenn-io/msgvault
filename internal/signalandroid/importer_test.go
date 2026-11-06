@@ -185,7 +185,8 @@ func TestImportDirectChatRecipients(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	st := testutil.NewTestStore(t)
-	runImport(t, st, dir, t.TempDir())
+	storage := t.TempDir()
+	runImport(t, st, dir, storage)
 
 	for _, tc := range []struct {
 		role string
@@ -219,6 +220,32 @@ func TestImportDirectChatRecipients(t *testing.T) {
 			}
 			require.NoError(rows.Err())
 			assert.ElementsMatch(tc.want, got)
+		})
+	}
+
+	for _, phase := range []string{"initial group", "changed membership"} {
+		t.Run(phase, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			if phase == "changed membership" {
+				changeFixture(t, dir, `UPDATE group_membership SET recipient_id = 4 WHERE recipient_id = 2`)
+				runImport(t, st, dir, storage)
+			}
+			rows, err := st.DB().Query(st.Rebind(`
+				SELECT p.phone_number FROM message_recipients mr
+				JOIN messages m ON m.id = mr.message_id
+				JOIN participants p ON p.id = mr.participant_id
+				WHERE mr.recipient_type = 'to' AND m.source_message_id = ?`),
+				"signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup))
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var phones []string
+			for rows.Next() {
+				var phone string
+				require.NoError(rows.Scan(&phone))
+				phones = append(phones, phone)
+			}
+			require.NoError(rows.Err())
+			assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
 		})
 	}
 }
