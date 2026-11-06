@@ -5,7 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -83,8 +82,7 @@ func (e Evidence) Validate() error {
 		(e.EndedAt != nil && (e.EndedAt.Before(e.OccurredAt) || e.EndedAt.Year() > 9999)) {
 		return invalid("timestamps")
 	}
-	if e.DurationSeconds != nil && (*e.DurationSeconds < 0 ||
-		math.IsInf(*e.DurationSeconds, 0) || math.IsNaN(*e.DurationSeconds)) {
+	if e.DurationSeconds != nil && *e.DurationSeconds < 0 {
 		return invalid("duration_seconds")
 	}
 	if e.Timezone != "" {
@@ -106,7 +104,7 @@ func (o Observation) Validate() error {
 		return invalid("record_id must equal native_call_id")
 	}
 	if !validID(o.RecordID) || len(o.Participants) > 100 ||
-		len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes || !o.Raw.IsValid() {
+		len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes {
 		return invalid("record_id, participants or raw")
 	}
 	seen := make(map[int64]string, len(o.Participants))
