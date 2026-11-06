@@ -39,7 +39,7 @@
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
-  import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
+  import { groupingOptions, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState, navigationFingerprint } from '../../explore/state.svelte';
   import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
@@ -53,7 +53,8 @@
     type CardDAVSettingsRequest,
     type SettingsNavigationTarget
   } from '../../carddav/navigation';
-  import { createCommandRegistry, type AppCommand, type CommandHandlers } from '../../commands/registry';
+  import { createCommandRegistry, type CommandHandlers } from '../../commands/registry';
+  import { PALETTE_ACTIONS } from '../../commands/palette';
   import {
     createAppearancePreferences,
     type AppearanceDefaults,
@@ -80,8 +81,15 @@
   import DisplayMenu from './DisplayMenu.svelte';
   import NavigationDrawer from './NavigationDrawer.svelte';
   import SearchBar from '../search/SearchBar.svelte';
-  import { NAVIGATION_ITEMS, SETTINGS_ITEM, SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
+  import { NAVIGATION_ITEMS, SETTINGS_ITEM, DELETIONS_ITEM, SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
   import Menu from '@lucide/svelte/icons/menu';
+  import Bookmark from '@lucide/svelte/icons/bookmark';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Palette from '@lucide/svelte/icons/palette';
+  import Rows3 from '@lucide/svelte/icons/rows-3';
+  import Search from '@lucide/svelte/icons/search';
+  import Users from '@lucide/svelte/icons/users';
+  import Group from '@lucide/svelte/icons/group';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
@@ -535,12 +543,11 @@
   const everythingSession = new EverythingSessionState();
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => loader.errorKind ?? (exploreState.current.query.trim() ? 'search' : 'other')); });
-  function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
+  function submitGlobalSearch(query: string, mode: ExploreSearchMode, workspace: ExploreWorkspace = exploreState.current.workspace): void {
     loader.submitted = true;
     loader.retry();
-    const workspace = exploreState.current.workspace;
     if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
-    if (workspace === 'everything' || workspace === 'files') {
+    if (workspace === exploreState.current.workspace && (workspace === 'everything' || workspace === 'files')) {
       commitSearch(query, mode);
       focusGrid();
       return;
@@ -988,66 +995,80 @@
     },
   };
   const groupingCommands = $derived(
-    GROUPING_CATALOG.flatMap((entry) => {
-      if (!entry.requestable)
-        return [
-          {
-            id: `unavailable:${entry.concept}`,
-            label: `Group by ${entry.label} (not available yet)`,
-            section: 'Group by',
-            keywords: `${entry.keywords} ${entry.unavailableReason ?? ''}`,
-            keys: [],
-            combos: [],
-            scopes: [],
-            destructive: false,
-            review: false,
-            disabled: true,
-            run: () => undefined,
-          },
-        ];
-      return entry.requestDimensions.map((dimension) => ({
+    groupingOptions().map(({ value, label }) => {
+      const dimension = value as ExploreGroupDimension;
+      return {
         id: `group:${dimension}`,
-        label: `Group by ${dimension === 'year' ? 'Year' : dimension === 'month' ? 'Month' : entry.label}`,
-        section: 'Group by',
-        keywords: entry.keywords,
-        keys: [],
-        combos: [],
-        scopes: [],
-        destructive: false,
-        review: false,
+        label,
+        icon: Group,
+        keywords: `Group by ${label} ${groupingByDimension(dimension).keywords}`,
         disabled: exploreState.current.groupingChain.includes(dimension),
         run: () => {
           commitGrouping(dimension);
           void focusGridAfterUpdate();
         },
-      }));
+      };
     }),
   );
-  const commandRegistry = $derived([
-    ...createCommandRegistry(commandHandlers),
-    ...groupingCommands,
-  ]);
+  const commandRegistry = createCommandRegistry(commandHandlers);
   const shellCommands = $derived([
-    { id: 'go:duplicates', label: 'Possible duplicates', section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
-    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
-    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
-    { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
-    ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
+    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, DELETIONS_ITEM].map(({ id, label, icon }) => ({ id: `go:${id}`, label, icon, section: 'Go to', run: () => openWorkspaceTab(id) })),
+    { id: 'go:duplicates', label: 'Possible duplicates', icon: Copy, section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
+    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, icon: Bookmark, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
+    { id: 'display', label: 'Display', icon: Palette, section: 'Appearance', run: () => { displayOpen = true; } },
+    ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, icon: kind === 'theme' ? Palette : Rows3, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
   ]);
-  const paletteCommands = $derived(
-    [...commandRegistry.map(
-      (command): PaletteCommand => ({
-        id: command.id,
-        label: command.label,
-        section: command.section,
+  const paletteCommands: PaletteCommand[] = $derived([
+    ...shellCommands.filter(command => command.section !== 'Appearance'),
+    ...PALETTE_ACTIONS.map(({ id, icon, label }): PaletteCommand => {
+      const command = commandRegistry.find(command => command.id === id)!;
+      return {
+        id,
+        label: label ?? command.label,
+        icon,
+        section: 'Actions',
         keywords: command.keywords,
         combo: command.combos[0],
-        disabled: command.disabled,
-      }),
-    ), ...shellCommands],
-  );
-  function runPalette(command: PaletteCommand): void {
-    [...commandRegistry, ...shellCommands].find(({ id }) => id === command.id)?.run();
+        children: id === 'open-grouping' ? groupingCommands : undefined,
+      };
+    }),
+    ...shellCommands.filter(command => command.section === 'Appearance'),
+  ]);
+  const PALETTE_RECENT_KEY = 'msgvault.palette.recent';
+  function readPaletteRecent(): string[] {
+    try {
+      const ids: unknown = JSON.parse(localStorage.getItem(PALETTE_RECENT_KEY) ?? '[]');
+      return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string').slice(0, 5) : [];
+    } catch {
+      return [];
+    }
+  }
+  let paletteRecent = $state(readPaletteRecent());
+  const recentIds = $derived(paletteRecent.filter(id => paletteCommands.some(command =>
+    !command.disabled && (command.children ? command.children.some(child => child.id === id && !child.disabled) : command.id === id)
+  )));
+  $effect(() => {
+    try {
+      localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(paletteRecent));
+    } catch {
+      // Keep recents for this page when storage is disabled.
+    }
+  });
+  function fallbacks(query: string): PaletteCommand[] {
+    return [
+      { id: 'search:archive', label: `Search archive for "${query}"`, icon: Search, section: 'Search', combo: 'enter' },
+      { id: 'search:person', label: 'Find person…', icon: Users, section: 'Search' },
+    ];
+  }
+  function runPalette(command: PaletteCommand, query: string): void {
+    if (command.id === 'search:archive') {
+      submitGlobalSearch(query, exploreState.current.searchMode, 'everything');
+    } else if (command.id === 'search:person') {
+      commitNavigation({ workspace: 'relationships', identityQuery: query, relationshipFacet: 'people', peopleDuplicates: false, relationshipTarget: null, directoryPersonID: null, relationshipFiles: false });
+    } else {
+      paletteRecent = [command.id, ...paletteRecent.filter(id => id !== command.id)].slice(0, 5);
+      [...commandRegistry, ...groupingCommands, ...shellCommands].find(({ id }) => id === command.id)?.run();
+    }
   }
   // KeyboardHelp's search input takes focus before the Modal's trap records
   // where focus came from, so the shell remembers the return target itself.
@@ -1605,7 +1626,7 @@
 {/if}
 
 
-<CommandPalette bind:open={paletteOpen} commands={paletteCommands} initialQuery={paletteQuery} ariaLabel="Messages commands" onrun={runPalette} />
+<CommandPalette bind:open={paletteOpen} commands={paletteCommands} initialQuery={paletteQuery} {recentIds} {fallbacks} placeholder="Type a command or search…" class="messages-palette" ariaLabel="Messages commands" onrun={runPalette} />
 
 {#if keyboardHelpOpen}
   <KeyboardHelp
@@ -1641,6 +1662,11 @@
 {/if}
 
 <style>
+  :global(.messages-palette) {
+    --label-transform: none;
+    --letter-spacing-label: normal;
+  }
+
   .archive-navigation-status { padding: var(--control-gap) var(--pane-pad-x); color: var(--text-secondary); }
 
   .app-shell {

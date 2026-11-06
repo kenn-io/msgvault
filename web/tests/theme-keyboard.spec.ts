@@ -113,8 +113,9 @@ test('keyboard palette grouping focuses the replacement grid', async ({ page }) 
   await grid.focus();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   const palette = page.getByRole('dialog', { name: 'Messages commands' });
-  await palette.getByRole('combobox').fill('group by source');
-  const command = palette.getByRole('option', { name: 'Group by Source' });
+  await palette.getByRole('combobox').fill('source');
+  await page.keyboard.press('ArrowDown');
+  const command = palette.getByRole('option', { name: 'Group by… › Source' });
   await expect(command).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('Enter');

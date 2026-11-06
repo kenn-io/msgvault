@@ -451,6 +451,8 @@ immediately. Shortcuts are suspended while typing and inside message/file
 content. `Ctrl K` or `Command K` on Mac still opens the command palette while
 typing in Help's search.
 
+The command palette lists Go to, Saved views, Actions, and Appearance. It remembers up to five recent commands across reloads. Choose **Group by…** to pick an available grouping, or search for a dimension directly. Type a query to find commands, search the archive from any workspace, or choose **Find person…** to filter People. Help's **Search commands instead** carries your query into the palette.
+
 ## Settings and restart behavior
 
 Settings opens on Overview, with status and setup or build actions for
