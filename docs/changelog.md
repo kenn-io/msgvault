@@ -38,6 +38,9 @@ All notable changes to msgvault, grouped by release.
   A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
 
   Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
+
+- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
+
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
 ## 0.23.0

@@ -25,7 +25,7 @@ type MediaSearchResult struct {
 	ConversationID  int64      `json:"conversation_id"`
 	AttachmentID    int64      `json:"attachment_id"`
 	Origin          string     `json:"origin" enum:"supplied,generated"`
-	Excerpt         string     `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
+	Excerpt         string     `json:"excerpt" doc:"Plain text excerpt without search highlight markers"`
 	StartMS         *int64     `json:"start_ms,omitempty"`
 	EndMS           *int64     `json:"end_ms,omitempty"`
 }
@@ -121,7 +121,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	reader := s.messageRecordings
 	if reader == nil || reader.Client == nil {
-		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure the Docbank integration to search transcripts")
+		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure Docbank to search transcripts and attachment text")
 		return
 	}
 	reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}
@@ -177,7 +177,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		status, failure := mediaSearchFailure(err)
-		if failure.Error == "invalid_media_search" || response.Attachments == nil || response.Attachments.Error != nil {
+		if failure.Error == "invalid_media_search" || response.Attachments == nil || response.Attachments.Error != nil && len(response.Attachments.Results) == 0 {
 			if s.writeIfContextError(w, err) {
 				return
 			}

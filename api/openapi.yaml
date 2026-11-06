@@ -7318,7 +7318,7 @@ components:
           format: int64
           type: integer
         excerpt:
-          description: Plain transcript excerpt without search highlight markers
+          description: Plain text excerpt without search highlight markers
           type: string
         filename:
           type: string
