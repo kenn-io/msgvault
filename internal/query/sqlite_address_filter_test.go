@@ -70,16 +70,16 @@ func TestSearchCommonWordPreservesPages(t *testing.T) {
 	SELECT 100+x, 'window-' || x, 1, 1, 'email',
 		CASE WHEN x <= 2997 THEN datetime('2025-01-01', '+' || (x/5) || ' minutes') END,
 		CASE WHEN x % 4 != 0 THEN 'dense ' ELSE '' END ||
-		CASE WHEN x <= 400 THEN 'oldest ' ELSE '' END ||
-		CASE WHEN x > 2400 THEN 'visibility ' ELSE '' END ||
-		CASE WHEN x > 2700 THEN 'ties' ELSE '' END,
-		CASE WHEN x > 2400 AND x % 10 BETWEEN 1 AND 4 THEN '2025-02-01' END,
-		CASE WHEN x > 2400 AND x % 10 BETWEEN 5 AND 9 THEN '2025-02-01' END
+		CASE WHEN x <= 1500 THEN 'oldest ' ELSE '' END ||
+		CASE WHEN x > 1000 THEN 'visibility ' ELSE '' END ||
+		CASE WHEN x > 1700 THEN 'ties' ELSE '' END,
+		CASE WHEN x > 1000 AND x % 10 BETWEEN 1 AND 4 THEN '2025-02-01' END,
+		CASE WHEN x > 1000 AND x % 10 BETWEEN 5 AND 9 THEN '2025-02-01' END
 	FROM seq`)
 	require.NoError(t, err)
 	env.EnableFTS()
 	for _, word := range []string{"dense", "oldest", "visibility", "ties"} {
-		for _, scope := range []search.DeletionScope{"", search.DeletionScopeActive, search.DeletionScopeAny} {
+		for _, scope := range []search.DeletionScope{"", search.DeletionScopeActive, search.DeletionScopeAny, search.DeletionScopeDeleted} {
 			t.Run(word+"/"+string(scope), func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
