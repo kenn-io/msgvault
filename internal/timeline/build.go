@@ -360,11 +360,13 @@ func (c *composer) tierPeople(people []Person) []Person {
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
 	people := []Person{}
 	seen := map[int64]bool{}
+	seenPeople := map[int64]bool{}
 	for _, p := range counterparts {
-		if p.Excluded != "" || seen[p.ParticipantID] {
+		if p.Excluded != "" || seen[p.ParticipantID] || p.PersonID > 0 && seenPeople[p.PersonID] {
 			continue
 		}
 		seen[p.ParticipantID] = true
+		seenPeople[p.PersonID] = true
 		name := p.DisplayName
 		if name == "" {
 			name = p.Address

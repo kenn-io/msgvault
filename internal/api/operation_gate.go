@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 )
 
 const cliRunGateInspectionMaxBytes = 1 << 20
@@ -526,7 +528,7 @@ func genericSyncTriggerRequest(r *http.Request) bool {
 	if account == "" {
 		return false
 	}
-	return classifySourceScheduling(r.URL.Query().Get("source_type"), account).kind == sourceScheduleGeneric
+	return sourcescheduling.Classify(r.URL.Query().Get("source_type"), account).Kind == sourcescheduling.Generic
 }
 
 type discardResponseWriter struct{}

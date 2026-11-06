@@ -616,3 +616,65 @@ func TestBuildDayIncludesOverlappingMeeting(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildDayUpcomingOnlyWhenWindowReachesToday(t *testing.T) {
+	f := newTimelineFixture(t)
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	f.src.Location = loc
+	f.src.Clock = func() time.Time { return time.Date(2026, 10, 23, 1, 0, 0, 0, time.UTC) }
+	f.calendar("future", `{"id":"future","start":{"dateTime":"2026-10-23T10:00:00Z"},"end":{"dateTime":"2026-10-23T11:00:00Z"}}`)
+	for _, tc := range []struct {
+		from, to string
+		upcoming int
+	}{
+		{"2026-10-21", "2026-10-21", 0},
+		{"2026-10-21", "2026-10-22", 1},
+		{"2026-10-22", "2026-10-22", 1},
+		{"2026-10-24", "2026-10-24", 0},
+	} {
+		t.Run(tc.from+"/"+tc.to, func(t *testing.T) {
+			req := dayRequest()
+			req.Date, req.From, req.To = "", tc.from, tc.to
+			got, err := Build(t.Context(), f.src, req)
+			require.NoError(t, err)
+			assert.Len(t, got.Upcoming, tc.upcoming)
+			if tc.upcoming == 0 {
+				assert.Contains(t, Markdown(got), "nothing archived")
+			}
+		})
+	}
+}
+
+func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
+	for _, kind := range []string{"burst", "meeting"} {
+		t.Run(kind, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			person := f.savePerson()
+			alias := f.EnsureParticipant("alice.work@example.com", "Alice work", "example.com")
+			_, err := f.Store.LinkParticipants(f.peer, alias)
+			requirements.NoError(err)
+			if kind == "burst" {
+				id := f.add(f.now.Add(-time.Hour), true)
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, alias}, nil))
+				f.project()
+			} else {
+				f.calendar("aliases", `{"id":"aliases","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":[{"email":"alice@example.com"},{"email":"alice.work@example.com"},{"email":"guest@example.com"}]}`)
+			}
+			got, err := Build(t.Context(), f.src, dayRequest())
+			requirements.NoError(err)
+			entries := allDayEntries(got)
+			requirements.Len(entries, 1)
+			if kind == "burst" {
+				assertions.Equal(1, entries[0].Burst.PeopleCount)
+				requirements.Len(entries[0].Burst.People, 1)
+				assertions.Equal(person, entries[0].Burst.People[0].PersonID)
+			} else {
+				assertions.Equal(2, entries[0].Meeting.PeopleCount)
+				requirements.Len(entries[0].Meeting.People, 2)
+				assertions.Equal(person, entries[0].Meeting.People[0].PersonID)
+			}
+		})
+	}
+}

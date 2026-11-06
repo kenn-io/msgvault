@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/whatsapp"
 )
@@ -21,7 +21,7 @@ const defaultWhatsAppAppleStorePath = "Library/Group Containers/group.net.whatsa
 func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.WhatsAppAppleSource) (retErr error) {
 	state := invocationFromContext(ctx)
 	defer func() {
-		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
+		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), sourcescheduling.WhatsAppAppleJobName(src.Phone)))
 	}()
 	path := src.Path
 	if path == "" {
@@ -49,7 +49,7 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessageConfig) (retErr error) {
 	state := invocationFromContext(ctx)
 	defer func() {
-		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.IMessageJobName))
+		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), sourcescheduling.IMessageJobName))
 	}()
 	opts, err := buildImessageOpts(state.logger, state.cfg.AttachmentsDir(), "", false, imessageMediaPolicy(0, state.cfg))
 	if err != nil {

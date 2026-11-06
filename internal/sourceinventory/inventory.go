@@ -10,18 +10,14 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/caldav"
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
-	"go.kenn.io/msgvault/internal/imazingcsv"
-	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/synctechsms"
-	"go.kenn.io/msgvault/internal/telegram"
 )
 
 type Item = freshness.SourceInventoryItem
@@ -89,9 +85,11 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		id := source.ID
 		item := Item{SourceID: &id, SourceType: source.SourceType, Identifier: source.Identifier, Scheduling: "manual", Outcome: "never"}
 		item.SyncCommand = syncCommand(item)
+		configuredSource := false
 		for i, entry := range configured {
 			if matches(source, entry) {
 				matched[i] = true
+				configuredSource = true
 				if entry.kind == "beeper" && !cfg.Beeper.AccountIncluded(source.Identifier) {
 					item.Scheduling = "disabled"
 				} else {
@@ -107,7 +105,7 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		}
 		// History-only Beeper archives are excluded from synchronization even
 		// when the provider itself has a scheduled job.
-		if source.HistoryOnly || staticSource(item.SourceType) {
+		if source.HistoryOnly || !configuredSource && item.SyncCommand == "" && sourcescheduling.Classify(source.SourceType, source.Identifier).Kind == sourcescheduling.NonSchedulable {
 			item.Scheduling = "static"
 			item.SyncCommand = ""
 		}
@@ -265,18 +263,7 @@ func configuration(cfg *config.Config) []configuredSource {
 	return entries
 }
 
-func staticSource(kind string) bool {
-	return slices.Contains([]string{
-		"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "google_voice",
-		"facebook_messenger", imazingcsv.SourceType, "slackdump", synctechsms.SourceType,
-		callhistory.SourceType, "ics", "whatsapp", "apple_messages", "google_messages", "imessage", meetingimport.SourceType, telegram.SourceType,
-	}, kind)
-}
-
 func syncCommand(item Item) string {
-	if staticSource(item.SourceType) {
-		return ""
-	}
 	arg := shellArgument(item.Identifier)
 	switch item.SourceType {
 	case store.SourceTypeGmail, store.SourceTypeIMAP, store.SourceTypeMSMail, "o365":

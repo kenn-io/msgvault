@@ -44,3 +44,16 @@ func TestParseAnchorRejectsSkippedCivilDate(t *testing.T) {
 	_, err = ParseAnchor("2011-12-30", loc)
 	require.ErrorIs(t, err, ErrInvalidRequest)
 }
+
+func TestParseAnchorRejectsNonexistentLocalDatetime(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, value := range []string{"2026-03-08T02:30", "2026-03-08T02:30:00", "2026-03-08T02:30:00.123"} {
+		_, err := ParseAnchor(value, loc)
+		require.ErrorIs(t, err, ErrInvalidRequest, value)
+	}
+	for _, value := range []string{"2026-03-08T03:30", "2026-03-08T02:30:00-05:00", "2026-11-01T01:30"} {
+		_, err := ParseAnchor(value, loc)
+		require.NoError(t, err, value)
+	}
+}

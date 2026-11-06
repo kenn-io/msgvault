@@ -90,6 +90,10 @@ func (c *composer) collectDay() dayRead {
 			r.calendar = c.readCalendar(from, to)
 		},
 		func() {
+			today := c.t.Now.In(c.loc).Format(time.DateOnly)
+			if c.t.Window.From > today || c.t.Window.To < today {
+				return
+			}
 			hours := 48
 			if c.req.Brief {
 				hours = 24

@@ -51,7 +51,7 @@ func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
 				f.add(f.now, false)
 			}
 			f.project()
-			got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+			got, err := Build(t.Context(), f.src, relationshipRequest("alice@example.com"))
 			requirements.NoError(err)
 			requirements.NotNil(got.OpenLoops)
 			if pending {

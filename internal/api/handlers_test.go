@@ -49,6 +49,7 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -4041,7 +4042,7 @@ func TestHandleSourceStatusBeeperSharesSingleJob(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	sched := newMockScheduler()
 	sched.jobStatuses = []JobStatus{{
-		Name:     BeeperJobName,
+		Name:     sourcescheduling.BeeperJobName,
 		Schedule: "*/30 * * * *",
 	}}
 	_, err := st.GetOrCreateSource("beeper", "beeper-account-1")
@@ -4131,13 +4132,13 @@ func TestHandleTriggerSyncBeeperSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	sched := newMockScheduler()
-	sched.scheduledJobs = map[string]bool{BeeperJobName: true}
+	sched.scheduledJobs = map[string]bool{sourcescheduling.BeeperJobName: true}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
 	resp := servePOSTTestRequest(srv, "/api/v1/sync/beeper-account-1?source_type=beeper")
 
 	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
-	assert.Equal([]string{BeeperJobName}, sched.startedJobs, "started beeper job")
+	assert.Equal([]string{sourcescheduling.BeeperJobName}, sched.startedJobs, "started beeper job")
 }
 
 // TestHandleTriggerSyncGenericSourceNotScheduled confirms a generic source
@@ -4370,7 +4371,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotName, gotOK := SchedulerJobNameForSource(tc.sourceType, tc.identifier)
+			gotName, gotOK := sourcescheduling.SchedulerJobNameForSource(tc.sourceType, tc.identifier)
 			assert.Equal(tc.wantOK, gotOK, "ok")
 			assert.Equal(tc.wantName, gotName, "name")
 		})

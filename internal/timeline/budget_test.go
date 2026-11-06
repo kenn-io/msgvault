@@ -462,3 +462,24 @@ func TestFitTruncatedNoteNamesNoUncallableTool(t *testing.T) {
 	assert.Equal([]Open{}, note.Open)
 	assert.Equal("2026-10-22", note.AnchorRef)
 }
+
+func TestFitBoundsGapItemsAtMinimumBudget(t *testing.T) {
+	for _, format := range []string{"json", "markdown"} {
+		t.Run(format, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			v := budgetTimeline(0)
+			items := make([]string, 5000)
+			for i := range items {
+				items[i] = fmt.Sprintf("evt:%d", i+1)
+			}
+			v.Gaps = []Gap{{Section: "meetings", Code: "partial", Items: items}}
+			got, err := Fit(v, format, 4096)
+			requirements.NoError(err)
+			requirements.Len(got.Gaps, 1)
+			assertions.Equal("partial", got.Gaps[0].Code)
+			assertions.Equal(items[:10], got.Gaps[0].Items)
+			assertions.Equal(4990, got.Omitted.Budget["gap_items"])
+			assertions.LessOrEqual(encodedSize(t, got, format), 4096)
+		})
+	}
+}

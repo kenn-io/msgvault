@@ -54,11 +54,13 @@ type AnchorRef struct {
 }
 
 // personReference splits a with value into its kind and value; bare values are
-// names, or phone numbers when they start with +.
+// names, email addresses, or phone numbers when they start with +.
 func personReference(with string) (store.PersonRefKind, string) {
 	kind, value := "name", strings.TrimSpace(with)
 	if k, v, ok := strings.Cut(value, ":"); ok {
 		kind, value = k, v
+	} else if strings.Contains(value, "@") {
+		kind = "email"
 	} else if strings.HasPrefix(value, "+") {
 		kind = "phone"
 	}
@@ -110,6 +112,12 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 	}
 	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04"} {
 		if at, err := time.ParseInLocation(layout, s, loc); err == nil {
+			if layout != time.RFC3339Nano {
+				wall, _ := time.Parse(layout, s)
+				if at.Format(layout) != wall.Format(layout) {
+					return a, fmt.Errorf("%w: local datetime does not exist in %s", ErrInvalidRequest, loc)
+				}
+			}
 			a.Kind = "datetime"
 			a.Time = at
 			return a, nil

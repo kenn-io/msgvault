@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telegram"
@@ -238,7 +239,7 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 }
 
 func TestImportOnlySourcesAreStatic(t *testing.T) {
-	for _, sourceType := range []string{"mbox", telegram.SourceType, "synctech_sms", "whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
+	for _, sourceType := range []string{"mbox", telegram.SourceType, "whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
 		t.Run(sourceType, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -403,4 +404,29 @@ func TestChatwootInventoryMatchesAccountScope(t *testing.T) {
 			assertions.Fail("unexpected inventory item", item.Identifier)
 		}
 	}
+}
+
+func TestConfiguredSyncTechSMSKeepsScheduleAndRecovery(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("synctech_sms", "+12025550123")
+	requirements.NoError(err)
+	run, err := st.StartSync(source.ID, "incremental")
+	requirements.NoError(err)
+	requirements.NoError(st.CompleteSync(run, "cursor"))
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE sync_runs SET completed_at=? WHERE id=?"), now.Add(-48*time.Hour), run)
+	requirements.NoError(err)
+	cfg := config.NewDefaultConfig()
+	cfg.SynctechSMS.Sources = []config.SynctechSMSSource{{Name: "phone", OwnerPhone: "+12025550123", Enabled: true, Schedule: "0 * * * *"}}
+	items, err := Build(t.Context(), cfg, st)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal("scheduled", items[0].Scheduling)
+	assertions.Equal("msgvault sync-synctech-sms phone", items[0].SyncCommand)
+	report, err := freshness.Build(t.Context(), freshness.Inputs{Sources: items, Now: now, StaleAfter: 24 * time.Hour})
+	requirements.NoError(err)
+	requirements.Len(report.Sources, 1)
+	assertions.Equal("stale", report.Sources[0].Reason)
+	assertions.Equal("msgvault sync-synctech-sms phone", report.Sources[0].SyncCommand)
 }

@@ -12,10 +12,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -222,7 +222,7 @@ func runConfiguredChatwootSync(ctx context.Context, st *store.Store, src config.
 	if sum == nil {
 		return err
 	}
-	job, ok := api.ChatwootJobNameForAccount(src.URL, src.AccountID)
+	job, ok := sourcescheduling.ChatwootJobNameForAccount(src.URL, src.AccountID)
 	if !ok {
 		return errors.Join(err, errors.New("invalid Chatwoot scheduler identity"))
 	}
@@ -230,7 +230,7 @@ func runConfiguredChatwootSync(ctx context.Context, st *store.Store, src config.
 }
 
 func registerScheduledChatwootJob(sched *scheduler.Scheduler, src config.ChatwootSource, maintenance *attachmentMaintenance, run func(context.Context) error) error {
-	job, ok := api.ChatwootJobNameForAccount(src.URL, src.AccountID)
+	job, ok := sourcescheduling.ChatwootJobNameForAccount(src.URL, src.AccountID)
 	if !ok {
 		return errors.New("invalid Chatwoot scheduler identity")
 	}

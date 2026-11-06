@@ -395,6 +395,7 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 
 	people := []Person{}
 	seen := map[string]bool{}
+	seenPeople := map[int64]bool{}
 	for _, a := range o.Attendees {
 		email := strings.ToLower(strings.TrimSpace(a.Email))
 		if !slices.Contains(emails, a.Email) || seen[email] {
@@ -402,6 +403,10 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 		}
 		seen[email] = true
 		p := resolved[email]
+		if p.PersonID > 0 && seenPeople[p.PersonID] {
+			continue
+		}
+		seenPeople[p.PersonID] = true
 		name := a.DisplayName
 		if name == "" {
 			name = a.Email

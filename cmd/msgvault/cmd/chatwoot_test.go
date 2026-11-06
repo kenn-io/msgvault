@@ -15,11 +15,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/chatwootapi"
@@ -304,7 +304,7 @@ func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing
 		hash = fixture.ingestLoose([]byte("synthetic Chatwoot scheduled media"))
 		return nil
 	}))
-	job, ok := api.SchedulerJobNameForSource(chatwoot.SourceType, "https://chatwoot.example.com/support/accounts/9/inboxes/7")
+	job, ok := sourcescheduling.SchedulerJobNameForSource(chatwoot.SourceType, "https://chatwoot.example.com/support/accounts/9/inboxes/7")
 	require.True(ok)
 	const expectedJob = "chatwoot:https://chatwoot.example.com/support/accounts/9"
 	assert.Equal(expectedJob, job)

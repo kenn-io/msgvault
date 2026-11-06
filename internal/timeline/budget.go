@@ -400,6 +400,17 @@ func boundPeople(ps []Person, count int) ([]Person, int, bool) {
 	return ps[:min(8, len(ps))], count, count > 8
 }
 func boundTimeline(t *Timeline) {
+	for i := range t.Gaps {
+		gap := &t.Gaps[i]
+		if len(gap.Items) > 10 {
+			if t.Omitted.Budget == nil {
+				t.Omitted.Budget = map[string]any{}
+			}
+			dropped, _ := t.Omitted.Budget["gap_items"].(int)
+			t.Omitted.Budget["gap_items"] = dropped + len(gap.Items) - 10
+			gap.Items = gap.Items[:10]
+		}
+	}
 	if len(t.Candidates) > 10 {
 		t.Candidates = t.Candidates[:10]
 		t.Candidates[9].Truncated = true

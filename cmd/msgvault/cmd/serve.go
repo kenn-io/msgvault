@@ -53,6 +53,7 @@ import (
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
@@ -471,9 +472,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		source := src
 		// The job name must match the store identity (OwnerPhone) that
 		// synctechsms.Importer uses for GetOrCreateSource, so
-		// api.SchedulerJobNameForSource can find this job from a source
-		// row. See internal/api/scheduler_jobs.go.
-		jobName, ok := api.SchedulerJobNameForSource(synctechsms.SourceType, source.OwnerPhone)
+		// sourcescheduling.SchedulerJobNameForSource can find this job from a source
+		// row. See internal/sourcescheduling/jobs.go.
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(synctechsms.SourceType, source.OwnerPhone)
 		if !ok {
 			logger.Error("no scheduler job mapping for synctech-sms source", "source", source.Name)
 			continue
@@ -547,9 +548,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// The job name is keyed on the normalized account email so it
 		// matches every per-calendar store source's identity
 		// ("<accountEmail>/<calendarID>", see internal/calsync/calsync.go
-		// sourceIdentifier) via api.SchedulerJobNameForSource, even when
+		// sourceIdentifier) via sourcescheduling.SchedulerJobNameForSource, even when
 		// the config [[gcal]] entry's Name differs from its Email.
-		jobName := api.GCalJobNameForAccountEmail(normalizeCalendarAccountEmail(source.Email))
+		jobName := sourcescheduling.GCalJobNameForAccountEmail(normalizeCalendarAccountEmail(source.Email))
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
@@ -630,7 +631,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Matrix.Enabled && cfg.Matrix.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
+			Name: sourcescheduling.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
 					return runConfiguredMatrixSync(ctx, s)
@@ -649,7 +650,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Slack.Enabled && cfg.Slack.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name:        api.SlackJobName,
+			Name:        sourcescheduling.SlackJobName,
 			Schedule:    cfg.Slack.Schedule,
 			Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
@@ -669,7 +670,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Inline.Enabled && cfg.Inline.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name: api.InlineJobName, Schedule: cfg.Inline.Schedule, Preemptible: true,
+			Name: sourcescheduling.InlineJobName, Schedule: cfg.Inline.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
 					return runConfiguredInlineSync(ctx, s)
@@ -703,7 +704,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledPocketSources() {
 		source := src
-		jobName, _ := api.SchedulerJobNameForSource(pocket.SourceType, source.Identifier)
+		jobName, _ := sourcescheduling.SchedulerJobNameForSource(pocket.SourceType, source.Identifier)
 		if err := sched.AddJob(scheduler.Job{
 			Name: jobName, Schedule: source.Schedule,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
@@ -745,7 +746,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Already matches the store identity (config Identifier ==
 		// GetOrCreateSource identifier); routed through the shared helper
 		// so registration and api.sourceStatus can never drift.
-		jobName, ok := api.SchedulerJobNameForSource(granola.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(granola.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for granola source", "source", source.Identifier)
 			continue
@@ -774,7 +775,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Already matches the store identity (config Identifier ==
 		// GetOrCreateSource identifier); routed through the shared helper
 		// so registration and api.sourceStatus can never drift.
-		jobName, ok := api.SchedulerJobNameForSource(circleback.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(circleback.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for circleback source", "source", source.Identifier)
 			continue
@@ -800,7 +801,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledPlaudSources() {
 		source := src
-		jobName, ok := api.SchedulerJobNameForSource(plaud.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(plaud.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for plaud source", "source", source.Identifier)
 			continue
@@ -826,7 +827,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledNotionMeetingsSources() {
 		source := src
-		jobName, ok := api.SchedulerJobNameForSource(notionmeetings.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(notionmeetings.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for notion meeting source", "source", source.Identifier)
 			continue
@@ -852,7 +853,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledTwilioSources() {
 		source := src
-		jobName, ok := api.SchedulerJobNameForSource(twilio.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(twilio.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for twilio source", "source", source.Identifier)
 			continue
@@ -880,7 +881,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledMuesliSources() {
 		source := src
-		jobName, ok := api.SchedulerJobNameForSource(muesli.SourceType, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(muesli.SourceType, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for muesli source", "source", source.Identifier)
 			continue
@@ -906,7 +907,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledTwentySources() {
 		source := src
-		jobName, ok := api.SchedulerJobNameForSource(sourceTypeTwenty, source.Identifier)
+		jobName, ok := sourcescheduling.SchedulerJobNameForSource(sourceTypeTwenty, source.Identifier)
 		if !ok {
 			logger.Error("no scheduler job mapping for Twenty source", "source", source.Identifier)
 			continue

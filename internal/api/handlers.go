@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/sourcescheduling"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
@@ -1621,8 +1622,8 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // sourceScheduling restricts the singleton Messages job to its import target.
-func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourceScheduleClassification {
-	scheduling := classifySourceScheduling(sourceType, identifier)
+func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourcescheduling.Classification {
+	scheduling := sourcescheduling.Classify(sourceType, identifier)
 	if sourceType != "apple_messages" {
 		return scheduling
 	}
@@ -1636,7 +1637,7 @@ func (s *Server) sourceScheduling(sourceType, identifier string, sources []*stor
 	if selected != nil && selected.Identifier == identifier || selected == nil && identifier == "local" {
 		return scheduling
 	}
-	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+	return sourcescheduling.Classification{Kind: sourcescheduling.NonSchedulable}
 }
 
 func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source, sources []*store.Source) (SourceStatus, error) {
@@ -1664,10 +1665,10 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	scheduling := s.sourceScheduling(source.SourceType, source.Identifier, sources)
 	schedulerRunning := false
 	if s.scheduler != nil {
-		switch scheduling.kind {
-		case sourceScheduleGeneric:
-			schedulerRunning = s.applyGenericJobStatus(&status, scheduling.jobName)
-		case sourceScheduleAccount:
+		switch scheduling.Kind {
+		case sourcescheduling.Generic:
+			schedulerRunning = s.applyGenericJobStatus(&status, scheduling.JobName)
+		case sourcescheduling.Account:
 			status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
 			for _, scheduled := range s.scheduler.Status() {
 				if scheduled.Email != source.Identifier {
@@ -1682,13 +1683,13 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 				applySchedulerQueueState(&status, scheduled.Queued, scheduled.Pending, scheduled.StartedAt, scheduled.QueuedAt)
 				break
 			}
-		case sourceScheduleNonSchedulable, sourceScheduleManualOnly:
+		case sourcescheduling.NonSchedulable, sourcescheduling.ManualOnly:
 		}
 	}
 	switch {
-	case scheduling.kind == sourceScheduleManualOnly:
+	case scheduling.Kind == sourcescheduling.ManualOnly:
 		status.SyncUnavailableReason = "sync_manual_only"
-	case scheduling.kind == sourceScheduleNonSchedulable:
+	case scheduling.Kind == sourcescheduling.NonSchedulable:
 		status.SyncUnavailableReason = "source_not_schedulable"
 	case status.ActiveSync != nil || schedulerRunning || status.SchedulerQueued || status.SchedulerPending:
 		status.SyncUnavailableReason = "sync_already_running"
@@ -1723,7 +1724,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 
 // applyGenericJobStatus populates status.Scheduled/Schedule/SchedulerLastError/
 // NextSyncAt from the scheduler's generic-job state (see
-// SchedulerJobNameForSource) when source's type is driven by one of those
+// sourcescheduling.SchedulerJobNameForSource) when source's type is driven by one of those
 // jobs rather than the account scheduler. It reports whether that job is
 // currently running (false if no matching job exists).
 func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) bool {
@@ -1846,27 +1847,27 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	scheduling := s.sourceScheduling(sourceType, account, sources)
-	switch scheduling.kind {
-	case sourceScheduleManualOnly:
+	switch scheduling.Kind {
+	case sourcescheduling.ManualOnly:
 		writeError(w, http.StatusBadRequest, "sync_manual_only", "Sync manually with msgvault sync-caldav")
 		return
-	case sourceScheduleNonSchedulable:
+	case sourcescheduling.NonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
 		return
-	case sourceScheduleGeneric:
-		if !s.scheduler.IsJobScheduled(scheduling.jobName) {
+	case sourcescheduling.Generic:
+		if !s.scheduler.IsJobScheduled(scheduling.JobName) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		disp, err := s.scheduler.StartJob(scheduling.jobName, manual)
+		disp, err := s.scheduler.StartJob(scheduling.JobName, manual)
 		if err != nil {
 			s.logger.Error("failed to trigger generic sync job",
-				"job", scheduling.jobName, "identifier", account, "error", err)
+				"job", scheduling.JobName, "identifier", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return
 		}
 		s.logger.Info("generic sync triggered via API",
-			"job", scheduling.jobName, "identifier", account, "disposition", disp)
+			"job", scheduling.JobName, "identifier", account, "disposition", disp)
 		var message string
 		switch disp {
 		case scheduler.JobStarted:
@@ -1882,7 +1883,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			Disposition: string(disp),
 		})
 		return
-	case sourceScheduleAccount:
+	case sourcescheduling.Account:
 		if !s.scheduler.IsScheduled(account) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
