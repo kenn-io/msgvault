@@ -187,7 +187,7 @@ marked present remain ineligible for `gc` until a complete sync resumes tracking
 or you opt in below.
 
 To track deletions in scanned folders, saved exclusions must skip only the
-account's Trash or Junk mailbox, and no `folders` allow list can be set. Other
+account's Trash or Junk mailboxes, and no `folders` allow list can be set. Other
 exclusions or an allow list keep the default behavior. See
 [`imap_reconcile_filtered_deletions`](../configuration.md#sync) for
 setup, membership rules, and the effects on `gc`.

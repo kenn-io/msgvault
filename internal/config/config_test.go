@@ -2642,3 +2642,18 @@ imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com
 	require.NoError(err)
 	assert.True(cfg.Sync.IMAPReconcileFilteredDeletions[account])
 }
+
+func TestSyncConfigValidateRejectsBlankIMAPAccount(t *testing.T) {
+	for _, key := range []string{"", " \t "} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q/%t", key, enabled), func(t *testing.T) {
+				cfg := SyncConfig{IMAPReconcileFilteredDeletions: map[string]bool{key: enabled}}
+				require.ErrorContains(t, cfg.Validate(), "sync.imap_reconcile_filtered_deletions contains a blank account key")
+			})
+		}
+		t.Run(fmt.Sprintf("skip/%q", key), func(t *testing.T) {
+			cfg := SyncConfig{IMAPSkipFolders: map[string][]string{key: {"Trash"}}}
+			require.ErrorContains(t, cfg.Validate(), "sync.imap_skip_folders contains a blank account key")
+		})
+	}
+}

@@ -135,6 +135,8 @@ type Client struct {
 	since                       time.Time            // IMAP SINCE date filter (zero = no filter)
 	before                      time.Time            // IMAP BEFORE date filter (zero = no filter)
 
+	mailboxAttrs map[string][]imap.MailboxAttr // LIST attributes by selectable mailbox
+
 	relocationCandidateLoader func(context.Context, []string) ([]RelocationCandidate, error)
 	relocationTargets         map[string]gmailapi.MessageRelocationTarget
 
@@ -637,11 +639,13 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 	}
 
 	var names []string
+	c.mailboxAttrs = make(map[string][]imap.MailboxAttr, len(items))
 	for _, item := range items {
 		if hasAttr(item.Attrs, imap.MailboxAttrNoSelect) {
 			continue
 		}
 		names = append(names, item.Mailbox)
+		c.mailboxAttrs[item.Mailbox] = item.Attrs
 		// Received-mail roles deny outgoing trust regardless of how the
 		// mailbox is advertised or configured. RFC 6154 roles describe
 		// intended use, not authorship proof, so this records every LIST
@@ -740,6 +744,7 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 // QRESYNC connection.
 func (c *Client) clearMailboxDiscoveryLocked() {
 	c.mailboxCache = nil
+	c.mailboxAttrs = nil
 	c.trashMailbox = ""
 	c.junkMailbox = ""
 	c.allMailFolder = ""

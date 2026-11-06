@@ -830,18 +830,15 @@ func (r *imapMembershipResolver) retireObsoleteKeys(
 	}
 
 	for _, delta := range deltas {
-		generation, ok := previous[delta.mailbox]
-		if !ok {
+		if _, ok := previous[delta.mailbox]; !ok {
 			previous[delta.mailbox] = 0
 		}
-		// Capture before retirement rewrites keys. UIDs from a replaced
-		// generation are not comparable, so every such row is judged by the
-		// identity rules that retire its key.
-		if !fullTopology {
-			newGeneration := generation != 0 && generation != delta.uidValidity
-			if err := r.captureScannedUntracked(delta, newGeneration, affected); err != nil {
-				return err
-			}
+	}
+	// Capture once per source before retirement rewrites keys. UIDs from a
+	// replaced generation are judged by the identity rules that retire its key.
+	if !fullTopology {
+		if err := r.captureScannedUntracked(current, previous, affected); err != nil {
+			return err
 		}
 	}
 	for mailbox, generation := range previous {
@@ -962,30 +959,42 @@ func imapSourceKeyUID(key, mailbox string) (uint32, bool) {
 }
 
 // captureScannedUntracked marks live rows without memberships whose source key
-// names delta's mailbox at a UID missing from its complete resulting UID set,
+// names a scanned mailbox at a UID missing from its complete resulting UID set,
 // or at any UID when the mailbox has a new generation.
 func (r *imapMembershipResolver) captureScannedUntracked(
-	delta normalizedIMAPMailboxDelta, newGeneration bool, affected map[int64]struct{},
+	deltas map[string]normalizedIMAPMailboxDelta, previous map[string]uint32, affected map[int64]struct{},
 ) error {
-	predicate, keyArgs := r.sourceKeyPrefix(delta.mailbox)
-	rows, err := r.tx.Query(`SELECT id, source_message_id FROM messages WHERE messages.source_id = ? `+untrackedIMAPMessagePredicates+` AND `+predicate,
-		append([]any{r.sourceID}, keyArgs...)...)
+	rows, err := r.tx.Query(`SELECT id, source_message_id FROM messages WHERE messages.source_id = ? `+untrackedIMAPMessagePredicates, r.sourceID)
 	if err != nil {
-		return fmt.Errorf("read untracked IMAP messages for %q: %w", delta.mailbox, err)
+		return fmt.Errorf("read untracked IMAP messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	present := make(map[uint32]struct{}, len(delta.delta.KnownUIDs))
-	for _, uid := range delta.delta.KnownUIDs {
-		present[uid] = struct{}{}
+	present := make(map[string]map[uint32]struct{}, len(deltas))
+	for mailbox, delta := range deltas {
+		uids := make(map[uint32]struct{}, len(delta.delta.KnownUIDs))
+		for _, uid := range delta.delta.KnownUIDs {
+			uids[uid] = struct{}{}
+		}
+		present[mailbox] = uids
 	}
 	for rows.Next() {
 		var id int64
 		var key string
 		if err := rows.Scan(&id, &key); err != nil {
-			return fmt.Errorf("scan untracked IMAP message for %q: %w", delta.mailbox, err)
+			return fmt.Errorf("scan untracked IMAP message: %w", err)
 		}
-		if uid, valid := imapSourceKeyUID(key, delta.mailbox); valid {
-			if _, ok := present[uid]; newGeneration || !ok {
+		separator := strings.LastIndexByte(key, '|')
+		if separator < 0 {
+			continue
+		}
+		mailbox := key[:separator]
+		delta, scanned := deltas[mailbox]
+		if !scanned {
+			continue
+		}
+		newGeneration := previous[mailbox] != 0 && previous[mailbox] != delta.uidValidity
+		if uid, valid := imapSourceKeyUID(key, mailbox); valid {
+			if _, ok := present[mailbox][uid]; newGeneration || !ok {
 				affected[id] = struct{}{}
 			}
 		}

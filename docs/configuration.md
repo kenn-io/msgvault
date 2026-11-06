@@ -1017,8 +1017,8 @@ imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com
 ```
 
 Restart the daemon after editing the file. This opt-in reconciles deletions in
-scanned folders only when every mailbox skipped by the saved exclusions is the
-account's Trash or Junk mailbox and no `folders` allow list is set. Msgvault
+scanned folders only when every mailbox skipped by the saved exclusions is one of the
+account's Trash or Junk mailboxes and no `folders` allow list is set. Msgvault
 identifies Trash and Junk from LIST special-use roles, falling back to common
 folder names. If any other mailbox is skipped or an allow list is set, the sync
 preserves memberships and deletion markers as it does by default.

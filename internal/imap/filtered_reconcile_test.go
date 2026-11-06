@@ -6,8 +6,55 @@ import (
 	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestFilteredReconciliation_MultipleAdvertisedTrashMailboxes(t *testing.T) {
+	for _, role := range []imapv2.MailboxAttr{imapv2.MailboxAttrTrash, imapv2.MailboxAttrJunk} {
+		t.Run(string(role), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t,
+				map[string]int{"INBOX": 1, "Discarded A": 0, "Discarded B": 0},
+				map[string][]imapv2.MailboxAttr{"Discarded A": {role}, "Discarded B": {role}},
+			)
+			opts := []Option{WithFolderFilter(nil, []string{"Discarded A", "Discarded B"}), WithFilteredDeletionReconciliation(true)}
+			first := newTestClient(t, addr, opts...)
+			require.Equal([]string{"INBOX|1"}, listAllMessages(t, first))
+			require.NoError(first.Close())
+
+			// Model an earlier filtered import that saved no memberships.
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("imap", "multiple-roles@example.com")
+			require.NoError(err)
+			conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+			require.NoError(err)
+			_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "INBOX|1", MessageType: "email"})
+			require.NoError(err)
+			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+			second := newTestClient(t, addr, opts...)
+			require.Empty(listAllMessages(t, second))
+			// The sync finalizer applies scoped deltas only for eligible sessions.
+			if second.ReconcilesFilteredDeletions() {
+				run, err := st.StartSync(source.ID, "full")
+				require.NoError(err)
+				require.NoError(st.CompleteSync(run, "0"))
+				var deltas []store.IMAPMailboxDelta
+				for _, delta := range second.ObservedMailboxDeltas() {
+					deltas = append(deltas, store.IMAPMailboxDelta{
+						Mailbox: delta.Mailbox, Reset: delta.Reset,
+						State:     store.IMAPFolderState{Mailbox: delta.Mailbox, UIDValidity: delta.State.UIDValidity, UIDNext: delta.State.UIDNext},
+						KnownUIDs: delta.State.KnownUIDs,
+					})
+				}
+				require.NoError(st.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), source.ID, run, deltas))
+			}
+			var tombstones int
+			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`).Scan(&tombstones))
+			assert.Equal(1, tombstones)
+		})
+	}
+}
 
 func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 	for _, all := range []string{"", "[Gmail]/All Mail"} {

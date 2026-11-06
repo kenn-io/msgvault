@@ -79,12 +79,17 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := newIMAPIdentityFixture(t)
-			require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}))
+			require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+				scannedIMAPDelta("INBOX", 11), scannedIMAPDelta("Archive|Projects", 21),
+			}))
 			// Earlier filtered syncs archived these rows without memberships.
 			moved := f.createMessage(t, "INBOX|1", "<moved@example.com>")
 			retained := f.createMessage(t, "INBOX|2", "<retained@example.com>")
 			archiveOnly := f.createMessage(t, "INBOX|3", "")
-			f.createMessage(t, "Trash|1", "")
+			skipped := f.createMessage(t, "Trash|1", "")
+			archiveMoved := f.createMessage(t, "Archive|Projects|1", "")
+			archiveRetained := f.createMessage(t, "Archive|Projects|2", "")
+			malformed := f.createMessage(t, "INBOX|01", "")
 			_, err := f.store.DB().Exec(f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
 			require.NoError(err)
 			label, err := f.store.EnsureLabel(f.source.ID, "INBOX", "INBOX", "system")
@@ -110,12 +115,19 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 				}
 			}
 			require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
-				t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{delta},
+				t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{
+					delta,
+					{Mailbox: "Archive|Projects", State: store.IMAPFolderState{Mailbox: "Archive|Projects", UIDValidity: 21}, KnownUIDs: []uint32{2}},
+				},
 			))
 			assert.True(messageTombstoned(t, f.store, moved))
 			assert.Empty(messageLabels(t, f.store, moved))
 			assert.Equal(name == "empty mailbox", messageTombstoned(t, f.store, retained))
 			assert.False(messageTombstoned(t, f.store, archiveOnly))
+			assert.False(messageTombstoned(t, f.store, skipped))
+			assert.True(messageTombstoned(t, f.store, archiveMoved))
+			assert.False(messageTombstoned(t, f.store, archiveRetained))
+			assert.False(messageTombstoned(t, f.store, malformed))
 			if name == "new generation" {
 				gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 12, 1)
 				assert.Equal(newID, gotID)

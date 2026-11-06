@@ -911,17 +911,32 @@ type SyncConfig struct {
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
-// Validate rejects invalid sync limits and blank saved IMAP folder names.
+// Validate rejects invalid sync limits and blank saved IMAP account keys or folder names.
 func (s *SyncConfig) Validate() error {
 	if s.IMAPMaxCommandsPerMinute < 0 {
 		return errors.New("sync.imap_max_commands_per_minute must be non-negative")
 	}
 	for identifier, folders := range s.IMAPSkipFolders {
+		if err := validateIMAPAccountKey("imap_skip_folders", identifier); err != nil {
+			return err
+		}
 		for _, folder := range folders {
 			if strings.TrimSpace(folder) == "" {
 				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
 			}
 		}
+	}
+	for identifier := range s.IMAPReconcileFilteredDeletions {
+		if err := validateIMAPAccountKey("imap_reconcile_filtered_deletions", identifier); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateIMAPAccountKey(setting, identifier string) error {
+	if strings.TrimSpace(identifier) == "" {
+		return fmt.Errorf("sync.%s contains a blank account key", setting)
 	}
 	return nil
 }

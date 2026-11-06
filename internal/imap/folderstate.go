@@ -372,7 +372,9 @@ func (c *Client) scannedMailboxSnapshotLocked() bool {
 		return false
 	}
 	for _, mailbox := range filterMailboxes(c.mailboxCache, c.folderFilterExclude, nil) {
-		if mailbox != c.trashMailbox && mailbox != c.junkMailbox {
+		attrs := c.mailboxAttrs[mailbox]
+		if mailbox != c.trashMailbox && mailbox != c.junkMailbox &&
+			!hasAttr(attrs, imap.MailboxAttrTrash) && !hasAttr(attrs, imap.MailboxAttrJunk) {
 			return false
 		}
 	}
