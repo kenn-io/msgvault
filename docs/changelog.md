@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Archive stopped [Hex meetings](usage/meetings.md#hex) from a local folder or a remote recorder, including transcripts, notes, available participant evidence and optional separate audio tracks. Schedule capture before Hex expires unsynced meetings; partial replacements preserve previously readable evidence.
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and

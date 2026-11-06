@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/hex"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -154,6 +155,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "twilio:" + identifier, true
 	case twenty.SourceType:
 		return "twenty:" + identifier, true
+	case hex.SourceType:
+		return hex.SourceType + ":" + identifier, true
 	case muesli.SourceType:
 		// Store identifier == config Identifier (see
 		// internal/muesli/importer.go GetSourceByTypeAndIdentifier call).

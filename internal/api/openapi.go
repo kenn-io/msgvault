@@ -400,7 +400,8 @@ import (
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
-const APISchemaVersion = "3.45.0"
+// 3.46.0 adds Hex meeting and two-track recording imports.
+const APISchemaVersion = "3.46.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1409,6 +1410,23 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"MeetingActionsRequestStatusUnknown",
 		})
 	}
+	// New provider enums must not claim the Muesli client's existing bare constants.
+	if request := schemas["HexRemoteRequest"]; request != nil {
+		setEnumNames(request.Properties["action"], qualifiedEnumNames("HexRemoteRequestAction", []string{"register", "upsert", "refresh"}))
+	}
+	if result := schemas["HexRemoteResult"]; result != nil {
+		setEnumNames(result.Properties["status"], qualifiedEnumNames("HexRemoteResultStatus", []string{"registered", "created", "updated", "unchanged", "refreshed"}))
+	}
+	for _, operation := range documentOperations(doc) {
+		if operation.OperationID == "importHexRecording" {
+			for _, parameter := range operation.Parameters {
+				if parameter.Name == "track" {
+					setEnumNames(parameter.Schema, qualifiedEnumNames("ImportHexRecordingQueryTrack", []string{"system", "microphone"}))
+				}
+			}
+		}
+	}
+
 	for schemaName, properties := range map[string]map[string][]any{
 		"AppendPersonNoteRequest": {
 			exploreFilterSource: {

@@ -1705,6 +1705,16 @@ type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
 
+type ImportHexResponse = HexRemoteResult
+
+type ImportHexResponseJSON = HexRemoteResult
+
+type ImportHexErrorResponse = ErrorResponse
+
+type ImportHexRecordingResponse = HexRemoteResult
+
+type ImportHexRecordingErrorResponse = ErrorResponse
+
 type ImportMeetingResponse = MeetingImportResponse
 
 type ImportMeetingResponseJSON = MeetingImportResponse
@@ -5622,6 +5632,23 @@ type UnlinkIdentityParticipantsResp struct {
 	StatusCode   int
 	JSON200      *UnlinkIdentityParticipantsResponse
 	JSONDefault  *UnlinkIdentityParticipantsErrorResponse
+}
+
+type ImportHexResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportHexResponse
+	JSON201      *ImportHexResponseJSON
+	JSONDefault  *ImportHexErrorResponse
+}
+
+type ImportHexRecordingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportHexRecordingResponse
+	JSONDefault  *ImportHexRecordingErrorResponse
 }
 
 type ImportMeetingResp struct {

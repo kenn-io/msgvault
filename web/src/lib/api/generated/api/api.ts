@@ -206,6 +206,8 @@ import type {
   GetTotalStatsParams,
   GmailIDsResponse,
   HealthResponse,
+  HexRemoteRequest,
+  HexRemoteResult,
   HybridSearchResponse,
   IdentityLinkRequest,
   IdentityLinkResponse,
@@ -213,6 +215,7 @@ import type {
   IdentityMatchCandidate,
   IdentityMatchCandidatesResponse,
   IdentityMatchRejectResponse,
+  ImportHexRecordingParams,
   ImportJobRequest,
   ImportJobResponse,
   ImportMuesliRecordingParams,
@@ -1975,6 +1978,42 @@ export const unlinkIdentityParticipants = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: identityLinkRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Import one recorder-local Hex meeting
+ */
+export const importHex = (
+  hexRemoteRequest: HexRemoteRequest,
+  options?: SecondParameter<typeof orvalFetch<HexRemoteResult>>,
+) => {
+  return orvalFetch<HexRemoteResult>(
+    {
+      url: `/api/v1/import/hex`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: hexRemoteRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Stream retained audio for an archived Hex meeting
+ */
+export const importHexRecording = (
+  importHexRecordingBody: Blob,
+  params: ImportHexRecordingParams,
+  options?: SecondParameter<typeof orvalFetch<HexRemoteResult>>,
+) => {
+  return orvalFetch<HexRemoteResult>(
+    {
+      url: `/api/v1/import/hex/recording`,
+      method: "POST",
+      headers: { "Content-Type": "audio/wav" },
+      data: importHexRecordingBody,
+      params,
     },
     options,
   );

@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-10-29"
 title: Meeting Transcripts
-description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Hex, Muesli, and Twenty into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -21,6 +21,7 @@ emails connect meetings to the people you already know in msgvault.
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
 | [Pocket](#pocket) | Personal API key | Requires Pocket API access and supported transcript/summary response shapes |
+| [Hex](#hex) | Recorder-local meeting folders | Schema-1 transcripts, notes, calendar evidence and optional WAV tracks |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
 | [Twenty](#twenty-call-recordings) | Read-only workspace API key | Reads every call recording in the workspace, whichever Twenty app wrote it |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
@@ -28,7 +29,7 @@ emails connect meetings to the people you already know in msgvault.
 Provider sync reads meeting data without changing the source service. Recording
 media is not downloaded by the Omi, Notion, Plaud, Pocket, Circleback,
 or Twenty integrations.
-Muesli can optionally archive locally retained recordings.
+Hex and Muesli can optionally archive locally retained recordings.
 
 ## Browse and search
 
@@ -60,6 +61,8 @@ For one meeting, expand its message and choose **⋯ → Export meeting…**. Ch
 
 The downloaded file contains the server's context packet, including meeting
 references, participants, summary, notes, recorded actions, and coverage states.
+For Hex, it also preserves the recorded app as `meeting_platform`; Markdown
+shows the same value as `Platform`.
 The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 4096 through 1048576 bytes. Packets report truncation and omitted meeting IDs;
 check those fields before treating an export as complete. A missing summary
@@ -234,7 +237,7 @@ and add the account email separately. Plaud validates this against the live
 account; it does not assume the account owner organized every recording.
 
 `add-omi`, `add-granola`, `add-plaud`, `add-pocket`, `add-circleback`,
-`add-notion-meetings`, and `add-muesli` always confirm the primary email for
+`add-notion-meetings`, `add-hex`, and `add-muesli` always confirm the primary email for
 their source. Add other confirmed aliases with the identity command:
 
 ```bash
@@ -262,6 +265,7 @@ has never used with you:
 | Granola, Circleback | One email | Not needed |
 | Plaud | Speaker display labels only | Names do not create identities |
 | Notion AI Meeting Notes | The user's verified email | The Notion user ID, so a user whose email changes keeps one person |
+| Hex | Explicit calendar attendee email strings | Names remain context and never create identities |
 | Muesli | Email, or the emails and phones on the attendee's Apple Contacts card | The Contacts card, excluding addresses shared by unlinked cards |
 | Import API | `email` and `phone` | The person's `id` within the import source |
 
@@ -951,6 +955,91 @@ status), insights, and tags land in the message metadata and body; the
 meeting recording URL and `recording_url_fetched_at` remain in the archived
 provider metadata. msgvault does not expose recording URLs as durable
 attachments, and downloading or archiving recording media is not supported.
+
+## Hex
+
+Archive Hex meeting transcripts, stored notes, chapters, calendar attendee
+strings and recording times. Configure a [Hex source](../configuration.md#hex-sources),
+then register and sync it on the computer where Hex records:
+
+```bash
+msgvault add-hex recorder
+msgvault sync-hex recorder
+```
+
+This integration is available on `main`. In remote mode, the recorder sends
+selected JSON evidence over the authenticated daemon connection. Source paths
+stay on the recorder. Same-host mode reads the folders on the daemon's host.
+Use Hex's authoritative meeting store, rather than its Documents Markdown exports.
+The default paths and `meetings_dir` override are in the configuration reference.
+
+Hex defaults to keeping new meetings for **24 hours**. Schedule sync well
+inside that window, such as every 30 minutes, or change Hex's **Keep meetings**
+setting. A sleeping recorder cannot sync; allow for that when choosing retention.
+Archived copies survive Hex's expiry and source deletion. Shutdown or offline
+time beyond retention can lose calls that have never synced.
+
+You can register before the first recording. A missing meetings folder is an
+empty scan; msgvault does not create it or write to Hex storage. Dot-prefixed
+folders are ignored.
+
+Scans revisit stopped meetings so edits update the archive:
+
+- If transcript input disappears, cannot be read, or contains malformed lines
+  or a non-whitespace unfinished tail, the earlier readable snapshot stays
+  searchable. This also applies to `--full`; notes edits wait for a readable
+  replacement in these cases.
+- First imports keep complete readable entries from incomplete input and mark
+  them partial. Clean shorter or empty final transcripts can replace old text.
+- Final NDJSON alone counts as publication, including while Markdown is pending.
+  Rolling NDJSON is retained when the final file is absent. A final archived
+  transcript never regresses to rolling evidence.
+- Held or unreadable `active.lock` files defer the folder. Stale recording states
+  are classified in memory; msgvault never repairs or changes Hex files.
+- Invalid folders and unsupported source versions produce warnings. Interrupted,
+  failed and metadata-only meetings remain searchable, with absent evidence
+  represented explicitly. Whitespace-only transcript tails are harmless.
+
+The searchable subject uses Hex's **base title**: user, call and calendar titles
+win; default titles yield to the notes title, then provisional title. Chapter
+titles remain separately searchable in the body; msgvault does not append Hex's
+chapter decoration to the subject. All title evidence, notes and chapters are
+preserved. Hex's optional manifest `app` value is preserved verbatim as
+`meeting_platform` in archive metadata and meeting context, and as a searchable
+`Platform:` line in the archived body. An absent value stays absent. Changing
+the recorder time zone does not retitle an unchanged archive.
+
+Calendar attendee strings remain context evidence. Only explicit valid email
+strings become recipients; names never identify people. `account_email` is the
+organizer. Transcript offsets keep the source's **You** and **Them** labels;
+**Them** can represent several people.
+
+Duration uses provider timing when present. Otherwise, the time between the
+first transcript start and last end is an observed transcript-span estimate,
+which may cover less than the whole meeting. Hex has no structured action items,
+so action coverage is unsupported in the existing meeting CLI, HTTP and MCP queries.
+
+Keep capture running before Hex expires meetings:
+
+- For same-host capture, keep the daemon running and set `enabled = true` and
+  a five-field `schedule` in `[[hex]]`.
+- For a remote recorder, keep `msgvault sync-hex --watch` running on that computer.
+  It scans initially and then follows enabled schedules serially. File and network
+  failures retry on the next scan; rejected credentials or an incompatible daemon
+  stop it. Hex has no executable completion hook.
+
+Audio is off by default. Set `recordings = true` to retain `system.wav` and
+`microphone.wav` as separate attachments, without mixing or transcoding:
+
+- Missing, empty, recent or changing audio waits while text is archived.
+  Each track retries independently.
+- WAV files with a RIFF size that does not match the saved file are deferred.
+  msgvault does not repair their headers. If Hex never finalizes an incomplete
+  file, its audio may expire without being archived; transcript capture continues.
+- The recorder and daemon default to 4 GiB per track. Raise
+  `recording_max_bytes` and `[server].hex_recording_max_bytes` together if needed.
+- Source paths and filenames stay on the recorder. `--full` reoffers text and
+  audio after an archive rollback; re-running `add-hex` resets upload receipts.
 
 ## Muesli
 

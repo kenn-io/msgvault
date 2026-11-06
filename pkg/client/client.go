@@ -311,6 +311,33 @@ func (c *Client) ImportMuesli(
 	return nil, fmt.Errorf("import muesli: %w", err)
 }
 
+// ImportHex accepts both documented success statuses. The generated
+// convenience method treats only 201 as success; registration and idempotent
+// updates return 200.
+func (c *Client) ImportHex(
+	ctx context.Context,
+	options *generated.ImportHexRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ImportHexResponseJSON, error) {
+	resp, err := c.ImportHexWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Body) == 0 {
+		return nil, errors.New("import hex: empty response")
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("import hex: %w", err)
+}
+
 // StageDeletion accepts both documented success statuses. The generated
 // convenience method treats only 201 as success even though the daemon
 // returns 200 for dry-run staging requests.

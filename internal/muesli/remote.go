@@ -3,7 +3,6 @@ package muesli
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -137,25 +135,9 @@ func remoteInvalid(field, rule string) error {
 // DecodeRemoteRequest applies the meeting import JSON and byte-bound rules,
 // then validates the provider contract. Parse errors never echo data.
 func DecodeRemoteRequest(reader io.Reader, limit int64) (RemoteRequest, error) {
-	if limit <= 0 {
-		return RemoteRequest{}, ErrRemoteTooLarge
-	}
-	if limit > MaxRemoteRequestBytes {
-		limit = MaxRemoteRequestBytes
-	}
-	if reader == nil {
-		return RemoteRequest{}, ErrRemoteMalformed
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	r, err := meetingimport.DecodeRecorderJSON[RemoteRequest](reader, limit, ErrRemoteMalformed, ErrRemoteTooLarge)
 	if err != nil {
-		return RemoteRequest{}, ErrRemoteMalformed
-	}
-	if int64(len(data)) > limit {
-		return RemoteRequest{}, ErrRemoteTooLarge
-	}
-	var r RemoteRequest
-	if !utf8.Valid(data) || json.Unmarshal(data, &r, json.RejectUnknownMembers(true)) != nil {
-		return RemoteRequest{}, ErrRemoteMalformed
+		return r, err
 	}
 	return r.Normalize()
 }
@@ -167,16 +149,11 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 	if r.BuildCache && r.Action != "refresh" {
 		return r, remoteInvalid("build_cache", "requires the refresh action")
 	}
-	// Reuse the provider-neutral source/email contract without importing content.
-	probe := meetingimport.Request{Source: r.Source, Meeting: meetingimport.Meeting{ExternalID: "validation", StartedAt: "2000-01-01T00:00:00Z", Transcript: "validation"}}
-	normal, err := probe.Normalize()
+	normal, err := meetingimport.NormalizeRecorderSource(r.Source)
 	if err != nil {
 		return r, remoteInvalid("source", "requires a bounded identifier and valid account email")
 	}
-	r.Source = normal.Source
-	if strings.IndexFunc(r.Source.Identifier, unicode.IsControl) >= 0 {
-		return r, remoteInvalid("source.identifier", "must not contain control characters")
-	}
+	r.Source = normal
 	switch r.Action {
 	case "register", "refresh":
 		if r.Meeting != nil || r.Full {
@@ -283,6 +260,7 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 				return r, remoteInvalid("participant exclusions", "must reference an included identity")
 			}
 		}
+		probe := meetingimport.Request{Source: r.Source, Meeting: meetingimport.Meeting{ExternalID: "validation", StartedAt: "2000-01-01T00:00:00Z", Transcript: "validation"}}
 		probe.Meeting.Attendees = identities
 		if _, err := probe.Normalize(); err != nil {
 			return r, remoteInvalid("participant identities", "must be valid emails or E.164 phones")
@@ -337,16 +315,9 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 		return result, err
 	}
 	result.SourceID = source.ID
-	identities, err := imp.store.ListAccountIdentitiesContext(ctx, source.ID)
+	hasRecorder, matches, err := meetingimport.RecorderIdentityMatch(ctx, imp.store, source.ID, r.Source.AccountEmail)
 	if err != nil {
 		return result, err
-	}
-	hasRecorder, matches := false, false
-	for _, identity := range identities {
-		if slices.Contains(strings.Split(identity.SourceSignal, ","), "account-email") {
-			hasRecorder = true
-			matches = matches || store.EqualIdentifier(identity.Address, r.Source.AccountEmail)
-		}
 	}
 	if hasRecorder && !matches {
 		return result, remoteInvalid("source.account_email", "does not match the registered recorder")

@@ -46,7 +46,7 @@ func newMeetingsCommand(deps meetingCommandDeps) *cobra.Command {
 		Use:   "meetings",
 		Short: "Read archived meeting context, actions, and metrics",
 		Long: `Read meetings archived from meeting sources (Granola, Circleback, Plaud,
-Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
+Hex, Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
   msgvault search 'message_type:meeting_transcript newer_than:30d' --json`,
 		Example: `  msgvault meetings context --id 42 --format json`,
 	}
