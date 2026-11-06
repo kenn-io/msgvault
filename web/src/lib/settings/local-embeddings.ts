@@ -27,8 +27,8 @@ export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: Emb
     meanwhile: 'Keyword search works',
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing search by meaning' } : {}),
     ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
-    rebuild: ('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : '')) + (status.document_rebuild ? '. Document search requires consent for the built-in provider.' : '.'),
-    ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index. Document search requires consent for the built-in provider.' } : {}),
+    rebuild: ('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : '')) + (status.document_rebuild ? '. Document\u00a0search requires consent for the built-in provider.' : '.'),
+    ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index. Document\u00a0search requires consent for the built-in provider.' } : {}),
   };
 }
 
