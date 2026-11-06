@@ -373,6 +373,7 @@ The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
+| `msgvault.skills` | List or read the server's shipped [agent guides](../guides/agent-skills.md#skills-and-the-mcp-server). Always present; serves guidance without reading archive data. | optional `name` (exact guide name); omit it to list the catalog |
 | `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
@@ -932,6 +933,8 @@ Code and Codex skill directories with:
 msgvault skills install
 ```
 
-The skills teach agents the CLI; the MCP server exposes structured tool calls.
-They can be used independently or together. See [Agent Skills](/docs/guides/agent-skills/)
-for installation targets, update behavior, and uninstall instructions.
+MCP clients can call `msgvault.skills {}` to discover these same bundled
+guides, with MCP mappings, and `msgvault.skills {"name":"workflow"}` to read
+the MCP quickstart. Guide Markdown is text; structured content contains
+metadata. See [Agent Skills](/docs/guides/agent-skills/) for the fixed catalog,
+access rules, installation targets and update behavior.

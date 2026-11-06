@@ -45,9 +45,19 @@ after upgrading msgvault refreshes them; files you have hand-edited
 
 ## Skills and the MCP server
 
-The skills teach agents the msgvault *CLI*; the [MCP
-server](../usage/chat.md) exposes msgvault as *tool calls*. They
-coexist: MCP suits chat apps (Claude Desktop), while skills suit
-terminal coding agents that already run shell commands and can pipe
-`--json` output through `jq`. Skill content is validated against the
-CLI's command tree in CI, so examples stay correct as the CLI evolves.
+MCP clients can read the bundled guides without installing skill files. Call
+`msgvault.skills {}` to list names, titles and summaries, then
+`msgvault.skills {"name":"workflow"}` for the MCP quickstart. The other names
+are `msgvault-search`, `msgvault-attachments` and `msgvault-analytics`.
+
+Named calls return Markdown as text and the guide's metadata in structured
+content. The three CLI skills include MCP command mappings and explain
+differences in search syntax, paging, scope and attachment exports. Use the
+connected server's tool list for actual availability and parameters.
+
+The guide tool is read-only and present in owner and delegated sessions,
+including sessions without archive-read permissions. Existing authentication
+and archive grants still apply. It serves only these shipped guides, rejects
+unknown or invalid names and extra arguments, and never reads paths or
+executes a skill. Skill content remains validated against the CLI command
+tree in CI.

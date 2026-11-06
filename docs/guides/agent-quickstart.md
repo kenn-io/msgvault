@@ -52,6 +52,12 @@ mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
 
+Call `msgvault.skills {}` to list the server's bundled guides and
+`msgvault.skills {"name":"workflow"}` to read this quickstart. The other guides
+reuse the CLI skills with MCP mappings. This read-only tool serves shipped
+guidance in every session; it does not read archive data or grant access to
+other tools.
+
 ## Find people and read conversations
 
 Use `search_people` with a `query` to find observed contacts and saved profiles.
@@ -135,7 +141,8 @@ A dash means no extra class flag, not guaranteed availability or authorization.
 The delegated column names permissions only for the scoped archive-read gate.
 `owner-only` tools are outside that gate. Calendar and draft tools use separate
 backend checks for action permissions, source scope, and sender identity;
-`backend-dependent` does not grant access. See the
+`backend-dependent` does not grant access. `none (guidance only)` needs no
+archive permission and still uses the session's authentication. See the
 [write controls](../usage/chat.md#write-controls) and
 [draft tools](../usage/chat.md#draft-tools) for those requirements.
 
@@ -202,6 +209,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `msgvault.skills` | read | — | none (guidance only) |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |

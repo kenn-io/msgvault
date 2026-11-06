@@ -157,6 +157,8 @@ linters:
     gomoddirectives:
       replace-allow-list:
         - github.com/emersion/go-imap/v2
+        # Draft dependency for kenn-io/kit#316; remove after its merge.
+        - go.kenn.io/kit
 
     importas:
       alias:
