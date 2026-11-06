@@ -16,10 +16,16 @@ session.
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
+| `msgvault-person-review` | Review one saved person's explicit non-sensitive details, attachment evidence, and meeting context with bounded, cited suggestions |
 
-All three cover read-only workflows only. They explicitly tell agents
+All four cover read-only workflows only. They explicitly tell agents
 not to run archive-mutating commands (sync, import, dedup, deletion)
 without your direction.
+
+Person review resolves exact identities before attributing evidence and reports
+missing or partial attachment coverage. It requires authorization for the source
+scope and processing destination. It does not save profiles, infer sensitive
+traits from shared content, merge identities, or contact people.
 
 ## Install
 
