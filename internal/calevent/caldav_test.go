@@ -72,11 +72,23 @@ func TestCalDAVLibicalTimeZone(t *testing.T) {
 }
 
 func TestCalDAVWindowsPeriodTimeZone(t *testing.T) {
-	for _, tc := range []struct{ line, want string }{
-		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=America/New_York;VALUE=PERIOD:20270314T090000/PT1H"},
-		{"RDATE;TZID=Eastern Standard Time:invalid", "RDATE;TZID=America/New_York:INVALID"},
-		{"EXDATE;TZID=Invalid/Zone:20270314T090000", "EXDATE;TZID=Invalid/Zone:20270314T090000"},
-	} {
+	type recurrenceCase struct {
+		line, want string
+		supported  bool
+	}
+	cases := []recurrenceCase{
+		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=America/New_York;VALUE=PERIOD:20270314T090000/PT1H", false},
+		{"RDATE;TZID=Eastern Standard Time:invalid", "RDATE;TZID=America/New_York:INVALID", false},
+		{"EXDATE;TZID=Invalid/Zone:20270314T090000", "EXDATE;TZID=Invalid/Zone:20270314T090000", false},
+	}
+	for _, zone := range []string{"Eastern Standard Time", "tzone://Microsoft/Eastern Standard Time", "tzone://Microsoft/America/New_York", "/vendor:1/America/New_York"} {
+		cases = append(cases, recurrenceCase{
+			"RRULE:FREQ=WEEKLY;COUNT=2\r\nRDATE;TZID=\"" + zone + "\":20270321T090000\r\nEXDATE;TZID=\"" + zone + "\":20270314T090000",
+			"RRULE:FREQ=WEEKLY;COUNT=2\r\nRDATE;TZID=America/New_York:20270321T090000\r\nEXDATE;TZID=America/New_York:20270314T090000",
+			true,
+		})
+	}
+	for _, tc := range cases {
 		t.Run(tc.line, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
@@ -85,9 +97,13 @@ func TestCalDAVWindowsPeriodTimeZone(t *testing.T) {
 			events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
 			require.NoError(err)
 			require.Len(events, 1)
-			assert.Equal([]string{tc.want}, events[0].Event.Recurrence)
+			assert.Equal(strings.Split(tc.want, "\r\n"), events[0].Event.Recurrence)
 			_, err = calrecur.ParseSet(*events[0].Event.Start, false, "", time.UTC, events[0].Event.Recurrence)
-			require.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+			if tc.supported {
+				require.NoError(err)
+			} else {
+				require.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+			}
 		})
 	}
 }
@@ -132,6 +148,11 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 			t.Helper()
 			require.Len(t, events, 1)
 			assert.Equal(t, "tentative", events[0].Event.Status)
+		}},
+		{"cancelled lowercase", "BEGIN:VEVENT\r\nUID:example@example.org\r\nDTSTART:20270314T130000Z\r\nSTATUS:cancelled\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
+			t.Helper()
+			require.Len(t, events, 1)
+			assert.Equal(t, "cancelled", events[0].Event.Status)
 		}},
 		{"nonstandard status", "BEGIN:VEVENT\r\nUID:nonstandard\r\nDTSTART:20270314T130000Z\r\nSTATUS:COMPLETED\r\nEND:VEVENT\r\n", "", func(t *testing.T, events []CalDAVEvent) {
 			t.Helper()
