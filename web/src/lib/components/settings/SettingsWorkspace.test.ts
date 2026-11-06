@@ -839,14 +839,20 @@ it('refreshes local setup after a network interruption and explains activation r
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The archive is stopping');
 });
 
-it('turns on local search once and keeps unrelated drafts when setup finishes', async () => {
+it.each(['none', 'http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
   let phase = 'idle';
   let enabled = false;
+  let failed = false;
   let releaseActivation!: () => void;
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (request.method === 'POST') { phase = 'indexing'; await activation; }
+    else if (phase !== 'idle' && failure !== 'none' && !failed) {
+      failed = true;
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return new Response('', { status: 503 });
+    }
     return Response.json({ enabled, provider: enabled ? 'builtin' : '', compatible: true, ollama_available: false,
       phase, download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
   });
@@ -860,30 +866,9 @@ it('turns on local search once and keeps unrelated drafts when setup finishes', 
   releaseActivation();
   await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
+  if (failure !== 'none') await waitFor(() => expect(failed).toBe(true));
   phase = 'idle'; enabled = true;
   await screen.findByText('On', {}, { timeout: 3000 });
-  expect(screen.getByText('1 unsaved change')).toBeDefined();
-});
-
-it.each(['http', 'network'])('recovers setup polling after a temporary %s failure', async failure => {
-  let started = false;
-  let failed = false;
-  const { client, operationsController } = fixture(settingsDoc(), async request => {
-    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') {
-      started = true;
-      return Response.json({ enabled: false, provider: '', phase: 'indexing', running: true }, { status: 202 });
-    }
-    if (started && !failed) {
-      failed = true;
-      if (failure === 'network') throw new TypeError('Network interrupted');
-      return new Response('', { status: 503 });
-    }
-    return Response.json({ enabled: started, provider: started ? 'builtin' : '', phase: 'idle', download_bytes: 290000000 });
-  });
-  render(SettingsWorkspace, { client, operationsController });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
-  await screen.findByText('On', {}, { timeout: 3000 });
-  expect(failed).toBe(true);
   expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
 });

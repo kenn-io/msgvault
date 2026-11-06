@@ -42,70 +42,76 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 	}
 }
 
-func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
-		defer func() { _ = srv.Shutdown(context.Background()) }()
-		controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
-		srv.SetLocalEmbeddings(controller)
-		requestCtx, cancel := context.WithCancel(context.Background())
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":false}`)).WithContext(requestCtx)
-		request.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusAccepted, response.Code)
-		cancel()
-		jobCtx := <-controller.started
-		assert.False(controller.builtin.Load())
-		require.NoError(jobCtx.Err())
-		duplicate := httptest.NewRecorder()
-		duplicateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{}`))
-		duplicateRequest.Header.Set("Content-Type", "application/json")
-		srv.Router().ServeHTTP(duplicate, duplicateRequest)
-		require.Equal(http.StatusAccepted, duplicate.Code)
-		assert.Equal(int32(1), controller.calls.Load())
-		conflict := httptest.NewRecorder()
-		conflictRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
-		conflictRequest.Header.Set("Content-Type", "application/json")
-		srv.Router().ServeHTTP(conflict, conflictRequest)
-		require.Equal(http.StatusConflict, conflict.Code)
-		assert.Contains(conflict.Body.String(), "different provider choice")
-		assert.Equal(int32(1), controller.calls.Load())
-		statusResponse := httptest.NewRecorder()
-		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-		var status LocalEmbeddingsStatus
-		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &status))
-		assert.Equal(int64(5), status.DoneBytes)
-		close(controller.release)
-		synctest.Wait()
-		statusResponse = httptest.NewRecorder()
-		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &status))
-		assert.Equal("build interrupted", status.Error)
-		finished := time.Now().Add(time.Minute)
-		srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
-			return vector.EmbeddingStatus{
-				Generation: vector.EmbeddingGenerationStatus{ID: 1}, ActiveGeneration: &vector.EmbeddingGenerationStatus{ID: 1}, Current: 1,
-				Diagnostics: &vector.EmbeddingDiagnostics{StartedAt: finished.Add(-time.Second), FinishedAt: &finished},
-			}, nil
-		}, 10)
-		statusResponse = httptest.NewRecorder()
-		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-		var recovered LocalEmbeddingsStatus
-		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &recovered))
-		assert.Empty(recovered.Error, "a later successful build resolves the setup build error")
-		controller.release = make(chan struct{})
-		retry := httptest.NewRecorder()
-		retryRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
-		retryRequest.Header.Set("Content-Type", "application/json")
-		srv.Router().ServeHTTP(retry, retryRequest)
-		require.Equal(http.StatusAccepted, retry.Code)
-		secondCtx := <-controller.started
-		assert.True(controller.builtin.Load())
-		require.NoError(srv.Shutdown(t.Context()))
-		require.ErrorIs(secondCtx.Err(), context.Canceled)
-		assert.Equal(int32(2), controller.calls.Load())
-	})
+func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
+	for _, behavior := range []string{"request lifetime", "admission", "later successful build", "retry after failure", "shutdown join"} {
+		t.Run(behavior, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+				defer func() { _ = srv.Shutdown(context.Background()) }()
+				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
+				srv.SetLocalEmbeddings(controller)
+				post := func(ctx context.Context, body string) *httptest.ResponseRecorder {
+					t.Helper()
+					request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(body)).WithContext(ctx)
+					request.Header.Set("Content-Type", "application/json")
+					response := httptest.NewRecorder()
+					srv.Router().ServeHTTP(response, request)
+					return response
+				}
+				status := func() LocalEmbeddingsStatus {
+					t.Helper()
+					response := httptest.NewRecorder()
+					srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+					var value LocalEmbeddingsStatus
+					require.NoError(json.Unmarshal(response.Body.Bytes(), &value))
+					return value
+				}
+				requestCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				require.Equal(http.StatusAccepted, post(requestCtx, `{"use_builtin":false}`).Code)
+				jobCtx := <-controller.started
+				synctest.Wait()
+				switch behavior {
+				case "request lifetime":
+					cancel()
+					require.NoError(jobCtx.Err())
+					assert.False(controller.builtin.Load())
+					assert.Equal(int64(5), status().DoneBytes)
+				case "admission":
+					require.Equal(http.StatusAccepted, post(t.Context(), `{}`).Code)
+					assert.Equal(int32(1), controller.calls.Load())
+					conflict := post(t.Context(), `{"use_builtin":true}`)
+					require.Equal(http.StatusConflict, conflict.Code)
+					assert.Contains(conflict.Body.String(), "different provider choice")
+					assert.Equal(int32(1), controller.calls.Load())
+				case "later successful build":
+					close(controller.release)
+					synctest.Wait()
+					assert.Equal("build interrupted", status().Error)
+					finished := time.Now().Add(time.Minute)
+					srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
+						return vector.EmbeddingStatus{
+							Generation: vector.EmbeddingGenerationStatus{ID: 1}, ActiveGeneration: &vector.EmbeddingGenerationStatus{ID: 1}, Current: 1,
+							Diagnostics: &vector.EmbeddingDiagnostics{StartedAt: finished.Add(-time.Second), FinishedAt: &finished},
+						}, nil
+					}, 10)
+					assert.Empty(status().Error, "a later successful build resolves the setup build error")
+				case "retry after failure":
+					close(controller.release)
+					synctest.Wait()
+					controller.release = make(chan struct{})
+					require.Equal(http.StatusAccepted, post(t.Context(), `{"use_builtin":true}`).Code)
+					<-controller.started
+					assert.True(controller.builtin.Load())
+					assert.Equal(int32(2), controller.calls.Load())
+				case "shutdown join":
+					require.NoError(srv.Shutdown(t.Context()))
+					require.ErrorIs(jobCtx.Err(), context.Canceled)
+					assert.Equal(int32(1), controller.calls.Load())
+				}
+			})
+		})
+	}
 }

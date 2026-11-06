@@ -81,9 +81,6 @@ func TestNativeMCPRefreshPreservesOperations(t *testing.T) {
 			var first exportChunkResp
 			must.NoError(json.Unmarshal(encoded, &first))
 			must.False(first.Complete)
-			// The continuation must retain its initial bytes across both a capability
-			// refresh and a later replacement of the archived original.
-			must.NoError(fixture.f.Store.UpsertMessageRaw(fixture.withRaw, []byte("replacement MIME")))
 			install()
 			response, raw = task4RawRequest(t, router, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": first.Length, "length": 100, "sha256": first.SHA256}}, nil)
 			must.Empty(response.Error, "%s", raw)

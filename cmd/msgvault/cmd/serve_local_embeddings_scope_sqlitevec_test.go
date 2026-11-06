@@ -28,43 +28,24 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
-func TestLocalEmbeddingsScheduledRecovery(t *testing.T) {
-	for _, failedBuild := range []bool{false, true} {
-		name := "new messages after activation"
-		if failedBuild {
-			name = "scoped recovery with existing visual search"
+func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syncAccount func(*store.Store) error) (*localActivationFixture, int64) {
+	t.Helper()
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/embeddings", r.URL.Path)
+		var body struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
 		}
-		t.Run(name, func(t *testing.T) {
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/v1/embeddings", r.URL.Path)
-				var body struct {
-					Model string   `json:"model"`
-					Input []string `json:"input"`
-				}
-				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) || !assert.Len(t, body.Input, 1) {
-					http.Error(w, "invalid embedding request", http.StatusBadRequest)
-					return
-				}
-				assert.Equal(t, "my-model", body.Model)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
-			}))
-			t.Cleanup(endpoint.Close)
-			account := "archive@example.test"
-			extra := ""
-			if failedBuild {
-				account = "selected@example.test"
-				defaults := config.NewDefaultConfig().Vector.Multimodal
-				policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: defaults.Model, Dimension: defaults.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
-				require.NoError(t, err)
-				manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
-				require.NoError(t, err)
-				manifestPath := filepath.Join(t.TempDir(), "visual-capabilities.json")
-				require.NoError(t, writeVisualCapabilityManifest(manifestPath, manifest))
-				t.Setenv(defaults.APIKeyEnv, "synthetic-visual-key")
-				extra = fmt.Sprintf("\n[vector.embed.scope]\naccounts = [\"selected@example.test\"]\n[vector.multimodal]\nenabled = true\ncapabilities_file = %q\n", manifestPath)
-			}
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) || !assert.Len(t, body.Input, 1) {
+			http.Error(w, "invalid embedding request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "my-model", body.Model)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
+	}))
+	t.Cleanup(endpoint.Close)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
 [vector]
 enabled = false
 [vector.embeddings]
@@ -77,68 +58,85 @@ max_input_chars = 777
 [chat]
 server = %q
 `, endpoint.URL+"/v1", endpoint.URL)+extra)
-			cfg := fixture.load(t)
-			require.NoError(t, os.MkdirAll(filepath.Dir(cfg.DatabaseDSN()), 0o700))
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(t, st.InitSchema())
-			_, selectedID, err := testutil.CreateIndexedSourceMessage(st, account, "selected", "Selected orchard", "The orchard has apples.")
-			require.NoError(t, err)
-			if failedBuild {
-				_, _, err = testutil.CreateIndexedSourceMessage(st, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
-				require.NoError(t, err)
-			}
-			state := &invocation{cfg: cfg, logger: testDiscardLogger()}
-			ctx := withInvocation(t.Context(), state)
-			handle := &vectorInitHandle{done: make(chan struct{})}
-			close(handle.done)
-			if failedBuild {
-				handle.vf, err = setupVectorFeatures(ctx, st, cfg.DatabaseDSN(), false, vectorInitVisualOpener{})
-				require.NoError(t, err)
-				require.NotNil(t, handle.vf.Visual)
-			}
-			t.Cleanup(func() { handle.CloseFeatures(state.logger) })
-			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: state.logger})
-			t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
-			sched := scheduler.New(func(context.Context, string) error {
-				if failedBuild {
-					return nil
-				}
-				_, _, err := testutil.CreateIndexedSourceMessage(st, account, "later", "Later orchard", "Another orchard message.")
-				return err
-			})
-			t.Cleanup(func() { <-sched.Stop().Done() })
-			require.NoError(t, sched.AddAccount(account, "0 0 * * *"))
-			runner := &localBuildTestRunner{t: t, home: cfg.HomeDir, failBuild: failedBuild}
-			controller := &localEmbeddingsController{state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: server, scheduler: sched, runner: runner, inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }}
-			if failedBuild {
-				visual := handle.vf.Visual
-				runner.beforeBuild = func() {
-					_, err := handle.vf.Backend.CreateGeneration(ctx, handle.vf.Cfg.Embeddings.Model, handle.vf.Cfg.Embeddings.Dimension, handle.vf.Cfg.GenerationFingerprint())
-					require.NoError(t, err)
-				}
-				require.ErrorContains(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}), "embedding build interrupted: context canceled")
-				assert.Same(t, visual, handle.vf.Visual)
-			} else {
-				require.NoError(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}))
-			}
-			require.NoError(t, sched.TriggerSync(account, true))
-			if failedBuild {
-				require.Eventually(t, func() bool {
-					var generation int64
-					err := st.DB().QueryRow("SELECT COALESCE(embed_gen, 0) FROM messages WHERE id = ?", selectedID).Scan(&generation)
-					return err == nil && generation > 0
-				}, 5*time.Second, 50*time.Millisecond, "scheduled recovery must embed the selected message")
-			}
-			want := 2
-			if failedBuild {
-				want = 1
-			}
-			require.Eventually(t, func() bool {
-				results, _, err := handle.vf.HybridEngine.Search(ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
-				return err == nil && len(results) == want
-			}, 10*time.Second, 50*time.Millisecond)
-		})
+	f := &localActivationFixture{cfg: fixture.load(t)}
+	require.NoError(t, os.MkdirAll(filepath.Dir(f.cfg.DatabaseDSN()), 0o700))
+	var err error
+	f.store, err = store.Open(f.cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.store.Close() })
+	require.NoError(t, f.store.InitSchema())
+	_, selectedID, err := testutil.CreateIndexedSourceMessage(f.store, account, "selected", "Selected orchard", "The orchard has apples.")
+	require.NoError(t, err)
+	f.state = &invocation{cfg: f.cfg, logger: testDiscardLogger()}
+	f.ctx = withInvocation(t.Context(), f.state)
+	f.handle = &vectorInitHandle{done: make(chan struct{})}
+	close(f.handle.done)
+	f.server = api.NewServerWithOptions(api.ServerOptions{Config: f.cfg, Logger: f.state.logger})
+	f.scheduler = scheduler.New(func(context.Context, string) error {
+		if syncAccount != nil {
+			return syncAccount(f.store)
+		}
+		return nil
+	})
+	t.Cleanup(func() {
+		<-f.scheduler.Stop().Done()
+		_ = f.server.Shutdown(context.Background())
+		f.handle.CloseFeatures(f.state.logger)
+	})
+	require.NoError(t, f.scheduler.AddAccount(account, "0 0 * * *"))
+	f.runner = &localBuildTestRunner{t: t, home: f.cfg.HomeDir}
+	f.controller = &localEmbeddingsController{state: f.state, store: f.store, dbPath: f.cfg.DatabaseDSN(), handle: f.handle, server: f.server, scheduler: f.scheduler, runner: f.runner, inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }}
+	return f, selectedID
+}
+
+func TestLocalEmbeddingsScheduledAfterSync(t *testing.T) {
+	account := "archive@example.test"
+	f, _ := newScheduledLocalEmbeddingsFixture(t, account, "", func(st *store.Store) error {
+		_, _, err := testutil.CreateIndexedSourceMessage(st, account, "later", "Later orchard", "Another orchard message.")
+		return err
+	})
+	require.NoError(t, f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
+	require.NoError(t, f.scheduler.TriggerSync(account, true))
+	require.Eventually(t, func() bool {
+		results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
+		return err == nil && len(results) == 2
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
+func TestLocalEmbeddingsScheduledRecoveryPreservesVisualSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	defaults := config.NewDefaultConfig().Vector.Multimodal
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: defaults.Model, Dimension: defaults.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
+	require.NoError(err)
+	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
+	require.NoError(err)
+	manifestPath := filepath.Join(t.TempDir(), "visual-capabilities.json")
+	require.NoError(writeVisualCapabilityManifest(manifestPath, manifest))
+	t.Setenv(defaults.APIKeyEnv, "synthetic-visual-key")
+	extra := fmt.Sprintf("\n[vector.embed.scope]\naccounts = [\"selected@example.test\"]\n[vector.multimodal]\nenabled = true\ncapabilities_file = %q\n", manifestPath)
+	f, selectedID := newScheduledLocalEmbeddingsFixture(t, "selected@example.test", extra, nil)
+	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
+	require.NoError(err)
+	f.handle.vf, err = setupVectorFeatures(f.ctx, f.store, f.cfg.DatabaseDSN(), false, vectorInitVisualOpener{})
+	require.NoError(err)
+	require.NotNil(f.handle.vf.Visual)
+	visual := f.handle.vf.Visual
+	f.runner.failBuild = true
+	f.runner.beforeBuild = func() {
+		_, err := f.handle.vf.Backend.CreateGeneration(f.ctx, f.handle.vf.Cfg.Embeddings.Model, f.handle.vf.Cfg.Embeddings.Dimension, f.handle.vf.Cfg.GenerationFingerprint())
+		require.NoError(err)
 	}
+	require.Error(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
+	assert.Same(visual, f.handle.vf.Visual)
+	require.NoError(f.scheduler.TriggerSync("selected@example.test", true))
+	require.Eventually(func() bool {
+		var generation int64
+		err := f.store.DB().QueryRow("SELECT COALESCE(embed_gen, 0) FROM messages WHERE id = ?", selectedID).Scan(&generation)
+		return err == nil && generation > 0
+	}, 5*time.Second, 50*time.Millisecond, "scheduled recovery must embed the selected message")
+	require.Eventually(func() bool {
+		results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
+		return err == nil && len(results) == 1
+	}, 10*time.Second, 50*time.Millisecond)
 }

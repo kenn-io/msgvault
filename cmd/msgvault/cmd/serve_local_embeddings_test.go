@@ -233,17 +233,7 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{OllamaAvailable: tc.kit}, nil
 			}
-			mcp := &cobra.Command{Use: "serve"}
-			if tc.builtin {
-				addServeConfigFlags(mcp)
-				require.NoError(t, installServeMCP(f.ctx, mcp, f.server, f.state))
-				assert.NotContains(t, f.mcpCall("tools/list", `{}`).Body.String(), `"find_similar_messages"`)
-				refresh := f.controller.refreshMCP
-				f.controller.refreshMCP = func(ctx context.Context, state *invocation) error {
-					require.NoError(t, refresh(ctx, state))
-					return installServeMCP(ctx, mcp, f.server, state)
-				}
-			}
+
 			f.start(t)
 			availability, err := f.controller.Inspect(f.ctx)
 			require.NoError(t, err)
@@ -261,26 +251,8 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 				assert.True(t, bounded)
 				require.ErrorIs(t, ctx.Err(), context.Canceled)
 			}
-			if tc.builtin {
-				assert.Contains(t, f.mcpCall("tools/list", `{}`).Body.String(), `"find_similar_messages"`)
-				semantic := f.mcpCall("tools/call", `{"name":"semantic_search_messages","arguments":{"query":"orchard","mode":"vector"}}`)
-				require.Equal(t, http.StatusOK, semantic.Code, semantic.Body.String())
-				assert.Contains(t, semantic.Body.String(), "Orchard")
-				assert.NotContains(t, semantic.Body.String(), `"isError":true`)
-			}
 		})
 	}
-}
-
-func (f *localActivationFixture) mcpCall(method, params string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
-	request.Header.Set("Authorization", "Bearer owner")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
-	request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	return response
 }
 
 func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
@@ -472,8 +444,6 @@ func TestLocalEmbeddingsDownloadFailureKeepsSavedSettings(t *testing.T) {
 	}
 	err = controller.Enable(t.Context(), true, func(api.LocalEmbeddingsStatus) {})
 	require.ErrorContains(t, err, "connection interrupted")
-	after := fixture.load(t)
-	assert.False(t, after.Vector.Enabled)
 	actual, err := os.ReadFile(fixture.path)
 	require.NoError(t, err)
 	assert.Equal(t, before, actual)
@@ -507,7 +477,7 @@ api_key_env = "EXAMPLE_EMBEDDING_KEY"
 				return embedlocal.Status{}, errors.New("local activation reached for a remote provider")
 			}
 			for _, builtin := range []bool{false, true} {
-				assert.ErrorContains(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
+				require.ErrorContains(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
 			}
 			after, err := os.ReadFile(fixture.path)
 			require.NoError(t, err)

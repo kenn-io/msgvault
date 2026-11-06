@@ -371,7 +371,7 @@ type Stats struct {
 // The original backend retains ownership of the shared storage handle.
 type BuildScopeBackend interface {
 	Backend
-	WithBuildScope(BuildScope) Backend
+	WithBuildScope(scope BuildScope) Backend
 }
 
 // Backend is the minimum contract a vector store must implement.

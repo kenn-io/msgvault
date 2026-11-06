@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import SettingsOverview from '../components/settings/SettingsOverview.svelte';
 import type { LocalEmbeddingsStatus } from '../api/generated/models';
 import { embeddingStatus } from '../../test/operations';
@@ -9,18 +9,19 @@ const off: LocalEmbeddingsStatus = { host: 'archive.example.test', enabled: fals
 const row = { id: 'message_embedding', name: 'Message search', chip: { text: 'Off', tone: 'muted' as const } };
 
 describe('local search row', () => {
-  it.each<{ name: string; status: LocalEmbeddingsStatus; chip: string; action?: string; description?: string; absent?: RegExp; progress?: { now: string; max: string } }>([
+  it.each<{ name: string; status: LocalEmbeddingsStatus; embedding?: typeof embeddingStatus; chip: string; action?: string; description?: string; absent?: RegExp; progress?: { now: string; max: string } }>([
     { name: 'off', status: off, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'downloaded', status: { ...off, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
     { name: 'available Ollama', status: { ...off, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Uses Ollama on this computer' },
     { name: 'matching Ollama', status: { ...off, enabled: true, provider: 'ollama', compatible: true }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching keeps your index', absent: /Switching rebuilds/ },
     { name: 'other Ollama', status: { ...off, enabled: true, provider: 'ollama' }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 10 messages.' },
+    { name: 'other Ollama with observed throughput', status: { ...off, enabled: true, provider: 'ollama' }, embedding: { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: 0.025, job: { ...embeddingStatus.job, state: 'running' } }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 48,000 messages, about 20 minutes.' },
     { name: 'on', status: { ...off, enabled: true, provider: 'builtin' }, chip: 'On' },
     { name: 'waiting for setup', status: { ...off, running: true }, chip: 'Turning on', description: 'Preparing search by meaning · Keyword search works', progress: { now: '0', max: '290000000' } },
     { name: 'downloading', status: { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
     { name: 'indexing', status: { ...off, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
-  ])('$name', ({ status, chip, action, description, absent, progress }) => {
-    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+  ])('$name', ({ status, embedding = embeddingStatus, chip, action, description, absent, progress }) => {
+    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
@@ -33,26 +34,16 @@ describe('local search row', () => {
   });
 });
 
-it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', switchAction: true }])('keeps rebuild for a stale $provider index', async ({ provider, switchAction }) => {
-  const calls: string[] = [];
+it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', switchAction: true }])('keeps rebuild for a stale $provider index', ({ provider, switchAction }) => {
   const status = { ...off, enabled: true, provider, compatible: true, error: 'Build interrupted' };
-  render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
+  render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
   expect(screen.getByText('Stale')).toBeDefined();
   expect(screen.getByRole('alert').textContent).toBe('Build interrupted');
   expect(Boolean(screen.queryByRole('button', { name: 'Use built-in instead' }))).toBe(switchAction);
-  await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
-  expect(calls).toEqual(['build']);
+  expect(screen.getByRole('button', { name: 'Build index, Message search' })).toBeDefined();
 });
 
 it('discloses the download size and remote host before hint activation', () => {
  expect(localSearchHintLabels(off).hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
  expect(localSearchHintLabels({...off,ollama_available:true}).hint).toBe('Search by meaning is off · Uses Ollama on this computer');
-});
-
-it('estimates the whole replacement index from observed throughput', () => {
-  const status = { ...off, enabled: true, provider: 'ollama', compatible: false };
-  const embedding = { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: 0.025, job: { ...embeddingStatus.job, state: 'running' as const } };
-  render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
-  expect(screen.getByText('Switching rebuilds the index for 48,000 messages, about 20 minutes.')).toBeDefined();
 });

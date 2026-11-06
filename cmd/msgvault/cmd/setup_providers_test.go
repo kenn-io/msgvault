@@ -2017,11 +2017,19 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 }
 
 func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *testing.T) {
-	for _, fields := range []string{"", "cron = \"\"", "run_after_sync = false"} {
-		t.Run(fields, func(t *testing.T) {
+	for _, tc := range []struct {
+		fields           string
+		wantCron         string
+		wantRunAfterSync bool
+	}{
+		{fields: "", wantCron: setupEmbedCron, wantRunAfterSync: true},
+		{fields: "cron = \"\"", wantCron: "", wantRunAfterSync: true},
+		{fields: "run_after_sync = false", wantCron: setupEmbedCron, wantRunAfterSync: false},
+	} {
+		t.Run(tc.fields, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+fields)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+tc.fields)
 			cfg := fixture.load(t)
 			var keys toml.MetaData
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
@@ -2036,12 +2044,8 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			assert.True(next.Vector.Enabled)
 			assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
 			assert.Equal(cfg.Vector.Backend, next.Vector.Backend)
-			if fields == "cron = \"\"" {
-				assert.Empty(next.Vector.Embed.Schedule.Cron)
-			} else {
-				assert.Equal(setupEmbedCron, next.Vector.Embed.Schedule.Cron)
-			}
-			assert.Equal(fields != "run_after_sync = false", next.Vector.Embed.Schedule.RunAfterSync)
+			assert.Equal(tc.wantCron, next.Vector.Embed.Schedule.Cron)
+			assert.Equal(tc.wantRunAfterSync, next.Vector.Embed.Schedule.RunAfterSync)
 		})
 	}
 }
