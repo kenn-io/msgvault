@@ -642,7 +642,7 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "one curated, non-sensitive attribute document per person uses the generation for search by meaning"
+		lane.Reason = "embeds one curated, non-sensitive attribute document per person alongside messages"
 		lane.edits = []config.TableEdit{{
 			Path: []string{tomlTableVector, "people"},
 			Values: map[string]any{

@@ -906,7 +906,7 @@ func TestSetupStatusConsentGatedLanesRequireActiveConsent(t *testing.T) {
 				}
 			}
 			assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
-			assert.Contains(findLane(t, report, lanePersonSearch).Reason, "uses the generation for search by meaning")
+			assert.Contains(findLane(t, report, lanePersonSearch).Reason, "embeds one curated document per person alongside messages")
 			assert.Contains(findLane(t, report, laneDocumentVectors).Reason, "sent to the provider for search by meaning")
 		})
 	}
@@ -982,7 +982,7 @@ func TestSetupProvidersVoyageWritesRecommendedDefaults(t *testing.T) {
 	assert.Contains(output, "multimodal probe --seeds <private-seed-dir> --out "+setupVoyageManifestPath(loaded))
 	assert.Contains(output, "msgvault embeddings build --full-rebuild --yes")
 	assert.Contains(output, "person provider consent --semantic-embeddings --yes")
-	assert.Contains(output, "one curated, non-sensitive attribute document per person uses the generation for search by meaning")
+	assert.Contains(output, "embeds one curated, non-sensitive attribute document per person alongside messages")
 	assert.NotContains(output, setupProvidersTestKey)
 
 	// Re-running leaves a configured archive alone.

@@ -425,7 +425,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
-		lane.Reason = "one curated document per person uses the generation for search by meaning"
+		lane.Reason = "embeds one curated document per person alongside messages"
 		if text := textSearchLane(cfg, env); text.State != laneStateOn {
 			lane.State = laneStatePending
 			lane.Reason += "; search by meaning is not ready: " + text.Reason
