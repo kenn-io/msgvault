@@ -704,7 +704,7 @@ LEFT JOIN (
 // sqlVMessages: messages with sender resolved via dual-path
 // (message_recipients for email, messages.sender_id for chat)
 // and labels as sorted JSON array.
-var sqlVMessages = `
+const sqlVMessages = `
 CREATE OR REPLACE VIEW v_messages AS
 SELECT
     m.id,
@@ -729,7 +729,7 @@ SELECT
     ) AS labels,
     m.deleted_from_source_at
 FROM messages m
-` + fmt.Sprintf(sqlMessageSenderJoins, "", "") + `
+` + sqlMessageSenderJoins + `
 LEFT JOIN (
     SELECT
         ml.message_id,
@@ -826,8 +826,10 @@ GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 `
 
 // sqlMessageSenderJoins resolves a message's From recipient before its direct
-// sender. The optional predicates bound each input to a selected page.
-const sqlMessageSenderJoins = `LEFT JOIN (
+// sender. Separate fragments let page queries bound each input before aggregation.
+const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
+
+const sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
         FIRST(p.email_address) AS from_email,
@@ -838,7 +840,9 @@ const sqlMessageSenderJoins = `LEFT JOIN (
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id
-    WHERE mr.recipient_type = 'from'%s
+    WHERE mr.recipient_type = 'from'`
+
+const sqlMessageSenderJoinsMiddle = `
     GROUP BY mr.message_id
 ) ms ON ms.message_id = m.id
 LEFT JOIN (
@@ -850,7 +854,9 @@ LEFT JOIN (
         COALESCE(p.phone_number, '') AS from_phone
     FROM messages msg
     JOIN participants p ON p.id = msg.sender_id
-    WHERE msg.sender_id IS NOT NULL%s
+    WHERE msg.sender_id IS NOT NULL`
+
+const sqlMessageSenderJoinsEnd = `
 ) ds ON ds.message_id = m.id AND ms.message_id IS NULL`
 
 // sqlPageSenderLabels reuses v_messages' sender relation with bounded inputs.
@@ -860,8 +866,7 @@ func sqlPageSenderLabels(messageIDs string) string {
 		COALESCE(NULLIF(TRIM(COALESCE(ms.from_name, ds.from_name)), ''),
 			NULLIF(COALESCE(ms.from_phone, ds.from_phone), ''), ms.from_email, ds.from_email, '') AS sender_label
 	FROM messages m
-	` + fmt.Sprintf(sqlMessageSenderJoins,
-		" AND mr.message_id IN ("+messageIDs+")",
-		" AND msg.id IN ("+messageIDs+")") + `
+	` + sqlMessageSenderJoinsStart + " AND mr.message_id IN (" + messageIDs + ")" +
+		sqlMessageSenderJoinsMiddle + " AND msg.id IN (" + messageIDs + ")" + sqlMessageSenderJoinsEnd + `
 	WHERE m.id IN (` + messageIDs + `)`
 }
