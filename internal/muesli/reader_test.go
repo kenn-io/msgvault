@@ -87,6 +87,56 @@ func TestReaderReadsCurrentSchema(t *testing.T) {
 	assert.InDelta(beforeUpdated, afterUpdated, 0)
 }
 
+func TestReaderMeetingPlatformAcrossSchemas(t *testing.T) {
+	for _, tc := range []struct {
+		name, schema string
+		column       bool
+		value        any
+		want         string
+	}{
+		{name: "legacy missing", schema: legacySchemaDDL},
+		{name: "current missing", schema: currentSchemaDDL},
+		{name: "null", schema: currentSchemaDDL, column: true},
+		{name: "empty", schema: currentSchemaDDL, column: true, value: ""},
+		{name: "known", schema: currentSchemaDDL, column: true, value: "googleMeet", want: "googleMeet"},
+		{name: "unknown", schema: currentSchemaDDL, column: true, value: "unknown", want: "unknown"},
+		{name: "future exact", schema: currentSchemaDDL, column: true, value: " FutureCall.会議 ", want: " FutureCall.会議 "},
+		{name: "whitespace evidence", schema: currentSchemaDDL, column: true, value: "  ", want: "  "},
+		{name: "Unicode scalars", schema: currentSchemaDDL, column: true, value: "e\u0301😀", want: "e\u0301😀"},
+		{name: "local controls", schema: currentSchemaDDL, column: true, value: "\x00Future\x1f\u009fCall\x00", want: "\x00Future\x1f\u009fCall\x00"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "muesli.db")
+			ddl := tc.schema
+			if tc.column {
+				ddl += `ALTER TABLE meetings ADD COLUMN meeting_platform TEXT;`
+			}
+			db := newFixtureDB(t, path, ddl)
+			values := map[string]any{
+				"title": "Synthetic meeting", "start_time": "2026-09-01T14:00:00Z",
+				"created_at": "2026-09-01 14:00:03", "raw_transcript": "Synthetic transcript",
+			}
+			if tc.column {
+				values["meeting_platform"] = tc.value
+			}
+			id := insertRow(t, db, "meetings", values)
+			reader, err := Open(t.Context(), path)
+			require.NoError(err)
+			t.Cleanup(func() { _ = reader.Close() })
+			all, err := reader.ListMeetings(t.Context())
+			require.NoError(err)
+			require.Len(all, 1)
+			assert.Equal(tc.want, all[0].MeetingPlatform)
+			one, err := reader.listMeetings(t.Context(), id)
+			require.NoError(err)
+			require.Len(one, 1)
+			assert.Equal(tc.want, one[0].MeetingPlatform, "completion-hook reads retain the same evidence")
+		})
+	}
+}
+
 func TestReaderReadsOneMeetingByID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -115,6 +115,11 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		return err
 	}
 	r := RemoteRequest{Action: "upsert", Source: meetingimport.Source{Identifier: p.opts.Identifier, AccountEmail: p.opts.AccountEmail}, Meeting: NewRemoteMeeting(meeting), Full: p.opts.Full}
+	if !validRemoteMeetingPlatform(r.Meeting.Record.MeetingPlatform) {
+		// A local archive may retain raw values outside the remote field contract.
+		// Omit only that optional value so the meeting's other changes still sync.
+		r.Meeting.Record.MeetingPlatform = ""
+	}
 	r, err := r.Normalize()
 	if err != nil {
 		return err

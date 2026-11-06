@@ -57,6 +57,7 @@ type RemoteRecord struct {
 	DurationSeconds  float64 `json:"duration_seconds,omitzero"`
 	Status           string  `json:"status,omitempty"`
 	Source           string  `json:"source,omitempty"`
+	MeetingPlatform  string  `json:"meeting_platform,omitempty" maxLength:"128"`
 	RawTranscript    string  `json:"raw_transcript,omitempty"`
 	FormattedNotes   string  `json:"formatted_notes,omitempty"`
 	ManualNotes      string  `json:"manual_notes,omitempty"`
@@ -100,7 +101,8 @@ func NewRemoteMeeting(m Meeting) *RemoteMeeting {
 	r := &RemoteMeeting{ContactsState: m.ContactsState, Record: RemoteRecord{
 		ID: m.ID, Title: m.Title, StartTime: m.StartTime, EndTime: m.EndTime, CreatedAt: created,
 		DurationSeconds: m.DurationSeconds, Status: m.Status, Source: m.Source,
-		RawTranscript: m.RawTranscript, FormattedNotes: m.FormattedNotes, ManualNotes: m.ManualNotes,
+		MeetingPlatform: m.MeetingPlatform,
+		RawTranscript:   m.RawTranscript, FormattedNotes: m.FormattedNotes, ManualNotes: m.ManualNotes,
 		WordCount: m.WordCount, TemplateName: m.TemplateName, TemplateKind: m.TemplateKind,
 		CalendarEventID: m.CalendarEventID, CalendarSource: m.CalendarSource, CalendarSeriesID: m.CalendarSeriesID,
 		Folder: m.Folder, FollowUpToID: m.FollowUpToID,
@@ -120,7 +122,8 @@ func (r RemoteMeeting) toMeeting() Meeting {
 	v := r.Record
 	m := Meeting{ID: v.ID, Title: v.Title, StartTime: v.StartTime, EndTime: v.EndTime, CreatedAt: v.CreatedAt,
 		DurationSeconds: v.DurationSeconds, Status: v.Status, Source: v.Source, RawTranscript: v.RawTranscript,
-		FormattedNotes: v.FormattedNotes, ManualNotes: v.ManualNotes, WordCount: v.WordCount, TemplateName: v.TemplateName, TemplateKind: v.TemplateKind,
+		MeetingPlatform: v.MeetingPlatform,
+		FormattedNotes:  v.FormattedNotes, ManualNotes: v.ManualNotes, WordCount: v.WordCount, TemplateName: v.TemplateName, TemplateKind: v.TemplateKind,
 		CalendarEventID: v.CalendarEventID, CalendarSource: v.CalendarSource, CalendarSeriesID: v.CalendarSeriesID, Folder: v.Folder, FollowUpToID: v.FollowUpToID, ContactsState: r.ContactsState}
 	for _, p := range r.Participants {
 		m.Participants = append(m.Participants, Participant{ref: p.Ref, Name: p.Name, Email: p.Email, Source: p.Source,
@@ -158,6 +161,12 @@ func DecodeRemoteRequest(reader io.Reader, limit int64) (RemoteRequest, error) {
 		return RemoteRequest{}, ErrRemoteMalformed
 	}
 	return r.Normalize()
+}
+
+func validRemoteMeetingPlatform(value string) bool {
+	return utf8.ValidString(value) &&
+		utf8.RuneCountInString(value) <= 128 &&
+		strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
 func (r RemoteRequest) Normalize() (RemoteRequest, error) {
@@ -218,12 +227,15 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 		limit        int
 	}{
 		{"title", v.Title, 4096}, {"start_time", v.StartTime, 128}, {"end_time", v.EndTime, 128}, {"created_at", v.CreatedAt, 128},
-		{"source", v.Source, 128}, {"template_name", v.TemplateName, 4096}, {"template_kind", v.TemplateKind, 128},
+		{"source", v.Source, 128}, {"meeting_platform", v.MeetingPlatform, 128}, {"template_name", v.TemplateName, 4096}, {"template_kind", v.TemplateKind, 128},
 		{"calendar_event_id", v.CalendarEventID, 4096}, {"calendar_source", v.CalendarSource, 128}, {"calendar_series_id", v.CalendarSeriesID, 4096}, {"folder", v.Folder, 4096},
 	} {
 		if !utf8.ValidString(value.value) || utf8.RuneCountInString(value.value) > value.limit {
 			return r, remoteInvalid("meeting.record."+value.field, "exceeds its text limit")
 		}
+	}
+	if !validRemoteMeetingPlatform(v.MeetingPlatform) {
+		return r, remoteInvalid("meeting.record.meeting_platform", "must not contain control characters")
 	}
 	switch m.ContactsState {
 	case ContactsComplete, ContactsPartial, ContactsUnavailable, ContactsOff:
