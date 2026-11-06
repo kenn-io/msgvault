@@ -206,18 +206,18 @@ type CLIHybridSearchRequest struct {
 }
 
 type CLIHybridSearch struct {
-	Mode                string
-	Results             []CLIHybridSearchResult
-	Generation          CLIHybridGeneration
-	TookMS              int64
-	Timings             CLIHybridSearchTimings
-	PoolSaturated       bool
-	Accelerator         string
-	ReturnedCount       int
-	ScopeLabel          string
-	ScopeSourceCount    int
-	HasMore             bool
-	RankingLimitReached int
+	Results               []CLIHybridSearchResult
+	Generation            CLIHybridGeneration
+	TookMS                int64
+	Timings               CLIHybridSearchTimings
+	PoolSaturated         bool
+	Accelerator           string
+	ReturnedCount         int
+	ScopeLabel            string
+	ScopeSourceCount      int
+	HasMore               bool
+	RankingLimitReached   int
+	CandidateLimitReached int
 }
 
 type CLIHybridSearchTimings struct {

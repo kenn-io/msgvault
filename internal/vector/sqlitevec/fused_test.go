@@ -91,6 +91,7 @@ func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 	assert.True(t, metadata.PoolSaturated)
+	assert.False(t, metadata.CandidatePoolOmitted, "a work ceiling alone does not prove a K limit")
 }
 
 func TestFusedSearchReportsExactRetrievalPaths(t *testing.T) {
@@ -257,6 +258,7 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 	hits, metadata, err := b.FusedSearch(ctx, req)
 	require.NoError(t, err, "FusedSearch")
 	assert.Truef(t, metadata.PoolSaturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
+	assert.True(t, metadata.CandidatePoolOmitted)
 }
 
 // TestFusedSearch_AnnSaturation_BelowCap is the counter-test for
@@ -1316,4 +1318,82 @@ func TestKitFusionOrderingMissingLegsBoostAndFilters(t *testing.T) {
 	assert.Equal(t, int64(7), hits[0].MessageID)
 	assert.True(t, math.IsNaN(hits[0].VectorScore))
 	assert.False(t, math.IsNaN(hits[0].BM25Score))
+}
+
+func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
+	for _, path := range []string{"cte", "accelerator"} {
+		t.Run(path, func(t *testing.T) {
+			b, ctx := newFusedBackendForTest(t)
+			gen := seedAndEmbed(t, b, map[int64][]float32{1: {1, 0.3, 0, 0}, 2: {1, 0.5, 0, 0}, 3: {1, 0.1, 0, 0}, 4: {1, 0.2, 0, 0}, 5: {1, 0.4, 0, 0}})
+			_, err := b.mainDB.Exec(`DELETE FROM messages_fts`)
+			require.NoError(t, err)
+			for id, rank := range map[int64]int{1: 1, 2: 2, 3: 3, 4: 5, 5: 4} {
+				_, err := b.mainDB.Exec(`INSERT INTO messages_fts(rowid,subject,body) VALUES (?, '', ?)`, id, strings.Repeat("invoice ", 6-rank)+strings.Repeat("filler ", rank))
+				require.NoError(t, err)
+			}
+			if path == "accelerator" {
+				installReadyFlatAccelerator(t, b, gen, 4)
+				b.exactFilterVectorThreshold = 1
+			}
+
+			for _, tc := range []struct {
+				name       string
+				ids        []int64
+				deleted    bool
+				term       string
+				limit      int
+				omitted    bool
+				wantIDs    []int64
+				wantScores []float64
+			}{
+				{"recovered_probes_later_omission", []int64{1, 2, 3, 4, 5}, false, "invoice", 10, true, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"unfiltered_omission", nil, false, "invoice", 10, true, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"complete_union", []int64{1, 2, 3, 4}, false, "invoice", 10, false, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"deleted_omission", []int64{1, 2, 3, 4, 5}, true, "invoice", 10, false, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"page_inside_union", []int64{1, 2, 3, 4, 5}, false, "invoice", 1, false, []int64{1}, []float64{1.0 / 61}},
+				{"empty_lexical_leg", []int64{1, 2, 3, 4, 5}, false, "missing", 10, true, []int64{3, 4}, []float64{1.0 / 61, 1.0 / 62}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assert, require := assert.New(t), require.New(t)
+					_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at=NULL WHERE id=5`)
+					require.NoError(err)
+					if tc.deleted {
+						_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=5`)
+						require.NoError(err)
+					}
+					req := vector.FusedRequest{Generation: gen, FTSTerms: []string{tc.term}, QueryVec: []float32{1, 0, 0, 0}, KPerSignal: 2, Limit: tc.limit, RRFK: 60, Filter: vector.Filter{MessageIDs: tc.ids}}
+					hits, meta, err := b.FusedSearch(ctx, req)
+					require.NoError(err)
+					if path == "accelerator" {
+						assert.Equal(acceleratorKind, meta.Accelerator)
+					}
+					assert.Equal(tc.omitted, meta.CandidatePoolOmitted)
+					assert.True(meta.PoolSaturated)
+					gotIDs := make([]int64, len(hits))
+					for i, hit := range hits {
+						gotIDs[i] = hit.MessageID
+					}
+					require.Equal(tc.wantIDs, gotIDs)
+					for i, hit := range hits {
+						assert.InDelta(tc.wantScores[i], hit.RRFScore, 1e-12)
+						switch hit.MessageID {
+						case 1, 2:
+							assert.True(math.IsNaN(hit.VectorScore))
+							assert.False(math.IsNaN(hit.BM25Score))
+						case 3:
+							assert.True(math.IsNaN(hit.BM25Score))
+							assert.InDelta(0.9, hit.VectorScore, 1e-6)
+						case 4:
+							assert.True(math.IsNaN(hit.BM25Score))
+							assert.InDelta(0.8, hit.VectorScore, 1e-6)
+						}
+					}
+				})
+			}
+			require.NoError(t, b.Delete(ctx, gen, []int64{5}))
+			_, meta, err := b.FusedSearch(ctx, vector.FusedRequest{Generation: gen, FTSTerms: []string{"invoice"}, QueryVec: []float32{1, 0, 0, 0}, KPerSignal: 2, Limit: 10, RRFK: 60})
+			require.NoError(t, err)
+			assert.True(t, meta.CandidatePoolOmitted, "an unembedded lexical match remains omitted")
+		})
+	}
 }

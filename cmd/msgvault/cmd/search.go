@@ -297,7 +297,11 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	}
 	if resp.HasMore {
 		defer func() {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more messages match; use --offset %d for the next page or raise --limit\n", searchOffset+len(resp.Results))
+			advice := fmt.Sprintf("Hint: more messages match; use --offset %d for the next page", searchOffset+len(resp.Results))
+			if info.Kind != HTTPStoreConfiguredRemote || searchLimit < 500 {
+				advice += " or raise --limit"
+			}
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), advice)
 		}()
 	}
 	// JSON mode must stay machine-parseable even with zero results:

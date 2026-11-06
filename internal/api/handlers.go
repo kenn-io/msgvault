@@ -394,19 +394,20 @@ type SearchResult struct {
 // PoolSaturated is always emitted so clients can read "pool not
 // saturated" as a positive signal rather than an absent field.
 type hybridSearchResponse struct {
-	Query               string                  `json:"query"`
-	Mode                string                  `json:"mode"`
-	Returned            int                     `json:"returned"`
-	PoolSaturated       bool                    `json:"pool_saturated"`
-	Accelerator         string                  `json:"accelerator,omitempty"`
-	HasMore             bool                    `json:"has_more"`
-	RankingLimitReached int                     `json:"ranking_limit_reached,omitzero"`
-	Generation          hybridGenerationSummary `json:"generation"`
-	TookMS              int64                   `json:"took_ms"`
-	Timings             hybridSearchTimings     `json:"timings"`
-	ScopeLabel          string                  `json:"scope_label,omitempty"`
-	ScopeSourceCount    int                     `json:"scope_source_count,omitzero"`
-	Results             []hybridSearchItem      `json:"results"`
+	Query                 string                  `json:"query"`
+	Mode                  string                  `json:"mode"`
+	Returned              int                     `json:"returned"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Accelerator           string                  `json:"accelerator,omitempty"`
+	HasMore               bool                    `json:"has_more"`
+	RankingLimitReached   int                     `json:"ranking_limit_reached,omitzero"`
+	CandidateLimitReached int                     `json:"candidate_limit_reached,omitzero"`
+	Generation            hybridGenerationSummary `json:"generation"`
+	TookMS                int64                   `json:"took_ms"`
+	Timings               hybridSearchTimings     `json:"timings"`
+	ScopeLabel            string                  `json:"scope_label,omitempty"`
+	ScopeSourceCount      int                     `json:"scope_source_count,omitzero"`
+	Results               []hybridSearchItem      `json:"results"`
 }
 
 type hybridSearchTimings struct {
@@ -1181,9 +1182,13 @@ func (s *Server) handleHybridSearch(
 	pageStart := min(offset, len(hits))
 	pageEnd := min(pageStart+pageSize, len(hits))
 	rankingLimitReached := 0
+	candidateLimitReached := 0
+	if mode == exploreSearchModeHybrid && meta.CandidatePoolOmitted {
+		candidateLimitReached = vectorCfg.Search.KPerSignal
+	}
 	hasMore := pageEnd < len(hits)
 	if maxPage > 0 && pageEnd >= maxPage {
-		if hasMore {
+		if hasMore || candidateLimitReached > 0 {
 			rankingLimitReached = maxPage
 		}
 		hasMore = false
@@ -1257,15 +1262,16 @@ func (s *Server) handleHybridSearch(
 	hydrationDuration := time.Since(hydrationStarted)
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
-		Query:               q,
-		Mode:                mode,
-		Returned:            len(items),
-		PoolSaturated:       meta.PoolSaturated,
-		Accelerator:         meta.Accelerator,
-		HasMore:             hasMore,
-		RankingLimitReached: rankingLimitReached,
-		ScopeLabel:          scope.displayName(),
-		ScopeSourceCount:    len(scope.sourceIDs()),
+		Query:                 q,
+		Mode:                  mode,
+		Returned:              len(items),
+		PoolSaturated:         meta.PoolSaturated,
+		Accelerator:           meta.Accelerator,
+		HasMore:               hasMore,
+		RankingLimitReached:   rankingLimitReached,
+		CandidateLimitReached: candidateLimitReached,
+		ScopeLabel:            scope.displayName(),
+		ScopeSourceCount:      len(scope.sourceIDs()),
 		Generation: hybridGenerationSummary{
 			ID:          int64(meta.Generation.ID),
 			Model:       meta.Generation.Model,

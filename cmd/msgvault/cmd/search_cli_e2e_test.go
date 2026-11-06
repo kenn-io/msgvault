@@ -32,22 +32,22 @@ import (
 
 // Only the external embedding provider is substituted; the built CLI uses production retrieval and HTTP.
 func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 
 	binary := os.Getenv("MSGVAULT_E2E_BINARY")
 	if binary == "" {
 		t.Skip("set MSGVAULT_E2E_BINARY to the make build binary for end-to-end CLI verification")
 	}
 	binary, err := filepath.Abs(binary)
-	require.NoError(err)
+	requirements.NoError(err)
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
-	require.NoError(err)
+	requirements.NoError(err)
 	conv, err := st.EnsureConversation(source.ID, "synthetic-thread", "Project plan")
-	require.NoError(err)
+	requirements.NoError(err)
 	var ids []int64
 	for i, fixture := range []struct {
 		year     int
@@ -55,25 +55,25 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	}{{2024, "plan.pdf"}, {2026, "plan.pdf"}, {2025, "notes.txt"}} {
 		id := storetest.NewMessage(source.ID, conv).WithSourceMessageID(fmt.Sprintf("synthetic-%d", i)).WithSubject("Project plan").WithSnippet("stored preview").WithSentAt(time.Date(fixture.year, 1, 1, 0, 0, 0, 0, time.UTC)).Create(t, st)
 		body := fmt.Sprintf("Reply %d contextneedle", i)
-		require.NoError(st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-		require.NoError(st.UpsertFTS(id, "Project plan", body, "sender@example.com", "recipient@example.com", ""))
+		requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		requirements.NoError(st.UpsertFTS(id, "Project plan", body, "sender@example.com", "recipient@example.com", ""))
 		_, err = st.DB().Exec(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,?,'application/octet-stream',10,'synthetic')`, id, fixture.filename)
-		require.NoError(err)
+		requirements.NoError(err)
 		ids = append(ids, id)
 	}
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(root, "vectors.db"), MainPath: dbPath, MainDB: st.DB(), Dimension: 4})
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(backend.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(backend.Close()) })
 	vectorCfg := vector.Config{}
 	fingerprint := vectorCfg.GenerationFingerprint()
 	gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, fingerprint)
-	require.NoError(err)
-	require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{
+	requirements.NoError(err)
+	requirements.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{
 		{MessageID: ids[0], Vector: []float32{0.8, 0.6, 0, 0}},
 		{MessageID: ids[1], Vector: []float32{0.6, 0.8, 0, 0}},
 		{MessageID: ids[2], Vector: []float32{1, 0, 0, 0}},
 	}))
-	require.NoError(backend.ActivateGeneration(t.Context(), gen, true))
+	requirements.NoError(backend.ActivateGeneration(t.Context(), gen, true))
 	engine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 10, SubjectBoost: 1})
 	cfg := &config.Config{HomeDir: root}
 	cfg.Data.DataDir = root
@@ -81,10 +81,10 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	server.SetVectorFeatures(engine, nil, backend, vectorCfg)
 	httpServer := httptest.NewServer(server.Router())
 	t.Cleanup(httpServer.Close)
-	t.Cleanup(func() { require.NoError(server.Shutdown(context.Background())) })
+	t.Cleanup(func() { requirements.NoError(server.Shutdown(context.Background())) })
 	home := filepath.Join(root, "cli-home")
-	require.NoError(os.MkdirAll(home, 0700))
-	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0600))
+	requirements.NoError(os.MkdirAll(home, 0700))
+	requirements.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0600))
 	run := func(args ...string) string {
 		t.Helper()
 		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // G702: the opt-in test operator supplies the built CLI; argv is passed without a shell.
@@ -92,78 +92,78 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		var out, stderr bytes.Buffer
 		command.Stdout = &out
 		command.Stderr = &stderr
-		require.NoError(command.Run(), "CLI %v: %s", args, stderr.String())
+		requirements.NoError(command.Run(), "CLI %v: %s", args, stderr.String())
 		return out.String()
 	}
 	decode := func(raw string, value any) {
 		decoder := json.NewDecoder(strings.NewReader(raw))
 		decoder.UseNumber()
-		require.NoError(decoder.Decode(value))
+		requirements.NoError(decoder.Decode(value))
 	}
 	command := exec.CommandContext(t.Context(), binary, "--home", home, "search", "from:@a.example OR from:@b.example", "--json") //nolint:gosec // The binary path is supplied by the test operator.
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 	var jsonOut, warningOut bytes.Buffer
 	command.Stdout, command.Stderr = &jsonOut, &warningOut
-	require.NoError(command.Run())
+	requirements.NoError(command.Run())
 	var warningResults []map[string]any
 	decode(jsonOut.String(), &warningResults)
-	assert.Contains(warningOut.String(), `OR was matched as a literal word`)
+	assertions.Contains(warningOut.String(), `OR was matched as a literal word`)
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
-	assert.Contains(out, "contextneedle")
+	assertions.Contains(out, "contextneedle")
 	out = run("search", "contextneedle | missingterm", "--snippet")
-	assert.Contains(out, "contextneedle")
+	assertions.Contains(out, "contextneedle")
 	// These searches cover filename and metadata propagation across the CLI, daemon and retrieval adapters.
 	out = run("search", "filename:plan.pdf", "--json")
 	var fts []map[string]any
 	decode(out, &fts)
-	require.Len(fts, 2)
+	requirements.Len(fts, 2)
 	for _, result := range fts {
-		assert.NotEqual(json.Number(strconv.FormatInt(ids[2], 10)), result["id"], "exclude the message whose attachment does not match")
+		assertions.NotEqual(json.Number(strconv.FormatInt(ids[2], 10)), result["id"], "exclude the message whose attachment does not match")
 	}
-	assert.Equal([]any{"plan.pdf"}, fts[0]["attachment_names"])
+	assertions.Equal([]any{"plan.pdf"}, fts[0]["attachment_names"])
 	// Isolated command roots don't prove the packaged alias and thread command can read through the daemon.
 	out = run("show", strconv.FormatInt(ids[0], 10), "--body-only")
-	assert.Contains(out, "Reply 0")
+	assertions.Contains(out, "Reply 0")
 	out = run("show-thread", strconv.FormatInt(ids[0], 10))
-	assert.Contains(out, "Reply 0")
+	assertions.Contains(out, "Reply 0")
 	// The full pipeline must preserve relevance unless the user requests another sort.
 	out = run("search", "project plan", "--mode", "vector", "--json")
 	var ranked struct {
 		Results []map[string]any `json:"results"`
 	}
 	decode(out, &ranked)
-	require.Len(ranked.Results, 3)
-	assert.Equal(json.Number(strconv.FormatInt(ids[2], 10)), ranked.Results[0]["id"], "the filename decoy ranks first without filtering")
+	requirements.Len(ranked.Results, 3)
+	assertions.Equal(json.Number(strconv.FormatInt(ids[2], 10)), ranked.Results[0]["id"], "the filename decoy ranks first without filtering")
 	for _, mode := range []string{"vector", "hybrid"} {
 		out = run("search", "project plan filename:plan.pdf", "--mode", mode, "--json")
 		var semantic struct {
 			Results []map[string]any `json:"results"`
 		}
 		decode(out, &semantic)
-		require.Len(semantic.Results, 2)
+		requirements.Len(semantic.Results, 2)
 		for _, result := range semantic.Results {
-			assert.NotEqual(json.Number(strconv.FormatInt(ids[2], 10)), result["id"], "%s excludes the message whose attachment does not match", mode)
+			assertions.NotEqual(json.Number(strconv.FormatInt(ids[2], 10)), result["id"], "%s excludes the message whose attachment does not match", mode)
 		}
-		assert.Equal(json.Number(strconv.FormatInt(conv, 10)), semantic.Results[0]["conversation_id"])
-		assert.Equal([]any{"plan.pdf"}, semantic.Results[0]["attachment_names"])
+		assertions.Equal(json.Number(strconv.FormatInt(conv, 10)), semantic.Results[0]["conversation_id"])
+		assertions.Equal([]any{"plan.pdf"}, semantic.Results[0]["attachment_names"])
 		// This boundary check proves after: reaches retrieval before ranking.
 		out = run("search", "project plan after:2026-01-01", "--mode", mode, "--json")
 		decode(out, &semantic)
-		require.Len(semantic.Results, 1)
-		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
+		requirements.Len(semantic.Results, 1)
+		assertions.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
 	// The built command must put continuation advice after its results.
 	for i := range 51 {
 		address := fmt.Sprintf("sender-%02d@example.com", i)
 		sender, err := st.EnsureParticipant(address, "", "example.com")
-		require.NoError(err)
+		requirements.NoError(err)
 		message := storetest.NewMessage(source.ID, conv).WithSubject("overflowboundary").Build()
 		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := st.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-		require.NoError(st.UpsertFTS(id, "overflowboundary", "", address, "", ""))
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+		requirements.NoError(st.UpsertFTS(id, "overflowboundary", "", address, "", ""))
 	}
 	for _, args := range [][]string{
 		{"search", "overflowboundary"},
@@ -172,9 +172,86 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		combined, err := command.CombinedOutput()
-		require.NoError(err, string(combined))
+		requirements.NoError(err, string(combined))
 		footer := bytes.Index(combined, []byte("Showing 50 results"))
-		require.GreaterOrEqual(footer, 0)
-		assert.Greater(bytes.Index(combined, []byte("Hint:")), footer, "the hint follows the results footer")
+		requirements.GreaterOrEqual(footer, 0)
+		assertions.Greater(bytes.Index(combined, []byte("Hint:")), footer, "the hint follows the results footer")
+	}
+	// Follow the advice through both server limits using real retrieval.
+	invoiceGeneration, err := backend.CreateGeneration(t.Context(), "synthetic", 4, fingerprint)
+	requirements.NoError(err)
+	var invoiceIDs []int64
+	var invoiceChunks []vector.Chunk
+	for i := range 312 {
+		id := storetest.NewMessage(source.ID, conv).WithSourceMessageID(fmt.Sprintf("invoice-%d", i)).WithSubject("invoice").Create(t, st)
+		requirements.NoError(st.UpsertFTS(id, "invoice", "invoice", "sender@example.com", "", ""))
+		invoiceIDs = append(invoiceIDs, id)
+		invoiceChunks = append(invoiceChunks, vector.Chunk{MessageID: id, Vector: []float32{1, float32(312-i) / 100, 0, 0}})
+	}
+	requirements.NoError(backend.Upsert(t.Context(), invoiceGeneration, invoiceChunks))
+	requirements.NoError(backend.ActivateGeneration(t.Context(), invoiceGeneration, true))
+	for _, step := range []struct {
+		name                 string
+		k, cap, limit, count int
+		code, message        string
+	}{
+		{"page_cap", 100, 50, 50, 50, "ranking_limit_reached", "max_page_size_hybrid above 50"},
+		{"more", 100, 313, 50, 50, "more_available", "more messages match; raise --limit"},
+		{"both_caps", 100, 200, 200, 200, "ranking_limit_reached", "max_page_size_hybrid above 200 and vector.search.k_per_signal above 100"},
+		{"candidate_cap", 100, 313, 312, 200, "candidate_limit_reached", "more messages match; raise vector.search.k_per_signal above 100 on the server and restart it, then raise --limit"},
+		{"complete_union", 156, 313, 312, 312, "", ""},
+	} {
+		vectorCfg.Search.KPerSignal = step.k
+		vectorCfg.Search.MaxPageSizeHybrid = new(step.cap)
+		invoiceEngine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: step.k, SubjectBoost: 1})
+		server.SetVectorFeatures(invoiceEngine, nil, backend, vectorCfg)
+		for _, asJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("invoice/%s/json=%t", step.name, asJSON), func(t *testing.T) {
+				requirements, assertions := require.New(t), assert.New(t)
+				args := []string{"--home", home, "--log-level=error", "search", "invoice", "--mode", "hybrid", "--limit", strconv.Itoa(step.limit)}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				command := exec.CommandContext(t.Context(), binary, args...) //nolint:gosec // The test operator supplies the built CLI.
+				command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+				var stdout, stderr bytes.Buffer
+				command.Stdout, command.Stderr = &stdout, &stderr
+				requirements.NoError(command.Run(), stderr.String())
+				if asJSON {
+					var page struct {
+						Results []struct {
+							ID int64 `json:"id"`
+						} `json:"results"`
+						Hints []struct {
+							Code    string `json:"code"`
+							Message string `json:"message"`
+						} `json:"hints"`
+					}
+					requirements.NoError(json.Unmarshal(stdout.Bytes(), &page))
+					requirements.Len(page.Results, step.count)
+					if step.code == "" {
+						assertions.Empty(page.Hints)
+						gotIDs := make([]int64, len(page.Results))
+						for i, result := range page.Results {
+							gotIDs[i] = result.ID
+						}
+						assertions.ElementsMatch(invoiceIDs, gotIDs)
+					} else {
+						requirements.Len(page.Hints, 1)
+						assertions.Equal(step.code, page.Hints[0].Code)
+						assertions.Contains(page.Hints[0].Message, step.message)
+					}
+					assertions.Empty(stderr.String())
+				} else {
+					assertions.Contains(stdout.String(), fmt.Sprintf("Showing %d results", step.count))
+					if step.message == "" {
+						assertions.Empty(stderr.String())
+					} else {
+						assertions.Contains(stderr.String(), "Hint: ")
+						assertions.Contains(stderr.String(), step.message)
+					}
+				}
+			})
+		}
 	}
 }

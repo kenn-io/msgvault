@@ -6843,6 +6843,9 @@ components:
       properties:
         accelerator:
           type: string
+        candidate_limit_reached:
+          format: int64
+          type: integer
         generation:
           $ref: "#/components/schemas/HybridGenerationSummary"
         has_more:

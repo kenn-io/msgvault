@@ -257,10 +257,18 @@ func semanticMoreResultsHints(resp *daemonclient.CLIHybridSearch) []map[string]s
 		return []map[string]string{{"code": "more_available", "message": "more messages match; raise --limit"}}
 	}
 	if resp.RankingLimitReached > 0 {
+		message := fmt.Sprintf("semantic result limit reached; raise vector.search.max_page_size_hybrid above %d", resp.RankingLimitReached)
+		if resp.CandidateLimitReached > 0 {
+			message += fmt.Sprintf(" and vector.search.k_per_signal above %d", resp.CandidateLimitReached)
+		}
+		message += " on the server and restart it, then raise --limit"
 		return []map[string]string{{
 			"code":    "ranking_limit_reached",
-			"message": fmt.Sprintf("semantic result limit reached; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached),
+			"message": message,
 		}}
+	}
+	if resp.CandidateLimitReached > 0 {
+		return []map[string]string{{"code": "candidate_limit_reached", "message": fmt.Sprintf("more messages match; raise vector.search.k_per_signal above %d on the server and restart it, then raise --limit", resp.CandidateLimitReached)}}
 	}
 	return nil
 }

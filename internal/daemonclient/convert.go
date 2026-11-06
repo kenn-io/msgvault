@@ -262,7 +262,6 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 		results[i] = result
 	}
 	return &CLIHybridSearch{
-		Mode:    resp.Mode,
 		Results: results,
 		Generation: CLIHybridGeneration{
 			ID:          resp.Generation.ID,
@@ -277,13 +276,14 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 			RetrievalMS:      resp.Timings.RetrievalMs,
 			HydrationMS:      resp.Timings.HydrationMs,
 		},
-		PoolSaturated:       resp.PoolSaturated,
-		Accelerator:         stringValue(resp.Accelerator),
-		ReturnedCount:       int(resp.Returned),
-		ScopeLabel:          stringValue(resp.ScopeLabel),
-		ScopeSourceCount:    intValue(resp.ScopeSourceCount),
-		HasMore:             resp.HasMore,
-		RankingLimitReached: intValue(resp.RankingLimitReached),
+		PoolSaturated:         resp.PoolSaturated,
+		Accelerator:           stringValue(resp.Accelerator),
+		ReturnedCount:         int(resp.Returned),
+		ScopeLabel:            stringValue(resp.ScopeLabel),
+		ScopeSourceCount:      intValue(resp.ScopeSourceCount),
+		HasMore:               resp.HasMore,
+		RankingLimitReached:   intValue(resp.RankingLimitReached),
+		CandidateLimitReached: intValue(resp.CandidateLimitReached),
 	}, nil
 }
 

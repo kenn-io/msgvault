@@ -279,14 +279,14 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 
 func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode      string
-		hasMore, pool   bool
-		cap, results    int
-		codes, messages []string
+		name          string
+		hasMore       bool
+		offset, limit int
+		message       string
 	}{
-		{name: "complete", results: 1, mode: "hybrid", pool: true},
-		{name: "more", results: 50, mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
-		{name: "ranking_cap", results: 50, mode: "vector", cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
+		{name: "fts_complete", limit: 50},
+		{name: "fts_later_page", hasMore: true, offset: 50, limit: 50, message: "--offset 100 for the next page or raise --limit"},
+		{name: "fts_remote_cap", hasMore: true, limit: 500, message: "--offset 500 for the next page"},
 	} {
 		for _, asJSON := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
@@ -294,70 +294,11 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				requests := &atomic.Int32{}
 				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
-					assert.Equal(tc.mode, r.URL.Query().Get("mode"))
-					writeVectorSearchResponse(t, w, tc.results, "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
-				})
-				ctx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
-				defer restore()
-				root := newTestRootCmd()
-				root.SetContext(ctx)
-				root.AddCommand(searchCmd)
-				args := []string{"search", "--mode", tc.mode, "lunch"}
-				if asJSON {
-					args = append(args, "--json")
-				}
-				root.SetArgs(args)
-				var stderr bytes.Buffer
-				root.SetErr(&stderr)
-				done := captureStdout(t)
-				err := root.Execute()
-				out := done()
-				require.NoError(err)
-				assert.Equal(int32(1), requests.Load())
-				if asJSON {
-					var page struct {
-						Hints []struct {
-							Code    string `json:"code"`
-							Message string `json:"message"`
-						} `json:"hints"`
-					}
-					require.NoError(json.Unmarshal([]byte(out), &page))
-					require.Len(page.Hints, len(tc.codes))
-					for i, code := range tc.codes {
-						assert.Equal(code, page.Hints[i].Code)
-						assert.Contains(page.Hints[i].Message, tc.messages[i])
-					}
-					assert.Empty(stderr.String())
-				} else {
-					assert.Equal(len(tc.messages), strings.Count(stderr.String(), "Hint:"))
-					for _, message := range tc.messages {
-						assert.Contains(stderr.String(), message)
-					}
-				}
-			})
-		}
-	}
-
-	for _, tc := range []struct {
-		name    string
-		hasMore bool
-		offset  int
-		message string
-	}{
-		{name: "fts_complete"},
-		{name: "fts_later_page", hasMore: true, offset: 50, message: "--offset 100"},
-	} {
-		for _, asJSON := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
-				assert, require := assert.New(t), require.New(t)
-				requests := &atomic.Int32{}
-				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-					requests.Add(1)
-					assert.Equal("50", r.URL.Query().Get("limit"))
+					assert.Equal(strconv.Itoa(tc.limit), r.URL.Query().Get("limit"))
 					if tc.offset > 0 {
 						assert.Equal("50", r.URL.Query().Get("offset"))
 					}
-					rows := make([]map[string]any, 50)
+					rows := make([]map[string]any, tc.limit)
 					for i := range rows {
 						rows[i] = map[string]any{"id": i + 1, "subject": "Lunch"}
 					}
@@ -368,7 +309,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				root := newTestRootCmd()
 				root.SetContext(ctx)
 				root.AddCommand(searchCmd)
-				args := []string{"search", "--mode", "fts", "lunch", "--offset", strconv.Itoa(tc.offset)}
+				args := []string{"search", "--mode", "fts", "lunch", "--offset", strconv.Itoa(tc.offset), "--limit", strconv.Itoa(tc.limit)}
 				if asJSON {
 					args = append(args, "--json")
 				}
@@ -385,11 +326,14 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				} else {
 					assert.Equal(1, strings.Count(stderr.String(), "Hint:"))
 					assert.Contains(stderr.String(), tc.message)
+					if tc.limit == 500 {
+						assert.NotContains(stderr.String(), "raise --limit")
+					}
 				}
 				if asJSON {
 					var rows []map[string]any
 					require.NoError(json.Unmarshal([]byte(out), &rows))
-					assert.Len(rows, 50)
+					assert.Len(rows, tc.limit)
 				}
 			})
 		}
