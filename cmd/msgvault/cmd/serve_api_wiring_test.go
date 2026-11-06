@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -439,4 +441,29 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 		require.True(ok)
 		assert.Equal(t, json.Number(strconv.FormatInt(attachment, 10)), row["id"])
 	}
+}
+
+func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", "Your code is 482913")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	daemon := httptest.NewServer(srv.Router())
+	t.Cleanup(daemon.Close)
+	// Issue grants through the same HTTP boundary used by the CLI.
+	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: daemon.Client()})
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(owner.Close()) })
+	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	requirements.NoError(err)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
+	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "[verification content masked]")
+	assertions.NotContains(response.Body.String(), "Account")
 }

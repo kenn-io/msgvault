@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 	"golang.org/x/oauth2"
 )
 
@@ -765,6 +766,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, MessageListResponse{
 		Total:    total,
 		Page:     page,
@@ -799,6 +803,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
+			s.maskMessageDetail(r, qMsg)
 			detail := messageDetailFromQuery(qMsg)
 			detail.SenderAuth = s.senderAuth(r.Context(), id, qMsg.SourceID, qMsg.MessageType, detail.FromEmail)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
@@ -833,6 +838,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
+	s.maskStoreMessage(r, msg)
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -1046,6 +1052,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchResult{
 		Warnings:   search.LiteralORWarnings(searchText),
 		IndexState: agentIndexState(r),
@@ -3100,6 +3109,9 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		IndexState:       agentIndexState(r),
 		Count:            len(summaries),
@@ -3533,6 +3545,14 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	withheld, ok := s.attachmentWithheld(w, r, []query.AttachmentInfo{*att})
+	if !ok {
+		return
+	}
+	if withheld {
+		att.Filename = verification.Masked
+		att.URL = ""
+	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
@@ -3579,13 +3599,12 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
 	var contentLength int64
 	var err error
 	if s.blobStore != nil {
-		content, contentLength, err = s.blobStore.OpenStream(r.Context(), hash)
+		content, contentLength, err = s.blobStore.OpenStream(store.WithoutReadSnapshotContext(r.Context()), hash)
 	}
 	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
 		content, contentLength, att, err = openLooseAttachmentCandidates(
@@ -3601,16 +3620,29 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
+	reader, withheld, apiErr := s.textAttachmentReader(w, r, content, attachments)
+	if reader == nil {
+		_ = content.Close()
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+		}
+		return
+	}
+	releaseReadSnapshot(r)
 	contentType := att.MimeType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
+	filename := att.Filename
+	if withheld {
+		filename = verification.Masked
+	}
+	w.Header().Set("Content-Disposition", contentDisposition(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	_, copyErr := io.Copy(w, content)
+	_, copyErr := io.Copy(w, reader)
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
@@ -3723,6 +3755,9 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		Count:    len(summaries),
 		HasMore:  result.HasMore,
@@ -3923,6 +3958,9 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchFastResponse{
 		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
@@ -4091,6 +4129,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var warnings []string
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
+	}
+	if !s.maskMessageSummaries(w, r, summaries, bodyContexts) {
+		return
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,

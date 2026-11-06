@@ -17220,7 +17220,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.44.0
+  version: 3.45.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -17720,6 +17720,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
           content:
             application/json:
               schema:
@@ -19613,6 +19619,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
           content:
             application/json:
               schema:
