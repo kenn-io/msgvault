@@ -43,7 +43,7 @@ func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
 			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-			assert.ErrorContains(err, tc.wantError)
+			require.ErrorContains(err, tc.wantError)
 			assert.Zero(summary.MessagesUpdated)
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))

@@ -43,7 +43,7 @@ func TestImportRejectsDuplicateAttachmentFiles(t *testing.T) {
 
 			assert.Equal(int64(1), summary.Errors)
 			require.Len(progress.errors, 1)
-			assert.ErrorContains(progress.errors[0], "multiple attachment files")
+			require.ErrorContains(progress.errors[0], "multiple attachment files")
 			assert.Equal(int64(2), summary.AttachmentsMissing)
 			assert.Equal(tc.wantStored, summary.AttachmentsStored)
 			assert.Equal(int(tc.wantStored), countRows(t, st, `SELECT COUNT(*) FROM attachments`))
@@ -57,6 +57,7 @@ func TestImportRejectsDuplicateAttachmentFiles(t *testing.T) {
 
 type duplicateAttachmentProgress struct {
 	NullProgress
+
 	errors []error
 }
 
