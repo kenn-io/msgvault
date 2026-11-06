@@ -906,7 +906,7 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
 
 // These importers include attachment bytes in their message estimates.
 // Known attachment bytes still bound an incomplete estimate from below.
-const exploreEstimatedBytesSQL = `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline')
+const exploreEstimatedBytesSQL = `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline', 'line')
 	THEN GREATEST(size_estimate, attachment_size)
 	ELSE size_estimate + attachment_size END`
 
