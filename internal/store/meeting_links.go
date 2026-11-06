@@ -209,6 +209,20 @@ func meetingOccurrenceMaster(ctx context.Context, r reboundReader, row CalendarE
 	return row, ref, nil
 }
 
+// Use the latest bounded exception directly, or expand around its effective start.
+func meetingOccurrenceWindow(at time.Time, moved []CalendarEventRow) ([2]time.Time, *CalendarEventRow) {
+	if len(moved) > 0 {
+		x := &moved[len(moved)-1]
+		if x.Event.Start != nil && x.Event.End != nil {
+			return [2]time.Time{}, x
+		}
+		if x.Event.Start != nil {
+			at = *x.Event.Start
+		}
+	}
+	return [2]time.Time{at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)}, nil
+}
+
 func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
 	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
@@ -247,27 +261,23 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	// Every copy supplies the UID; the latest copy supplies the bounds.
-	var x CalendarEventRow
-	for _, x = range moved {
+	for _, x := range moved {
 		row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
 	}
-	if x.Event.Start != nil && x.Event.End != nil {
+	window, bounded := meetingOccurrenceWindow(at, moved)
+	if bounded != nil {
 		o := occurrenceFromRow(row, ref.Key)
-		o.Start, o.End, err = seriesExceptionBounds(row, x)
+		o.Start, o.End, err = seriesExceptionBounds(row, *bounded)
 		if err != nil {
 			return linkOccurrence{}, err
 		}
-		o.Row = x
+		o.Row = *bounded
 		if row.Event.Status == meetingCancelledStatus {
 			o.Row.Event.Status = meetingCancelledStatus
 		}
 		return o, nil
 	}
-	if x.Event.Start != nil {
-		at = *x.Event.Start
-	}
-	occurrences, err := expandMeetingSeries(ctx, r, row, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin), budget)
+	occurrences, err := expandMeetingSeries(ctx, r, row, window[0], window[1], budget)
 	if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 		return linkOccurrence{}, err
 	}

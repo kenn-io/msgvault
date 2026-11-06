@@ -128,18 +128,13 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		}
 		predicate, args := meetingMovedExceptionPredicate(ref.row, ref.id)
 		moved := r.batch.events[meetingQueryKey(predicate, args)]
-		if len(moved) > 0 {
-			x := moved[len(moved)-1]
-			if x.Event.Start != nil && x.Event.End != nil {
-				continue
-			}
-			if x.Event.Start != nil {
-				at = *x.Event.Start
-			}
+		window, bounded := meetingOccurrenceWindow(at, moved)
+		if bounded != nil {
+			continue
 		}
 		id := ref.row.MessageID
 		masters[id] = ref.row
-		windows[id] = append(windows[id], [2]time.Time{at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)})
+		windows[id] = append(windows[id], window)
 	}
 	for id, master := range masters {
 		windows[id] = coalesceMeetingWindows(windows[id])
