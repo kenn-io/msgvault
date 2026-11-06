@@ -37,6 +37,10 @@ type pollingIMAPListener struct {
 	limitNext    atomic.Bool
 	limited      atomic.Int32
 	limitCommand string
+	limitCount   int32
+	limitDelay   string
+	lastLimitAt  atomic.Int64
+	nextCommand  atomic.Int64
 }
 type pollingIMAPConn struct {
 	net.Conn
@@ -69,8 +73,15 @@ func (c *pollingIMAPConn) Read(p []byte) (int, error) {
 			c.owner.bodies.Add(1)
 		}
 		fields := strings.Fields(line)
-		if c.owner.limitCommand != "" && len(fields) >= 2 && strings.EqualFold(fields[1], c.owner.limitCommand) && c.owner.limitNext.CompareAndSwap(true, false) {
-			c.limitTag = fields[0]
+		if len(fields) >= 2 {
+			if c.owner.limitCount > 0 && c.owner.limited.Load() >= c.owner.limitCount {
+				c.owner.nextCommand.CompareAndSwap(0, time.Now().UnixNano())
+			}
+			command := strings.ToUpper(strings.Join(fields[1:], " "))
+			matches := c.owner.limitCommand != "" && strings.HasPrefix(command, strings.ToUpper(c.owner.limitCommand))
+			if matches && (c.owner.limitNext.CompareAndSwap(true, false) || c.owner.limitCount > c.owner.limited.Load()) {
+				c.limitTag = fields[0]
+			}
 		}
 	}
 	if err != nil {
@@ -90,9 +101,14 @@ func (c *pollingIMAPConn) Write(p []byte) (int, error) {
 		c.writePending = rest
 		fields := strings.Fields(line)
 		if c.limitTag != "" && len(fields) >= 2 && fields[0] == c.limitTag && strings.EqualFold(fields[1], "OK") {
-			line = c.limitTag + " NO [LIMIT] retry in 60 seconds"
+			delay := c.owner.limitDelay
+			if delay == "" {
+				delay = "60"
+			}
+			line = c.limitTag + " NO [LIMIT] retry in " + delay + " seconds"
 			c.limitTag = ""
 			c.owner.limited.Add(1)
+			c.owner.lastLimitAt.Store(time.Now().UnixNano())
 		}
 		out := []byte(line + "\r\n")
 		for len(out) > 0 {
@@ -297,4 +313,93 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	assert.EqualValues(1, callbacks.Load(), "another manual acquisition waits for the provider floor")
 	assert.EqualValues(1, counted.accepted.Load(), "the deferred acquisition opens no second IMAP connection")
 	assert.True(s.Status()[0].Pending, "the accepted manual retry remains pending")
+}
+
+func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(err)
+	counted := &pollingIMAPListener{Listener: ln, limitCommand: "UID FETCH", limitCount: 4, limitDelay: "1"}
+	testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 1}, nil)
+	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
+	st := storetest.New(t)
+	src := pollingIMAPSource(t, st.Store, ic)
+	state := testInvocationWithConfig(cfg)
+	var callbacks atomic.Int32
+	firstResult := make(chan error, 1)
+	secondStarted := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	s := scheduler.New(func(ctx context.Context, identifier string) error {
+		if callbacks.Add(1) > 1 {
+			close(secondStarted)
+			<-releaseSecond
+			return nil
+		}
+		err := runRapidEmailSync(withInvocation(ctx, state), identifier, st.Store, nil, state)
+		firstResult <- err
+		return err
+	})
+	defer func() {
+		close(releaseSecond)
+		<-s.Stop().Done()
+	}()
+	require.NoError(s.AddAccount(src.Identifier, "0 0 1 1 *"))
+	require.NoError(s.SetAccountPollInterval(src.Identifier, 30*time.Second))
+	require.NoError(s.TriggerSync(src.Identifier, false))
+	var firstErr error
+	select {
+	case firstErr = <-firstResult:
+	case <-time.After(10 * time.Second):
+		require.FailNow("the partial IMAP acquisition did not return")
+	}
+	require.Eventually(func() bool {
+		status := s.Status()[0]
+		return !status.Running && !status.Queued
+	}, 5*time.Second, 10*time.Millisecond, "the scheduler records the partial acquisition")
+	var acquisition *scheduler.AcquisitionError
+	require.ErrorAs(firstErr, &acquisition)
+	assert.Equal(scheduler.AcquisitionIncomplete, acquisition.Outcome)
+	require.EqualValues(4, counted.limited.Load(), "one FETCH exhausted the real command retry budget")
+	require.True(acquisition.NotBefore.After(time.Now()), "the per-item partial result retains its provider deadline")
+	assert.Positive(counted.bodies.Load(), "the limited request was the message body fetch")
+
+	require.NoError(s.TriggerSync(src.Identifier, false))
+	require.Eventually(func() bool {
+		status := s.Status()[0]
+		return status.Pending && !status.Running && !status.Queued
+	}, 300*time.Millisecond, 5*time.Millisecond, "manual follow-up remains admitted but deferred under the provider floor")
+	assert.EqualValues(1, callbacks.Load(), "the scheduler must not start another acquisition before the provider deadline")
+	assert.True(s.Status()[0].Pending)
+	assert.EqualValues(1, counted.accepted.Load(), "the deferred request opens no second IMAP connection")
+	select {
+	case <-secondStarted:
+		require.FailNow("the scheduler started a follow-up while the provider floor was live")
+	default:
+	}
+}
+
+func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(err)
+	counted := &pollingIMAPListener{Listener: ln, limitCommand: "UID FETCH", limitCount: 4, limitDelay: "1"}
+	testutil.ServeIMAPMemServer(t, counted, map[string]int{"Archive": 1, "INBOX": 1}, nil)
+	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
+	st := storetest.New(t)
+	src := pollingIMAPSource(t, st.Store, ic)
+	state := testInvocationWithConfig(cfg)
+	err = runRapidEmailSync(withInvocation(t.Context(), state), src.Identifier, st.Store, nil, state)
+	var acquisition *scheduler.AcquisitionError
+	require.ErrorAs(err, &acquisition)
+	assert.Equal(scheduler.AcquisitionIncomplete, acquisition.Outcome)
+	require.EqualValues(4, counted.limited.Load(), "one mailbox FETCH exhausted the real command retry budget")
+	lastLimitNanos := counted.lastLimitAt.Load()
+	nextCommandNanos := counted.nextCommand.Load()
+	require.NotZero(lastLimitNanos)
+	require.NotZero(nextCommandNanos, "the second mailbox must issue a command after the partial FETCH")
+	lastLimit := time.Unix(0, lastLimitNanos)
+	nextCommand := time.Unix(0, nextCommandNanos)
+	assert.GreaterOrEqual(nextCommand.Sub(lastLimit), time.Second, "no later IMAP command is sent while the provider floor is live")
 }
