@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ type scriptedBriefRunner struct {
 	briefPackets  []map[string]any
 
 	extractionRequests int
+	candidate          func(map[string]any) json.RawMessage
+	afterBrief         func()
 }
 
 func (r *scriptedBriefRunner) PrepareStructured(
@@ -69,6 +72,12 @@ func (r *scriptedBriefRunner) RunPreparedStructured(
 	packet := decodeBriefPacket(r.t, request.InputText)
 	r.briefPackets = append(r.briefPackets, packet)
 	response.Output = briefCandidateForPacket(r.t, packet)
+	if r.candidate != nil {
+		response.Output = r.candidate(packet)
+	}
+	if r.afterBrief != nil {
+		r.afterBrief()
+	}
 	return response, nil
 }
 
@@ -179,7 +188,7 @@ func briefCandidateForPacket(t *testing.T, packet map[string]any) json.RawMessag
 	return json.RawMessage(fmt.Sprintf(`{
 		"last_meaningful_interaction":{"evidence_id":%q,"summary":"they start a new role in September"},
 		"highlights":[{"text":"they start a new role in September","speaker":"person",
-			"evidence_ids":[%q],"observed_at":null,"confidence_basis_points":800}],
+			"evidence_ids":[%q],"observed_at":null,"confidence_basis_points":800,"life_event":null}],
 		"follow_ups":[{"question":"how the first week went","why":"they were about to start",
 			"highlight_index":0,"evidence_ids":[%q]}],
 		"appreciations":[],
@@ -189,6 +198,59 @@ func briefCandidateForPacket(t *testing.T, packet map[string]any) json.RawMessag
 			"evidence_ids":[%q],"valid_from":null,"valid_until":null,
 			"confidence_basis_points":900}]}`,
 		newest, newest, newest, newest, target, newest))
+}
+
+func briefEventCandidateForPacket(
+	t *testing.T, packet map[string]any, quote, date string,
+) json.RawMessage {
+	t.Helper()
+	seeds, ok := packet["seeds"].([]any)
+	require.True(t, ok, "brief packet must carry seed evidence")
+	var anchorID string
+	for _, raw := range seeds {
+		seed, ok := raw.(map[string]any)
+		require.True(t, ok)
+		excerpt, _ := seed["excerpt"].(string)
+		id, _ := seed["id"].(string)
+		if strings.Contains(excerpt, quote) {
+			anchorID = id
+			break
+		}
+	}
+	require.NotEmpty(t, anchorID, "brief packet must carry the event announcement")
+	eventDate := date
+	output := peoplesweep.BriefOutput{
+		LastMeaningfulInteraction: &peoplesweep.BriefInteraction{
+			EvidenceID: anchorID, Summary: "plans a temporary move",
+		},
+		Highlights: []peoplesweep.BriefHighlight{{
+			Text: "plans a temporary move", Speaker: peoplesweep.BriefSpeakerPerson,
+			EvidenceIDs: []string{anchorID}, ConfidenceBasisPoints: 900,
+			LifeEvent: &peoplesweep.BriefLifeEvent{Date: &eventDate, AnchorID: anchorID,
+				Quote: quote, Question: "How did the move go?",
+				State: peoplesweep.BriefEventUpcoming},
+		}},
+		FollowUps: []peoplesweep.BriefFollowUp{}, Appreciations: []peoplesweep.BriefAppreciation{},
+		Uncertainties:      []peoplesweep.BriefUncertainty{},
+		PossibleAttributes: []peoplesweep.ExtractedClaim{},
+	}
+	encoded, err := json.Marshal(output)
+	require.NoError(t, err)
+	return encoded
+}
+
+func briefPacketEventContextEvents(t *testing.T, packet map[string]any) []any {
+	t.Helper()
+	context, ok := packet["brief_context"].(map[string]any)
+	require.True(t, ok, "brief packet must carry event context")
+	events, exists := context["events"]
+	require.True(t, exists)
+	if events == nil {
+		return nil
+	}
+	list, ok := events.([]any)
+	require.True(t, ok)
+	return list
 }
 
 type briefWorkerEndToEndFixture struct {
@@ -282,7 +344,7 @@ func TestPersonSweepWorkerStoresARealBriefThroughApplyPersonSweep(t *testing.T) 
 	checks.Equal(store.PersonBriefStatusCurrent, stored.Status)
 	checks.Equal(peoplesweep.BriefProgramID, stored.ProgramID)
 	checks.Equal(peoplesweep.BriefProgramFingerprint(), stored.ProgramFingerprint)
-	checks.Equal(peoplesweep.BriefRendererPolicyV1, stored.RendererPolicy)
+	checks.Equal(peoplesweep.BriefRendererPolicyV2, stored.RendererPolicy)
 	checks.Contains(stored.RenderedText, "Last time you talked")
 	checks.Equal(string(f.config.Providers["default"].Protocol), stored.Provider)
 	checks.Equal("provider-v1", stored.ProviderVersion)
@@ -556,6 +618,92 @@ func TestPersonSweepWorkerSchedulesRejectedBriefWithoutNewActivity(t *testing.T)
 	require.NoError(err)
 	require.Len(regenerated.People, 1)
 	assert.Equal(2, regenerated.People[0].BriefVersion)
+}
+
+func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newBriefWorkerEndToEndFixture(t, "rejected-event-memory-race")
+	st, personID := f.journal.store, f.journal.alicePersonID
+	quote := "I am moving to Riverton on September 10."
+	message := f.journal.insertMessage(t, "rejected-event-memory-race", "chat",
+		f.journal.aliceID, time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
+	addSweepBody(t, f.journal, message, quote)
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		return briefEventCandidateForPacket(t, packet, quote, "2026-09-10")
+	}
+	f.worker.Clock = func() time.Time { return f.now }
+	id := 0
+	f.worker.NewID = func() string {
+		id++
+		return fmt.Sprintf("rejected-event-memory-race-%d", id)
+	}
+	request := peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeForce}
+	first, err := f.worker.Run(t.Context(), request)
+	require.NoError(err)
+	require.Len(first.People, 1)
+	assert.Equal(1, first.People[0].BriefVersion)
+	prior, err := st.GetPersonBriefContext(t.Context(), personID, 1)
+	require.NoError(err)
+	var priorBoundary peoplesweep.BriefBoundary
+	require.NoError(json.Unmarshal(prior.Boundary, &priorBoundary))
+	require.Len(priorBoundary.EventMemory, 1)
+	var cursorBefore int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COALESCE(MAX(optimistic_sequence), 0) FROM person_sweep_cursors
+		WHERE person_id = ? AND source_lane = ?`), personID,
+		string(peoplesweep.SourceConversationText)).Scan(&cursorBefore))
+
+	f.runner.candidate = nil
+	newMessage := f.journal.insertMessage(t, "rejected-event-memory-new-activity", "chat",
+		f.journal.aliceID, f.now.Add(-time.Hour))
+	addSweepBody(t, f.journal, newMessage, "I started a new role yesterday.")
+	f.runner.afterBrief = func() {
+		rejected, rejectErr := st.RejectPersonBriefContext(t.Context(), personID,
+			"The event question was not wanted", f.now)
+		require.NoError(rejectErr)
+		assert.Equal(prior.Version, rejected.Version)
+	}
+	second, err := f.worker.Run(t.Context(), request)
+	require.NoError(err)
+	require.Len(second.People, 1)
+	assert.Zero(second.People[0].BriefVersion,
+		"a result based on rejected event memory is not stored")
+	assert.Equal(peoplesweep.FailureInvalidOutput, second.People[0].BriefFailureClass)
+	assert.NotEmpty(second.People[0].CursorAdvances,
+		"fresh extraction work still advances its source cursor")
+	var cursorAfter int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COALESCE(MAX(optimistic_sequence), 0) FROM person_sweep_cursors
+		WHERE person_id = ? AND source_lane = ?`), personID,
+		string(peoplesweep.SourceConversationText)).Scan(&cursorAfter))
+	assert.Greater(cursorAfter, cursorBefore,
+		"the extraction cursor commits even though the brief was rejected")
+	require.Len(f.runner.briefPackets, 2)
+	assert.Len(briefPacketEventContextEvents(t, f.runner.briefPackets[1]), 1,
+		"the rejected event was present in the in-flight packet")
+	rejected, err := st.GetPersonBriefContext(t.Context(), personID, 1)
+	require.NoError(err)
+	assert.Equal(store.PersonBriefStatusRejected, rejected.Status)
+	versions, err := st.ListPersonBriefVersionsContext(t.Context(), personID, 10)
+	require.NoError(err)
+	require.Len(versions, 1, "the rejected version remains the only stored version")
+
+	f.runner.afterBrief = nil
+	f.now = f.now.Add(time.Hour)
+	third, err := f.worker.Run(t.Context(), request)
+	require.NoError(err)
+	require.Len(third.People, 1)
+	assert.Equal(2, third.People[0].BriefVersion)
+	require.Len(f.runner.briefPackets, 3)
+	assert.Empty(briefPacketEventContextEvents(t, f.runner.briefPackets[2]),
+		"a later retry starts without the rejected event memory")
+	current, err := st.GetPersonBriefContext(t.Context(), personID, 0)
+	require.NoError(err)
+	var currentBoundary peoplesweep.BriefBoundary
+	require.NoError(json.Unmarshal(current.Boundary, &currentBoundary))
+	assert.Empty(currentBoundary.EventMemory)
 }
 
 func TestPersonSweepWorkerReconsidersBriefDeferredByBudget(t *testing.T) {

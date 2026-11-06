@@ -588,6 +588,36 @@ func (w *Worker) runPerson(
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
+	if plan.retireVersion > 0 {
+		retire := plan.retireOnly
+		if !retire {
+			window, windowErr := BuildBriefWindow(ctx, w.Archive,
+				w.briefWindowRequest(lease.PersonID, catalog, profile, plan, 0))
+			if windowErr != nil && !errors.Is(windowErr, ErrNoBriefEvidence) {
+				if fatal := briefFatalError(ctx, windowErr); fatal != nil {
+					return PersonRunResult{}, w.failClaim(ctx, lease, "", fatal)
+				}
+				plan.preflightFailure, plan.run = windowErr, true
+			}
+			retire = errors.Is(windowErr, ErrNoBriefEvidence)
+			if windowErr == nil {
+				plan.preflightWindow = &window
+				if briefEventMemoryChanged(plan, window) {
+					plan.run = true
+				}
+			}
+		}
+		if retire {
+			if err := w.Brief.RetirePersonSweepBrief(ctx, lease, plan.retireVersion, resolvedAt); err != nil {
+				if fatal := briefFatalError(ctx, err); fatal != nil {
+					return PersonRunResult{}, w.failClaim(ctx, lease, "", fatal)
+				}
+				plan.preflightFailure, plan.run = err, true
+			} else {
+				plan.run = false
+			}
+		}
+	}
 	keys := make([]CursorKey, 0, len(profile.AllowedSources))
 	for _, lane := range profile.AllowedSources {
 		keys = append(keys, CursorKey{PersonID: lease.PersonID, SourceLane: lane,
@@ -1094,12 +1124,24 @@ func (w *Worker) runPerson(
 		briefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0,
 			w.Config.RetryBase, w.Config.RetryMax))
 	}
-	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
+	applyRequest := ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
 		Batches: accounting.completedBatches, Usage: accounting.totalUsage,
 		Budget: w.Config.Budgets, CursorAdvances: advances,
 		DeferredCursorWork: deferredCursorWork, Brief: brief, BriefFailureClass: briefFailure,
-		BriefRetryAt: briefRetryAt, CompletedAt: completedAt})
+		BriefRetryAt: briefRetryAt, CompletedAt: completedAt}
+	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, applyRequest)
+	if brief != nil && (errors.Is(applyErr, ErrBriefEventEvidenceChanged) ||
+		errors.Is(applyErr, ErrBriefEventMemoryChanged)) {
+		// The first apply refused before writing. Preserve paid usage and
+		// extraction, and let the normal brief-only retry retain its work.
+		briefFailure = FailureInvalidOutput
+		applyRequest.Brief = nil
+		applyRequest.BriefFailureClass = briefFailure
+		applyRequest.BriefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID,
+			lease.AttemptCount, 0, w.Config.RetryBase, w.Config.RetryMax))
+		apply, applyErr = w.Sink.ApplyPersonSweep(ctx, applyRequest)
+	}
 	if applyErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
 			accounting.completedUsage, applyErr, resolvedAt)
@@ -1227,13 +1269,20 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 				if err != nil {
 					return fmt.Errorf("plan person %d brief work: %w", personID, err)
 				}
-				if plan.run {
+				if plan.run || plan.retireVersion > 0 {
 					// An enrolled person with no admissible text never produces a
 					// version. Check the bounded window before publishing work so
 					// such a person does not repeat backstop extraction every tick.
-					_, err := BuildBriefWindow(ctx, w.Archive,
-						w.briefWindowRequest(personID, catalog, profile, plan, 0))
-					if errors.Is(err, ErrNoBriefEvidence) {
+					var window BriefWindow
+					var err error
+					if !plan.retireOnly {
+						window, err = BuildBriefWindow(ctx, w.Archive,
+							w.briefWindowRequest(personID, catalog, profile, plan, 0))
+					}
+					if errors.Is(err, ErrNoBriefEvidence) && plan.retireVersion == 0 {
+						continue
+					}
+					if err == nil && !plan.run && !briefEventMemoryChanged(plan, window) {
 						continue
 					}
 					if ctx.Err() != nil {

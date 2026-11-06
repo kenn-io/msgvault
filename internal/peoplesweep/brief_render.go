@@ -14,6 +14,7 @@ import (
 // It is stored on every brief row, so a later wording change becomes a new
 // policy rather than a silent rewrite of what the owner already read.
 const BriefRendererPolicyV1 = "person-brief-render-v1"
+const BriefRendererPolicyV2 = "person-brief-render-v2"
 
 // briefDateFormat matches the design's rendered form ("Aug 29"). The structured
 // record keeps full timestamps; the paragraph stays short.
@@ -76,7 +77,7 @@ type RenderedBrief struct {
 // usable message the header falls back to the cited item's event time and
 // omits the excluded contact's channel.
 func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) {
-	rendered := RenderedBrief{Policy: BriefRendererPolicyV1}
+	rendered := RenderedBrief{Policy: BriefRendererPolicyV2}
 
 	if interaction := parsed.Output.LastMeaningfulInteraction; interaction != nil {
 		header := "Last time you talked (" + briefHeaderDate(window, interaction.EvidenceID)
@@ -91,7 +92,7 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 	for index, highlight := range parsed.Output.Highlights {
 		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
 			Kind: BriefSentenceHighlight, Index: index,
-			Text: briefSentence(briefSpeakerPrefix(highlight.Speaker) + highlight.Text),
+			Text: briefHighlightSentence(highlight),
 		})
 	}
 	for index, followUp := range parsed.Output.FollowUps {
@@ -122,6 +123,20 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 	}
 	rendered.Text = strings.Join(texts, " ")
 	return rendered, nil
+}
+
+func briefHighlightSentence(highlight BriefHighlight) string {
+	if event := highlight.LifeEvent; event != nil {
+		switch event.State {
+		case BriefEventFollowUp:
+			return briefSentence("You may want to ask: " + event.Question)
+		case BriefEventUpcoming:
+			return briefSentence("Upcoming: " + highlight.Text)
+		case BriefEventResolved:
+			return briefSentence("Resolved: " + highlight.Text)
+		}
+	}
+	return briefSentence(briefSpeakerPrefix(highlight.Speaker) + highlight.Text)
 }
 
 func briefSpeakerPrefix(speaker BriefSpeaker) string {
@@ -363,14 +378,20 @@ func briefDropTrailingItem(output BriefOutput) (BriefOutput, int, bool) {
 		output.FollowUps = slices.Clone(output.FollowUps[:len(output.FollowUps)-1])
 		return output, 1, true
 	case len(output.Highlights) > 0:
-		trimmed, dropped := briefDropLastHighlight(output)
-		return trimmed, dropped, true
+		for index := range slices.Backward(output.Highlights) {
+			if output.Highlights[index].LifeEvent != nil {
+				continue
+			}
+			trimmed, dropped := briefDropHighlight(output, index)
+			return trimmed, dropped, true
+		}
+		return output, 0, false
 	default:
 		return output, 0, false
 	}
 }
 
-// briefDropLastHighlight removes the final highlight together with every
+// briefDropHighlight removes the chosen highlight together with every
 // follow-up that explains it, and reindexes the follow-ups that survive.
 //
 // A follow-up's highlight_index is a position in the highlight list, so a
@@ -378,12 +399,11 @@ func briefDropTrailingItem(output BriefOutput) (BriefOutput, int, bool) {
 // follow-up after the dropped one would name the wrong highlight entirely. The
 // trimmer reaches highlights only once the follow-ups are gone, so the cascade
 // is the invariant that keeps that ordering from being load-bearing.
-func briefDropLastHighlight(output BriefOutput) (BriefOutput, int) {
-	last := len(output.Highlights) - 1
+func briefDropHighlight(output BriefOutput, last int) (BriefOutput, int) {
 	if last < 0 {
 		return output, 0
 	}
-	output.Highlights = slices.Clone(output.Highlights[:last])
+	output.Highlights = append(slices.Clone(output.Highlights[:last]), output.Highlights[last+1:]...)
 	kept := make([]BriefFollowUp, 0, len(output.FollowUps))
 	dropped := 1
 	for _, followUp := range output.FollowUps {

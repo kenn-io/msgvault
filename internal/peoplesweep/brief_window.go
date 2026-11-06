@@ -72,6 +72,12 @@ type BriefWindowLastContact struct {
 
 // BriefWindowRequest bounds one brief evidence window.
 type BriefWindowRequest struct {
+	AsOf                       time.Time
+	retainedEvents             []BriefHighlight
+	initialWindow              bool // Known-v1 upgrade uses the bounded initial window.
+	priorEventMemoryVersion    int
+	retainedEventMemoryVersion int
+
 	PersonID int64
 	Catalog  personfacts.Catalog
 	Profile  ProviderProfile
@@ -110,6 +116,11 @@ type BriefWindowRequest struct {
 // BriefBoundary is the durable description of one brief's input. It is stored
 // verbatim as person_briefs.boundary_json.
 type BriefBoundary struct {
+	EventMemoryVersion        int                `json:"event_memory_version,omitempty"`
+	EventMemory               []BriefEventMemory `json:"event_memory,omitempty"`
+	AdmissionThroughEventTime time.Time          `json:"admission_through_event_time,omitzero"`
+	NextEventAt               *time.Time         `json:"next_event_at,omitempty"`
+
 	Lanes            []string  `json:"lanes"`
 	FromEventTime    time.Time `json:"from_event_time"`
 	ThroughEventTime time.Time `json:"through_event_time"`
@@ -119,14 +130,19 @@ type BriefBoundary struct {
 	PacketSHA256     string    `json:"packet_sha256"`
 }
 
-// Canonical returns the boundary with sorted lanes and UTC times truncated to
-// the second, which is the form serialized into boundary_json.
+// Canonical sorts lanes and normalizes UTC times. Input window bounds use
+// seconds; admission retains full precision so tied-second replays stay old.
 func (b BriefBoundary) Canonical() BriefBoundary {
 	canonical := b
 	canonical.Lanes = append([]string(nil), b.Lanes...)
 	slices.Sort(canonical.Lanes)
 	canonical.FromEventTime = b.FromEventTime.UTC().Truncate(time.Second)
 	canonical.ThroughEventTime = b.ThroughEventTime.UTC().Truncate(time.Second)
+	canonical.AdmissionThroughEventTime = b.AdmissionThroughEventTime.UTC()
+	if b.NextEventAt != nil {
+		due := b.NextEventAt.UTC()
+		canonical.NextEventAt = &due
+	}
 	return canonical
 }
 
@@ -187,20 +203,20 @@ func BuildBriefWindow(
 	// would hydrate the whole unfiltered scope for a person who authored
 	// nothing on an authenticating source, such as an email-only contact,
 	// only to reject every row. No candidate means no evidence.
-	if len(candidates) == 0 {
-		return BriefWindow{}, ErrNoBriefEvidence
-	}
-	// An empty target carries no lexical filter, so the search returns every
-	// hydrated candidate in newest-first candidate order. The window applies its
-	// own caps below rather than borrowing the retrieval limit.
-	retrieved, err := archive.SearchPersonSweepMessages(ctx, ContextRequest{
-		PersonID: request.PersonID, CandidateMessageIDs: candidates, SourceClasses: lanes,
-		SourceSince: request.Profile.SourceSince, SourceUntil: request.Profile.SourceUntil,
-		HistoricalCandidateLimit: candidateLimit, Limit: candidateLimit,
-		ThroughSequence: request.ThroughSequence,
-	})
-	if err != nil {
-		return BriefWindow{}, fmt.Errorf("retrieve person brief evidence: %w", err)
+	var retrieved []EvidenceItem
+	if len(candidates) > 0 {
+		// An empty target carries no lexical filter, so the search returns every
+		// hydrated candidate in newest-first candidate order. The window applies its
+		// own caps below rather than borrowing the retrieval limit.
+		retrieved, err = archive.SearchPersonSweepMessages(ctx, ContextRequest{
+			PersonID: request.PersonID, CandidateMessageIDs: candidates, SourceClasses: lanes,
+			SourceSince: request.Profile.SourceSince, SourceUntil: request.Profile.SourceUntil,
+			HistoricalCandidateLimit: candidateLimit, Limit: candidateLimit,
+			ThroughSequence: request.ThroughSequence,
+		})
+		if err != nil {
+			return BriefWindow{}, fmt.Errorf("retrieve person brief evidence: %w", err)
+		}
 	}
 
 	eligible := make([]EvidenceItem, 0, len(retrieved))
@@ -233,6 +249,17 @@ func BuildBriefWindow(
 		}
 	}
 
+	retained, events, protected, err := briefRetainedEvents(ctx, archive, request, lanes, after, before)
+	if err != nil {
+		return BriefWindow{}, err
+	}
+	request.retainedEvents = events
+	for _, item := range retained {
+		if _, err := appendEligible(item); err != nil {
+			return BriefWindow{}, err
+		}
+	}
+
 	lastContact, mandatory, err := briefLastContactItem(ctx, archive, request, lanes, after, before)
 	if err != nil {
 		return BriefWindow{}, err
@@ -259,10 +286,19 @@ func BuildBriefWindow(
 	sortBriefItemsNewestFirst(eligible)
 
 	selected := briefSelectItems(eligible, mandatory, request)
+	selected, request.retainedEvents, err = briefReserveEventItems(
+		selected, retained, request.retainedEvents, mandatory, protected, request.MaxItems,
+	)
+	if err != nil {
+		return BriefWindow{}, err
+	}
 	if len(selected) == 0 {
 		return BriefWindow{}, ErrNoBriefEvidence
 	}
 
+	if request.AsOf.IsZero() {
+		request.AsOf = selected[0].EventTime.UTC()
+	}
 	window := BriefWindow{Request: request, LastContact: lastContact}
 	for {
 		batch, boundary, buildErr := briefBatch(request, lanes, selected)
@@ -270,14 +306,23 @@ func BuildBriefWindow(
 			return BriefWindow{}, buildErr
 		}
 		if boundary.InputBytes <= request.MaxBytes {
+			if request.priorEventMemoryVersion > 0 {
+				request.retainedEventMemoryVersion = request.priorEventMemoryVersion
+			}
+			window.Request = request
 			window.Batch = batch
 			window.Boundary = boundary
 			window.Items = selected
 			return window, nil
 		}
-		trimmed, ok := briefDropOldest(selected, mandatory)
+		trimmed, ok := briefDropUnprotected(selected, mandatory, protected)
 		if !ok {
-			return BriefWindow{}, ErrEvidenceItemTooLarge
+			request.retainedEvents, _, ok = briefRetireCapacityEvent(
+				request.retainedEvents, protected, briefEventEvidenceByID(selected))
+			if !ok {
+				return BriefWindow{}, ErrEvidenceItemTooLarge
+			}
+			continue
 		}
 		selected = trimmed
 	}
@@ -361,7 +406,7 @@ func briefSelectItems(
 			selected = append(selected, item)
 			continue
 		}
-		if request.Previous != nil && !item.EventTime.After(request.Previous.ThroughEventTime) {
+		if !request.initialWindow && request.Previous != nil && !item.EventTime.After(request.Previous.ThroughEventTime) {
 			if overlapUsed == request.OverlapItems {
 				continue
 			}
@@ -381,26 +426,6 @@ func briefSelectItems(
 	return selected
 }
 
-// briefDropOldest removes the oldest item that is not the mandatory
-// last-contact item. It reports false when nothing more can be dropped, which
-// includes the case where one item alone already exceeds the byte cap.
-func briefDropOldest(items []EvidenceItem, mandatory *EvidenceItem) ([]EvidenceItem, bool) {
-	if len(items) < 2 {
-		return nil, false
-	}
-	mandatoryID := ""
-	if mandatory != nil {
-		mandatoryID = packetEvidenceID(*mandatory)
-	}
-	for index := range slices.Backward(items) {
-		if packetEvidenceID(items[index]) == mandatoryID {
-			continue
-		}
-		return append(append([]EvidenceItem(nil), items[:index]...), items[index+1:]...), true
-	}
-	return nil, false
-}
-
 // briefBatch freezes the selected items into one canonical packet. Every item
 // is a seed: the brief window has no changed-seed and retrieved-context split,
 // and canonicalPacket treats both groups identically.
@@ -410,7 +435,7 @@ func briefBatch(
 	packet, err := packetForProfile(EvidencePacket{
 		PersonID: request.PersonID, ProgramID: BriefProgramID,
 		ProgramVersion: BriefProgramVersion, Catalog: request.Catalog,
-		Seeds: append([]EvidenceItem(nil), items...),
+		Seeds: append([]EvidenceItem(nil), items...), BriefContext: briefEventContext(request),
 	}, request.Profile)
 	if err != nil {
 		return PacketBatch{}, BriefBoundary{}, fmt.Errorf("build person brief packet: %w", err)
