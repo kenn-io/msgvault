@@ -281,7 +281,7 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	}, 10)
 	assertions.Empty(got.Persons)
 	assertions.Equal(store.DirectionObserved, got.Direction)
-	assertions.Equal(store.ChannelChat, got.Channel)
+	assertions.Equal(store.ChannelOther, got.Channel)
 }
 
 func TestCallObservationParticipantMergeSubsetCopyAndDeletion(t *testing.T) {

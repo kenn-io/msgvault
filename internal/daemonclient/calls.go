@@ -3,7 +3,6 @@ package daemonclient
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
@@ -29,9 +28,6 @@ func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (*gener
 }
 
 func (c *Client) ListCallObservations(ctx context.Context, q store.CallQuery) (*generated.CallEvidenceResponse, error) {
-	if q.Offset != 0 {
-		return nil, fmt.Errorf("%w: evidence pages require after_id", callhistory.ErrInvalid)
-	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListCallObservationsResp, error) {
 		return client.ListCallObservationsWithResponse(ctx, &generated.ListCallObservationsRequestOptions{
 			Query: &generated.ListCallObservationsQuery{
@@ -47,9 +43,6 @@ func (c *Client) ListCallObservations(ctx context.Context, q store.CallQuery) (*
 }
 
 func (c *Client) SummarizeCalls(ctx context.Context, q store.CallQuery) (*generated.CallSummaryResponse, error) {
-	if q.AfterID != 0 {
-		return nil, fmt.Errorf("%w: summary pages require offset", callhistory.ErrInvalid)
-	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SummarizeCallsResp, error) {
 		return client.SummarizeCallsWithResponse(ctx, &generated.SummarizeCallsRequestOptions{
 			Query: &generated.SummarizeCallsQuery{

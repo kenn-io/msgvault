@@ -29,7 +29,7 @@ func ClassifyActivityCandidate(
 	// contact activity must not credit invitations or unsuccessful attempts.
 	if candidate.MessageType == "call_record" {
 		return ActivityClassification{
-			RefKind: RefKindMessage, Channel: ChannelChat, Direction: DirectionObserved,
+			RefKind: RefKindMessage, Channel: activityChannelFor(candidate.ConversationType, false), Direction: DirectionObserved,
 		}
 	}
 	if maxDirectCounterparts <= 0 {

@@ -3,6 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +20,7 @@ import (
 type fakeCallCommandClient struct {
 	imports          [][]byte
 	lists, summaries []store.CallQuery
+	importErrorAt    int
 }
 
 func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error) {
@@ -23,7 +28,10 @@ func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error
 }
 
 func (c *fakeCallCommandClient) ImportCallObservation(_ context.Context, data []byte) (*generated.CallImportResponse, error) {
-	c.imports = append(c.imports, data)
+	c.imports = append(c.imports, bytes.Clone(data))
+	if len(c.imports) == c.importErrorAt {
+		return nil, errors.New("import rejected")
+	}
 	return &generated.CallImportResponse{MessageID: 42, SourceID: 7}, nil
 }
 
@@ -46,9 +54,10 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
 			return client, func() { cleanups++ }, nil
 		}})
+		command.SilenceUsage = true
 		var output bytes.Buffer
 		command.SetOut(&output)
-		command.SetErr(&output)
+		command.SetErr(io.Discard)
 		command.SetIn(strings.NewReader(input))
 		command.SetArgs(args)
 		err := command.ExecuteContext(t.Context())
@@ -73,4 +82,42 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	requirements.Error(err)
 	assertions.Len(client.summaries, 1)
 	assertions.Equal(3, cleanups, "invalid --after must fail before opening the daemon client")
+
+	second := strings.Replace(input, `"callId":"one"`, `"callId":"two"`, 1)
+	for _, tc := range []struct {
+		name          string
+		input         string
+		file          bool
+		importErrorAt int
+		wantImports   int
+		wantResults   int
+		wantError     string
+	}{
+		{name: "several from stdin", input: input + "\n" + second, wantImports: 2, wantResults: 2},
+		{name: "several from file", input: input + second, file: true, wantImports: 2, wantResults: 2},
+		{name: "stop at invalid JSON", input: input + "\n{invalid}\n" + input, wantImports: 1, wantResults: 1, wantError: "call import record 2:"},
+		{name: "stop at import error", input: input + second + input, importErrorAt: 2, wantImports: 2, wantResults: 1, wantError: "call import record 2: import rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client = &fakeCallCommandClient{importErrorAt: tc.importErrorAt}
+			path := "-"
+			if tc.file {
+				path = filepath.Join(t.TempDir(), "calls.json")
+				require.NoError(os.WriteFile(path, []byte(tc.input), 0600))
+			}
+			output, err := run(tc.input, "import", path)
+			if tc.wantError == "" {
+				require.NoError(err, output)
+			} else {
+				require.ErrorContains(err, tc.wantError)
+			}
+			require.Len(client.imports, tc.wantImports)
+			for i, data := range client.imports {
+				assert.JSONEq([]string{input, second}[i], string(data))
+			}
+			assert.Equal(strings.Repeat("{\"message_id\":42,\"source_id\":7}\n", tc.wantResults), output)
+		})
+	}
 }
