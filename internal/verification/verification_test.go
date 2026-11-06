@@ -14,6 +14,14 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		{"alphabetic magic link", Content{Text: "Sign in: https://example.test/api/auth/magic-link/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf&callbackURL=%2Fdashboard"}, true},
+		{"alphabetic magic link href", Content{HTML: `<a href="https://example.test/api/auth/magic-link/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf&amp;callbackURL=%2Fdashboard">Sign in</a>`}, true},
+		{"alphabetic code key", Content{Text: "https://example.test/verify?code=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf"}, true},
+		{"short alphabetic token", Content{Text: "Sign in: https://example.test/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdE"}, false},
+		{"lowercase alphabetic token", Content{Text: "Sign in: https://example.test/verify?token=abcdefghijklmnopqrstuvwxyzabcdefghijklmn"}, false},
+		{"alphabetic unsubscribe token", Content{Text: "https://example.test/unsubscribe?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf"}, false},
+		{"long hyphenated slug", Content{Text: "Sign in: https://example.test/articles/AbCdEfGhIjKlMnOpQrStUvWxYz-AbCdEfGhIjKlMnOpQrStUvWxYz"}, false},
+		{"long hyphenated campaign", Content{Text: "Sign in: https://example.test/articles?utm_campaign=AbCdEfGhIjKlMnOpQrStUvWxYz-AbCdEfGhIjKlMnOpQrStUvWxYz"}, false},
 		{"German lautet", Content{Text: "Ihr Bestätigungscode lautet 482913"}, true},
 		{"verification code was", Content{Text: "Your verification code was 482913"}, true},
 		{"German war", Content{Text: "Ihr Sicherheitscode war 482913"}, true},
