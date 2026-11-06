@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -47,16 +46,6 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		}
 		return client, cleanup, nil
 	}
-	write := func(cmd *cobra.Command, value any) error {
-		if err := json.MarshalWrite(cmd.OutOrStdout(), value); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(cmd.OutOrStdout())
-		if err != nil {
-			return fmt.Errorf("write call output: %w", err)
-		}
-		return nil
-	}
 	importCommand := &cobra.Command{
 		Use: "import [file|-]", Short: "Import one supplied JSON observation (default: stdin)",
 		Args: cobra.MaximumNArgs(1),
@@ -83,7 +72,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return write(cmd, result)
+			return writeJSONOutput(cmd, result)
 		},
 	}
 	root.AddCommand(importCommand)
@@ -128,13 +117,13 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return write(cmd, result)
+				return writeJSONOutput(cmd, result)
 			}
 			result, err := client.ListCallObservations(cmd.Context(), q)
 			if err != nil {
 				return err
 			}
-			return write(cmd, result)
+			return writeJSONOutput(cmd, result)
 		}
 		root.AddCommand(command)
 	}

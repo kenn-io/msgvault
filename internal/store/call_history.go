@@ -10,8 +10,8 @@ import (
 	"go.kenn.io/msgvault/internal/callhistory"
 )
 
-// PutCallObservationContext replaces one source observation atomically. It
-// never resolves a person by name or infers participants from a chat roster.
+// PutCallObservationContext replaces one validated source observation atomically.
+// It never resolves a person by name or infers participants from a chat roster.
 func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o callhistory.Observation) (int64, error) {
 	// Source locking serializes absent-row creation as well as later updates.
 	// The identity lock held by persistence also orders participant merges.
@@ -91,9 +91,6 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	var e callhistory.Evidence
 	if err := json.Unmarshal([]byte(metadata), &e); err != nil {
 		return fmt.Errorf("%w: scalar metadata", callhistory.ErrInvalid)
-	}
-	if err := e.Validate(); err != nil {
-		return err
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
