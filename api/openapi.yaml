@@ -17285,10 +17285,6 @@ components:
           items:
             $ref: "#/components/schemas/TimelineEntry"
           type: array
-        notes:
-          items:
-            $ref: "#/components/schemas/TimelineEntry"
-          type: array
         summary:
           $ref: "#/components/schemas/TimelineDaySummary"
       required:
@@ -17350,8 +17346,6 @@ components:
           $ref: "#/components/schemas/TimelineMeetingEntry"
         message:
           $ref: "#/components/schemas/TimelineMessageEntry"
-        note:
-          $ref: "#/components/schemas/TimelineNoteEntry"
         open:
           items:
             $ref: "#/components/schemas/TimelineOpen"
@@ -17512,25 +17506,6 @@ components:
         - direction
         - people
         - untrusted_text
-      type: object
-    TimelineNoteEntry:
-      additionalProperties: true
-      properties:
-        people:
-          items:
-            $ref: "#/components/schemas/TimelinePerson"
-          type: array
-        people_count:
-          format: int64
-          type: integer
-        people_truncated:
-          type: boolean
-        untrusted_text:
-          $ref: "#/components/schemas/TimelineUntrustedText"
-      required:
-        - people_count
-        - untrusted_text
-        - people
       type: object
     TimelineOmitted:
       additionalProperties: true

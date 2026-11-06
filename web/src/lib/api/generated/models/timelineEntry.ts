@@ -6,7 +6,6 @@ import type { TimelineCallEntry } from "./timelineCallEntry";
 import type { TimelineLoopEntry } from "./timelineLoopEntry";
 import type { TimelineMeetingEntry } from "./timelineMeetingEntry";
 import type { TimelineMessageEntry } from "./timelineMessageEntry";
-import type { TimelineNoteEntry } from "./timelineNoteEntry";
 import type { TimelineOpen } from "./timelineOpen";
 
 export interface TimelineEntry {
@@ -21,7 +20,6 @@ export interface TimelineEntry {
   loop?: TimelineLoopEntry;
   meeting?: TimelineMeetingEntry;
   message?: TimelineMessageEntry;
-  note?: TimelineNoteEntry;
   open: TimelineOpen[];
   ref: string;
   time: string;

@@ -4,7 +4,6 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"strconv"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -74,7 +73,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch m.timelineState.reader {
 	case timelineReaderNone:
 		// List navigation continues below.
-	case timelineReaderCalendar, timelineReaderNote:
+	case timelineReaderCalendar:
 		return m.handleTimelineArchiveKey(msg)
 	case timelineReaderMessage:
 		// Horizontal navigation belongs to the parked Email/Text reader state.
@@ -194,14 +193,6 @@ func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
-	if entry.Kind == "note" {
-		if key, ok := strings.CutPrefix(entry.Key, "note:"); ok {
-			if id, err := strconv.ParseInt(key, 10, 64); err == nil && id > 0 {
-				m.timelineState.noteDate, m.timelineState.note = entry.Ref, nil
-				return m.openTimelineReader(timelineReaderNote, id)
-			}
-		}
-	}
 	// Preserve transcript/message openers when a meeting has both targets.
 	var calendarRef string
 	for _, open := range entry.Open {
@@ -242,9 +233,6 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 func (m Model) handleTimelineArchiveKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	scroll := m.timelineState.calendarScroll
 	lines := m.timelineCalendarLines()
-	if m.timelineState.reader == timelineReaderNote {
-		scroll, lines = m.timelineState.noteScroll, m.timelineNoteLines()
-	}
 	switch msg.String() {
 	case "up", "k", keyNameCtrlP:
 		scroll--
@@ -260,11 +248,7 @@ func (m Model) handleTimelineArchiveKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		scroll = len(lines)
 	}
 	scroll = min(max(scroll, 0), max(len(lines)-m.detailPageSize(), 0))
-	if m.timelineState.reader == timelineReaderNote {
-		m.timelineState.noteScroll = scroll
-	} else {
-		m.timelineState.calendarScroll = scroll
-	}
+	m.timelineState.calendarScroll = scroll
 	return m, nil
 }
 

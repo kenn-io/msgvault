@@ -166,7 +166,6 @@ func allDayEntries(t *Timeline) []Entry {
 		entries = append(entries, d.Meetings...)
 		entries = append(entries, d.Bursts...)
 		entries = append(entries, d.Calls...)
-		entries = append(entries, d.Notes...)
 	}
 	return entries
 }

@@ -13,7 +13,6 @@ Thu Oct 22
 - 13:30 Notes Alice T1 · 2 actions · #22
 - Alice T1 · email ↓2 ↑1 · 13:30 "Hello" (2 copies) · burst:1:2:2026-10-22
 - 13:30 call answered Alice 60s · #41
-- 13:30 note "Follow up" Alice T1 · 2026-10-22
 
 Tue Oct 20 · 1 meetings · 1 people (Alice T1)
 

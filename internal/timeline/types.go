@@ -57,7 +57,7 @@ type Open struct {
 	Args map[string]any `json:"args"`
 }
 
-// Entry is a tagged union. Kind: "meeting" | "transcript" | "burst" | "message" | "call" | "loop" | "note".
+// Entry is a tagged union. Kind: "meeting" | "transcript" | "burst" | "message" | "call" | "loop".
 type Entry struct {
 	// Truncated reports omitted text and lists; scalar values are preserved.
 	Truncated  bool          `json:"truncated,omitzero"`
@@ -75,7 +75,6 @@ type Entry struct {
 	Message    *MessageEntry `json:"message,omitempty"`
 	Call       *CallEntry    `json:"call,omitempty"`
 	Loop       *LoopEntry    `json:"loop,omitempty"`
-	Note       *NoteEntry    `json:"note,omitempty"`
 }
 
 const (
@@ -102,6 +101,11 @@ type SourceFreshness struct {
 	Outcome              string     `json:"outcome"`
 	Reason               string     `json:"reason,omitempty"`
 	SyncCommand          string     `json:"sync_command"`
+}
+
+// Warn reports whether the source needs a freshness warning.
+func (s SourceFreshness) Warn() bool {
+	return s.Reason != "" || s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Scheduling == "disabled" || s.LastSyncErrors > 0
 }
 
 type Freshness struct {
@@ -173,7 +177,6 @@ type Day struct {
 	Meetings []Entry     `json:"meetings,omitempty"`
 	Bursts   []Entry     `json:"bursts,omitempty"`
 	Calls    []Entry     `json:"calls,omitempty"`
-	Notes    []Entry     `json:"notes,omitempty"`
 }
 type DaySummary struct {
 	Messages        int      `json:"messages"`
@@ -241,10 +244,4 @@ type LoopEntry struct {
 	Kind   string `json:"kind"`
 	Age    string `json:"age"`
 	Person Person `json:"person"`
-}
-type NoteEntry struct {
-	PeopleCount     int           `json:"people_count"`
-	PeopleTruncated bool          `json:"people_truncated,omitzero"`
-	Text            UntrustedText `json:"untrusted_text"`
-	People          []Person      `json:"people"`
 }

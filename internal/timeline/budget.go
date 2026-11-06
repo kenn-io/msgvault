@@ -157,7 +157,6 @@ func timelineItems(t *Timeline) []pageItem {
 		add("days", "meetings", d.Date, d.Meetings)
 		add("days", "bursts", d.Date, d.Bursts)
 		add("days", "calls", d.Date, d.Calls)
-		add("days", "notes", d.Date, d.Notes)
 	}
 	add("history", "", "", t.History)
 	return out
@@ -207,8 +206,6 @@ func appendItem(t *Timeline, item pageItem, stub bool) {
 			d.Bursts = append(d.Bursts, e)
 		case "calls":
 			d.Calls = append(d.Calls, e)
-		case "notes":
-			d.Notes = append(d.Notes, e)
 		}
 	}
 }
@@ -247,13 +244,6 @@ func entryStub(e Entry) Entry {
 		p.Person.Name, p.Person.Truncated = "", true
 		e.Loop = &p
 	}
-	if e.Note != nil {
-		p := *e.Note
-		p.People = nil
-		p.PeopleTruncated = p.PeopleCount > 0
-		p.Text = UntrustedText{Truncated: true}
-		e.Note = &p
-	}
 	return e
 }
 
@@ -269,7 +259,6 @@ func clonePage(t Timeline) Timeline {
 		d.Meetings = append([]Entry(nil), d.Meetings...)
 		d.Bursts = append([]Entry(nil), d.Bursts...)
 		d.Calls = append([]Entry(nil), d.Calls...)
-		d.Notes = append([]Entry(nil), d.Notes...)
 	}
 	if t.OpenLoops != nil {
 		loops := *t.OpenLoops
@@ -461,10 +450,6 @@ func boundTimeline(t *Timeline) {
 		}
 		if p := e.Loop; p != nil {
 			p.Person = boundPerson(p.Person)
-		}
-		if p := e.Note; p != nil {
-			boundText(&p.Text, 600)
-			p.People, p.PeopleCount, p.PeopleTruncated = boundPeople(p.People, p.PeopleCount)
 		}
 	}
 }

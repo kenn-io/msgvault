@@ -24,7 +24,6 @@ type timelineModeBackend struct {
 	requests []timeline.Request
 	contexts []context.Context
 	result   *timeline.Timeline
-	note     *store.DailyNoteEntry
 }
 
 func (b *timelineModeBackend) Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error) {
@@ -757,27 +756,4 @@ func TestTimelineRefreshPreservesNavigationHistory(t *testing.T) {
 	back, _ := sendKey(t, next, keyEsc())
 	assertions.Equal(m.timelineState.request, back.timelineState.request)
 	assertions.Empty(back.timelineState.history)
-}
-
-func TestTimelineDailyNoteOpensDetail(t *testing.T) {
-	assertions := assert.New(t)
-	m := timelineModeModel()
-	backend, ok := m.timelineBackend.(*timelineModeBackend)
-	require.True(t, ok)
-	backend.note = &store.DailyNoteEntry{ID: 7, LocalDate: "2027-03-14", Body: strings.Repeat("Full note line\n", 50) + "Final note line"}
-	m.timelineState.result.Days[0].Bursts = nil
-	m.timelineState.result.Days[0].Notes = []timeline.Entry{{Kind: "note", Key: "note:7", Ref: "2027-03-14", Note: &timeline.NoteEntry{Text: timeline.UntrustedText{Text: "Short preview", Truncated: true}}, Open: []timeline.Open{}}}
-	m.rebuildTimelineRows()
-	opened, cmd := sendKey(t, m, keyEnter())
-	require.NotNil(t, cmd)
-	opened = sendMsg(t, opened, cmd())
-	assertions.Contains(strings.Join(opened.timelineNoteLines(), "\n"), "Final note line")
-	end, _ := sendKey(t, opened, key('G'))
-	assertions.Contains(stripANSI(end.renderView()), "Final note line")
-	back, _ := sendKey(t, end, keyEsc())
-	assertions.Equal(timelineReaderNone, back.timelineState.reader)
-}
-
-func (b *timelineModeBackend) GetDailyNoteContext(context.Context, string, int64) (*store.DailyNoteEntry, error) {
-	return b.note, nil
 }

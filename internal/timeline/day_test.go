@@ -346,8 +346,6 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	f.calendar("planning", singleDayEvent)
 	// This future occurrence appears in both pageable sections with one identity.
 	f.calendar("future", `{"id":"future","summary":"Later today","start":{"dateTime":"2026-10-22T15:00:00Z"},"end":{"dateTime":"2026-10-22T16:00:00Z"}}`)
-	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: "Authored note", Author: "owner"})
-	requirements.NoError(err)
 	copySource, e := f.Store.GetOrCreateSource("gmail", "second@example.com")
 	requirements.NoError(e)
 	requirements.NoError(f.Store.AddAccountIdentity(copySource.ID, "owner@example.com", "manual"))
@@ -530,7 +528,7 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 	assertions.Equal(1, got.Days[0].Summary.PeopleCount)
 }
 
-func TestBuildDaySkippedMidnightKeepsHoursAndNote(t *testing.T) {
+func TestBuildDaySkippedMidnightKeepsHours(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	loc, err := time.LoadLocation("America/Santiago")
@@ -542,25 +540,18 @@ func TestBuildDaySkippedMidnightKeepsHoursAndNote(t *testing.T) {
 		requirements.NoError(err)
 		f.call(at)
 	}
-	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Sunday note", Author: "owner"})
-	requirements.NoError(err)
 	req := dayRequest()
 	req.Date = "2026-09-06"
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	entries := allDayEntries(got)
 	var calls []string
-	var notes []string
 	for _, entry := range entries {
 		if entry.Kind == "call" {
 			calls = append(calls, entry.Time.UTC().Format(time.RFC3339))
 		}
-		if entry.Kind == "note" {
-			notes = append(notes, entry.Note.Text.Text)
-		}
 	}
 	assertions.ElementsMatch([]string{"2026-09-06T04:30:00Z", "2026-09-07T02:30:00Z"}, calls)
-	assertions.Equal([]string{"Sunday note"}, notes)
 }
 
 func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {

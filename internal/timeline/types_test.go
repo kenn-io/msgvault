@@ -26,7 +26,6 @@ func sampleTimeline(mode Mode) *Timeline {
 		{Kind: "message", Key: "msg:32", Ref: "msg:32", AnchorRef: "msg:32", Time: now, Message: &MessageEntry{Direction: "inbound", PeopleCount: 1, People: []Person{person}, Snippet: UntrustedText{Text: "Hello"}}},
 		{Kind: "call", Key: "m:41", Ref: "msg:41", AnchorRef: "msg:41", Time: now, Call: &CallEntry{Outcome: "answered", DurationSeconds: new(60.0), PeopleCount: 1, People: []Person{{Name: "Alice", TierSource: "none", Participation: "joined", Credited: true}}}},
 		{Kind: "loop", Key: "msg:51", Ref: "msg:51", AnchorRef: "msg:51", Time: now.AddDate(0, 0, -4), Loop: &LoopEntry{Kind: "reply_owed", Age: "4d", Person: person}},
-		{Kind: "note", Key: "note:61", Ref: "2026-10-22", AnchorRef: "2026-10-22", Time: now, Note: &NoteEntry{Text: UntrustedText{Text: "Follow up"}, PeopleCount: 1, People: []Person{person}}},
 	}
 	entries[0].Open = []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": "evt:12"}}, {Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{21}}}}
 	entries[1].Open = []Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []int64{22}}}}
@@ -34,7 +33,6 @@ func sampleTimeline(mode Mode) *Timeline {
 	entries[3].Open = []Open{{Tool: "get_message", Args: map[string]any{"id": 32}}}
 	entries[4].Open = []Open{{Tool: "get_message", Args: map[string]any{"id": 41}}}
 	entries[5].Open = []Open{{Tool: "get_message", Args: map[string]any{"id": 51}}}
-	entries[6].Open = []Open{}
 	entries[3].HiddenText = true
 	entries[3].Message = &MessageEntry{People: []Person{}}
 	v := &Timeline{Mode: mode, Timezone: "UTC", TimezoneIsDefault: true, Window: Window{From: "2026-10-20", To: "2026-10-22"}, Now: now,
@@ -43,7 +41,7 @@ func sampleTimeline(mode Mode) *Timeline {
 	if mode == ModeAnchor {
 		entries[3].Anchor, entries[3].Filtered = true, true
 		v.Anchor = &Anchor{Ref: "msg:32", Kind: "message", Time: now, Filtered: true}
-		v.History = []Entry{entries[0], entries[1], entries[2], entries[3], entries[4], entries[6]}
+		v.History = []Entry{entries[0], entries[1], entries[2], entries[3], entries[4]}
 		return v
 	}
 	v.OpenLoops = &OpenLoops{Items: []Entry{entries[5]}, Truncated: true, CoverageIncomplete: true, SkippedUnparseable: 1}
@@ -58,7 +56,7 @@ func sampleTimeline(mode Mode) *Timeline {
 		v.History = []Entry{entries[0], entries[1], entries[2], entries[4]}
 	} else {
 		v.Omitted.Budget = map[string]any{"days": 2, "open_loops": "more"}
-		v.Days = []Day{{Date: "2026-10-22", Meetings: entries[:2], Bursts: entries[2:3], Calls: entries[4:5], Notes: entries[6:]}, {Date: "2026-10-20", Summary: &DaySummary{Meetings: 1, PeopleCount: 1, People: []Person{person}}}}
+		v.Days = []Day{{Date: "2026-10-22", Meetings: entries[:2], Bursts: entries[2:3], Calls: entries[4:5]}, {Date: "2026-10-20", Summary: &DaySummary{Meetings: 1, PeopleCount: 1, People: []Person{person}}}}
 	}
 	return v
 }

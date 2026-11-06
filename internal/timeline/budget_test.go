@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func budgetTimeline(n int) *Timeline {
@@ -87,7 +86,7 @@ func TestFitDaySectionsAtMinimumBudget(t *testing.T) {
 	SetContinuation(v, Continuation{Binding: cursorBinding(), SortKeys: map[string]string{
 		v.Days[0].Meetings[0].Key: "001", v.Days[0].Meetings[1].Key: "002",
 		v.Days[0].Bursts[0].Key: "003", v.Days[0].Calls[0].Key: "004",
-		v.Days[0].Notes[0].Key: "005", "day:2026-10-20": "006",
+		"day:2026-10-20": "005",
 	}})
 	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
@@ -323,17 +322,13 @@ func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 			burst.Copies = nil
 			e.Burst = &burst
 			day.Bursts = append(day.Bursts, e)
-		case i < 45:
+		default:
 			e = sample.Calls[0]
 			e.Key = fmt.Sprintf("m:%d", i+1)
 			e.Ref = fmt.Sprintf("msg:%d", i+1)
 			e.AnchorRef = e.Ref
 			e.Open = []Open{{Tool: "get_message", Args: map[string]any{"id": i + 1}}}
 			day.Calls = append(day.Calls, e)
-		default:
-			e = sample.Notes[0]
-			e.Key = fmt.Sprintf("note:%d", i+1)
-			day.Notes = append(day.Notes, e)
 		}
 		entries = append(entries, e)
 		keys[e.Key] = fmt.Sprintf("%03d", i+1)
@@ -349,7 +344,6 @@ func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 		got = append(got, d.Meetings...)
 		got = append(got, d.Bursts...)
 		got = append(got, d.Calls...)
-		got = append(got, d.Notes...)
 	}
 	requirements.NotEmpty(got)
 	for i, e := range got {
@@ -441,25 +435,6 @@ func TestFitMarksClippedInvalidUTF8(t *testing.T) {
 	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.Snippet.Text)
 	assert.True(out.History[0].Message.People[0].Truncated)
 	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.People[0].Name)
-}
-
-// MCP has no daily-note reader, so a truncated note must not name an
-// uncallable tool; its date anchor re-centers the timeline instead.
-func TestFitTruncatedNoteNamesNoUncallableTool(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	_, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: strings.Repeat("<", 2000), Author: "owner"})
-	require.NoError(err)
-	req := dayRequest()
-	req.Budget = 4096
-	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(got.Days, 1)
-	require.Len(got.Days[0].Notes, 1)
-	note := got.Days[0].Notes[0]
-	assert.True(note.Truncated)
-	assert.Equal([]Open{}, note.Open)
-	assert.Equal("2026-10-22", note.AnchorRef)
 }
 
 func TestFitBoundsGapItemsAtMinimumBudget(t *testing.T) {

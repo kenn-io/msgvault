@@ -17132,7 +17132,6 @@ type TimelineDay struct {
 	Calls    []TimelineEntry     `json:"calls,omitempty"`
 	Date     string              `json:"date" validate:"required"`
 	Meetings []TimelineEntry     `json:"meetings,omitempty"`
-	Notes    []TimelineEntry     `json:"notes,omitempty"`
 	Summary  *TimelineDaySummary `json:"summary,omitempty"`
 }
 
@@ -17159,13 +17158,6 @@ func (t TimelineDay) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Meetings[%d]", i), err)
-			}
-		}
-	}
-	for i, item := range t.Notes {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Notes[%d]", i), err)
 			}
 		}
 	}
@@ -17222,7 +17214,6 @@ type TimelineEntry struct {
 	Loop       *TimelineLoopEntry    `json:"loop,omitempty"`
 	Meeting    *TimelineMeetingEntry `json:"meeting,omitempty"`
 	Message    *TimelineMessageEntry `json:"message,omitempty"`
-	Note       *TimelineNoteEntry    `json:"note,omitempty"`
 	Open       []TimelineOpen        `json:"open" validate:"required"`
 	Ref        string                `json:"ref" validate:"required"`
 	Time       time.Time             `json:"time" validate:"required"`
@@ -17272,13 +17263,6 @@ func (t TimelineEntry) Validate() error {
 		if v, ok := any(t.Message).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Message", err)
-			}
-		}
-	}
-	if t.Note != nil {
-		if v, ok := any(t.Note).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Note", err)
 			}
 		}
 	}
@@ -17442,36 +17426,6 @@ func (t TimelineMessageEntry) Validate() error {
 	if err := typesValidator.Var(t.Direction, "required"); err != nil {
 		errors = errors.Append("Direction", err)
 	}
-	if err := typesValidator.Var(t.People, "required"); err != nil {
-		errors = errors.Append("People", err)
-	}
-	for i, item := range t.People {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
-			}
-		}
-	}
-	if v, ok := any(t.UntrustedText).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("UntrustedText", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type TimelineNoteEntry struct {
-	People          []TimelinePerson      `json:"people" validate:"required"`
-	PeopleCount     int64                 `json:"people_count"`
-	PeopleTruncated *bool                 `json:"people_truncated,omitempty"`
-	UntrustedText   TimelineUntrustedText `json:"untrusted_text"`
-}
-
-func (t TimelineNoteEntry) Validate() error {
-	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(t.People, "required"); err != nil {
 		errors = errors.Append("People", err)
 	}

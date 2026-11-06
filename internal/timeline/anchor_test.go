@@ -216,25 +216,21 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 	f.add(f.now, false)
 	f.transcript("unlinked", "", f.now.Add(-time.Hour))
 	f.calendar("event", singleDayEvent)
-	_, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: "Synthetic note", Author: "owner"})
-	require.NoError(t, err)
 	f.project()
 	f.call(f.now.Add(-2 * time.Hour))
 	got, err := Build(t.Context(), f.src, dayRequest())
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(allDayEntries(got)), 5)
+	require.GreaterOrEqual(t, len(allDayEntries(got)), 4)
 	for _, entry := range allDayEntries(got) {
 		t.Run(entry.Kind, func(t *testing.T) {
 			around, e := Build(t.Context(), f.src, anchorRequest(entry.AnchorRef))
 			require.NoError(t, e)
 			require.NotNil(t, around.Anchor)
-			if entry.Kind != "note" {
-				found := false
-				for _, v := range around.History {
-					found = found || v.Anchor
-				}
-				assert.True(t, found)
+			found := false
+			for _, v := range around.History {
+				found = found || v.Anchor
 			}
+			assert.True(t, found)
 		})
 	}
 }
@@ -246,14 +242,12 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	assert := assert.New(t)
 	f := newTimelineFixture(t)
 	f.src.Location = loc
-	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Civil date", Author: "owner"})
-	require.NoError(err)
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
 	require.NoError(err)
 	assert.Equal("2026-09-06T01:00:00-03:00", got.Anchor.Time.Format(time.RFC3339))
 	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
-	require.Len(got.History, 2)
+	require.Len(got.History, 1)
 	for _, entry := range got.History {
 		assert.Equal("2026-09-06", entry.Time.In(loc).Format(time.DateOnly))
 	}
@@ -325,9 +319,7 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 				}
 				ids = append(ids, f.add(at, !cold && i%2 == 0, func(m *store.Message) {
 					m.ConversationID = conv
-					if !cold {
-						m.Snippet = sql.NullString{String: strings.Repeat("message ", 30), Valid: true}
-					}
+					m.Snippet = sql.NullString{String: strings.Repeat("message ", 30), Valid: true}
 				}))
 			}
 			f.project()

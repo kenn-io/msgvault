@@ -4,7 +4,7 @@ description: Read a bounded view of archived activity by day, person, or anchor.
 ---
 
 The timeline is unreleased. It combines archived messages, meetings, calls,
-open loops, and notes.
+and open loops.
 It reads the archive through the daemon and shows where a source is missing or
 out of date. Start here to find activity, then follow an entry's `open` targets
 to read its details.
@@ -72,7 +72,8 @@ and outbound messages, `✓` marks attendance, `T1`/`T2` show tiers, `×N` gives
 message count, and a copies label counts email copies. An empty window explicitly
 says `nothing archived`. Freshness warnings use the daemon's per-source sync
 status. A scheduled source warns when it has no successful sync, its next sync
-time has passed without a success, or its latest run failed or was cancelled.
+time has passed without a success, or its latest run failed, was cancelled,
+was paused, or recorded errors.
 Warnings include recovery commands where available. Manual sources, including
 CalDAV, don't warn. Configured sources appear after their first sync creates an
 archive source. Projection warnings report incomplete or reconciling activity.
@@ -90,7 +91,7 @@ A delegated token needs `message.read` on at least one admitted source.
 (`with`) are owner-only. Person-scoped delegated grants are deferred and are
 not available in the current authorization model. Delegated results include
 only authorized source data. Calls, loops, meeting suggestions, briefs, agendas,
-cadence, and daily notes are owner-only and appear as gaps for delegated reads.
+and cadence are owner-only and appear as gaps for delegated reads.
 An `open` target is emitted only when the caller has permission to use its tool.
 Numeric message and conversation IDs above 9007199254740991 require CLI or
 HTTP reads; MCP numeric opener arguments are limited to that safe integer

@@ -243,7 +243,7 @@ func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline
 				item.Reason = "stale"
 			}
 		}
-		if item.Reason != "" || item.Outcome == "failed" || item.Outcome == "cancelled" {
+		if item.Warn() {
 			result.Sources = append(result.Sources, item)
 		}
 	}

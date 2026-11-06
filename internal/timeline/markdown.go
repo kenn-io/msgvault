@@ -59,7 +59,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	}
 	fmt.Fprintf(&b, "# %s · %s\n", heading, zone)
 	for _, s := range t.Freshness.Sources {
-		if s.Reason != "" || s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Scheduling == "disabled" || s.LastSyncErrors > 0 {
+		if s.Warn() {
 			fmt.Fprintf(&b, "⚠ %s %s", singleLine(strings.TrimSuffix(s.SourceType+":"+s.Identifier, ":"), 80), singleLine(cmp.Or(s.Reason, s.Outcome, "current"), 80))
 			if s.Reason != "" && (s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Outcome == "partial") {
 				fmt.Fprintf(&b, " %s", singleLine(s.Outcome, 80))
@@ -166,7 +166,6 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 			}
 			fmt.Fprintf(&b, "- %s\n", strings.Join(other, " · "))
 		}
-		rows(d.Notes)
 	}
 	if len(t.History) > 0 {
 		b.WriteString("\nHistory\n")
@@ -322,8 +321,6 @@ func entryRow(e Entry, loc *time.Location) string {
 			kind = "awaiting"
 		}
 		body = kind + " " + personName(e.Loop.Person) + " " + singleLine(e.Loop.Age, 80)
-	case e.Note != nil:
-		body = clock + " note \"" + textLine(e.Note.Text, 80) + "\" " + peopleNames(e.Note.People, e.Note.PeopleCount)
 	default:
 		body = clock + " " + e.Kind
 	}

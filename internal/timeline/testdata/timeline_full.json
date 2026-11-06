@@ -325,36 +325,6 @@
 						]
 					}
 				}
-			],
-			"notes": [
-				{
-					"kind": "note",
-					"key": "note:61",
-					"ref": "2026-10-22",
-					"anchor_ref": "2026-10-22",
-					"time": "2026-10-22T13:30:00Z",
-					"open": [],
-					"anchor": false,
-					"filtered": false,
-					"hidden_text": false,
-					"note": {
-						"people_count": 1,
-						"untrusted_text": {
-							"text": "Follow up",
-							"truncated": false
-						},
-						"people": [
-							{
-								"tier_source": "applied",
-								"person_id": 7,
-								"participant_id": 8,
-								"name": "Alice",
-								"tier": 1,
-								"credited": false
-							}
-						]
-					}
-				}
 			]
 		},
 		{

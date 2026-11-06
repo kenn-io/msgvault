@@ -73,7 +73,7 @@ func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageD
 	return r
 }
 
-func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.ActivityMessage, occurrences []store.CalendarOccurrence, calls []store.LogicalCall, notes []store.DailyNoteEntry) ([]Entry, []Entry) {
+func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.ActivityMessage, occurrences []store.CalendarOccurrence, calls []store.LogicalCall) ([]Entry, []Entry) {
 	ids := []int64{}
 	calendarIDs := []int64{}
 	refs := []string{}
@@ -161,9 +161,6 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		for _, p := range call.Participants {
 			personIDs = append(personIDs, p.PersonID)
 		}
-	}
-	for _, note := range notes {
-		personIDs = append(personIDs, note.PersonIDs...)
 	}
 	c.loadTiers(personIDs)
 	entries := []Entry{}
@@ -328,20 +325,6 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		e := Entry{Kind: "call", Key: call.IdentityKey, Ref: ref, AnchorRef: ref, Time: call.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(call.MessageID), Call: &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, People: people, PeopleCount: len(people)}}
 		entries = append(entries, e)
 	}
-	for _, note := range notes {
-		people := []Person{}
-		for _, id := range note.PersonIDs {
-			people = append(people, c.savedPerson(id))
-		}
-		people = c.tierPeople(people)
-		if !c.admitTier(people) {
-			continue
-		}
-		at, _, _ := calrecur.CivilDateBoundary(note.LocalDate, c.loc)
-		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
-		c.entryDates[e.Key] = note.LocalDate
-		entries = append(entries, e)
-	}
 	return entries, upcoming
 }
 func displaySnippet(d store.MessageDisplay) string {
@@ -431,19 +414,6 @@ func (c *composer) participantPerson(participant, person int64) Person {
 
 	return p
 }
-func (c *composer) savedPerson(id int64) Person {
-	p := Person{PersonID: id, TierSource: "none"}
-
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.PersonCandidate, error) {
-		return c.src.People.ResolvePersonReferenceContext(ctx, "person", strconv.FormatInt(id, 10), nil, 10)
-	})
-	c.gap("people", r.err, false)
-	if len(r.value) > 0 {
-		p.Name = r.value[0].DisplayName
-	}
-
-	return p
-}
 
 const sortTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
@@ -498,8 +468,6 @@ func (c *composer) dayKey(e Entry) string {
 	case "call":
 		part = "2"
 		order = rankKey(e)
-	case "note":
-		part = "3"
 	}
 	return reverseDigits(date) + "|" + part + "|" + order
 }
@@ -603,8 +571,6 @@ func (c *composer) groupDays(entries []Entry) {
 					day.Bursts = append(day.Bursts, e)
 				case "call":
 					day.Calls = append(day.Calls, e)
-				case "note":
-					day.Notes = append(day.Notes, e)
 				}
 			}
 			if len(items) == 0 {
@@ -626,8 +592,6 @@ func EntryPeople(e Entry) []Person {
 		return e.Call.People
 	case e.Message != nil:
 		return e.Message.People
-	case e.Note != nil:
-		return e.Note.People
 	case e.Loop != nil:
 		return []Person{e.Loop.Person}
 	}

@@ -61,7 +61,6 @@ type dayRead struct {
 	calendar, upcoming readResult[store.CalendarOccurrencePage]
 	calls              readResult[[]store.LogicalCall]
 	loops              readResult[loops.Result]
-	notes              readResult[[]store.DailyNoteEntry]
 	inventory          readResult[Freshness]
 }
 
@@ -113,11 +112,6 @@ func (c *composer) collectDay() dayRead {
 			}
 		},
 		func() {
-			if c.req.Scope.Owner {
-				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return c.readNotes(ctx, from, to) })
-			}
-		},
-		func() {
 			r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
 		},
 	)
@@ -156,25 +150,6 @@ func (c *composer) readCalls(ctx context.Context, q store.LogicalCallQuery) ([]s
 		q.AfterKey = key
 	}
 }
-func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.DailyNoteEntry, error) {
-	result := []store.DailyNoteEntry{}
-	start, _ := time.Parse(time.DateOnly, from.In(c.loc).Format(time.DateOnly))
-	end, _ := time.Parse(time.DateOnly, to.In(c.loc).Format(time.DateOnly))
-	for date := start; date.Before(end); date = date.AddDate(0, 0, 1) {
-		for offset := 0; ; offset += 100 {
-			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date.Format(time.DateOnly), 100, offset)
-			result = append(result, notes...)
-			if err != nil {
-				return result, err
-			}
-			if len(notes) < 100 {
-				break
-			}
-		}
-	}
-	return result, nil
-}
-
 func (c *composer) buildDay() {
 	r := c.collectDay()
 
@@ -207,13 +182,12 @@ func (c *composer) buildDay() {
 	c.calendarGaps(r.calendar, "meetings")
 	c.calendarGaps(r.upcoming, "upcoming")
 	c.gap("calls", r.calls.err, len(r.calls.value) > 0)
-	c.gap("notes", r.notes.err, len(r.notes.value) > 0)
 	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}
 	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
-	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value, r.notes.value)
+	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value)
 	c.t.Upcoming = c.filterSubject(upcoming)
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
@@ -238,7 +212,7 @@ func (c *composer) calendarGaps(r readResult[store.CalendarOccurrencePage], sect
 	}
 }
 func (c *composer) ownerGaps() {
-	for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence", "notes"} {
+	for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence"} {
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: section, Code: "owner-only"})
 	}
 }

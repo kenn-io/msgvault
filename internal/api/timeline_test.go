@@ -72,14 +72,9 @@ func TestTimelineOwnerFormatsAndErrors(t *testing.T) {
 		})
 	}
 }
-func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
+func TestTimelineLibrarySourceScopeDeniesOwnerTimeline(t *testing.T) {
 	requirements := require.New(t)
-	srv, st, src := timelineRouteFixture(t)
-	const noteBody = "Synthetic owner-only timeline note"
-	_, err := st.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{
-		LocalDate: "2027-03-01", Body: noteBody, Author: "Synthetic Owner",
-	})
-	requirements.NoError(err)
+	srv, _, src := timelineRouteFixture(t)
 	handler := srv.Handler(func(_ http.ResponseWriter, _ *http.Request, op Operation) bool {
 		return op.ID == "getTimeline"
 	})
@@ -87,7 +82,6 @@ func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
 	owner := httptest.NewRecorder()
 	handler.ServeHTTP(owner, httptest.NewRequest(http.MethodGet, path, nil))
 	requirements.Equal(http.StatusOK, owner.Code, owner.Body.String())
-	requirements.Contains(owner.Body.String(), noteBody, "the unrestricted host request must exercise owner-only notes")
 
 	for _, tc := range []struct {
 		name string
@@ -103,7 +97,6 @@ func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
 			handler.ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
 			assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 			assertions.Contains(response.Body.String(), "unsupported_source_scope")
-			assertions.NotContains(response.Body.String(), noteBody)
 		})
 	}
 }
@@ -259,6 +252,7 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 		name, kind, identifier, job, outcome, reason, command string
 		next                                                  time.Duration
 		never                                                 bool
+		errors                                                int64
 	}{
 		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, reason: "stale", command: "msgvault sync-calendar calendar@example.com"},
 		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, reason: "stale"},
@@ -266,6 +260,8 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 		{name: "calendar never succeeded", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, never: true, reason: "never_synced"},
 		{name: "calendar failed", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "failed"},
 		{name: "calendar cancelled", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "cancelled"},
+		{name: "calendar paused", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "paused"},
+		{name: "calendar completed with errors", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "completed", errors: 2},
 		{name: "manual discovery alias", kind: "caldav", identifier: `["owner@example.com","https://calendar.example.com/discovered/work/"]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,7 +280,7 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 				run, err := st.StartSync(src.ID, "full")
 				requirements.NoError(err)
 				requirements.NoError(st.FailSync(run, "synthetic failure"))
-				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET status = ?, started_at = ? WHERE id = ?"), tc.outcome, srv.clockNow().Add(-time.Hour), run)
+				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET status = ?, errors_count = ?, started_at = ? WHERE id = ?"), tc.outcome, tc.errors, srv.clockNow().Add(-time.Hour), run)
 				requirements.NoError(err)
 			}
 			sched := newMockScheduler()
@@ -303,12 +299,14 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 				requirements.Len(got.Freshness.Sources, 1)
 				item := got.Freshness.Sources[0]
 				assertions.Equal(tc.reason, item.Reason)
+				assertions.Equal(tc.errors, item.LastSyncErrors)
 				assertions.Equal(src.ID, *item.SourceID)
 				if tc.command != "" {
 					assertions.Equal(tc.command, item.SyncCommand)
 				}
 				if tc.outcome != "" {
 					assertions.Equal(tc.outcome, item.Outcome)
+					assertions.Contains(timeline.Markdown(&got), "⚠ gcal:calendar@example.com/work")
 				}
 			}
 			visibleWarnings := len(got.Freshness.Sources)

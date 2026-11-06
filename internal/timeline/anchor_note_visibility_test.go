@@ -95,36 +95,3 @@ func TestEventAnchorSurvivesTierFilter(t *testing.T) {
 	requirements.NotEmpty(got.History[0].Open)
 	assertions.Equal("get_calendar_event", got.History[0].Open[0].Tool)
 }
-
-func TestDailyNoteHasNoToolTarget(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	note, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: "Synthetic note", Author: "owner"})
-	requirements.NoError(err)
-	got, err := Build(t.Context(), f.src, dayRequest())
-	requirements.NoError(err)
-	requirements.Len(got.Days, 1)
-	requirements.Len(got.Days[0].Notes, 1)
-	assertions.Equal(fmt.Sprintf("note:%d", note.ID), got.Days[0].Notes[0].Key)
-	assertions.Empty(got.Days[0].Notes[0].Open)
-}
-
-func TestDailyNoteDetailBeyondFirstPage(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	var id int64
-	for range 101 {
-		note, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: "Full synthetic note", Author: "owner"})
-		requirements.NoError(err)
-		id = note.ID
-	}
-	note, err := ReadDailyNote(t.Context(), f.src.Notes, "2026-10-22", id)
-	requirements.NoError(err)
-	requirements.NotNil(note)
-	assertions.Equal(id, note.ID)
-	assertions.Equal("Full synthetic note", note.Body)
-	_, err = ReadDailyNote(t.Context(), f.src.Notes, "2026-10-21", id)
-	assertions.ErrorIs(err, store.ErrDailyNoteEntryNotFound)
-}

@@ -22,7 +22,6 @@ type Sources struct {
 	Loops       LoopsSource
 	Freshness   func(context.Context, time.Time) (Freshness, error)
 	People      PeopleSource
-	Notes       NotesSource
 	Briefs      BriefsSource
 	Agenda      AgendaSource
 	Filters     store.ActivityFilters
@@ -69,9 +68,6 @@ type LoopsSource interface {
 type PeopleSource interface {
 	ResolvePersonReferenceContext(ctx context.Context, kind store.PersonRefKind, value string, allowedPersonIDs []int64, limit int) ([]store.PersonCandidate, error)
 	PersonTiersContext(ctx context.Context, ids []int64, options store.PersonTierOptions) (map[int64]store.PersonTier, error)
-}
-type NotesSource interface {
-	ListDailyNoteEntriesContext(ctx context.Context, date string, limit, offset int) ([]store.DailyNoteEntry, error)
 }
 type BriefsSource interface {
 	GetPersonBriefContext(ctx context.Context, personID int64, maxLength int) (*store.PersonBrief, error)

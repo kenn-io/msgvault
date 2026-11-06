@@ -9,17 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/timeline"
 )
-
-func TestTimelineDailyNotePreservesParagraphs(t *testing.T) {
-	m := timelineModeModel()
-	m.timelineState.reader = timelineReaderNote
-	m.timelineState.note = &store.DailyNoteEntry{LocalDate: "2026-10-22", Body: "First paragraph\n\nSecond paragraph"}
-	assert.Equal(t, []string{"2026-10-22", "", "First paragraph", "", "Second paragraph"}, m.timelineNoteLines())
-	assert.Contains(t, stripANSI(m.renderView()), "First paragraph\n\nSecond paragraph")
-}
 
 func TestTimelineViewRendersSharedMarkdownRows(t *testing.T) {
 	assert := assert.New(t)

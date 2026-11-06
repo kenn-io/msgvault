@@ -171,7 +171,6 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	var coldCount readResult[int]
 	var calendar readResult[store.CalendarOccurrencePage]
 	var calls readResult[[]store.LogicalCall]
-	var notes readResult[[]store.DailyNoteEntry]
 	c.parallel(
 		func() {
 			activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
@@ -207,28 +206,18 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 				})
 			}
 		},
-		func() {
-			if c.req.Scope.Owner && !c.req.Conversation {
-				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
-					start, _, _ := calrecur.CivilDateBoundary(from.Format(time.DateOnly), c.loc)
-					end, _, _ := calrecur.CivilDateBoundary(to.Format(time.DateOnly), c.loc)
-					return c.readNotes(ctx, start, end.AddDate(0, 0, 1))
-				})
-			}
-		},
 	)
 	c.gap("history", activity.err, len(activity.value.bursts) > 0)
 	c.gap("cold", cold.err, false)
 	c.gap("cold", coldCount.err, false)
 	c.calendarGaps(calendar, "meetings")
 	c.gap("calls", calls.err, false)
-	c.gap("notes", notes.err, false)
 	if activity.value.more || cold.value.NextKey != nil {
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "history", Code: "partial"})
 	}
 	c.t.Omitted.Noise = activity.value.noise + cold.value.NoiseOmitted
 	c.t.Omitted.Cold = coldCount.value
-	probeErr := errors.Join(activity.err, cold.err, coldCount.err, calendar.err, calls.err, notes.err)
+	probeErr := errors.Join(activity.err, cold.err, coldCount.err, calendar.err, calls.err)
 	if c.req.Conversation {
 		entries, err := c.conversationEntries(target.conversationID, from, to)
 		return entries, errors.Join(probeErr, err)
@@ -237,7 +226,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	if target.occurrence != nil {
 		occurrences = append(slices.Clone(occurrences), *target.occurrence)
 	}
-	entries, _ := c.mergeEntries(mergeBursts(activity.value.bursts, cold.value.Bursts), activity.value.meetings, occurrences, calls.value, notes.value)
+	entries, _ := c.mergeEntries(mergeBursts(activity.value.bursts, cold.value.Bursts), activity.value.meetings, occurrences, calls.value)
 	return c.filterSubject(entries), probeErr
 }
 func anchorMatches(e Entry, target anchorTarget) bool {
@@ -261,7 +250,7 @@ func (c *composer) anchorFallback(target anchorTarget) Entry {
 	if target.occurrence != nil {
 		cc := *c
 		cc.req.Tiers = nil
-		entries, _ := cc.mergeEntries(nil, nil, []store.CalendarOccurrence{*target.occurrence}, nil, nil)
+		entries, _ := cc.mergeEntries(nil, nil, []store.CalendarOccurrence{*target.occurrence}, nil)
 		if len(entries) > 0 {
 			entry := entries[0]
 			entry.Anchor, entry.Filtered = true, true

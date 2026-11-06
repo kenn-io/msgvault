@@ -208,7 +208,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.calendarGaps(upcoming, "upcoming")
 	bursts := mergeBursts(history.value.bursts, cold.value.Bursts)
 	slices.Reverse(bursts)
-	entries, future := c.mergeEntries(bursts, history.value.meetings, occurrences, logicalCalls.value, nil)
+	entries, future := c.mergeEntries(bursts, history.value.meetings, occurrences, logicalCalls.value)
 	c.t.Upcoming = c.filterSubject(future)
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)

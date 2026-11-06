@@ -9,7 +9,6 @@ export interface TimelineDay {
   calls?: TimelineEntry[];
   date: string;
   meetings?: TimelineEntry[];
-  notes?: TimelineEntry[];
   summary?: TimelineDaySummary;
   [key: string]: unknown;
 }

@@ -134,13 +134,6 @@ func (s deniedLoops) List(context.Context, loops.Options, time.Time) (loops.Resu
 	return loops.Result{}, errors.New("owner-only loops queried")
 }
 
-type deniedNotes struct{ hits *atomic.Int64 }
-
-func (s deniedNotes) ListDailyNoteEntriesContext(context.Context, string, int, int) ([]store.DailyNoteEntry, error) {
-	s.hits.Add(1)
-	return nil, errors.New("owner-only notes queried")
-}
-
 type deniedBriefs struct{ hits *atomic.Int64 }
 
 func (s deniedBriefs) GetPersonBriefContext(context.Context, int64, int) (*store.PersonBrief, error) {
@@ -192,7 +185,6 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 	var hits atomic.Int64
 	f.src.Calls = deniedCalls{&hits}
 	f.src.Loops = deniedLoops{&hits}
-	f.src.Notes = deniedNotes{&hits}
 	f.src.Briefs = deniedBriefs{&hits}
 	f.src.Agenda = deniedAgenda{&hits}
 	f.src.Activity = deniedCadence{f.src.Activity, &hits}
@@ -208,7 +200,7 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 			assertions.Empty(got.Person.Agenda)
 			assertions.Empty(got.Person.CadenceStatus)
 		}
-		for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence", "notes"} {
+		for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence"} {
 			count := 0
 			for _, gap := range got.Gaps {
 				if gap.Section == section && gap.Code == "owner-only" {

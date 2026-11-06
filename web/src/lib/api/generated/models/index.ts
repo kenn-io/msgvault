@@ -1054,7 +1054,6 @@ export * from "./timelineGap";
 export * from "./timelineLoopEntry";
 export * from "./timelineMeetingEntry";
 export * from "./timelineMessageEntry";
-export * from "./timelineNoteEntry";
 export * from "./timelineOmitted";
 export * from "./timelineOmittedBudget";
 export * from "./timelineOpen";
