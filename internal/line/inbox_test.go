@@ -37,6 +37,27 @@ func TestRetryableEventDoesNotHideJoinedArchiveFailures(t *testing.T) {
 	checks.False(retryableEvent(fmt.Errorf("wrapped: %w", errors.Join(provider, archive))))
 }
 
+func TestGroupSummaryPermanentErrorPreservesArchivedMessage(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: status})
+			f.enqueue(t, f.message("1", "archived text", f.now.UnixMilli()), time.Time{})
+			f.run(t)
+			checks.Equal("archived text", f.archived(t, "1").body)
+			var state string
+			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			want := "processed"
+			if status == http.StatusTooManyRequests || status == http.StatusInternalServerError {
+				want = "retry"
+			}
+			checks.Equal(want, state)
+		})
+	}
+}
+
 type inboxFixture struct {
 	st          *store.Store
 	source      *store.Source
