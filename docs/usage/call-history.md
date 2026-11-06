@@ -7,7 +7,7 @@ These commands require daemon API schema 3.45.0 or newer.
 
 ## Import a supplied record
 
-`calls import` accepts one JSON request from a file or stdin. It uses the
+`calls import` reads consecutive JSON requests from a file or stdin, reports each result, and stops at the first error with the failed record number. It uses the
 selected local or remote daemon and owner authentication. Delegated agent
 tokens cannot import or read call history.
 
@@ -77,28 +77,12 @@ phone numbers and similar titles never merge calls. `--after` is inclusive and
 
 ## Coverage and limitations
 
-- **Beeper/hosted iMessage:** live call-record validation remains pending.
-  No personal examples have been validated. The [documented message API](https://developers.beeper.com/desktop-api-reference/go/resources/messages/methods/list/)
-  has no structured CALL type; automatic extraction is not enabled.
 - **Signal:** the [bridge converter](https://github.com/mautrix/signal/blob/main/pkg/connector/handlesignal.go)
   emits incoming/end notices. Those notices alone establish neither answer nor
   talk duration. The native adapter follows [Signal's call dispositions](https://github.com/signalapp/Signal-Desktop/blob/main/ts/types/CallDisposition.std.ts):
   group `Accepted` does not imply `Joined`. Unknown enums stay unknown; end
   minus start never becomes talk duration. Epoch timestamps do not identify
   the original time zone.
-- **Calendar:** synced events stay in the [calendar archive](calendar.md). Invitations never count as calls.
-- **Slack:** [huddle history objects](https://docs.slack.dev/reference/objects/conversation-object/)
-  can contain room timestamps and participant history. The
-  [third-party Calls API](https://docs.slack.dev/apis/web-api/using-the-calls-api)
-  is not a general historical call-log API. No automatic adapter is included.
-- **Discord:** [private-channel call objects](https://docs.discord.com/developers/resources/message#message-call-object)
-  describe participants and end time. The existing guild bot source does not
-  establish access to private historical calls. No alternate account or client
-  is used.
-- **macOS:** Apple documents [Phone/FaceTime history synchronization](https://support.apple.com/en-nz/guide/icloud/mmc2662aa6e0/icloud).
-  [CallKit](https://developer.apple.com/documentation/CallKit) describes call
-  integration, not a general historical export API. Protected call databases
-  and additional privacy permissions are outside this importer.
 
 Call observations do not create ordinary message-contact activity. The
 per-person Store summary is available for relationship-tier integration;
