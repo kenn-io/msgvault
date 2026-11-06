@@ -8972,6 +8972,9 @@ components:
           type: integer
         manual_notes:
           type: string
+        meeting_platform:
+          maxLength: 128
+          type: string
         raw_transcript:
           type: string
         source:
@@ -17226,7 +17229,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.45.0
+  version: 3.46.0
 openapi: 3.1.0
 paths:
   /api/ping:

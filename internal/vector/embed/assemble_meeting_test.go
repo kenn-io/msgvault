@@ -27,6 +27,40 @@ func TestAssembleMeetingDocument_PacksWholeTurnsAndKeepsSourceSpans(t *testing.T
 	}
 }
 
+func TestAssembleMeetingDocument_PlatformHeaderKeepsAttendeesInContext(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	body := "Weekly sync\nWhen: 2026-08-08 09:00\nPlatform: teams\nAttendees: Alice, Bob\n\nDecision summary.\n\nTranscript:\n[00:01] Alice: First turn."
+	doc, err := embed.AssembleMeetingDocument(meetingRow(19, body), embed.AssemblyPolicy{MaxChunkRunes: 500})
+	require.NoError(err)
+	require.Len(doc.Chunks, 2)
+	header := "Weekly sync\nWhen: 2026-08-08 09:00\nPlatform: teams\nAttendees: Alice, Bob"
+	for _, chunk := range doc.Chunks {
+		assert.Contains(chunk.Text, header)
+		assert.NotContains(sourceText(body, chunk), "Attendees:")
+	}
+	assert.Contains(concatenateMeetingSource(body, doc.Chunks), "[00:01] Alice: First turn.")
+}
+
+func TestAssembleMeetingDocument_WhitespacePlatformHeaderKeepsAttendeesAfterCollapse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	body := "Weekly sync\nWhen: 2026-08-08 09:00\nPlatform: \t  \nAttendees: Alice, Bob\n\nDecision summary.\n\nTranscript:\n[00:01] Alice: First turn."
+	policy := embed.AssemblyPolicy{
+		MaxChunkRunes: 500,
+		Preprocess:    embed.PreprocessConfig{CollapseWhitespace: true},
+	}
+	doc, err := embed.AssembleMeetingDocument(meetingRow(20, body), policy)
+	require.NoError(err)
+	require.Len(doc.Chunks, 2)
+	preprocessed, _ := embed.Preprocess("", body, 0, policy.Preprocess)
+	header := "Weekly sync\nWhen: 2026-08-08 09:00\nPlatform:\nAttendees: Alice, Bob"
+	assert.Contains(preprocessed, header)
+	for _, chunk := range doc.Chunks {
+		assert.Contains(chunk.Text, header)
+	}
+}
+
 func TestAssembleMeetingDocument_NoteOnlyProducesContextualNoteChunks(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

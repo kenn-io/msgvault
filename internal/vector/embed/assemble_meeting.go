@@ -84,13 +84,23 @@ func errorsNewMeeting(detail string) error {
 
 func parseMeetingLayout(body string) meetingLayout {
 	lines := meetingLines(body)
-	if len(lines) < 2 || strings.TrimSpace(lines[0].text) == "" ||
-		(!strings.HasPrefix(lines[1].text, "When: ") && !strings.HasPrefix(lines[1].text, "Attendees: ")) {
+	if len(lines) < 2 || strings.TrimSpace(lines[0].text) == "" {
+		return meetingLayout{}
+	}
+	hasWhen := strings.HasPrefix(lines[1].text, "When: ")
+	if !hasWhen && !strings.HasPrefix(lines[1].text, "Attendees: ") {
 		return meetingLayout{}
 	}
 	headerLast := 1
-	if strings.HasPrefix(lines[1].text, "When: ") && len(lines) > 2 && strings.HasPrefix(lines[2].text, "Attendees: ") {
-		headerLast = 2
+	if hasWhen {
+		for headerLast+1 < len(lines) {
+			next := lines[headerLast+1].text
+			if next != "Platform:" && !strings.HasPrefix(next, "Platform: ") &&
+				!strings.HasPrefix(next, "Attendees: ") {
+				break
+			}
+			headerLast++
+		}
 	}
 	headerParts := make([]string, 0, headerLast+1)
 	for i := 0; i <= headerLast; i++ {

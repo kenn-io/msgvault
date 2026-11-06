@@ -8775,6 +8775,7 @@ type MuesliRemoteRecord struct {
 	FormattedNotes   *string  `json:"formatted_notes,omitzero"`
 	ID               int64    `json:"id"`
 	ManualNotes      *string  `json:"manual_notes,omitzero"`
+	MeetingPlatform  *string  `json:"meeting_platform,omitzero" validate:"omitempty,max=128"`
 	RawTranscript    *string  `json:"raw_transcript,omitzero"`
 	Source           *string  `json:"source,omitzero"`
 	StartTime        string   `json:"start_time" validate:"required"`

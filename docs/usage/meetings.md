@@ -1029,8 +1029,8 @@ msgvault sync-muesli --full
 ```
 
 Every run reads the whole database and updates meetings that changed in place,
-including title, notes, transcript, participant, and folder edits. Unchanged
-meetings are skipped.
+including title, notes, transcript, participant, folder, and meeting platform
+edits. Unchanged meetings are skipped.
 
 - Meetings still recording or processing wait for a later run.
 - Meetings deleted in Muesli stay in the archive unchanged.
@@ -1040,6 +1040,9 @@ meetings are skipped.
   you add an identity.
 
 ### Automatic sync on a remote recorder
+
+Upgrade the daemon before upgrading the recorder-side msgvault client. Older
+daemons reject the optional `meeting.record.meeting_platform` transfer field.
 
 After registration, keep the native watcher running on the Mac:
 
@@ -1162,6 +1165,20 @@ Each meeting becomes one `meeting_transcript` message in a `meeting`
 conversation. The body holds the title, time, participant names, Muesli's AI
 notes, the notes you typed, and the transcript. When Muesli skipped or failed
 the summary, the body omits that notice instead of showing it as a summary.
+
+When Muesli supplies a detected call service, the body includes a
+`Platform: <value>` line, such as `Platform: googleMeet`. msgvault keeps the
+supplied identifier, including future values, without guessing from titles or
+calendar links. Older Muesli databases and recordings without this evidence
+omit the line. Muesli keeps this evidence on the recording device; its
+cross-device sync does not transmit it. Run `msgvault sync-muesli mac --full`
+to refresh archived meetings from values available in the local source.
+
+The exact value is retained as `meeting_platform` in stored archive metadata
+and as `meeting.meeting_platform` in raw evidence. The metadata's `platform`
+remains `muesli` (the recorder); `source` remains the recording mode.
+Only the body display flattens control characters and line separators.
+Structured meeting-context packets do not expose the call service.
 
 Muesli does not record an organizer. msgvault attributes each meeting to
 `account_email` as its organizer. Participants with an email address become

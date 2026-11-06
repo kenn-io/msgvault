@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingidentity"
@@ -121,6 +122,7 @@ type rawMeeting struct {
 	DurationSeconds  float64 `json:"duration_seconds,omitzero"`
 	Status           string  `json:"status,omitempty"`
 	Source           string  `json:"source,omitempty"`
+	MeetingPlatform  string  `json:"meeting_platform,omitempty"`
 	FormattedNotes   string  `json:"formatted_notes,omitempty"`
 	NotesState       string  `json:"notes_state"`
 	ManualNotes      string  `json:"manual_notes,omitempty"`
@@ -147,6 +149,7 @@ type rawEvidence struct {
 
 type meetingMetadata struct {
 	Platform             string  `json:"platform"`
+	MeetingPlatform      string  `json:"meeting_platform,omitempty"`
 	SourceIdentifier     string  `json:"source_identifier,omitempty"`
 	MuesliID             int64   `json:"muesli_id"`
 	Status               string  `json:"status,omitempty"`
@@ -242,13 +245,14 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string
 		resolved, carried, unresolved, skippedPhones = 0, 0, 0, 0
 	}
 
-	body := meetingBody(title, started, ended, labels, summary, notes, transcript)
+	body := meetingBody(title, m.MeetingPlatform, started, ended, labels, summary, notes, transcript)
 	raw, err := json.Marshal(rawEvidence{
 		SchemaVersion: rawSchemaVersion,
 		Meeting: rawMeeting{
 			ID: m.ID, Title: m.Title, StartTime: m.StartTime, EndTime: m.EndTime,
 			DurationSeconds: m.DurationSeconds, Status: m.Status, Source: m.Source,
-			FormattedNotes: m.FormattedNotes, NotesState: notesState, ManualNotes: m.ManualNotes,
+			MeetingPlatform: m.MeetingPlatform,
+			FormattedNotes:  m.FormattedNotes, NotesState: notesState, ManualNotes: m.ManualNotes,
 			RawTranscript: m.RawTranscript, WordCount: m.WordCount,
 			TemplateName: m.TemplateName, TemplateKind: m.TemplateKind,
 			CalendarEventID: m.CalendarEventID, CalendarSource: m.CalendarSource,
@@ -262,7 +266,8 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string
 	}
 	metadata, err := json.Marshal(meetingMetadata{
 		Platform: SourceType, SourceIdentifier: identifier, MuesliID: m.ID,
-		Status: m.Status, Source: m.Source,
+		MeetingPlatform: m.MeetingPlatform,
+		Status:          m.Status, Source: m.Source,
 		StartedAt: started.Format(time.RFC3339Nano), EndedAt: formatOptionalTime(ended),
 		DurationSeconds: m.DurationSeconds, NotesState: notesState,
 		HasSummary: summary != "", HasNotes: notes != "", HasTranscript: transcript != "",
@@ -342,13 +347,24 @@ func dedupeParticipants(participants []Participant) []Participant {
 	return out
 }
 
-func meetingBody(title string, start, end time.Time, attendees []string, summary, notes, transcript string) string {
+func meetingBody(title, platform string, start, end time.Time, attendees []string, summary, notes, transcript string) string {
 	lines := []string{title}
 	when := "When: " + start.Format("2006-01-02 15:04")
 	if !end.IsZero() {
 		when += " - " + end.UTC().Format("15:04")
 	}
 	lines = append(lines, when)
+	if platform != "" {
+		// Keep source evidence exact in raw/metadata while making this one body
+		// line safe even for values read directly from a local database.
+		display := strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+				return ' '
+			}
+			return r
+		}, platform)
+		lines = append(lines, "Platform: "+display)
+	}
 	if len(attendees) > 0 {
 		lines = append(lines, "Attendees: "+strings.Join(attendees, ", "))
 	}

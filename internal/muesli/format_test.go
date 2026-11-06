@@ -2,6 +2,7 @@ package muesli
 
 import (
 	"encoding/json/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,45 @@ func TestArchiveSnapshot(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(snapshot.Raw, again.Raw, "raw evidence is deterministic")
 	assert.Equal(snapshot.Metadata, again.Metadata)
+}
+
+func TestArchiveSnapshotMeetingPlatform(t *testing.T) {
+	for _, tc := range []struct{ value, display string }{
+		{"", ""}, {"facetime", "facetime"}, {"googleMeet", "googleMeet"}, {"unknown", "unknown"},
+		{" FutureCall.会議 ", " FutureCall.会議 "},
+		{"  ", "  "}, {"e\u0301😀", "e\u0301😀"},
+		{"Future\u2028Call\u2029", "Future Call "},
+		{"\r\nTranscript:\v\fAttendees:\x1b", "  Transcript:  Attendees: "},
+		{"Future\r\nCall\t\x00\x1b\u0085\u2028\u2029", "Future  Call      "},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			meeting := sampleMeeting()
+			meeting.MeetingPlatform = tc.value
+			snapshot, err := meeting.ArchiveSnapshot(7, "mac", "you@example.com")
+			require.NoError(err)
+			var raw struct {
+				Meeting map[string]any `json:"meeting"`
+			}
+			var metadata map[string]any
+			require.NoError(json.Unmarshal(snapshot.Raw, &raw))
+			require.NoError(json.Unmarshal(snapshot.Metadata, &metadata))
+			assert.Equal("muesli", metadata["platform"])
+			assert.Equal("meeting", metadata["source"])
+			assert.Equal("meeting", raw.Meeting["source"])
+			if tc.value == "" {
+				assert.NotContains(raw.Meeting, "meeting_platform")
+				assert.NotContains(metadata, "meeting_platform")
+				assert.NotContains(snapshot.Body, "Platform:")
+			} else {
+				assert.Equal(tc.value, raw.Meeting["meeting_platform"])
+				assert.Equal(tc.value, metadata["meeting_platform"])
+				assert.Contains(strings.Split(snapshot.Body, "\n"), "Platform: "+tc.display)
+				assert.Equal(1, strings.Count(snapshot.Body, "Platform:"))
+			}
+		})
+	}
 }
 
 func TestArchiveSnapshotOmitsFallbackNotesFromSummary(t *testing.T) {
