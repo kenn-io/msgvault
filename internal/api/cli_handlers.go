@@ -2524,7 +2524,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	resp.Results = results
 	if len(results) == 0 && offset == 0 {
 		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
-			if hint := matcher.MatchSenderName(r.Context(), parsed, query.MessageFilter{}, false); hint != nil {
+			if hint := matcher.MatchSenderName(r.Context(), parsed, query.MessageFilter{}); hint != nil {
 				resp.SenderNameHint = hint.Message
 			}
 		}

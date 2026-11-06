@@ -798,7 +798,11 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), Hints: hints, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
 		})
 	}
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(result.Messages, result.TotalCount, offset), Hints: hints, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr)})
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr), hints)
+}
+
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string, hints []searchMetadataHint) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings, Hints: hints})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {

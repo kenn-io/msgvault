@@ -17,13 +17,16 @@ type SenderNameHint struct {
 
 // SenderNameMatcher is optional on engines with exact sender-address search.
 type SenderNameMatcher interface {
-	MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter, metadata bool) *SenderNameHint
+	MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter) *SenderNameHint
 }
 
 // MatchSenderName counts corrected queries within the same search and view scope.
-// metadata selects the metadata-only predicates used by SearchFastWithStats.
 // The hint is best effort: it is nil when none applies or the lookup fails.
-func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter, metadata bool) *SenderNameHint {
+func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter) *SenderNameHint {
+	return e.matchSenderName(ctx, q, filter, false)
+}
+
+func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, filter MessageFilter, metadata bool) *SenderNameHint {
 	if q.HasOR() || len(q.FromAddrs) != 1 || strings.Contains(q.FromAddrs[0], "@") {
 		return nil
 	}
@@ -48,10 +51,11 @@ func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query, fil
  JOIN participants p_hint ON p_hint.id = mr_hint.participant_id
  WHERE %s
  ) SELECT address, COUNT(DISTINCT id) FROM eligible
- WHERE address IN (SELECT address FROM eligible WHERE %s)
+ WHERE address IN (SELECT address FROM eligible WHERE %s OR %s)
  GROUP BY address ORDER BY COUNT(DISTINCT id) DESC, address LIMIT 3`,
-		recipientNameExpr("mr_hint", "p_hint"), join, strings.Join(conditions, " AND "), metadataContainsExpression(e.dialect, "name"))
-	args = append(args, "%"+escapeSQLiteLike(q.FromAddrs[0])+"%")
+		recipientNameExpr("mr_hint", "p_hint"), join, strings.Join(conditions, " AND "), metadataContainsExpression(e.dialect, "name"), metadataContainsExpression(e.dialect, "address"))
+	pattern := "%" + escapeSQLiteLike(q.FromAddrs[0]) + "%"
+	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
 	if err != nil {
 		return nil
@@ -79,12 +83,12 @@ func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query, fil
 	}
 	scoped.FromAddrs = []string{first}
 	retry := search.Format(&scoped)
-	return &SenderNameHint{Message: fmt.Sprintf("from: matches whole addresses; senders named %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry), Query: retry}
+	return &SenderNameHint{Message: fmt.Sprintf("from: matches addresses; senders matching %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry), Query: retry}
 }
 
-func (e *DuckDBEngine) MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter, metadata bool) *SenderNameHint {
+func (e *DuckDBEngine) MatchSenderName(ctx context.Context, q *search.Query, filter MessageFilter) *SenderNameHint {
 	if e.sqliteEngine == nil {
 		return nil
 	}
-	return e.sqliteEngine.MatchSenderName(ctx, q, filter, metadata)
+	return e.sqliteEngine.MatchSenderName(ctx, q, filter)
 }
