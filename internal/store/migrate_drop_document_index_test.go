@@ -80,6 +80,8 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(ctx, "document-index/v1")
 			requirements.NoError(err)
 			requirements.NoError(f.Store.CompleteAttachmentChangeReconciliation(ctx, "document-index/v1", consumer.BaselineSequence))
+			exec(`INSERT INTO person_sweep_cursors (person_id,source_lane,program_fingerprint,catalog_fingerprint,optimistic_sequence,reconcile_upper_key,reconcile_after_key,reconciliation_complete) VALUES (?,'document_text','program','catalog',0,'','',TRUE)`, personID)
+			exec(`INSERT INTO attachment_change_log (event_kind,new_message_id,new_attachment_id) VALUES ('attachment_insert',?,?)`, messageID, attachmentID)
 
 			var logs bytes.Buffer
 			previousLogger := slog.Default()
@@ -126,6 +128,8 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				requirements.NoError(f.Store.DB().QueryRowContext(ctx, query).Scan(&n))
 				return n
 			}
+			checks.Zero(count(`SELECT COUNT(*) FROM person_sweep_cursors WHERE source_lane='document_text'`), "the upgrade removes retired document cursors")
+			checks.Zero(count(`SELECT COUNT(*) FROM attachment_change_log`), "the upgrade prunes attachment changes after removing the retired consumer")
 			retired := `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'document%' OR name LIKE 'trg_document%' OR sql LIKE '%document_key%'`
 			if f.Store.IsPostgreSQL() {
 				retired = `SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name LIKE 'document%')
