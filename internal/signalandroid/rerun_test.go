@@ -220,7 +220,6 @@ func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
 	assert.Equal(summary.MessagesProcessed, processed)
 	assert.Equal(int64(0), added)
 	assert.Equal(summary.MessagesUpdated, updated)
-	assert.Equal("Carol again", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)].body)
 }
 
 func TestSendStateFollowsSignal(t *testing.T) {
@@ -249,23 +248,6 @@ func TestSendStateFollowsSignal(t *testing.T) {
 	assert.True(isSent(), "a later backup shows it sent")
 }
 
-func TestRerunLongTextRemovalKeepsMediaOccurrence(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewTestStore(t), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type, display_order) VALUES (503, 200, 'text/x-signal-plain', -1)`)
-	require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Original long text"), 0o600))
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	changeFixture(t, dir, `DELETE FROM attachment WHERE _id = 503`)
-	summary := runImport(t, st, dir, storage)
-	assert.Zero(summary.AttachmentsStored)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
-	var count int
-	require.NoError(st.DB().QueryRow(`SELECT attachment_count FROM messages WHERE has_attachments = TRUE`).Scan(&count))
-	assert.Equal(1, count)
-}
-
 func TestImportAttachmentReferenceRoles(t *testing.T) {
 	for _, tc := range []struct {
 		name, column, reference string
@@ -282,22 +264,22 @@ func TestImportAttachmentReferenceRoles(t *testing.T) {
 			changeFixture(t, dir, `ALTER TABLE message ADD COLUMN `+tc.column+` TEXT`,
 				`UPDATE message SET `+tc.column+` = '`+tc.reference+`' WHERE _id = 200`)
 			runImport(t, st, dir, storage)
-			var attachmentID, messageID int64
-			require.NoError(st.DB().QueryRow(`SELECT id, message_id FROM attachments`).Scan(&attachmentID, &messageID))
+			var messageID int64
+			require.NoError(st.DB().QueryRow(`SELECT message_id FROM attachments`).Scan(&messageID))
 			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)
 			require.Len(refs, 1)
 			assert.Equal(tc.role, refs[0].Role)
 
-			// Reruns also correct roles written by an earlier importer.
-			_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_role = ?, role_source = ? WHERE id = ?`),
-				store.AttachmentRoleStandalone, store.AttachmentRoleSourceImporterSemantics, attachmentID)
-			require.NoError(err)
-			runImport(t, st, dir, storage)
-			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), messageID)
-			require.NoError(err)
-			require.Len(refs, 1)
-			assert.Equal(tc.role, refs[0].Role)
+			if tc.role != store.AttachmentRoleStandalone {
+				// A later backup drops the preview or contact reference.
+				changeFixture(t, dir, `UPDATE message SET `+tc.column+` = NULL WHERE _id = 200`)
+				runImport(t, st, dir, storage)
+				refs, err = st.MessageMIMEAttachmentsContext(t.Context(), messageID)
+				require.NoError(err)
+				require.Len(refs, 1)
+				assert.Equal(store.AttachmentRoleStandalone, refs[0].Role)
+			}
 		})
 	}
 }

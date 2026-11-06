@@ -20,17 +20,25 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, display_value, is_primary)
-		VALUES (?, 'signal', ?, ?, FALSE), (?, 'signal_aci', ?, ?, FALSE)`),
-		left, "00000000-0000-4000-8000-000000000001", "Signal account",
-		left, "00000000-0000-4000-8000-000000000002", "Unscored account")
+		VALUES (?, 'signal_aci', ?, ?, FALSE), (?, 'signal_aci', ?, ?, FALSE)`),
+		left, "00000000-0000-4000-8000-000000000001", "Left Signal account",
+		right, "00000000-0000-4000-8000-000000000002", "Right Signal account")
 	require.NoError(err)
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
 	assert.Equal("Pair Left", summaries.Left.DisplayName)
 	assert.Equal("Pair Right", summaries.Right.DisplayName)
 	assert.Equal("participant", summaries.Left.Kind)
-	require.Len(summaries.Left.Identifiers, 2)
-	assert.ElementsMatch([]string{"pair-left", "00000000-0000-4000-8000-000000000001"}, []string{summaries.Left.Identifiers[0].Value, summaries.Left.Identifiers[1].Value})
+	require.Len(summaries.Left.Identifiers, 1)
+	assert.Equal("pair-left", summaries.Left.Identifiers[0].Value)
+	require.Len(summaries.Right.Identifiers, 1)
+	assert.Equal("pair-right", summaries.Right.Identifiers[0].Value)
+	require.Len(summaries.LeftGuardIdentifiers, 1)
+	assert.Equal("signal_aci", summaries.LeftGuardIdentifiers[0].Type)
+	assert.Equal("00000000-0000-4000-8000-000000000001", summaries.LeftGuardIdentifiers[0].Value)
+	require.Len(summaries.RightGuardIdentifiers, 1)
+	assert.Equal("signal_aci", summaries.RightGuardIdentifiers[0].Type)
+	assert.Equal("00000000-0000-4000-8000-000000000002", summaries.RightGuardIdentifiers[0].Value)
 }
 
 func TestPersonMatchPairSummariesFlagClippedFields(t *testing.T) {

@@ -1,7 +1,6 @@
 package signalandroid
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -86,7 +85,6 @@ func TestRerunCountsUnchanged(t *testing.T) {
 	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
 	require.NoError(err)
 	require.True(eligible)
-	require.NoError(os.Remove(filepath.Join(dir, "Attachment_500_-1.bin")))
 	summary := runImport(t, st, dir, storage)
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
 	assert.Zero(summary.ReactionsAdded)
@@ -121,6 +119,8 @@ func TestReactorConflictLeavesSnapshot(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	// Alice sends the group message; Bob is another group member.
+	changeFixture(t, dir, `UPDATE message SET from_recipient_id = 2 WHERE _id = 200`)
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
 	before := importedMessages(t, st)
@@ -133,8 +133,8 @@ func TestReactorConflictLeavesSnapshot(t *testing.T) {
 	require.NoError(err)
 	_, _, err = st.CreatePersonFromParticipant(phonePID)
 	require.NoError(err)
-	// Carol's sender resolves normally; only her reactor has a conflict.
-	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 300`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (300, 3, 'x', 1700000300100, 1700000300101)`)
+	// Alice resolves normally; only the group message's reactor conflicts.
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 200`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (200, 3, 'x', 1700000300100, 1700000300101)`)
 	summary := runImport(t, st, dir, storage)
 	require.Positive(summary.Errors)
 	assert.Equal(before, importedMessages(t, st))

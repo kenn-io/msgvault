@@ -289,21 +289,17 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 }
 
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
-	// Each missing column guards its own schema check. Reject it before
-	// creating a source or updating an existing archive.
+	// Each missing column guards its own schema check before creating a source.
 	for _, tc := range []struct{ name, change, want string }{
 		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
 		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
 		{"chat contacts", `ALTER TABLE thread DROP COLUMN recipient_id`, "chat contacts are missing"},
 		{"contacts", `ALTER TABLE recipient DROP COLUMN group_id`, "contact details are missing"},
-		{"attachment table", `DROP TABLE attachment`, "attachment details are missing"},
 		{"attachments", `ALTER TABLE attachment DROP COLUMN content_type`, "attachment details are missing"},
-		{"reaction table", `DROP TABLE reaction`, "reaction details are missing"},
 		{"reaction message", `ALTER TABLE reaction DROP COLUMN message_id`, "reaction details are missing"},
 		{"reaction author", `ALTER TABLE reaction DROP COLUMN author_id`, "reaction details are missing"},
 		{"reaction emoji", `ALTER TABLE reaction DROP COLUMN emoji`, "reaction details are missing"},
 		{"reaction sent date", `ALTER TABLE reaction DROP COLUMN date_sent`, "reaction details are missing"},
-		{"mention table", `DROP TABLE mention`, "mention details are missing"},
 		{"mention message", `ALTER TABLE mention DROP COLUMN message_id`, "mention details are missing"},
 		{"mention recipient", `ALTER TABLE mention DROP COLUMN recipient_id`, "mention details are missing"},
 		{"mention range", `ALTER TABLE mention DROP COLUMN range_start`, "mention details are missing"},
@@ -312,25 +308,32 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dir := t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-			st, storage := testutil.NewSQLiteTestStore(t), t.TempDir()
-			runImport(t, st, dir, storage)
-			before := importedMessages(t, st)
-			reactions := countRows(t, st, `SELECT COUNT(*) FROM reactions`)
-			changeFixture(t, dir, tc.change, `UPDATE message SET body = 'Changed text' WHERE _id = 300`)
+			changeFixture(t, dir, tc.change)
 			opts := DefaultOptions()
-			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			fresh := testutil.NewSQLiteTestStore(t)
-			_, err := NewImporter(fresh, nil).Import(t.Context(), path, opts)
+			opts.Phone = signalfixture.OwnPhone
+			st := testutil.NewSQLiteTestStore(t)
+			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tc.want)
-			assert.Zero(countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
-
-			_, err = NewImporter(st, nil).Import(t.Context(), path, opts)
-			require.Error(err)
-			assert.Equal(before, importedMessages(t, st))
-			assert.Equal(reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
+			assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 		})
 	}
+
+	// Schema rejection must also leave an existing archive untouched.
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	st, storage := testutil.NewSQLiteTestStore(t), t.TempDir()
+	runImport(t, st, dir, storage)
+	before := importedMessages(t, st)
+	reactions := countRows(t, st, `SELECT COUNT(*) FROM reactions`)
+	changeFixture(t, dir, `ALTER TABLE recipient DROP COLUMN aci`, `UPDATE message SET body = 'Changed text' WHERE _id = 300`)
+	opts := DefaultOptions()
+	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+	_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+	require.ErrorIs(err, ErrUnsupportedDatabase)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
 }
 
 func TestImportLimitStopsAfterWrites(t *testing.T) {

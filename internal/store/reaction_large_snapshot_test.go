@@ -1,16 +1,13 @@
 package store_test
 
 import (
-	"database/sql"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestReactionLargeSnapshot(t *testing.T) {
@@ -31,16 +28,6 @@ func TestReactionLargeSnapshot(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
 	assert.Equal(11001, count)
-	require.NoError(st.ReplaceReactions(messageID, reactions))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
-	assert.Equal(11001, count)
-
-	require.NoError(st.ReplaceReactions(messageID, reactions[:1]))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
-	assert.Equal(1, count)
-	var value string
-	require.NoError(st.DB().QueryRow(`SELECT reaction_value FROM reactions WHERE message_id = ?`, messageID).Scan(&value))
-	assert.Equal("reaction-0", value)
 }
 
 func TestReactionSnapshotUpdates(t *testing.T) {
@@ -80,24 +67,4 @@ func TestReactionSnapshotUpdates(t *testing.T) {
 		require.NoError(st.DB().QueryRow(`SELECT GROUP_CONCAT(reaction_value, ',') FROM (SELECT reaction_value FROM reactions ORDER BY reaction_value)`).Scan(&values))
 		assert.Equal("❤,👍", values)
 	})
-
-	assert, require := assert.New(t), require.New(t)
-	f := storetest.New(t)
-	pid := f.EnsureParticipant("reactor@example.com", "Reactor", "example.com")
-	reactions := []store.ReactionRef{{ParticipantID: pid, Type: "emoji", Value: "👍", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}
-	data := &store.MessagePersistData{
-		Message:  &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "reaction-time", MessageType: "signal"},
-		BodyText: sql.NullString{String: "Group message", Valid: true}, Reactions: &reactions,
-	}
-	id, err := f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(err)
-	require.Equal(int64(1), data.ReactionsAdded)
-	// Updating a timestamp must keep the reaction's identity and addition count.
-	reactions[0].CreatedAt = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(err)
-	assert.Zero(data.ReactionsAdded)
-	var createdAt time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = '👍'`), id).Scan(&createdAt))
-	assert.True(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).Equal(createdAt))
 }

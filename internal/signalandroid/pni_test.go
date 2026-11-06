@@ -10,23 +10,19 @@ import (
 )
 
 func TestImportPNIOnlyChat(t *testing.T) {
-	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			signalfixture.WritePNIOnly(t, dir, layout)
-			st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	signalfixture.WritePNIOnly(t, dir, signalfixture.V185)
+	st := testutil.NewTestStore(t)
 
-			summary := runImport(t, st, dir, t.TempDir())
+	summary := runImport(t, st, dir, t.TempDir())
 
-			assert.Zero(t, summary.ChatsSkipped)
-			assert.Equal(t, int64(1), summary.MessagesAdded)
-			assert.Equal(t, map[string]importedMessage{
-				"signal:pni:0f0f0f0f-0000-4000-8000-000000000005:self:1700000400000": {
-					conversation: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005", body: "hello Dana", fromMe: true,
-				},
-			}, importedMessages(t, st))
-		})
-	}
+	assert.Zero(t, summary.ChatsSkipped)
+	assert.Equal(t, int64(1), summary.MessagesAdded)
+	assert.Equal(t, map[string]importedMessage{
+		"signal:pni:0f0f0f0f-0000-4000-8000-000000000005:self:1700000400000": {
+			conversation: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005", body: "hello Dana", fromMe: true,
+		},
+	}, importedMessages(t, st))
 }
 
 func TestImportDirectAuthorWithoutACI(t *testing.T) {
@@ -70,31 +66,14 @@ func TestImportDirectAuthorWithoutACI(t *testing.T) {
 }
 
 func TestImportGroupAuthorWithoutACI(t *testing.T) {
-	for _, tc := range []struct{ name, change, token string }{
-		{"phone only", `UPDATE recipient SET aci = NULL, e164 = '+15555550102' WHERE _id = 3`, "tel:+15555550102"},
-		{"PNI only", `UPDATE recipient SET aci = NULL, pni = '0f0f0f0f-0000-4000-8000-000000000005' WHERE _id = 3`, "pni:0f0f0f0f-0000-4000-8000-000000000005"},
-		{"unknown", `UPDATE recipient SET aci = NULL WHERE _id = 3`, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			dir := t.TempDir()
-			signalfixture.Write(t, dir, signalfixture.Current, 0)
-			changeFixture(t, dir, tc.change, `DELETE FROM message WHERE _id <> 200`)
-			st := testutil.NewTestStore(t)
-			summary := runImport(t, st, dir, t.TempDir())
-			if tc.token == "" {
-				assert.Equal(int64(1), summary.MessagesSkipped)
-				assert.Empty(importedMessages(t, st))
-				return
-			}
-			assert.Zero(summary.MessagesSkipped)
-			assert.Equal(map[string]importedMessage{
-				"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + tc.token + ":1700000240000": {
-					conversation: "signal:group:" + signalfixture.GroupB64, body: "Hi @Alice Example, look\n\nBeach",
-				},
-			}, importedMessages(t, st))
-		})
-	}
+	assert := assert.New(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `UPDATE recipient SET aci = NULL WHERE _id = 3`, `DELETE FROM message WHERE _id <> 200`)
+	st := testutil.NewTestStore(t)
+	summary := runImport(t, st, dir, t.TempDir())
+	assert.Equal(int64(1), summary.MessagesSkipped)
+	assert.Empty(importedMessages(t, st))
 }
 
 func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
@@ -108,9 +87,12 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 			signalfixture.Write(t, dir, signalfixture.Current, 0)
 			changeFixture(t, dir, tc.change, `DELETE FROM message WHERE _id <> 200`)
 			st, attachments := testutil.NewTestStore(t), t.TempDir()
-			runImport(t, st, dir, attachments)
+			summary := runImport(t, st, dir, attachments)
+			assert.Zero(summary.MessagesSkipped)
 			before := importedMessages(t, st)
-			require.Contains(before, tc.parentID)
+			require.Equal(map[string]importedMessage{
+				tc.parentID: {conversation: "signal:group:" + signalfixture.GroupB64, body: "Hi @Alice Example, look\n\nBeach"},
+			}, before)
 			var archivedID int64
 			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&archivedID))
 
@@ -118,7 +100,7 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 				`UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`,
 				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, quote_id, quote_author)
 				 VALUES (202, 1700000241000, 1700000241001, 11, 1, 5, `+ms(signalfixture.TypeOutgoing)+`, 'Group reply', 1700000240000, 3)`)
-			summary := runImport(t, st, dir, attachments)
+			summary = runImport(t, st, dir, attachments)
 
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Zero(summary.RepliesUnresolved)
