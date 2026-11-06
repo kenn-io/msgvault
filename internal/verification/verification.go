@@ -30,7 +30,7 @@ var (
 	linkCue                 = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
 	qualifiedCodeCue        = regexp.MustCompile(`(?i)` + localizedCodeCues + `|` + englishQualifiedCodeCues)
 	englishQualifiedCodeCue = regexp.MustCompile(`(?i)` + englishQualifiedCodeCues)
-	credentialCodeCue       = regexp.MustCompile(`(?i)\b(?:(?:verification|security|login|sign[ -]in|authentication|one[- ]time) (?:code|pin|password)|otp|passcode|2fa)\b`)
+	credentialCodeCue       = regexp.MustCompile(`(?i)\b(?:(?:verification|security|login|sign[ -]in|authentication|one[- ]time) (?:code|pin|password)|temporary password|otp|passcode|2fa)\b`)
 	ordinaryCodePrefix      = regexp.MustCompile(`(?i)\b(?:promo|coupon|discount|voucher|referral|gift|zip|postal|area|tracking|order|invoice|product|project)\s+$`)
 
 	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\u202f", "", "\u2009", "", "\n", "")
