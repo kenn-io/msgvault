@@ -654,6 +654,7 @@
             <SettingsOverview
               localSearch={localStatus && localStatus.provider !== 'configured' ? localSearchState(localStatus, embeddingStatus) : undefined}
               localLabels={localStatus ? localSearchLabels(localStatus, embeddingStatus) : undefined}
+              localRetryBuiltin={localStatus?.retry_use_builtin ?? false}
               {localError} onLocalSearch={(builtin) => void turnOnLocalSearch(builtin)}
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}

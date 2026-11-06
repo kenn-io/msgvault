@@ -14,6 +14,7 @@ export interface LocalEmbeddingsStatus {
   ollama_available: boolean;
   phase: LocalEmbeddingsStatusPhase;
   provider: string;
+  retry_use_builtin?: boolean;
   running?: boolean;
   total_bytes: number;
   [key: string]: unknown;

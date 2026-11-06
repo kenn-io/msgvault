@@ -52,7 +52,7 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 }
 
 func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
-	for _, behavior := range []string{"request lifetime", "admission", "later successful build", "retry after failure", "shutdown join", "installation failure", "publication failure"} {
+	for _, behavior := range []string{"request lifetime", "admission", "later successful build", "retry after failure", "shutdown join", "installation failure", "publication failure", "built-in retry choice"} {
 		t.Run(behavior, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
@@ -64,7 +64,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 				if behavior == "request lifetime" {
 					controller.builtin.Store(true)
 				}
-				if behavior == "installation failure" {
+				if behavior == "installation failure" || behavior == "built-in retry choice" {
 					controller.failurePhase = "downloading"
 				}
 				if behavior == "publication failure" {
@@ -104,7 +104,11 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 
 				requestCtx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				require.Equal(http.StatusAccepted, post(requestCtx, `{"use_builtin":false}`).Code)
+				body := `{"use_builtin":false}`
+				if behavior == "built-in retry choice" {
+					body = `{"use_builtin":true}`
+				}
+				require.Equal(http.StatusAccepted, post(requestCtx, body).Code)
 				jobCtx := <-controller.started
 				synctest.Wait()
 				switch behavior {
@@ -134,11 +138,16 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					<-controller.started
 					assert.True(controller.builtin.Load())
 					assert.Equal(int32(2), controller.calls.Load())
-				case "installation failure", "publication failure":
+				case "installation failure", "publication failure", "built-in retry choice":
 					close(controller.release)
 					synctest.Wait()
 					recordSuccessfulBuild()
 					assert.Equal("build interrupted", status().Error)
+					response := httptest.NewRecorder()
+					srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+					var payload map[string]any
+					require.NoError(json.Unmarshal(response.Body.Bytes(), &payload))
+					assert.Equal(behavior == "built-in retry choice", payload["retry_use_builtin"] == true)
 
 				case "shutdown join":
 					require.NoError(srv.Shutdown(t.Context()))

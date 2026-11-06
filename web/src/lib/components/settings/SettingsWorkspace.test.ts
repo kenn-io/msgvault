@@ -806,6 +806,34 @@ it('discloses the built-in download before switching from Ollama', async () => {
   await waitFor(() => expect(seen.find(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')?.body).toEqual({ use_builtin: true }));
 });
 
+it('retries a failed built-in switch instead of resuming Ollama', async () => {
+  let attempts = 0;
+  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') {
+      if (request.method === 'POST') {
+        attempts++;
+        return Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 });
+      }
+      return Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible: true, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: attempts ? 'connection interrupted' : undefined, retry_use_builtin: attempts > 0 });
+    }
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'switch-failure-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+  });
+  const view = render(SettingsWorkspace, { client, operationsController });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Use built-in instead' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('connection interrupted'));
+  const posts = () => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
+  expect(posts().map(request => request.body)).toEqual([{ use_builtin: true }]);
+  view.unmount();
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('alert');
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
+  await waitFor(() => expect(posts()).toHaveLength(2));
+  expect(posts()[1].body).toEqual({ use_builtin: true });
+});
+
 it('retries setup after a publication failure without changing the selected provider', async () => {
   let retried = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {

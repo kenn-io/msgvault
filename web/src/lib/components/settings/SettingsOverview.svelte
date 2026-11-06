@@ -11,6 +11,7 @@
     localSearch,
     localLabels,
     localError = '',
+    localRetryBuiltin = false,
     onLocalSearch = () => undefined,
     working = {},
     onSetUp,
@@ -22,6 +23,7 @@
     localSearch?: SearchByMeaningState;
     localLabels?: Partial<SearchByMeaningLabels>;
     localError?: string;
+    localRetryBuiltin?: boolean;
     onLocalSearch?: (builtin: boolean) => void;
     onDetails?: (authority: OperationStatusAuthority) => void;
     /** Start actions in progress; each button waits for its own action. */
@@ -36,7 +38,7 @@
 {#snippet rowActions(action: OverviewAction | undefined, authority: OverviewRow['relatedStatus'], name: string, retry = false)}
       <span class="row__action">
         {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${name}`} onclick={() => onDetails(authority)} />{/if}
-        {#if retry}<Button size="sm" label="Retry setup" ariaLabel={`Retry setup, ${name}`} onclick={() => onLocalSearch(false)} />{/if}
+        {#if retry}<Button size="sm" label="Retry setup" ariaLabel={`Retry setup, ${name}`} onclick={() => onLocalSearch(localRetryBuiltin)} />{/if}
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}

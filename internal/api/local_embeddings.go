@@ -32,6 +32,7 @@ type LocalEmbeddingsStatus struct {
 	TotalBytes      int64  `json:"total_bytes"`
 	Error           string `json:"error,omitempty"`
 	Running         bool   `json:"running,omitempty"`
+	RetryUseBuiltin bool   `json:"retry_use_builtin,omitempty"`
 }
 
 type LocalEmbeddingsRequest struct {
@@ -73,7 +74,7 @@ func (s *Server) registerLocalEmbeddingsRoutes(api huma.API) {
 
 func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request) {
 	s.importMu.Lock()
-	controller, progress := s.localEmbeddings, s.localSetup
+	controller, progress, useBuiltin := s.localEmbeddings, s.localSetup, s.localSetupUseBuiltin
 	running := progress.Running
 	failedAt := s.localSetupBuildFailedAt
 	s.importMu.Unlock()
@@ -103,6 +104,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		status.Error = progress.Error
 	}
 	status.Running = running
+	status.RetryUseBuiltin = progress.Error != "" && useBuiltin
 	if running {
 		status.Phase, status.DoneBytes, status.TotalBytes = progress.Phase, progress.DoneBytes, progress.TotalBytes
 	}
