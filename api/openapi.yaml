@@ -1737,8 +1737,6 @@ components:
         version:
           format: int64
           type: integer
-        withdrawn:
-          type: boolean
       required:
         - message_id
         - source_id

@@ -4140,7 +4140,6 @@ CREATE TABLE IF NOT EXISTS call_details (
     outcome TEXT NOT NULL,
     owner_participation TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
-    withdrawn BOOLEAN NOT NULL DEFAULT FALSE,
     evidence_version INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);

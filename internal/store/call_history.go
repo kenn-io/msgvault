@@ -10,8 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/callhistory"
 )
 
-var ErrCallObservationWithdrawn = errors.New("call observation was withdrawn")
-
 // PutCallObservationContext replaces one source observation atomically. It
 // never resolves a person by name or infers participants from a chat roster.
 func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o callhistory.Observation) (int64, error) {
@@ -40,16 +38,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 			if !exists {
 				return fmt.Errorf("%w: participant does not exist", callhistory.ErrInvalid)
 			}
-		}
-		var withdrawn bool
-		err = tx.QueryRowContext(ctx, `
-			SELECT c.withdrawn FROM messages m JOIN call_details c ON c.message_id = m.id
-			WHERE m.source_id = ? AND m.source_message_id = ?`, sourceID, o.RecordID).Scan(&withdrawn)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if withdrawn && !o.Withdrawn {
-			return ErrCallObservationWithdrawn
 		}
 		return nil
 	}
@@ -109,25 +97,16 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
-		(message_id, outcome, owner_participation, occurred_at, withdrawn, evidence_version)
-		VALUES (?, ?, ?, ?, ?, ?)
+		(message_id, outcome, owner_participation, occurred_at, evidence_version)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
 			outcome = excluded.outcome,
 			owner_participation = excluded.owner_participation,
 			occurred_at = excluded.occurred_at,
-			withdrawn = excluded.withdrawn,
 			evidence_version = excluded.evidence_version`,
-		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Withdrawn, e.Version)
+		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Version)
 	if err != nil {
 		return fmt.Errorf("write call projection: %w", err)
-	}
-	if e.Withdrawn {
-		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			UPDATE messages SET deleted_from_source_at = %s
-			WHERE id = ? AND deleted_from_source_at IS NULL`, s.dialect.Now()), id)
-		if err != nil {
-			return fmt.Errorf("mark withdrawn call deleted from source: %w", err)
-		}
 	}
 	return nil
 }

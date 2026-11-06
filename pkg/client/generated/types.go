@@ -1586,7 +1586,6 @@ type CallObservationView struct {
 	SourceID           int64             `json:"source_id"`
 	Timezone           *string           `json:"timezone,omitzero"`
 	Version            int64             `json:"version"`
-	Withdrawn          *bool             `json:"withdrawn,omitempty"`
 }
 
 func (c CallObservationView) Validate() error {

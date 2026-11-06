@@ -163,13 +163,13 @@ Imports use the daemon mutation gate and return stable message/source IDs.
 | Route | Contract |
 | --- | --- |
 | `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
-| `GET /api/v1/calls` | Typed observations, including withdrawn evidence. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
+| `GET /api/v1/calls` | Typed observations. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
 | `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
 
 Read results use an `items` array. Limits default to 50 and are capped at 100.
 Times are RFC3339, with inclusive `after` and exclusive `before`.
 Invalid queries return 400; malformed imports 400, invalid observations 422,
-oversized imports 413, unsupported media 415, withdrawn-source/observation
+oversized imports 413, unsupported media 415, retired-source
 conflicts 409, and unavailable or busy service 503.
 The [call-history guide](usage/call-history.md) owns format details, attendance
 rules, deduplication and source limitations. The generated OpenAPI document

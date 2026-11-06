@@ -80,8 +80,8 @@ func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 		writeError(w, 400, "bad_request", "Invalid call import JSON")
 	case errors.Is(err, callhistory.ErrInvalid):
 		writeError(w, 422, "validation_failed", err.Error())
-	case errors.Is(err, store.ErrCallObservationWithdrawn), errors.Is(err, store.ErrSourceRetired):
-		writeError(w, 409, "evidence_withdrawn", "Source or observation was withdrawn")
+	case errors.Is(err, store.ErrSourceRetired):
+		writeError(w, 409, "source_retired", "Source was retired")
 	default:
 		if !s.writeIfContextError(w, err) {
 			writeError(w, 500, "internal_error", "Call evidence operation failed")
