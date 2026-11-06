@@ -265,17 +265,17 @@ func credentialLink(raw string, cue bool) bool {
 		}
 	}
 	for key, vals := range values {
+		key = strings.ToLower(key)
 		for _, value := range vals {
+			switch {
+			case strings.Contains(key, "token"), key == "otp", key == "code", key == "oobcode", key == "magic", key == "reset", key == "verify":
+				credentialKey = true
+				hasToken = hasToken || tokenValue(strings.NewReplacer("/", "", "+", "", "=", "").Replace(value))
+			}
 			// Fragment values can include an escaped prefix before the token.
 			for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == '&' || r == '=' || r == '/' || r == '+' }) {
 				if tokenValue(part) {
 					hasToken = true
-					key = strings.ToLower(key)
-					credentialKey = credentialKey || strings.Contains(key, "token")
-					switch key {
-					case "otp", "code", "oobcode", "magic", "reset", "verify":
-						credentialKey = true
-					}
 				}
 			}
 		}
