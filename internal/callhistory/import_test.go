@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,6 +105,7 @@ func TestImportRequestBoundsAndAccountMismatch(t *testing.T) {
 	requirements.NoError(err)
 	got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
 	requirements.NoError(err)
+	o.OccurredAt = time.Date(2026, 10, 1, 16, 0, 0, 0, time.UTC)
 	assert.Equal(t, o, got)
 	_, err = (ImportRequest{Format: "normalized", Account: "different", Record: record}).Observation()
 	requirements.ErrorIs(err, ErrInvalid)
