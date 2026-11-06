@@ -21,7 +21,7 @@ describe('local search row', () => {
     { name: 'on', status: { ...off, enabled: true, provider: 'builtin' }, chip: 'On' },
     { name: 'waiting for setup', status: { ...off, running: true }, chip: 'Turning on', description: 'Preparing search by meaning · Keyword search works', progress: { now: '0', max: '290000000' } },
     { name: 'downloading', status: { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
-    { name: 'indexing', status: { ...off, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
+    { name: 'indexing', status: { ...off, enabled: true, provider: 'builtin', running: true, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
   ])('$name', ({ status, embedding = embeddingStatus, chip, action, description, absent, progress }) => {
     render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();

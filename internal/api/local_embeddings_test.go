@@ -34,14 +34,14 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 	c.calls.Add(1)
 	c.builtin.Store(builtin)
 	c.started <- ctx
-	report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
+	if c.failurePhase != "idle" {
+		report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
+	}
 	select {
 	case <-c.release:
-		phase := c.failurePhase
-		if phase == "" {
-			phase = "indexing"
+		if c.failurePhase == "" {
+			report(LocalEmbeddingsStatus{Phase: "indexing"})
 		}
-		report(LocalEmbeddingsStatus{Phase: phase})
 		return errors.New("build interrupted")
 	case <-ctx.Done():
 		return ctx.Err()
@@ -58,6 +58,13 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, OperationHistoryReader: history, Logger: testLogger()})
 				defer func() { _ = srv.Shutdown(context.Background()) }()
 				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
+				if behavior == "installation failure" {
+					controller.failurePhase = "downloading"
+				}
+				if behavior == "publication failure" {
+					// An installed model can fail publication before emitting progress.
+					controller.failurePhase = "idle"
+				}
 				srv.SetLocalEmbeddings(controller)
 				post := func(ctx context.Context, body string) *httptest.ResponseRecorder {
 					t.Helper()
@@ -122,10 +129,6 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					assert.True(controller.builtin.Load())
 					assert.Equal(int32(2), controller.calls.Load())
 				case "installation failure", "publication failure":
-					controller.failurePhase = "downloading"
-					if behavior == "publication failure" {
-						controller.failurePhase = "idle"
-					}
 					close(controller.release)
 					synctest.Wait()
 					recordSuccessfulBuild()

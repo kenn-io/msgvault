@@ -397,6 +397,16 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	old, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
 	require.NoError(err)
 	require.NotNil(old)
+	searchDocuments := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
+		request.Header.Set("Authorization", "Bearer owner")
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		return response
+	}
+	before := searchDocuments()
+	require.Equal(http.StatusOK, before.Code, before.Body.String())
+	require.Contains(before.Body.String(), "orchard document evidence")
 	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
 	require.NoError(err)
 	var consents int
@@ -405,10 +415,7 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
 	require.NoError(err)
 	assert.Equal(old.ID, generation.ID)
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
-	request.Header.Set("Authorization", "Bearer owner")
-	f.server.Router().ServeHTTP(response, request)
+	response := searchDocuments()
 	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 	assert.Contains(response.Body.String(), "semantic_search_unavailable")
 	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
@@ -540,11 +547,8 @@ api_key_env = "EXAMPLE_EMBEDDING_KEY"
 			close(handle.done)
 			controller := &localEmbeddingsController{state: &invocation{cfg: cfg}, handle: handle,
 				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-					return embedlocal.Status{DownloadBytes: 290000000}, nil
+					return embedlocal.Status{}, errors.New("local activation reached for a remote provider")
 				},
-			}
-			controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-				return embedlocal.Status{}, errors.New("local activation reached for a remote provider")
 			}
 			for _, builtin := range []bool{false, true} {
 				require.ErrorContains(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
