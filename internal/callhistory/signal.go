@@ -66,7 +66,7 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 	}
 	if len(r.Bindings) != 0 {
 		id, ok := r.Bindings[row.PeerID]
-		if row.Mode != "Direct" || len(r.Bindings) != 1 || !ok {
+		if row.Mode != "Direct" || len(r.Bindings) != 1 || !ok || !validID(row.PeerID) {
 			return Observation{}, invalid("Signal bindings require the exact direct peer ID")
 		}
 		role := unknown
