@@ -1013,6 +1013,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		}
 	}
 
+	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision) SELECT d.member_message_id,d.target_message_id,d.occurrence_key,d.decision FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND d.target_message_id IN (SELECT id FROM messages)`); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
+		}
+	}
+
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
 	if _, err := tx.Exec(`UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {

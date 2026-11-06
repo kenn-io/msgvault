@@ -75,6 +75,7 @@ type MergeResult struct {
 }
 
 // ContentHashCandidate holds message metadata for raw-MIME hash scans.
+// ICS payloads use UID identities; their bytes are not email delivery evidence.
 type ContentHashCandidate struct {
 	ID               int64
 	SourceID         int64
@@ -564,6 +565,9 @@ func (s *Store) MergeDuplicates(
 				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
 				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
 			}
+			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
@@ -574,6 +578,15 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshMeetingProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}
@@ -623,7 +636,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true)
+		WHERE ` + LiveMessagesWhere("m", true) + ` AND COALESCE(mr.raw_format, 'mime') <> 'ics'`
 	var args []any
 	if len(sourceIDs) > 0 {
 		placeholders := make([]string, len(sourceIDs))

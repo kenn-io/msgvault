@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-const calendarEventProjectionVersion = 1
+const calendarEventProjectionVersion = 2
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.
@@ -59,14 +59,14 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read calendar projection raw: %w", err)
 	}
-	if format.String != gcalmodel.RawFormat {
+	if format.String != gcalmodel.RawFormat && format.String != rawFormatICS {
 		return clearProjection()
 	}
 	var config sql.NullString
 	if err := q.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
 		return fmt.Errorf("read calendar projection source: %w", err)
 	}
-	event, ok := decodeCalendarProjection(stored, compression, []byte(metadata.String), calendarConfigZone(config))
+	event, ok := decodeCalendarProjection(format.String, stored, compression, []byte(metadata.String), calendarConfigZone(config))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -120,12 +120,12 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	return nil
 }
 
-func decodeCalendarProjection(stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
+func decodeCalendarProjection(format string, stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	var event calevent.Event
 	var ok bool
 	if err == nil {
-		event, ok, err = calevent.Decode(gcalmodel.RawFormat, raw, metadata, zone)
+		event, ok, err = calevent.Decode(format, raw, metadata, zone)
 	}
 	if err != nil {
 		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true

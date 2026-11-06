@@ -13,6 +13,7 @@ import (
 )
 
 type CalendarOccurrence struct {
+	Ref               string              `json:"ref"`
 	MessageID         int64               `json:"message_id"`
 	SeriesMessageID   int64               `json:"series_message_id"`
 	SourceID          int64               `json:"source_id"`
@@ -43,7 +44,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	defer release()
-	rows, err := calendarEventRowsInWindow(ctx, s.db, s.dialect, from, to)
+	rows, err := calendarEventRowsInWindow(ctx, s.meetingReader(), from, to)
 	if err != nil {
 		return page, err
 	}
@@ -59,7 +60,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if row.Event.Kind == "series" || row.Event.Kind == "single" {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == meetingExceptionKind {
 			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
 			exceptions[key] = append(exceptions[key], row)
 		}
@@ -81,21 +82,16 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if attendees == nil {
 			attendees = []calevent.Attendee{}
 		}
-		page.Occurrences = append(page.Occurrences, CalendarOccurrence{MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
+		ref := OccurrenceRef{MessageID: row.MessageID}
+		if seriesID != 0 && o.Original != (calrecur.Identity{}) {
+			ref = OccurrenceRef{MessageID: seriesID, Key: o.Original.Key()}
+		}
+		page.Occurrences = append(page.Occurrences, CalendarOccurrence{Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
 	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) error {
-		effective := row
-		if o.HasException {
-			effective = byID[o.ExceptionRef]
-			if effective.Event.Status == "cancelled" {
-				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		if row.Event.Status == "cancelled" {
-			o.Cancelled = true
+		effective, o, err := materializeCalendarOccurrence(ctx, s.meetingReader(), row, byID, o)
+		if err != nil {
+			return err
 		}
 		add(effective, row.MessageID, o)
 		return nil
@@ -112,12 +108,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			return page, err
 		}
 		e := row.Event
-		if e.Kind == "exception" && e.Original == nil {
+		if e.Kind == meetingExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
 		switch e.Kind {
-		case "exception", "single":
-			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+		case meetingExceptionKind, "single":
+			if e.Kind == meetingExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
 			if e.Start != nil && e.End != nil {
@@ -125,7 +121,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			} else {
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
-			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
+			if e.Kind == meetingExceptionKind || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
 			}
 			fallthrough
@@ -164,7 +160,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 	if event.Status == calendarEventDecodeFailureStatus {
 		return "event data could not be decoded"
 	}
-	if event.Kind == "exception" {
+	if event.Kind == meetingExceptionKind {
 		return "missing series master and event bounds"
 	}
 	return "missing event bounds"
@@ -214,7 +210,11 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	for _, row := range rows {
 		e := row.Event
 		if e.Start != nil && e.End != nil {
-			bounded = append(bounded, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", ExceptionRef: row.MessageID, HasException: true})
+			o, err := exceptionBoundsFor(set, duration, days, row)
+			if err != nil {
+				return nil, bounded, err
+			}
+			bounded = append(bounded, o)
 			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
@@ -283,7 +283,7 @@ func calendarEventZone(e calevent.Event) (*time.Location, error) {
 	if name == "" {
 		return time.UTC, nil
 	}
-	zone, err := time.LoadLocation(name)
+	zone, err := calevent.LoadZone(name)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
@@ -327,4 +327,25 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 		days = int(last.Sub(first) / (24 * time.Hour))
 	}
 	return set, e.End.Sub(*e.Start), days, nil
+}
+
+func materializeCalendarOccurrence(ctx context.Context, r loggedReader, master CalendarEventRow, byID map[int64]CalendarEventRow, o calrecur.Occurrence) (CalendarEventRow, calrecur.Occurrence, error) {
+	effective := master
+	if o.HasException {
+		effective = byID[o.ExceptionRef]
+		if effective.Event.Status == meetingCancelledStatus {
+			var err error
+			effective, err = inheritCalendarCancellation(ctx, r, effective, master)
+			if err != nil {
+				return effective, o, err
+			}
+		}
+	}
+	if master.Event.Status == meetingCancelledStatus {
+		o.Cancelled = true
+	}
+	if o.Cancelled {
+		effective.Event.Status = meetingCancelledStatus
+	}
+	return effective, o, nil
 }

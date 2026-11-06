@@ -513,7 +513,7 @@ func (s *Store) refreshAccountAttributionTx(
 	}
 
 	if messageType == "calendar_event" {
-		address, err := s.calendarAccountAddressTx(ctx, tx, sourceID, syncConfig)
+		address, err := s.calendarAccountAddressTx(ctx, tx, sourceID, sourceType, identifier, syncConfig)
 		if err != nil {
 			return false, err
 		}
@@ -664,9 +664,13 @@ func calendarMailbox(syncConfig sql.NullString) string {
 }
 
 func (s *Store) calendarAccountAddressTx(
-	ctx context.Context, tx *loggedTx, sourceID int64, syncConfig sql.NullString,
+	ctx context.Context, tx *loggedTx, sourceID int64, sourceType, identifier string, syncConfig sql.NullString,
 ) (string, error) {
 	address := calendarMailbox(syncConfig)
+	if sourceType != "gcal" && sourceType != rawFormatICS {
+		// Email invitations inherit the confirmed mailbox of their mail source.
+		address = accountSink(sourceType, identifier)
+	}
 	if address == "" {
 		return "", nil
 	}

@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -73,6 +73,25 @@ msgvault meetings context --id 42 --id 43 --format markdown --output context.md
 msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
+
+### meetings link, unlink, links, and suggest
+
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.46.0 or newer.
+
+```bash
+msgvault meetings suggest msg:42
+msgvault meetings suggest evt:81@20270314T100000Z --json
+msgvault meetings link 42 --event evt:81@20270314T100000Z
+msgvault meetings links 42
+msgvault meetings links evt:81@20270314T100000Z
+msgvault meetings unlink 42 --event evt:81@20270314T100000Z
+```
+
+`link` and `unlink` take one meeting note's message ID and a required `--event` reference. Copy the event reference from `meetings suggest` or the `ref` field in `calendar events --json`. A series occurrence uses the series master's ID and its original occurrence key, even when an edited copy moved to another time.
+
+`suggest` accepts `msg:<id>` for a note or `evt:<id>[@occurrence key]` for an event. It returns up to ten overlapping candidates, ranked by overlap minutes, shared attendees, and shared title words. Plain output warns on stderr when calendar entries could not be fully expanded, while still listing readable candidates. `--json` includes those entries in an `unexpandable` array with their `message_id` and `reason`. Check this array before treating an empty or partial result as complete. Suggestions leave links unchanged.
+
+`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. `link` adds the chosen occurrence to automatic matches. `unlink` applies to all calendar copies of that occurrence.
 
 ### meetings context
 
@@ -2005,7 +2024,7 @@ msgvault calendar events --from 2027-03-01 --to 2027-04-01
 msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link` and `meetings unlink`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
@@ -2057,6 +2076,51 @@ remote failure or an archive failure exits with an error after printing the
 receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
+
+## import-ics
+
+Import a local iCalendar file as separate calendar event messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
+event, identified by UID and original recurrence identity, and keeps its own
+VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
+byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
+sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
+component rejects the whole file. A series with unsupported recurrence stays
+archived and is reported as unexpandable by `calendar events`. The import command
+reports updated and unchanged counts. Floating times use UTC. The daemon
+reads the file locally; importing files through a remote daemon is unavailable.
+
+A cancellation keeps the event's last accepted title, times, participants, and
+raw, and only marks it cancelled.
+
+### Invitations in email
+
+Archiving email extracts decoded `text/calendar` MIME parts into event messages
+in the same source. Attached forwarded emails and iTIP messages with the ADD,
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+
+An invitation, its updates, and its cancellation share one event. Every
+contributing email keeps its full MIME and attachments, and the event survives
+deletion of any of them. A later email applies only when its `ORGANIZER`
+address matches the organizer of the email that created the event, ignoring
+case. An event with no organizer accepts a revision that sets its organizer.
+An organizer mismatch leaves the event unchanged and logs a warning with the email message ID. Organizer addresses are unauthenticated: a
+sender who copies the `ORGANIZER` address can update or cancel the event.
+Invalid calendar parts leave the email intact and log a warning with its message ID.
+
+The next email re-derivation extracts invites from archived MIME automatically
+after a sync or import. To run it on demand, use
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
 
 ## import-eml
 
@@ -3102,8 +3166,8 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. The provider-message counts used by `verify` and `remove-account` exclude calendar events extracted from invitations.
+The command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -5236,6 +5300,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived

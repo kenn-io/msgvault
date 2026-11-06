@@ -4308,6 +4308,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     recurrence_json TEXT NOT NULL DEFAULT '[]',
     recurrence_end_at TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
@@ -4372,3 +4373,22 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
 CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    calendar_id TEXT NOT NULL DEFAULT '',
+    scheduled_at TIMESTAMPTZ,
+    PRIMARY KEY (message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_value ON meeting_link_key(value);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_scheduled ON meeting_link_key(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_meeting_details_duration ON meeting_details(duration_seconds);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    member_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    target_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_message_id, occurrence_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);
