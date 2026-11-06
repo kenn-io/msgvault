@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, Card, Chip } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
+  import { formatContactDate } from '../../directory/labels';
   import { listLoops } from '../../api/generated/api/api';
   import type { LoopItem } from '../../api/generated/models';
 
@@ -64,9 +65,10 @@
     return () => controller.abort();
   });
 
-  function kindLabel(kind: string): string {
-    return kind === 'reply_owed' ? 'Waiting on you' : 'Waiting on them';
-  }
+  const groups = $derived([
+    { kind: 'reply_owed', label: 'Waiting on you', items: items.filter((loop) => loop.kind === 'reply_owed') },
+    { kind: 'awaiting_reply', label: 'Waiting on them', items: items.filter((loop) => loop.kind !== 'reply_owed') },
+  ]);
 
   function ageLabel(since: string): string {
     const seconds = Math.max(0, (Date.now() - Date.parse(since)) / 1000);
@@ -76,49 +78,55 @@
   }
 </script>
 
-<section aria-label="Open loops">
-  <Card level="default" padding="sm">
-    <div class="loops-card">
-      <header>
-        <h3>Open loops</h3>
-        {#if !loading && !failed && items.length > 0}<span>{items.length}{truncated ? '+' : ''} open</span>{/if}
-      </header>
-      {#if loading}<p role="status">Loading…</p>
-      {:else if failed}<p role="alert">Couldn't load open loops.</p>
-      {:else if items.length === 0 && coverageIncomplete}<p>No loops found in the messages checked.</p>
-      {:else if items.length === 0}<p>Nothing open with this person.</p>
-      {:else}
-        <ul>
-          {#each items as loop (loop.anchor_message_id)}
-            <li>
-              <div class="loop-meta">
-                <Chip size="xs" tone="muted" uppercase={false}>{kindLabel(loop.kind)}</Chip>
-                <span title={`Since ${loop.owed_since_at}`}>{ageLabel(loop.owed_since_at)}</span>
-              </div>
-              <a href={`/messages/${loop.anchor_message_id}`}>{loop.summary || '(no subject)'}</a>
-            </li>
-          {/each}
-        </ul>
+<section class="open-loops" aria-label="Open loops">
+  <header>
+    <h3>Open loops</h3>
+    {#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}
+  </header>
+  {#if loading}<p class="muted" role="status">Loading…</p>
+  {:else if failed}<p role="alert">Couldn't load open loops.</p>
+  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
+  {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
+  {:else}
+    {#each groups as group (group.kind)}
+      {#if group.items.length > 0}
+        <div class="group">
+          <h4>{group.label}</h4>
+          <ul>
+            {#each group.items as loop (loop.anchor_message_id)}
+              <li>
+                <a href={`/messages/${loop.anchor_message_id}`} title={loop.summary || '(no subject)'}>{loop.summary || '(no subject)'}</a>
+                <span class="muted" title={`Since ${formatContactDate(loop.owed_since_at)}`}>{ageLabel(loop.owed_since_at)}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
       {/if}
-      {#if !loading && !failed && unreadable > 0}
-        <p class="note">
-          {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
-        </p>
-      {/if}
-      {#if !loading && !failed && coverageIncomplete}
-        {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
-        <Button size="sm" surface="outline" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} />
-      {/if}
-    </div>
-  </Card>
+    {/each}
+  {/if}
+  {#if !loading && !failed && unreadable > 0}
+    <p class="muted">
+      {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
+    </p>
+  {/if}
+  {#if !loading && !failed && coverageIncomplete}
+    {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
+    <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} /></div>
+  {/if}
 </section>
 
 <style>
-  .loops-card { display: grid; gap: var(--space-3); min-width: 0; }
-  header, .loop-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-  h3, p, ul { margin: 0; }
-  header > span, .loop-meta > span { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .note { color: var(--text-muted); font-size: var(--font-size-sm); }
-  ul { display: grid; gap: var(--space-3); padding: 0; list-style: none; }
-  li { display: grid; gap: var(--space-1); overflow-wrap: anywhere; }
+  .open-loops { display: grid; gap: var(--space-2); min-width: 0; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); min-height: var(--control-h); }
+  h3, h4, p, ul { margin: 0; }
+  h3 { font-size: var(--font-size-md); }
+  h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
+  .group { display: grid; gap: var(--space-1); }
+  ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
+  li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+  a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+  a:hover { text-decoration: underline; }
+  li > span { flex: none; }
+  .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+  [role="alert"] { color: var(--text-danger); }
 </style>
