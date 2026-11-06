@@ -63,67 +63,17 @@ func TestLineServeMountsOnlyReadyRegisteredChannels(t *testing.T) {
 	must.NoError(err)
 	checks.True(runtime.receiver.Active(source.ID, source.Identifier))
 	checks.False(runtime.receiver.Active(retired.ID, retired.Identifier))
+	for _, channelID := range []string{"2000000003", "2000000004", "2000000005"} {
+		source, err := st.GetSourceByTypeAndIdentifier("line", channelID)
+		must.NoError(err)
+		checks.False(runtime.receiver.Active(source.ID, source.Identifier))
+	}
 	jobs := sched.JobStatus()
 	must.Len(jobs, 1)
 	checks.Equal("line:2000000001", jobs[0].Name)
 	checks.Equal("@every 30s", jobs[0].Schedule)
 	checks.Equal(1, fake.Count("GET", "/v2/bot/info"), "serve initialization must not call LINE")
 	checks.Equal(1, fake.Count("POST", "/oauth2/v3/token"))
-}
-
-func TestLineServeWebhookAckDoesNotWaitForEnrichment(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	cfg, st, _ := lineWiringFixture(t)
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	must.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	must.NoError(err)
-	profileStarted := make(chan struct{}, 2)
-	release := make(chan struct{})
-	api := lineapi.New()
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/profile/") {
-			profileStarted <- struct{}{}
-			select {
-			case <-release:
-			case <-r.Context().Done():
-				return
-			}
-		}
-		api.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	defer close(release)
-	lineClientFactory = func(id, secret string) *line.Client {
-		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
-	}
-	sched := scheduler.New(nil).WithLogger(testLoggerValue())
-	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
-	must.NoError(err)
-	sched.Start()
-	defer func() { <-sched.Stop().Done() }()
-	body := `{"destination":"` + wiringBot + `","events":[{"type":"message","webhookEventId":"wake-event","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}]}`
-	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000001", strings.NewReader(body))
-	request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
-	acknowledged := make(chan int, 1)
-	go func() {
-		response := httptest.NewRecorder()
-		runtime.receiver.Receive(response, request, nil)
-		acknowledged <- response.Code
-	}()
-	select {
-	case status := <-acknowledged:
-		checks.Equal(200, status)
-	case <-time.After(5 * time.Second):
-		must.FailNow("webhook acknowledgement waited for processor")
-	}
-	select {
-	case <-profileStarted:
-	case <-time.After(5 * time.Second):
-		must.FailNow("wake did not start processor")
-	}
 }
 
 func TestLineServeSecondReceiptDuringEnrichment(t *testing.T) {

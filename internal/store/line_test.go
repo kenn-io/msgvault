@@ -3,14 +3,18 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
 
 func TestLineInboxAtomicDedupe(t *testing.T) {
@@ -384,5 +388,55 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 			_, err = st.MergeSourcesContext(t.Context(), req)
 			must.NoError(err)
 		})
+	}
+}
+
+func TestLineGCPurgesRetryPayloadsAfterSourceMerge(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fake := lineapi.New()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	client := line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(server.URL, server.URL))
+	source, err := line.Register(t.Context(), st, client, "2000000001")
+	must.NoError(err)
+	processor := line.NewProcessor(st, client, source.ID, source.Identifier, t.TempDir())
+	now := time.Now().UTC().Truncate(time.Second)
+	enqueue := func(event line.Event) {
+		t.Helper()
+		raw, err := json.Marshal(event)
+		require.NoError(t, err)
+		clean, err := line.SanitizeEvent(raw)
+		require.NoError(t, err)
+		require.NoError(t, st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: "gc-merged", EventTimestamp: event.Timestamp, RawJSON: string(clean), ReceivedAt: now}}))
+	}
+	if st.IsPostgreSQL() {
+		t.Skip("archive GC is SQLite-only")
+	}
+	ctx := t.Context()
+	message := line.Event{Type: "message", WebhookEventID: "event-gc-merged", Timestamp: now.UnixMilli(), Source: line.Source{Type: "group", GroupID: "C00000000000000000000000000000001", UserID: "U00000000000000000000000000000002"}, Message: &line.Message{ID: "gc-merged", Type: "text", Text: "text to purge after merge"}}
+	enqueue(message)
+	must.NoError(processor.Process(ctx))
+	enqueue(line.Event{Type: "unsend", WebhookEventID: "gc-merged-unsend", Timestamp: message.Timestamp + 1, Source: message.Source, Unsend: &line.Unsend{MessageID: message.Message.ID}})
+	must.NoError(processor.Process(ctx))
+	archived, err := st.LineMessageContext(ctx, source.ID, message.Message.ID)
+	must.NoError(err)
+	deletedFromSource, err := st.LineMessageDeletedContext(ctx, archived.ID)
+	must.NoError(err)
+	must.True(deletedFromSource)
+	into, err := st.GetOrCreateSource("line", "2000000002")
+	must.NoError(err)
+	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
+	must.NoError(err)
+	plan, err := st.PlanGCContext(ctx)
+	must.NoError(err)
+	deleted, err := st.ExecuteGCContext(ctx, plan)
+	must.NoError(err)
+	must.Equal(int64(1), deleted)
+	for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
+		var raw string
+		must.NoError(st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+		checks.Equal("{}", raw)
 	}
 }

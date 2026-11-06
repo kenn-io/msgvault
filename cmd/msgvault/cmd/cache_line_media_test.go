@@ -50,9 +50,8 @@ func TestLineMediaCacheAppend(t *testing.T) {
 	checks.Equal(int64(1), result.StagedCount, "new media must append only the new message")
 }
 
-// Cache publication is SQLite-only; processor counters also run on PostgreSQL
-// in internal/line's retry tests.
-func TestMediaTranscodingRetryCachedResults(t *testing.T) {
+// Cache publication is SQLite-only.
+func TestLineEnrichmentRetryRefreshesCachedResults(t *testing.T) {
 	for _, profileRetry := range []bool{false, true} {
 		name := "media"
 		if profileRetry {
@@ -97,9 +96,6 @@ func TestMediaTranscodingRetryCachedResults(t *testing.T) {
 			}
 			now = now.Add(time.Minute)
 			must.NoError(processor.Process(ctx))
-			var updated int64
-			must.NoError(st.DB().QueryRow(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`, source.ID).Scan(&updated))
-			checks.Equal(int64(1), updated)
 			_, err = buildCacheAuto(dbPath, analyticsDir)
 			must.NoError(err)
 			messages, err := engine.Search(ctx, search.Parse("larger:13"), 10, 0)

@@ -608,20 +608,6 @@ func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 }
 
 func TestProcessorProfileFailureKeepsText(t *testing.T) {
-	t.Run("first profile succeeds", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newInboxFixture(t)
-		f.enqueue(t, f.message("1", "first message text", f.now.UnixMilli()), time.Time{})
-		f.run(t)
-		archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-		must.NoError(err)
-		must.Len(archived.From, 1)
-		checks.Equal("Example User", archived.From[0].Name)
-		count, err := f.st.CountMessagesForSource(f.source.ID)
-		must.NoError(err)
-		checks.Equal(int64(1), count)
-	})
 	t.Run("profile retry preserves text", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)
@@ -637,7 +623,6 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		must.NoError(err)
 		checks.Equal(int64(1), status.Pending)
 		f.now = f.now.Add(time.Minute)
-		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 		f.run(t)
 		status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 		must.NoError(err)
@@ -711,35 +696,6 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
 		checks.Equal(1, rows)
 		checks.Equal("{}", raw)
-	})
-	t.Run("merged identity", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newInboxFixture(t)
-		if f.st.IsPostgreSQL() {
-			t.Skip("archive GC is SQLite-only")
-		}
-		ctx := t.Context()
-		message := f.message("gc-merged", "text to purge after merge", f.now.UnixMilli())
-		f.enqueue(t, message, time.Time{})
-		f.run(t)
-		f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-merged-unsend", Timestamp: message.Timestamp + 1, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
-		f.run(t)
-		must.True(f.archived(t, message.Message.ID).deleted)
-		into, err := f.st.GetOrCreateSource("line", "2000000002")
-		must.NoError(err)
-		_, err = f.st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: f.source.ID, IntoSourceID: into.ID})
-		must.NoError(err)
-		plan, err := f.st.PlanGCContext(ctx)
-		must.NoError(err)
-		deleted, err := f.st.ExecuteGCContext(ctx, plan)
-		must.NoError(err)
-		must.Equal(int64(1), deleted)
-		for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
-			var raw string
-			must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
-			checks.Equal("{}", raw)
-		}
 	})
 }
 
@@ -1189,10 +1145,20 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 	for _, curated := range []bool{false, true} {
 		t.Run(strconv.FormatBool(curated), func(t *testing.T) {
 			must := require.New(t)
+			checks := assert.New(t)
 
 			f := newInboxFixture(t)
 			f.enqueue(t, f.message("1", "initial", f.now.UnixMilli()), time.Time{})
 			f.run(t)
+			if !curated {
+				archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
+				must.NoError(err)
+				must.Len(archived.From, 1)
+				checks.Equal("Example User", archived.From[0].Name)
+				count, err := f.st.CountMessagesForSource(f.source.ID)
+				must.NoError(err)
+				checks.Equal(int64(1), count)
+			}
 			var pid int64
 			must.NoError(f.st.DB().QueryRow(`SELECT sender_id FROM messages WHERE source_message_id='1'`).Scan(&pid))
 			if curated {
@@ -1209,10 +1175,14 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 			if curated {
 				want = "Chosen label"
 			}
-			assert.Equal(t, want, name)
+			checks.Equal(want, name)
 			if !curated {
 				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "2").Scan(&name))
-				assert.Equal(t, "Updated user", name)
+				checks.Equal("Updated user", name)
+				archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
+				must.NoError(err)
+				must.Len(archived.From, 1)
+				checks.Equal("Example User", archived.From[0].Name)
 			}
 		})
 	}
@@ -1220,8 +1190,8 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 
 func TestProcessorCombinedRetryAfterUsesLatestDeadline(t *testing.T) {
 	f := newInboxFixture(t)
-	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 429, Header: http.Header{"Retry-After": []string{"30"}}})
-	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": []string{"3600"}}})
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 429, Header: http.Header{"Retry-After": []string{"3600"}}})
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": []string{"30"}}})
 	f.enqueue(t, f.message("1", "rate limited enrichments", f.now.UnixMilli()), time.Time{})
 	f.run(t)
 	due, err := f.st.DueLineEventsContext(context.Background(), f.source.ID, f.now.Add(time.Minute), 10)
@@ -1258,9 +1228,15 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	must.NoError(err)
 	must.Len(rows, 502)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
+	later := f.message("later", "next drain", f.now.UnixMilli())
+	raw, err := json.Marshal(later)
+	must.NoError(err)
+	clean, err := SanitizeEvent(raw)
+	must.NoError(err)
+	enqueued := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/bot/message/1/content" {
-			f.enqueue(t, f.message("later", "next drain", f.now.UnixMilli()), time.Time{})
+			enqueued <- f.st.EnqueueLineEventsContext(r.Context(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: later.WebhookEventID, EventType: later.Type, TargetMessageID: later.Message.ID, EventTimestamp: later.Timestamp, RawJSON: string(clean), ReceivedAt: f.now}})
 		}
 		f.api.ServeHTTP(w, r)
 	}))
@@ -1268,6 +1244,12 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
 	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	must.NoError(processor.Drain(t.Context()))
+	select {
+	case err := <-enqueued:
+		must.NoError(err)
+	case <-time.After(10 * time.Second):
+		must.FailNow("drain did not enqueue the later receipt")
+	}
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	var archived int
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id LIKE 'batch-%'"), f.source.ID).Scan(&archived))
@@ -1287,7 +1269,7 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	must.ErrorIs(processor.Drain(ctx), context.Canceled)
 }
 
-func TestReviewLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
+func TestProcessorArchivesLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
 	f := newInboxFixture(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
