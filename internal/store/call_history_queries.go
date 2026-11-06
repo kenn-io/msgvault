@@ -205,17 +205,18 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(scopeArgs, args...)
 	out := []PersonCallSummary{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `
 		WITH active AS (
 			SELECT c.*
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
-			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`+scope+`
 		), per_person AS (
 			SELECT a.message_id, pp.person_id,
-				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
-					AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) AS confirmed
+				MAX(`+callConfirmedSQL()+`) AS confirmed
 			FROM active a JOIN (`+s.callRolesSQL()+`) r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
 			GROUP BY a.message_id, pp.person_id
@@ -255,38 +256,38 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	}
 	return out, nil
 }
-// callIdentitySQL also serves fallback observations without a canonical key.
+
+// Each imported record is its own call identity.
 func callIdentitySQL(alias string) string {
-	return "CASE WHEN " + alias + ".canonical_key = '' THEN 'm:' || CAST(" + alias + ".message_id AS TEXT) ELSE 'n:' || " + alias + ".canonical_key END"
+	return "'m:' || CAST(" + alias + ".message_id AS TEXT)"
 }
 
 func (s *Store) callActiveSQL(extra string) string {
-	return `SELECT c.*, ` + callIdentitySQL("c") + ` AS identity_key
+	// Direction and duration remain in normalized evidence, outside the scalar
+	// projection used by the summary. Extract only those fields for this reader.
+	direction := "m.metadata ->> 'direction'"
+	duration := "m.metadata ->> 'duration_seconds'"
+	if s.dialect.DriverName() != postgresDriverName {
+		direction = "CASE WHEN json_valid(m.metadata) THEN " + direction + " END"
+		duration = "CASE WHEN json_valid(m.metadata) THEN " + duration + " END"
+	}
+	return `SELECT c.message_id, c.kind, c.outcome, c.owner_participation,
+ c.occurred_at, CASE WHEN m.message_type = 'call_record' THEN ` + direction + ` ELSE c.direction END AS direction,
+ CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds,
+ ` + callIdentitySQL("c") + ` AS identity_key
  FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
  WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
 }
 
-// Resolve all active evidence before filtering an identity by its earliest date.
 func callIdentityCTEs(active string) string {
 	return `active AS (` + active + `), identities AS (
- SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
- MIN(message_id) AS message_id, MAX(duration_seconds) AS duration_seconds,
- MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
- MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled') THEN 1 ELSE 0 END) AS negative,
- MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
- MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
- MAX(CASE WHEN outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
- FROM active GROUP BY identity_key)`
+ SELECT identity_key, occurred_at, kind, message_id, duration_seconds, outcome
+ FROM active)`
 }
 
 func callCategorySQL(confirmed string) string {
-	return fmt.Sprintf(`CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
- WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
- WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
- WHEN %s = 1 THEN 'answered'
- WHEN i.missed = 1 THEN 'missed'
- WHEN i.declined = 1 THEN 'declined'
- WHEN i.cancelled = 1 THEN 'cancelled'
+	return fmt.Sprintf(`CASE WHEN %s = 1 THEN 'answered'
+ WHEN i.outcome IN ('missed','declined','cancelled') THEN i.outcome
  ELSE 'unknown' END`, confirmed)
 }
 
@@ -294,3 +295,4 @@ func callConfirmedSQL() string {
 	return `CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
  AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END`
 }
+

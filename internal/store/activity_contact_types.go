@@ -1,17 +1,6 @@
 package store
 
-import (
-	"time"
-
-	"go.kenn.io/msgvault/internal/persontiers"
-)
-
-// ActivityFilters selects the stored evidence admitted to an activity result.
-type ActivityFilters struct {
-	Exclusions   persontiers.Config
-	MaxDirect    int
-	IncludeNoise bool
-}
+import "time"
 
 // ActivitySubject selects a saved person or an unsaved participant cluster.
 type ActivitySubject struct {
@@ -26,12 +15,4 @@ type ContactAggregate struct {
 	Channels                                       []ActivityChannel
 	Monthly                                        [12]int
 	InitiatedByContact, InitiatedByOwner           int
-}
-
-// ContactQuery supplies the identity, filters, clock and zone for an aggregate.
-type ContactQuery struct {
-	Subject  ActivitySubject
-	Filters  ActivityFilters
-	Now      time.Time
-	Location *time.Location
 }
