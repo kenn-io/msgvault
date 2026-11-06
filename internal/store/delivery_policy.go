@@ -247,6 +247,12 @@ func (s *Store) deliveryStateTx(ctx context.Context, tx *loggedTx, q DeliveryPol
 	return state, unavailable, nil
 }
 
+func (s *Store) deliveryApprovalCoversPointsQuery() string {
+	return `SELECT EXISTS (SELECT 1 FROM person_contact_points,
+		(SELECT created_at FROM delivery_policy_audit WHERE person_uid=? AND scope=? ORDER BY revision DESC LIMIT 1) approval
+		WHERE id=? AND (active_from IS NULL OR ` + s.deliveryActiveFromComparison("approval.created_at") + `))`
+}
+
 func (s *Store) deliveryApprovalCoversPointsTx(ctx context.Context, tx *loggedTx, personUID string, approvedThrough sql.NullInt64, pointIDs []int64) (bool, error) {
 	if !approvedThrough.Valid {
 		return false, nil
@@ -256,9 +262,7 @@ func (s *Store) deliveryApprovalCoversPointsTx(ctx context.Context, tx *loggedTx
 			continue
 		}
 		var covered bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_contact_points,
-		(SELECT created_at FROM delivery_policy_audit WHERE person_uid=? AND scope=? ORDER BY revision DESC LIMIT 1) approval
-		WHERE id=? AND (active_from IS NULL OR `+s.deliveryActiveFromComparison("approval.created_at")+`))`,
+		err := tx.QueryRowContext(ctx, s.deliveryApprovalCoversPointsQuery(),
 			personUID, DeliveryPersonAllRoutes, pointID).Scan(&covered)
 		if err != nil || covered {
 			return covered, err
