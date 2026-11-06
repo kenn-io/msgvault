@@ -14,6 +14,12 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		{"German lautet", Content{Text: "Ihr Bestätigungscode lautet 482913"}, true},
+		{"verification code was", Content{Text: "Your verification code was 482913"}, true},
+		{"German war", Content{Text: "Ihr Sicherheitscode war 482913"}, true},
+		{"code was", Content{Text: "Your code was 482913"}, true},
+		{"verification code sent yesterday", Content{Text: "Your verification code was sent yesterday"}, false},
+		{"order code updated count", Content{Text: "Order code was updated for 482913 accounts"}, false},
 		{"security code after as", Content{Text: "Use 482913 as your Dropbox security code"}, true},
 		{"verify login after code", Content{Text: "Use 482913 to verify your login"}, true},
 		{"confirm identity after code", Content{Text: "Enter 482913 on the Uber app to confirm it's you"}, true},
