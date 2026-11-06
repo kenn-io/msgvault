@@ -148,78 +148,11 @@ func startVectorInit(
 		h.vf = vf
 		h.mu.Unlock()
 		if cfg.Vector.Enabled {
-			publishTextVectorFeatures(ctx, s, apiServer, sched, vf, state)
-		}
-		if vf.Visual != nil {
-			searchService, searchErr := visual.NewSearchService(s, vf.Visual.Provider, vf.Visual.Backend,
-				cfg.Vector.Multimodal.ImageQueriesEnabled())
-			if searchErr == nil {
-				searchService.ExpectFingerprint(vf.Visual.Generation.Fingerprint)
-				searchService.SetScopeCheck(vf.Visual.ScopeCheck)
-			}
-			if searchErr != nil {
-				logger.Error("configure multimodal search failed", "error", searchErr)
-			} else {
-				apiServer.SetVisualSearch(searchService)
-			}
-			build := func(runCtx context.Context, scope operations.PassScope) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := vf.Visual.Archive.ConsentVisualGeneration(
-						ctx, vf.Visual.Generation.ID, vf.Visual.PolicyFingerprint); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					return runVisualOnce(ctx, vf.Visual)
-				})
-			}
-			resume := func(runCtx context.Context, scope operations.PassScope) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					return runVisualOnce(ctx, vf.Visual)
-				})
-			}
-			apiServer.SetVisualOperations(build, resume, func(
-				runCtx context.Context, scope operations.PassScope, messageID int64, hash string,
-			) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					if vf.Visual.ScopeCheck != nil {
-						if err := vf.Visual.ScopeCheck(ctx); err != nil {
-							return visual.WorkerResult{}, err
-						}
-					}
-					result, err := vf.Visual.Reconciler.RetryOwner(ctx, messageID, hash)
-					if err != nil || len(result.Work) == 0 {
-						return visual.WorkerResult{}, err
-					}
-					return vf.Visual.Worker.Run(ctx, result.Work)
-				})
-			}, func(statusCtx context.Context, includeCoverage bool) (visual.Status, error) {
-				return vf.Visual.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false, includeCoverage)
-			}, func(retireCtx context.Context) error {
-				// Retire FIRST: prepare and commit refuse retired
-				// generations, so no publisher can add a token after this
-				// point and the enumeration below is complete.
-				if err := vf.Visual.Reconciler.Retire(retireCtx); err != nil {
-					return err
-				}
-				tokens, err := vf.Visual.Reconciler.GenerationTokens(retireCtx)
-				if err != nil {
-					return err
-				}
-				visualTokens := make([]visual.VectorToken, len(tokens))
-				for i, token := range tokens {
-					visualTokens[i] = visual.VectorToken(token)
-				}
-				return vf.Visual.Backend.DeleteTokens(retireCtx, visualTokens)
-			})
-			if err := registerVisualJob(sched, vf.Visual, cfg); err != nil {
-				logger.Error("register multimodal job failed", "error", err)
+			if err := publishTextVectorFeatures(ctx, s, apiServer, sched, vf, state); err != nil {
+				logger.Error("register vector jobs failed", "error", err)
 			}
 		}
+		publishVisualVectorFeatures(s, apiServer, sched, vf, state)
 		if !cfg.Vector.Enabled {
 			if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
 				logger.Error("register document vector job failed", "error", err)
@@ -228,6 +161,81 @@ func startVectorInit(
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
 	return h
+}
+
+func publishVisualVectorFeatures(s *store.Store, apiServer *api.Server, sched *scheduler.Scheduler, vf *vectorFeatures, state *invocation) {
+	if vf.Visual == nil {
+		return
+	}
+	cfg, logger := state.cfg, state.logger
+	searchService, searchErr := visual.NewSearchService(s, vf.Visual.Provider, vf.Visual.Backend,
+		cfg.Vector.Multimodal.ImageQueriesEnabled())
+	if searchErr == nil {
+		searchService.ExpectFingerprint(vf.Visual.Generation.Fingerprint)
+		searchService.SetScopeCheck(vf.Visual.ScopeCheck)
+	}
+	if searchErr != nil {
+		logger.Error("configure multimodal search failed", "error", searchErr)
+	} else {
+		apiServer.SetVisualSearch(searchService)
+	}
+	build := func(runCtx context.Context, scope operations.PassScope) error {
+		return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := vf.Visual.Archive.ConsentVisualGeneration(
+				ctx, vf.Visual.Generation.ID, vf.Visual.PolicyFingerprint); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			return runVisualOnce(ctx, vf.Visual)
+		})
+	}
+	resume := func(runCtx context.Context, scope operations.PassScope) error {
+		return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := requireVisualConsent(ctx, vf.Visual); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			return runVisualOnce(ctx, vf.Visual)
+		})
+	}
+	apiServer.SetVisualOperations(build, resume, func(
+		runCtx context.Context, scope operations.PassScope, messageID int64, hash string,
+	) error {
+		return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := requireVisualConsent(ctx, vf.Visual); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			if vf.Visual.ScopeCheck != nil {
+				if err := vf.Visual.ScopeCheck(ctx); err != nil {
+					return visual.WorkerResult{}, err
+				}
+			}
+			result, err := vf.Visual.Reconciler.RetryOwner(ctx, messageID, hash)
+			if err != nil || len(result.Work) == 0 {
+				return visual.WorkerResult{}, err
+			}
+			return vf.Visual.Worker.Run(ctx, result.Work)
+		})
+	}, func(statusCtx context.Context, includeCoverage bool) (visual.Status, error) {
+		return vf.Visual.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false, includeCoverage)
+	}, func(retireCtx context.Context) error {
+		// Retire FIRST: prepare and commit refuse retired
+		// generations, so no publisher can add a token after this
+		// point and the enumeration below is complete.
+		if err := vf.Visual.Reconciler.Retire(retireCtx); err != nil {
+			return err
+		}
+		tokens, err := vf.Visual.Reconciler.GenerationTokens(retireCtx)
+		if err != nil {
+			return err
+		}
+		visualTokens := make([]visual.VectorToken, len(tokens))
+		for i, token := range tokens {
+			visualTokens[i] = visual.VectorToken(token)
+		}
+		return vf.Visual.Backend.DeleteTokens(retireCtx, visualTokens)
+	})
+	if err := registerVisualJob(sched, vf.Visual, cfg); err != nil {
+		logger.Error("register multimodal job failed", "error", err)
+	}
 }
 
 // requireVisualConsent verifies durable hosted-processing consent AND that it
@@ -558,7 +566,7 @@ func registerDocumentVectorJob(sched documentVectorJobRegistrar, vf *vectorFeatu
 		return runScheduledDocumentVectorGeneration(ctx, st, vf, limit)
 	})
 	if err := sched.SetDocumentVectorJob(job, cfg.Vector.Embed.Schedule.Cron, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
-		return fmt.Errorf("register document vector job: %w", err)
+		return errors.Join(fmt.Errorf("register document vector job: %w", err), sched.SetDocumentVectorJob(nil, "", false))
 	}
 	repairLogger(state.logger).Info("document vectors scheduled", "cron", cfg.Vector.Embed.Schedule.Cron,
 		"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync)
@@ -584,7 +592,7 @@ func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Stor
 	}
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
-		return fmt.Errorf("register embed job: %w", err)
+		return errors.Join(fmt.Errorf("register embed job: %w", err), sched.SetEmbedJob(nil, "", false))
 	}
 	repairLogger(logger).Info("embed scheduled",
 		"cron", schedule,
@@ -608,7 +616,7 @@ func newSchedulerEmbedJob(vf *vectorFeatures, s *store.Store, logger *slog.Logge
 	}
 }
 
-func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *api.Server, sched *scheduler.Scheduler, vf *vectorFeatures, state *invocation) {
+func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *api.Server, sched *scheduler.Scheduler, vf *vectorFeatures, state *invocation) error {
 	logger := state.logger
 	status := embeddingStatusSource{st: s, backend: vf.Backend, cfg: vf.Cfg, coverage: newEmbeddingCoverageCache(ctx, nil)}
 	apiServer.SetEmbeddingStatus(status.read, vf.Cfg.Embeddings.ETAWindow)
@@ -624,13 +632,8 @@ func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *a
 	apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
 	apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
 	checkVectorIndexFreshness(ctx, apiServer, vf, logger)
-	if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
-		logger.Error("register document vector job failed", "error", err)
-	}
-
-	if err := registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger); err != nil {
-		// Cron was validated in precheckVectorFeatures, so this is an
-		// invariant violation, not user error; vector search still works.
-		logger.Error("register embed job failed", "error", err)
-	}
+	return errors.Join(
+		registerDocumentVectorJob(sched, vf, s, state),
+		registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger),
+	)
 }

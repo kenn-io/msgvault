@@ -236,6 +236,61 @@ func (f *localActivationFixture) start(t *testing.T) {
 	f.controller.handle = f.handle
 }
 
+func TestLocalEmbeddingsRetriesMissingBuiltinFiles(t *testing.T) {
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "nomic-embed-text", "")
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"local_only": true, "endpoint": ""}}})
+	require.NoError(err)
+	f.cfg.Vector.Embeddings.LocalOnly = true
+	f.cfg.Vector.Embeddings.Endpoint = ""
+	fixtureEndpoint := localEmbeddingEndpoint
+	localEmbeddingEndpoint = embedlocal.Endpoint
+	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
+	require.True(f.handle.WaitTimeout(5 * time.Second))
+	f.controller.handle = f.handle
+	startup, detail := f.server.VectorStatus()
+	require.Equal(api.VectorStatusError, startup)
+	require.Contains(detail, "local embeddings need setup")
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	require.Equal("builtin", status.Provider)
+	require.False(status.Enabled, "missing model files must leave Turn on available")
+	localEmbeddingEndpoint = fixtureEndpoint
+	require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
+	require.Equal(1, f.installs)
+	status, err = f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	require.True(status.Enabled)
+	require.Equal("builtin", status.Provider)
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(messages, 1)
+}
+
+func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newLocalActivationFixture(t, "nomic-embed-text", "")
+	f.start(t)
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
+	require.NoError(err)
+	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+	require.ErrorContains(err, "invalid embed cron")
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(messages, 1)
+	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
+	require.NoError(err)
+	before := f.inputs.Load()
+	err = f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel)
+	require.ErrorContains(err, "not scheduled")
+	assert.Equal(before, f.inputs.Load(), "failed replacement must not send new text to the previous provider")
+}
+
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string

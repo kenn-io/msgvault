@@ -50,6 +50,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	}
 	c.handle.mu.Lock()
 	cfg := c.state.cfg.Vector
+	missingRuntime := c.handle.vf == nil
 	if c.handle.vf != nil {
 		cfg = c.handle.vf.Cfg
 	}
@@ -64,6 +65,13 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		default:
 			provider = "configured"
 		}
+	}
+	select {
+	case <-c.handle.done:
+		if missingRuntime && (provider == "builtin" || provider == "ollama") {
+			cfg.Enabled = false
+		}
+	default:
 	}
 	return api.LocalEmbeddingsStatus{Host: host, DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
 		OllamaAvailable: status.OllamaAvailable || provider == "ollama", DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
@@ -204,7 +212,8 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	var vf *vectorFeatures
-	if c.handle.vf == nil {
+	freshRuntime := c.handle.vf == nil
+	if freshRuntime {
 		vf, err = setupVectorFeaturesForRun(nextCtx, c.store, c.dbPath, false, c.openers...)
 	} else {
 		vf, err = c.handle.vf.configureText(nextCtx, &state, vecCfg)
@@ -218,8 +227,12 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	c.handle.mu.Lock()
 	c.handle.vf = vf
 	c.handle.mu.Unlock()
-	publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
+	publicationErr := publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
+	if freshRuntime {
+		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
+	}
 	defer func() {
+		result = errors.Join(result, publicationErr)
 		if rebuildDocuments {
 			_, err := c.scheduler.StartJob("scheduled document indexing", false)
 			result = errors.Join(result, err)

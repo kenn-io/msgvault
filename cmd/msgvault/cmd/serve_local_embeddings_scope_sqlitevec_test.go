@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,10 +22,12 @@ import (
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
 func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syncAccount func(*store.Store) error) (*localActivationFixture, int64) {
@@ -141,4 +144,46 @@ func TestLocalEmbeddingsScheduledRecoveryPreservesVisualSearch(t *testing.T) {
 		results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
 		return err == nil && len(results) == 1
 	}, 10*time.Second, 50*time.Millisecond)
+}
+
+func TestLocalEmbeddingsPublishesVisualRecoveryAfterFailedStartup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	defaults := config.NewDefaultConfig().Vector.Multimodal
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: defaults.Model, Dimension: defaults.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
+	require.NoError(err)
+	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
+	require.NoError(err)
+	manifestPath := filepath.Join(t.TempDir(), "visual-capabilities.json")
+	require.NoError(writeVisualCapabilityManifest(manifestPath, manifest))
+	t.Setenv(defaults.APIKeyEnv, "synthetic-visual-key")
+	extra := fmt.Sprintf("\n[vector.multimodal]\nenabled = true\ncapabilities_file = %q\n[vector.multimodal.schedule]\ncron = \"0 0 * * *\"\n", manifestPath)
+	f := newLocalActivationFixture(t, "nomic-embed-text", extra)
+	credentials, err := providercredentials.Read(f.cfg.TokensDir())
+	require.NoError(err)
+	_, err = providercredentials.Put(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, "https://previous.example.test/v1", "synthetic-previous-key")
+	require.NoError(err)
+	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler, vectorInitVisualOpener{})
+	require.True(f.handle.WaitTimeout(5 * time.Second))
+	f.controller.handle = f.handle
+	f.controller.openers = []visual.StreamOpener{vectorInitVisualOpener{}}
+	status, _ := f.server.VectorStatus()
+	require.Equal(api.VectorStatusError, status)
+	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+	for _, tc := range []struct {
+		method, path, body string
+		code               int
+	}{
+		{method: http.MethodGet, path: "/api/v1/multimodal/status", code: http.StatusOK},
+		{method: http.MethodPost, path: "/api/v1/search/attachments/visual", body: `{}`, code: http.StatusBadRequest},
+		{method: http.MethodPost, path: "/api/v1/multimodal/build", body: `{"consent":true}`, code: http.StatusOK},
+	} {
+		request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		request.Header.Set("Authorization", "Bearer owner")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		assert.Equal(tc.code, response.Code, "%s: %s", tc.path, response.Body.String())
+	}
+	require.NoError(f.scheduler.TriggerJob("multimodal-attachments"))
 }
