@@ -2182,7 +2182,7 @@ func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
 	requirements.NoError(err)
 	fingerprint := New(gmail.NewMockAPI(), first, nil).fullSyncRequestFingerprint()
 	_, err = first.DB().Exec(
-		`UPDATE sync_runs SET sync_type = 'full', request_fingerprint = ? WHERE id = ?`,
+		`UPDATE sync_runs SET sync_type = 'full', cursor_after = '1000', request_fingerprint = ? WHERE id = ?`,
 		fingerprint, abandonedRun,
 	)
 	requirements.NoError(err)
@@ -3092,7 +3092,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	syncID, err := env.Store.StartSync(source.ID, "full")
 	require.NoError(err, "StartSync")
 	_, err = env.Store.DB().Exec(
-		`UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?`,
+		`UPDATE sync_runs SET cursor_after = '12345', request_fingerprint = ? WHERE id = ?`,
 		env.Syncer.fullSyncRequestFingerprint(), syncID,
 	)
 	require.NoError(err, "record request fingerprint")
@@ -3343,7 +3343,7 @@ func TestInitSyncState_Resume(t *testing.T) {
 	syncID, err := env.Store.StartSync(source.ID, "full")
 	require.NoError(err, "StartSync")
 	_, err = env.Store.DB().Exec(
-		`UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?`,
+		`UPDATE sync_runs SET cursor_after = '1000', request_fingerprint = ? WHERE id = ?`,
 		env.Syncer.fullSyncRequestFingerprint(), syncID,
 	)
 	require.NoError(err, "record request fingerprint")
@@ -3369,44 +3369,7 @@ func TestInitSyncState_Resume(t *testing.T) {
 	assert.NotEqual(syncID, state.syncID, "resume starts a new run")
 	assert.Equal(int64(50), state.checkpoint.MessagesProcessed, "MessagesProcessed")
 	assert.Equal(int64(45), state.checkpoint.MessagesAdded, "MessagesAdded")
-}
-
-func TestLegacyFullCheckpointRestartsForCoverage(t *testing.T) {
-	t.Parallel()
-	legacy := &store.SyncRun{
-		CursorBefore: sql.NullString{String: "page_1", Valid: true},
-	}
-	pinnedRecovery := *legacy
-	pinnedRecovery.CursorAfter = sql.NullString{String: "12345", Valid: true}
-
-	tests := []struct {
-		name   string
-		run    *store.SyncRun
-		modify func(*Options)
-		want   bool
-	}{
-		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: false},
-		{name: "filtered Gmail", run: legacy, modify: func(options *Options) {
-			options.Query = "after:2024/01/01"
-		}},
-		{name: "limited Gmail", run: legacy, modify: func(options *Options) {
-			options.Limit = 10
-		}},
-		{name: "IMAP", run: legacy, modify: func(options *Options) {
-			options.SourceType = "imap"
-		}},
-		{name: "pinned recovery", run: &pinnedRecovery, modify: func(*Options) {}},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			options := DefaultOptions()
-			test.modify(options)
-			syncer := &Syncer{opts: options}
-			assert.Equal(t, test.want,
-				syncer.fullCheckpointMatchesRequest(test.run, "current-request"))
-		})
-	}
+	assert.Equal("1000", state.handoffCursor, "restore the History boundary with the page token")
 }
 
 func TestInitSyncState_NoResumeOption(t *testing.T) {

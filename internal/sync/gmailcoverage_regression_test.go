@@ -159,6 +159,10 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 	default:
 		return nil, fmt.Errorf("unexpected synthetic endpoint: %s", r.URL)
 	}
+	return gmailJSONResponse(r, status, body)
+}
+
+func gmailJSONResponse(r *http.Request, status int, body any) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -170,11 +174,7 @@ func TestGmailCoverageScenario3(t *testing.T) {
 
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000, failPage: true}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	// nil source uses DefaultClient and does not construct any OAuth credential.
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	first, err := e.Syncer.Full(e.Context, testEmail)
 	require.Error(err)
 	require.Nil(first)
