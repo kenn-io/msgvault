@@ -1350,4 +1350,53 @@ func TestProcessorCooperativeStopAfterEnrichment(t *testing.T) {
 	checks.Equal(before[1].State, after[0].State)
 	checks.Equal(before[1].Attempts, after[0].Attempts)
 	checks.Equal(before[1].NextAttemptAt, after[0].NextAttemptAt)
+	run, err := f.st.GetLatestSync(f.source.ID)
+	must.NoError(err)
+	checks.Equal(store.SyncStatusCancelled, run.Status)
+	checks.Equal(int64(1), run.MessagesProcessed)
+	checks.Equal(int64(2), run.MessagesAdded)
+	checks.Zero(run.ErrorsCount)
+}
+
+func TestProcessorHandoffStatus(t *testing.T) {
+	for _, itemError := range []bool{false, true} {
+		t.Run(strconv.FormatBool(itemError), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			f.enqueue(t, f.message("text", "committed before download", f.now.UnixMilli()-1), time.Time{})
+			f.enqueue(t, f.fileEvent(), time.Time{})
+			if itemError {
+				f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: http.StatusInternalServerError})
+			}
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v2/bot/message/1/content" {
+					cancel(jobctx.ErrRunBudgetExceeded)
+					<-r.Context().Done()
+					return
+				}
+				f.api.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
+			processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+			must.ErrorIs(processor.Process(ctx), context.Canceled)
+			checks.Equal("committed before download", f.archived(t, "text").body)
+			run, err := f.st.GetLatestSync(f.source.ID)
+			must.NoError(err)
+			checks.Equal(int64(2), run.MessagesAdded)
+			if itemError {
+				checks.Equal(store.SyncStatusFailed, run.Status)
+				checks.Equal(int64(1), run.ErrorsCount)
+				checks.Zero(run.MessagesProcessed)
+			} else {
+				checks.Equal(store.SyncStatusCancelled, run.Status)
+				checks.Zero(run.ErrorsCount)
+				checks.Equal(int64(1), run.MessagesProcessed)
+				checks.Empty(run.ErrorMessage.String)
+			}
+		})
+	}
 }
