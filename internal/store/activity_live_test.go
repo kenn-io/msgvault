@@ -60,8 +60,12 @@ func TestLiveEligibilityExcludesChangesAfterProjection(t *testing.T) {
 				requirements.NoError(err)
 				requirements.Len(page.Bursts, 1)
 				assertions.Equal(id, page.Bursts[0].AnchorMessageID)
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE calendar_events SET status='cancelled' WHERE message_id=?`), id)
+				// Remove decoded status so the live reader must use message metadata.
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM calendar_events WHERE message_id=?`), id)
 				requirements.NoError(err)
+				page, err = f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+				requirements.NoError(err)
+				requirements.Len(page.Bursts, 1, "missing decoded status alone must keep the event visible")
 			} else {
 				assertions.Equal(1, summary.Count)
 			}

@@ -38,13 +38,17 @@ func TestActivityEmailCopyWinnerStableWhenEndDateWidens(t *testing.T) {
 			require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
 		}
 		projectTierSignals(t, f.Fixture, "UTC", 0)
-		page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-		require.NoError(err)
-		require.Len(page.Bursts, 1)
-		assert.Equal(work.ID, page.Bursts[0].SourceID)
-		assert.Equal(workThread, page.Bursts[0].ConversationID)
-		assert.Equal(1, page.Bursts[0].Inbound)
-		assert.Equal(1, page.Bursts[0].Outbound)
+		for _, to := range []string{"2026-10-22", "2026-10-24"} {
+			query := timelineBurstQuery()
+			query.ToDate = to
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), query)
+			require.NoError(err)
+			require.Len(page.Bursts, 1)
+			assert.Equal(work.ID, page.Bursts[0].SourceID)
+			assert.Equal(workThread, page.Bursts[0].ConversationID)
+			assert.Equal(1, page.Bursts[0].Inbound)
+			assert.Equal(1, page.Bursts[0].Outbound)
+		}
 	})
 	t.Run("daily counted messages", func(t *testing.T) {
 		requirements := require.New(t)
@@ -137,9 +141,14 @@ func TestActivityEmailCopyWinnerStableWhenEndDateWidens(t *testing.T) {
 // A lower-ID observed copy must not suppress the owned copy's real contact.
 func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 	for _, tc := range []struct {
-		invitation, largeAudience bool
-	}{{false, false}, {true, false}, {true, true}} {
-		t.Run(fmt.Sprintf("counted tie/invitation=%t/largeAudience=%t", tc.invitation, tc.largeAudience), func(t *testing.T) {
+		name                            string
+		invitation, largeAudience, list bool
+	}{
+		{name: "counted tie"},
+		{name: "list copy tie", list: true},
+		{name: "large audience invitation", invitation: true, largeAudience: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			invitation := tc.invitation
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newTimelineActivityFixture(t)
@@ -152,7 +161,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 				requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 				room, err := f.Store.EnsureConversationWithType(source.ID, "copy", "email_thread", "Copy")
 				requirements.NoError(err)
-				id := f.add(t, room, source.ID, at, !invitation, "<display-copy@example.com>")
+				id := f.add(t, room, source.ID, at, !invitation && !tc.list, "<display-copy@example.com>")
 				ids = append(ids, id)
 				rooms = append(rooms, room)
 				if tc.largeAudience {
@@ -161,7 +170,8 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 						recipients = append(recipients, f.EnsureParticipant(fmt.Sprintf("guest-%d@example.com", j), "Guest", "example.com"))
 					}
 					requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", recipients, nil))
-				} else if invitation {
+				}
+				if tc.list {
 					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
 					requirements.NoError(err)
 				}
@@ -179,7 +189,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 				for _, counterpart := range messages[0].Counterparts {
 					counted = counted || counterpart.Counted
 				}
-				assertions.Equal(!invitation, counted)
+				assertions.Equal(!invitation && !tc.list, counted)
 			}
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 			requirements.NoError(err)
@@ -187,9 +197,9 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 			if tc.largeAudience {
 				winner = ids[1]
 			}
-			if invitation && !tc.largeAudience {
+			if tc.list {
 				assertions.Empty(page.Bursts)
-				assertions.Equal(1, page.NoiseOmitted)
+				assertions.Equal(1, page.NoiseOmitted, "mailbox copies count as one omitted message")
 				query := timelineBurstQuery()
 				query.Filters.IncludeNoise = true
 				page, err = f.Store.ListActivityBurstsContext(t.Context(), query)
@@ -201,7 +211,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 			assertions.Equal(winner, page.Bursts[0].AnchorMessageID)
 			assertions.Equal(2, page.Bursts[0].CopyCounts[winner])
 			assertions.Zero(page.Bursts[0].Inbound)
-			if invitation {
+			if invitation || tc.list {
 				assertions.Zero(page.Bursts[0].Outbound)
 			} else {
 				assertions.Equal(1, page.Bursts[0].Outbound)

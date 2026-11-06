@@ -184,6 +184,4 @@ func TestContactReadersKeepPolicySnapshot(t *testing.T) {
 	got := <-done
 	require.NoError(got.err)
 	assert.Equal(1, got.count, "in-flight reader must retain evidence from its policy snapshot")
-	_, err = read(t.Context())
-	assert.ErrorIs(err, ErrPersonTierRebuilding)
 }

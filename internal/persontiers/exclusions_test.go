@@ -26,10 +26,12 @@ func TestExcludesAddressUsesLocalPartAndDomainPatterns(t *testing.T) {
 		}},
 		{"custom local", Config{ExcludeAddressPatterns: []string{"bot-*"}}, []struct{ address, want string }{
 			{"BOT-alerts@example.com", "automated_address"}, {"bot@example.com", ""},
+			{"mybot-alerts@example.com", ""},
 		}},
 		{"custom domain", Config{ExcludeDomainPatterns: []string{"rooms.*"}}, []struct{ address, want string }{
 			{"alice@ROOMS.EXAMPLE.COM", "calendar_room"},
 			{"bot-alerts@rooms.example.com", "calendar_room"},
+			{"alice@myrooms.example.com", ""},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

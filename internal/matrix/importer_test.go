@@ -70,7 +70,7 @@ func TestImporterBackfillsJoinedRoomAndPersistsCheckpoint(t *testing.T) {
 	assert.Equal(encryptedPlaceholder, body)
 	var snippet string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT snippet FROM messages WHERE id=?`), messageIDs["$encrypted"]).Scan(&snippet))
-	assert.Equal(store.MatrixEncryptedPlaceholder, snippet)
+	assert.Equal("[encrypted message — keys unavailable]", snippet)
 	rawRows, err := st.ScanArchivedRawMessages(source.ID, rawFormat, 0, 10)
 	require.NoError(err)
 	var encrypted event.Event

@@ -76,13 +76,27 @@ func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
 		requirements := require.New(t)
 		assertions := assert.New(t)
 		f := newTimelineActivityFixture(t)
-		f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
+		id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
 		projectTierSignals(t, f.Fixture, "UTC", 0)
 		got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 		requirements.NoError(err)
 		requirements.Len(got.Bursts, 1)
-		assertions.Equal(1, got.Bursts[0].Outbound)
+		b := got.Bursts[0]
+		assertions.Equal(1, b.Outbound)
 		assertions.Zero(got.NoiseOmitted)
+		assertions.Equal(id, b.AnchorMessageID)
+		var peer store.ActivityMessageCounterpart
+		for _, c := range b.Counterparts {
+			if c.ParticipantID == f.peer {
+				peer = c
+			}
+		}
+		assertions.Equal(f.peer, peer.ParticipantID)
+		assertions.Zero(peer.PersonID)
+		assertions.Equal("alice@example.com", peer.Address)
+		assertions.Equal(store.RoleAddressed, peer.Role)
+		assertions.Equal(store.EvidenceDirect, peer.Evidence)
+		assertions.True(peer.Counted)
 	})
 }
 

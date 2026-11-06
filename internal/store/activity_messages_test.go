@@ -36,15 +36,20 @@ func TestActivityMessagesConversationKeyset(t *testing.T) {
 		}
 	}
 }
+
 func TestLatestEligibleMessageSkipsDrafts(t *testing.T) {
+	require := require.New(t)
 	f := newTimelineActivityFixture(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	want := f.add(t, f.ConvID, f.Source.ID, at, false, "")
 	draft := f.add(t, f.ConvID, f.Source.ID, at.Add(time.Hour), true, "")
 	projectTierSignals(t, f.Fixture, "UTC", 0)
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), draft)
-	require.NoError(t, err)
+	latest, err := f.Store.LatestEligibleMessageContext(t.Context(), f.ConvID)
+	require.NoError(err)
+	require.Equal(draft, latest)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), draft)
+	require.NoError(err)
 	got, err := f.Store.LatestEligibleMessageContext(t.Context(), f.ConvID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, want, got)
 }
