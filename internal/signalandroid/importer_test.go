@@ -347,11 +347,11 @@ func TestSkipReason(t *testing.T) {
 
 func TestIdentifiers(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	id, ok := groupV2Identifier(groupV2IDPrefix + signalfixture.GroupHex)
+	id, ok := groupIdentifier(groupV2IDPrefix+signalfixture.GroupHex, groupV2IDPrefix)
 	require.True(ok)
 	assert.Equal(signalfixture.GroupB64, id)
 
-	_, ok = groupV2Identifier("__textsecure_group__!00ff")
+	_, ok = groupIdentifier("__textsecure_group__!00ff", groupV2IDPrefix)
 	assert.False(ok)
 
 	assert.Equal(signalfixture.AliceACI, normalizeACI("ACI:"+"0F0F0F0F-0000-4000-8000-000000000002"))

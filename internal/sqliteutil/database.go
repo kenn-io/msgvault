@@ -16,9 +16,13 @@ func OpenReadOnlyDatabase(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("stat database: %w", err)
 	}
 
-	dsn, err := DatabaseDSN(path, "_busy_timeout=5000&_query_only=1")
+	dsn, err := DatabaseDSN(path, "")
 	if err != nil {
 		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+	dsn, _, err = QueryOnlyDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("resolve database options: %w", err)
 	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {

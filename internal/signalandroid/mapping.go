@@ -147,24 +147,20 @@ func conversationIdentity(r sigRecipient, archived map[string]bool) (sourceConvI
 }
 
 func groupIdentity(stored string) (string, string, bool) {
-	if id, ok := groupV2Identifier(stored); ok {
+	if id, ok := groupIdentifier(stored, groupV2IDPrefix); ok {
 		return groupPrefix + id, "group_chat", true
 	}
-	hexID, found := strings.CutPrefix(stored, "__textsecure_group__!")
-	if !found || hexID == "" {
+	id, ok := groupIdentifier(stored, "__textsecure_group__!")
+	if !ok {
 		return "", "", false
 	}
-	raw, err := hex.DecodeString(hexID)
-	if err != nil {
-		return "", "", false
-	}
-	return "signal:group-v1:" + base64.RawURLEncoding.EncodeToString(raw), "group_chat", true
+	return "signal:group-v1:" + id, "group_chat", true
 }
 
-// groupV2Identifier converts Signal's stored group ID
-// ("__signal_group__v2__!<hex>") to unpadded base64url of the raw bytes.
-func groupV2Identifier(stored string) (string, bool) {
-	hexID, found := strings.CutPrefix(stored, groupV2IDPrefix)
+// groupIdentifier converts Signal's stored group ID with the given prefix
+// to unpadded base64url of the raw bytes.
+func groupIdentifier(stored, prefix string) (string, bool) {
+	hexID, found := strings.CutPrefix(stored, prefix)
 	if !found || hexID == "" {
 		return "", false
 	}
