@@ -161,6 +161,7 @@ func TestImportSendingSkipped(t *testing.T) {
 		{name: "peer", phone: signalfixture.AlicePhone, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st, dir := testutil.NewTestStore(t), t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
 			// Type 28 still supplies owner evidence and outgoing authorship.
@@ -170,13 +171,13 @@ func TestImportSendingSkipped(t *testing.T) {
 			opts.Phone, opts.AttachmentsDir = tc.phone, t.TempDir()
 			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			if tc.wantError {
-				require.ErrorContains(t, err, "--phone does not match")
-				assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
+				require.ErrorContains(err, "--phone does not match")
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
 				return
 			}
-			require.NoError(t, err)
+			require.NoError(err)
 			id := "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TReply)
-			assert.Equal(t, map[string]importedMessage{id: {
+			assert.Equal(map[string]importedMessage{id: {
 				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
 			}}, importedMessages(t, st))
 		})

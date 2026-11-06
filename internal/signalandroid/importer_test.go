@@ -352,12 +352,13 @@ func TestImportLimitStopsAfterWrites(t *testing.T) {
 	summary, err = NewImporter(st, nil).Import(context.Background(), path, opts)
 	require.NoError(err)
 	assert.Equal(int64(2), summary.MessagesAdded)
-	assert.Equal(4, len(importedMessages(t, st)))
+	assert.Len(importedMessages(t, st), 4)
 }
 
 func TestImportPre191DuplicateMessage(t *testing.T) {
 	for name, limit := range map[string]int{"unlimited": 0, "limit_seven": 7} {
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
 			dir := t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.V185, 0)
 			changeFixture(t, dir, `INSERT INTO message
@@ -372,10 +373,10 @@ func TestImportPre191DuplicateMessage(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			require.NoError(t, err)
-			assert.Zero(t, summary.Errors)
-			assert.Equal(t, int64(7), summary.MessagesAdded)
-			assert.Equal(t, int64(1), summary.MessagesUpdated)
-			assert.Equal(t, 7, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE source_id = ?`, summary.SourceID))
+			assert.Zero(summary.Errors)
+			assert.Equal(int64(7), summary.MessagesAdded)
+			assert.Equal(int64(1), summary.MessagesUpdated)
+			assert.Equal(7, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE source_id = ?`, summary.SourceID))
 		})
 	}
 }
