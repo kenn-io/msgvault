@@ -2019,27 +2019,37 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		fields           string
+		unavailable      string
 		wantCron         string
 		wantRunAfterSync bool
 	}{
 		{fields: "", wantCron: setupEmbedCron, wantRunAfterSync: true},
 		{fields: "cron = \"\"", wantCron: "", wantRunAfterSync: true},
 		{fields: "run_after_sync = false", wantCron: setupEmbedCron, wantRunAfterSync: false},
+		{unavailable: "archive vector backend unavailable"},
 	} {
-		t.Run(tc.fields, func(t *testing.T) {
+		t.Run(tc.fields+tc.unavailable, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+tc.fields)
 			cfg := fixture.load(t)
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
 			require.NoError(err)
-			ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
-			assert.Equal(planActionSkip, ordinary.Action)
-			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true})
+			if tc.unavailable == "" {
+				ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
+				assert.Equal(planActionSkip, ordinary.Action)
+			}
+			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true, backendUnavailable: tc.unavailable})
 			snapshot, err := config.ReadConfigFile(fixture.path)
 			require.NoError(err)
 			next, err := config.PreviewConfigTableEdits(snapshot, resumed.edits)
 			require.NoError(err)
+			if tc.unavailable != "" {
+				assert.Equal(planActionPending, resumed.Action)
+				assert.Equal("archive vector backend unavailable", resumed.Reason)
+				assert.False(next.Vector.Enabled)
+				return
+			}
 			assert.True(next.Vector.Enabled)
 			assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
 			assert.Equal(cfg.Vector.Backend, next.Vector.Backend)
@@ -2047,26 +2057,4 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			assert.Equal(tc.wantRunAfterSync, next.Vector.Embed.Schedule.RunAfterSync)
 		})
 	}
-}
-
-func TestPlanTextSearchLeavesPausedProviderDisabledWithoutBackend(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[vector]
-enabled = false
-[vector.embeddings]
-endpoint = "http://localhost:11434/v1"
-model = "custom-model"
-dimension = 4
-`)
-	cfg := fixture.load(t)
-	snapshot, err := config.ReadConfigFile(fixture.path)
-	require.NoError(err)
-	lane := planTextSearch(cfg, setupDetection{resumeLocalText: true, backendUnavailable: "archive vector backend unavailable"})
-	assert.Equal(planActionPending, lane.Action)
-	assert.Equal("archive vector backend unavailable", lane.Reason)
-	next, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
-	require.NoError(err)
-	assert.False(next.Vector.Enabled)
 }

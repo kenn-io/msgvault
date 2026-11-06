@@ -18,7 +18,7 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ enabled: true, phase: 'idle' })) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
   if (path === '/api/v1/embeddings/local') return localFetch(input, init);

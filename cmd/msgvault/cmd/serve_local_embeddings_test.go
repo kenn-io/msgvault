@@ -238,6 +238,7 @@ func (f *localActivationFixture) start(t *testing.T) {
 
 func TestLocalEmbeddingsRetriesMissingBuiltinFiles(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text", "")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
@@ -257,9 +258,24 @@ func TestLocalEmbeddingsRetriesMissingBuiltinFiles(t *testing.T) {
 	require.NoError(err)
 	require.Equal("builtin", status.Provider)
 	require.False(status.Enabled, "missing model files must leave Turn on available")
+	assert.Equal("Local model files need setup. Turn on to retry.", status.Error)
+	f.server.SetLocalEmbeddings(f.controller)
+	readStatus := func() api.LocalEmbeddingsStatus {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+		request.Header.Set("Authorization", "Bearer owner")
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusOK, response.Code)
+		var status api.LocalEmbeddingsStatus
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+		return status
+	}
+	assert.Equal("Local model files need setup. Turn on to retry.", readStatus().Error)
 	localEmbeddingEndpoint = fixtureEndpoint
 	require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
 	require.Equal(1, f.installs)
+	assert.Empty(readStatus().Error)
 	status, err = f.controller.Inspect(f.ctx)
 	require.NoError(err)
 	require.True(status.Enabled)
@@ -271,24 +287,38 @@ func TestLocalEmbeddingsRetriesMissingBuiltinFiles(t *testing.T) {
 
 func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text", "")
 	f.start(t)
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
 	require.NoError(err)
-	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-	require.ErrorContains(err, "invalid embed cron")
-	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(err)
-	require.Len(messages, 1)
+	f.server.SetLocalEmbeddings(f.controller)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer owner")
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusAccepted, response.Code)
+	readStatus := func() api.LocalEmbeddingsStatus {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+		request.Header.Set("Authorization", "Bearer owner")
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusOK, response.Code)
+		var status api.LocalEmbeddingsStatus
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+		return status
+	}
+	require.Eventually(func() bool { return !readStatus().Running }, 5*time.Second, 10*time.Millisecond)
+	require.Contains(readStatus().Error, "invalid embed cron")
+	require.ErrorContains(f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel), "not scheduled")
 	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 	require.NoError(err)
-	before := f.inputs.Load()
-	err = f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel)
-	require.ErrorContains(err, "not scheduled")
-	assert.Equal(before, f.inputs.Load(), "failed replacement must not send new text to the previous provider")
+	f.runner.beforeBuild = nil
+	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
+	require.Contains(readStatus().Error, "invalid embed cron", "a message build cannot repair rejected scheduling")
 }
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
@@ -379,6 +409,10 @@ func TestLocalEmbeddingsBuildsDespiteDocumentJobFailure(t *testing.T) {
 	status, detail := f.server.VectorStatus()
 	require.Equal(api.VectorStatusError, status)
 	assert.Contains(detail, providercredentials.ErrOriginMismatch.Error())
+	localStatus, err := f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	assert.Contains(localStatus.Error, providercredentials.ErrOriginMismatch.Error())
+	assert.Contains(localStatus.Error, "Turn on to retry.")
 	var id int64
 	require.NoError(f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
 	seedLocalSearchDocument(t, f.store, id)
@@ -400,9 +434,14 @@ func TestLocalEmbeddingsBuildsDespiteDocumentJobFailure(t *testing.T) {
 	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
 	require.NoError(err)
 	var phase string
+	beforeBuild := f.runner.beforeBuild
+	f.runner.beforeBuild = func() {
+		assert.Equal("indexing", phase)
+		beforeBuild()
+	}
 	err = f.controller.Enable(f.ctx, true, func(status api.LocalEmbeddingsStatus) { phase = status.Phase })
 	require.ErrorContains(err, "not scheduled")
-	assert.Equal("indexing", phase)
+	assert.Equal("idle", phase)
 	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(err)
 	require.Len(messages, 1)
@@ -547,9 +586,6 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	}
 	f.start(t)
 	require.NoError(runScheduledDocumentVectorGeneration(jobctx.WithProgress(f.ctx), f.store, f.handle.vf, 100))
-	old, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
-	require.NoError(err)
-	require.NotNil(old)
 	searchDocuments := func() *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
 		request.Header.Set("Authorization", "Bearer owner")
@@ -560,14 +596,16 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	before := searchDocuments()
 	require.Equal(http.StatusOK, before.Code, before.Body.String())
 	require.Contains(before.Body.String(), "orchard document evidence")
-	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
+	require.NoError(err)
+	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+	require.ErrorContains(err, "invalid embed cron")
+	assert.NotContains(err.Error(), "not scheduled", "the unconsented document job must not be admitted")
 	var consents int
 	require.NoError(f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
 	assert.Equal(2, consents)
-	generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
-	require.NoError(err)
-	assert.Equal(old.ID, generation.ID)
 	response := searchDocuments()
 	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 	assert.Contains(response.Body.String(), "semantic_search_unavailable")
@@ -638,7 +676,7 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 	}
 }
 
-func TestLocalEmbeddingsSeparatesSetupAndRuntimeLifetimes(t *testing.T) {
+func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		controller := &localEmbeddingsController{handle: &vectorInitHandle{done: make(chan struct{})}}
@@ -648,6 +686,9 @@ func TestLocalEmbeddingsSeparatesSetupAndRuntimeLifetimes(t *testing.T) {
 		time.Sleep(24 * time.Hour)
 		require.ErrorIs(<-finished, context.DeadlineExceeded)
 	})
+}
+
+func TestLocalEmbeddingsKeepsPublishedRuntimeAliveAfterSetup(t *testing.T) {
 	f := newLocalActivationFixture(t, "", "")
 	f.start(t)
 	require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))

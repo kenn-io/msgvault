@@ -793,7 +793,7 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
   let running = false;
   const { client, operationsController } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json({ enabled: true, provider: 'builtin', phase: 'idle', running: false, error: recovered ? undefined : 'Message index build interrupted.' });
+    if (path === '/api/v1/embeddings/local') return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: recovered ? undefined : 'Message index build interrupted.' });
     if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'incomplete', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
@@ -829,7 +829,7 @@ it('refreshes local setup after a network interruption and explains activation r
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (request.method === 'POST') return Response.json({ error: 'unavailable', message: 'The archive is stopping' }, { status: 503 });
     if (++reads === 1) throw new TypeError('Network interrupted');
-    return Response.json({ enabled: false, provider: '', phase: 'idle', download_bytes: 290000000 });
+    return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
   });
   render(SettingsWorkspace, { client, operationsController });
   await screen.findByRole('button', { name: 'Set up Message search' });

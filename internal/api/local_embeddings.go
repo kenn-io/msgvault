@@ -83,7 +83,9 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 			s.importMu.Unlock()
 		}
 	}
-	status.Error = progress.Error
+	if progress.Error != "" || running {
+		status.Error = progress.Error
+	}
 	status.Running = running
 	if running {
 		status.Phase, status.DoneBytes, status.TotalBytes = progress.Phase, progress.DoneBytes, progress.TotalBytes

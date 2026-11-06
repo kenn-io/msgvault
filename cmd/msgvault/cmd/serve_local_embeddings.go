@@ -66,15 +66,22 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 			provider = "configured"
 		}
 	}
+	var startupError string
 	select {
 	case <-c.handle.done:
 		if missingRuntime && (provider == "builtin" || provider == "ollama") {
 			cfg.Enabled = false
+			if state, detail := c.server.VectorStatus(); state == api.VectorStatusError {
+				startupError = strings.Replace(detail, "local embeddings need setup: run msgvault setup providers --local-embeddings", "Local model files need setup. Turn on to retry.", 1)
+				if startupError == detail {
+					startupError = fmt.Sprintf("Search by meaning couldn't start: %s. Turn on to retry.", strings.TrimRight(detail, "."))
+				}
+			}
 		}
 	default:
 	}
 	return api.LocalEmbeddingsStatus{Host: host, DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
-		OllamaAvailable: status.OllamaAvailable || provider == "ollama", DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
+		OllamaAvailable: status.OllamaAvailable || provider == "ollama", DownloadBytes: status.DownloadBytes, Phase: "idle", Error: startupError}, nil
 }
 
 // Inspect the configured local Ollama server as CLI setup does. Kit covers its default port.
@@ -232,14 +239,18 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
 	defer func() {
-		result = errors.Join(result, publicationErr)
 		if rebuildDocuments {
 			_, err := c.scheduler.StartJob("scheduled document indexing", false)
-			result = errors.Join(result, err)
+			publicationErr = errors.Join(publicationErr, err)
 		}
 		if c.refreshMCP != nil {
-			result = errors.Join(result, c.refreshMCP(nextCtx, &state))
+			publicationErr = errors.Join(publicationErr, c.refreshMCP(nextCtx, &state))
 		}
+		// A later message build cannot repair publication or scheduling failures.
+		if publicationErr != nil {
+			report(api.LocalEmbeddingsStatus{Phase: "idle"})
+		}
+		result = errors.Join(result, publicationErr)
 	}()
 
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
