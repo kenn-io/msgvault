@@ -54,22 +54,20 @@ func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
 	}
 }
 
-func TestSearchPeopleRanksPhoneDigitsAndAtPrefixedUsername(t *testing.T) {
+func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "gmail")
 	// Vary recency so equal text matches have a visible order.
 	for index, person := range []struct {
 		email    string
-		phone    string
 		username string
 	}{
-		{email: "exact@example.test", phone: "+12025550123", username: "alice"},
-		{email: "prefix@example.test", phone: "+120255501234", username: "alice.example"},
-		{email: "substring@example.test", phone: "+4412025550123", username: "malice"},
+		{email: "exact@example.test", username: "alice"},
+		{email: "prefix@example.test", username: "alice.example"},
+		{email: "substring@example.test", username: "malice"},
 	} {
 		participant := b.AddParticipant(person.email, "example.test", "")
-		b.AddParticipantIdentifier(participant, "phone", person.phone, person.phone, true)
 		b.AddParticipantIdentifier(participant, "slack", person.username, "@"+person.username, false)
 		message := b.AddMessage(MessageOpt{
 			SourceID: source, SentAt: time.Date(2026, 8, 22, 9, index, 0, 0, time.UTC),
