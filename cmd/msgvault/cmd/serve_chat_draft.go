@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -143,7 +144,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		draft, err = a.store.UpdateChatDraftContext(ctx, draft.DraftID, intent.Revision, intent.Body)
 	case api.CLIRunDraftDeleteCommand:
 		status = "deleted"
-		err = a.store.DeleteChatDraftContext(ctx, draft.DraftID, intent.Revision)
+		err = a.store.DeleteChatDraftContext(ctx, draft.DraftID, intent.Revision, time.Now())
 	}
 	if err != nil {
 		return chatDraftStoreError(err, grant)

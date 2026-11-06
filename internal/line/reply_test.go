@@ -373,7 +373,7 @@ func TestReplyExpiryPermanentlyStopsProviderIO(t *testing.T) {
 		must.Equal(store.LineReplyAdmitted, receipt.Status)
 		must.NotNil(receipt.RetryAfter)
 		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-		must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+		must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now))
 		_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
 		must.ErrorIs(err, store.ErrChatDraftNotFound)
 		f.now = receipt.RetryAfter.Add(time.Second)
@@ -444,7 +444,7 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 		assert.Equal("provider_rejected", rejected.Status)
 		assert.Nil(rejected.RetryAfter)
 		f.now = f.now.Add(3 * time.Minute)
-		require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+		require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now))
 		sender := f.sender()
 		sender.Client = nil
 		repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
@@ -970,7 +970,7 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			checks := assert.New(t)
 			f := newReplyFixture(t, kind, nil)
 			if kind != "user" {
-				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now))
 			}
 			// Receiving starts after the bot joined, so there is no join event.
 			event := line.Event{Type: "message", Timestamp: f.now.UnixMilli(), WebhookEventID: "incoming-group", Source: line.Source{Type: kind, UserID: replyUser}, Message: &line.Message{ID: "101", Type: "text", Text: "Incoming reply target"}}
@@ -1038,7 +1038,7 @@ func TestReplyPendingAttemptRechecksPolicy(t *testing.T) {
 				checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
 			} else {
 				must.NoError(err)
-				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now))
 			}
 			must.Equal(state, receipt.Status)
 			pushes := f.fake.Count(http.MethodPost, "/v2/bot/message/push")

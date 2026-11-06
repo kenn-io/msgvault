@@ -83,7 +83,7 @@ func TestLineReplyAdmissionGateFailureLeavesDraftEditable(t *testing.T) {
 	require.ErrorIs(err, sql.ErrNoRows)
 	edited, err := st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "editable")
 	require.NoError(err)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, edited.Revision))
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, edited.Revision, time.Now()))
 }
 
 func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
@@ -296,11 +296,11 @@ func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
 				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
 				require.NoError(err)
 			}
-			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2, now.Add(24*time.Hour)), store.ErrChatDraftRevisionConflict)
 			unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			assert.Equal("Thanks!", unchanged.Body)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now.Add(24*time.Hour)))
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			assert.Equal(state, receipt.State)
@@ -412,7 +412,7 @@ func TestLineReplyUnresolvedAttemptPreventsSourceRetirement(t *testing.T) {
 	require.NoError(err)
 	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 	require.NoError(err)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 	target, err := st.GetOrCreateSource("line", "2000000002")
 	require.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
@@ -487,7 +487,7 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 			must.Equal("synthetic-parent-quote", accepted.QuoteToken)
 			must.Equal("remote-quote", accepted.RemoteQuoteToken)
 			if order == "delete then expire" {
-				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 			}
 			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 			must.ErrorIs(err, store.ErrLineReplyExpired)
@@ -496,7 +496,7 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 			checks.Empty(expired.RemoteQuoteToken)
 			checks.Empty(expired.SourceConversationID)
 			if order == "expire then delete" {
-				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 			}
 			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 			must.ErrorIs(err, store.ErrChatDraftNotFound)
@@ -525,7 +525,7 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 		must.NoError(err)
 		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 		must.NoError(err)
-		must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+		must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 		must.ErrorIs(err, store.ErrLineReplyExpired)
 		receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
@@ -576,11 +576,11 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 			if state != store.LineReplySent {
 				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
 				require.ErrorIs(err, store.ErrChatDraftFrozen)
-				require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+				require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2, now), store.ErrChatDraftRevisionConflict)
 				unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 				require.NoError(err)
 				assert.Equal(attempt, unchanged, "stale deletion must preserve the payload")
-				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 			}
 			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 			require.ErrorIs(err, store.ErrChatDraftNotFound)
@@ -634,7 +634,7 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true})
 				require.NoError(err)
 			}
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
 			wantState := store.LineReplyRemoteUnknownExpired
 			switch transition {
 			case "reject":

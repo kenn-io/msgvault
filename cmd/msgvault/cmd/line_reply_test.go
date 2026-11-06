@@ -247,7 +247,7 @@ func TestLineReplyRevokedSendCanDeleteDraftAndRecover(t *testing.T) {
 	require.NoError(err)
 	_, err = run()
 	require.EqualError(err, "send_disabled")
-	require.NoError(a.store.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+	require.NoError(a.store.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, time.Now()))
 	_, err = a.store.GetChatDraftContext(t.Context(), draft.DraftID)
 	require.ErrorIs(err, store.ErrChatDraftNotFound)
 	a.config.Line[0].AllowSend = true

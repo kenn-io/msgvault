@@ -189,7 +189,8 @@ func (s *Store) UpdateChatDraftContext(
 }
 
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
-func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
+// now uses the same clock as LINE reply admission and request recovery.
+func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64, now time.Time) error {
 	draft, err := s.GetChatDraftContext(ctx, draftID)
 	if err != nil {
 		return err
@@ -215,8 +216,8 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 		}
 		if attempt.State == LineReplyAdmitted {
 			attempt.State = LineReplyRemoteUnknownExpired
-		} else {
-			expireLineReply(&attempt, time.Now())
+		} else if !expireLineReply(&attempt, now) {
+			return nil
 		}
 		return writeLineReplyTx(ctx, tx, &attempt)
 	})
