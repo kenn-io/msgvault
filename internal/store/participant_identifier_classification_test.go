@@ -32,6 +32,13 @@ func assertParticipantIdentifierClassification(
 	assert.Equal(t, scopeValue != "", gotScopeValue.Valid, "scope-value presence")
 }
 
+func TestSignalPhoneParticipantIdentifierHasService(t *testing.T) {
+	st := storetest.New(t).Store
+	_, err := st.EnsureParticipantByPhone("+15550100004", "Test User", "signal")
+	require.NoError(t, err)
+	assertParticipantIdentifierClassification(t, st, "signal", "+15550100004", "signal", "", "")
+}
+
 func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
