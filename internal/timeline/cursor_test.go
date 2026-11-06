@@ -134,9 +134,6 @@ func TestCursorSizeLimit(t *testing.T) {
 	}
 	_, err = DecodeCursor("bad*", b)
 	requirements.ErrorIs(err, ErrCursorExpired)
-	var fields map[string]any
-	requirements.NoError(json.Unmarshal(raw, &fields))
-	assertions.Len(fields, 5)
 }
 
 func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {

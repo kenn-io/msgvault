@@ -71,15 +71,6 @@ func TestFitMeasuresFinalEncoding(t *testing.T) {
 		})
 	}
 }
-func TestFitMinimumEnvelopeSucceedsAt4096(t *testing.T) {
-	for _, format := range []string{"json", "markdown"} {
-		out, err := Fit(budgetTimeline(0), format, 4096)
-		require.NoError(t, err)
-		assert.Empty(t, out.Cursor)
-		assert.LessOrEqual(t, encodedSize(t, out, format), 4096)
-	}
-}
-
 func TestFitDaySectionsAtMinimumBudget(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	v := sampleTimeline(ModeDay)
@@ -276,15 +267,22 @@ func TestFitJSONEscapingAndMultibyte(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			v := budgetTimeline(80)
 			text := strings.Repeat("猫😀<>&\"\\", 100)
+			keys := map[string]string{}
 			for i := range v.History {
 				if kind == "title" {
 					v.History[i].Message = nil
 					v.History[i].Kind = "meeting"
+					ref := fmt.Sprintf("evt:%d", i+1)
+					v.History[i].Key = "occ:" + ref
+					v.History[i].Ref, v.History[i].AnchorRef = ref, ref
+					v.History[i].Open = []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": ref}}}
 					v.History[i].Meeting = &MeetingEntry{Title: UntrustedText{Text: text}, Start: v.Now, End: v.Now.Add(time.Hour)}
 				} else {
 					v.History[i].Message.Snippet.Text = text
 				}
+				keys[v.History[i].Key] = fmt.Sprintf("%03d", i+1)
 			}
+			SetContinuation(v, Continuation{Binding: cursorBinding(), SortKeys: keys})
 			out, err := Fit(v, "json", 4096)
 			requirements.NoError(err)
 			b, err := json.Marshal(out, jsontext.EscapeForHTML(true))

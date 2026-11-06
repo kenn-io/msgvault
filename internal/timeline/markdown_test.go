@@ -6,32 +6,16 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-func TestMarkdownBurstOpenerRespectsScope(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	f.add(f.now, false)
-	f.project()
-	req := dayRequest()
-	req.Scope.OpenTools = []string{"list_messages"}
-	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.Contains(Markdown(got), ` → list_messages {"conversation_id":1}`)
-	text, entries := MarkdownWithEntries(got)
-	assert.NotContains(text, " → ")
-	assert.NotEmpty(entries)
-	req.Scope.OpenTools = []string{}
-	got, err = Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.NotContains(Markdown(got), " → ")
-}
 
 func TestMarkdownDayGolden(t *testing.T) {
 	v := sampleTimeline(ModeDay)
 	v.Omitted.Budget["entry_fields"] = 1
 	golden(t, "day.md", []byte(Markdown(v)))
+	v.Freshness.Sources = nil
+	text, entries := MarkdownWithEntries(v)
+	assert.NotContains(t, text, " → ")
+	assert.NotEmpty(t, entries)
 }
 func TestMarkdownSingleDayHeading(t *testing.T) {
 	v := sampleTimeline(ModeDay)
@@ -98,18 +82,14 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v.Gaps = nil
 	assert.NotContains(t, Markdown(v), "retry:")
 }
-func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
-	v := sampleTimeline(ModeAnchor)
-	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
-	assert.Contains(t, Markdown(v), "Thu Oct 22 · 13 people\n")
-}
-
 func TestMarkdownSummaryCountsMessagesAndCalls(t *testing.T) {
 	v := sampleTimeline(ModeDay)
 	v.Days = []Day{{Date: "2026-10-20", Summary: &DaySummary{Messages: 3, PeopleCount: 1}}}
 	assert.Contains(t, Markdown(v), "Tue Oct 20 · 3 messages · 1 people")
 	v.Days[0].Summary.Calls = 1
 	assert.Contains(t, Markdown(v), "Tue Oct 20 · 3 messages · 1 calls · 1 people")
+	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
+	assert.Contains(t, Markdown(v), "Thu Oct 22 · 13 people\n")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)

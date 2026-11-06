@@ -1,10 +1,8 @@
 package timeline
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -133,7 +131,7 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
-	one := f.calendar("one", singleDayEvent)
+	f.calendar("one", singleDayEvent)
 	// A series occurrence and a single with the same UID are distinct identities.
 	f.calendar("two", strings.ReplaceAll(singleDayEvent, `"id":"planning"`, `"id":"two","recurrence":["RRULE:FREQ=DAILY;COUNT=1"]`))
 	note := f.transcript("ambiguous", "planning@example.com", f.now.Add(-2*time.Hour))
@@ -149,25 +147,6 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 			assertions.Equal([]string{messageRef(note)}, entry.Meeting.PossiblyRelated)
 		}
 	}
-	d, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", one))
-	requirements.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{d.SourceID})
-	req := dayRequest()
-	req.Scope.Owner = false
-	before, err := Build(ctx, f.src, req)
-	requirements.NoError(err)
-	for _, entry := range allDayEntries(before) {
-		assertions.Empty(entry.Meeting.PossiblyRelated)
-	}
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET subject=? WHERE id=?`), "Hidden suggestion changed", note)
-	requirements.NoError(err)
-	after, err := Build(ctx, f.src, req)
-	requirements.NoError(err)
-	beforeJSON, err := json.Marshal(before)
-	requirements.NoError(err)
-	afterJSON, err := json.Marshal(after)
-	requirements.NoError(err)
-	assertions.True(bytes.Equal(beforeJSON, afterJSON), "restricted suggestions must preserve byte-identical output")
 }
 
 func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {

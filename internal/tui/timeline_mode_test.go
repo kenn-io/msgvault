@@ -373,6 +373,10 @@ func TestTimelineNextPagePreservesRequestAndBackRestoresSelection(t *testing.T) 
 				request.BeforeSet, request.AfterSet, request.Conversation = true, true, true
 			}
 			firstPage.Mode = mode
+			if mode != timeline.ModeDay {
+				firstPage.History = firstPage.Days[0].Bursts
+				firstPage.Days = nil
+			}
 			cmd := m.startTimelineRequest(request, false)
 			require.NotNil(cmd)
 			m = sendMsg(t, m, cmd())
@@ -382,6 +386,11 @@ func TestTimelineNextPagePreservesRequestAndBackRestoresSelection(t *testing.T) 
 			secondPage := timelineModeFixture()
 			secondPage.Days[0].Bursts[0].Ref = "conv:9"
 			secondPage.Days[0].Bursts[0].AnchorRef = "burst:1:9:2027-03-14"
+			secondPage.Mode = mode
+			if mode != timeline.ModeDay {
+				secondPage.History = secondPage.Days[0].Bursts
+				secondPage.Days = nil
+			}
 			backend.result = secondPage
 			next, cmd := sendKey(t, m, key('n'))
 			require.NotNil(cmd)
@@ -677,7 +686,11 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 				m.timelineState.result.Window = timeline.Window{From: tc.from, To: tc.to}
 				if tc.mode != timeline.ModeDay && !tc.empty {
 					m.timelineState.result.Now = time.Date(2027, 3, 20, 8, 30, 0, 0, time.UTC)
-					m.timelineState.result.Anchor = &timeline.Anchor{Time: time.Date(2027, 3, 16, 8, 30, 0, 0, time.UTC)}
+					m.timelineState.result.History = m.timelineState.result.Days[0].Bursts
+					m.timelineState.result.Days = nil
+					if tc.mode == timeline.ModeAnchor {
+						m.timelineState.result.Anchor = &timeline.Anchor{Time: time.Date(2027, 3, 16, 8, 30, 0, 0, time.UTC)}
+					}
 				}
 				if tc.upcoming {
 					entry := m.timelineState.result.Days[0].Bursts[0]
@@ -747,6 +760,7 @@ func TestTimelineRefreshOrRetryAfterNextPage(t *testing.T) {
 	next, cmd := sendKey(t, m, key('n'))
 	requirements.NotNil(cmd)
 	next = sendMsg(t, next, cmd())
+	requirements.Len(next.timelineState.history, 1)
 	refreshed, cmd := sendKey(t, next, key('r'))
 	requirements.NotNil(cmd)
 	refreshed = sendMsg(t, refreshed, cmd())
@@ -755,6 +769,7 @@ func TestTimelineRefreshOrRetryAfterNextPage(t *testing.T) {
 	assertions.Equal(original.Date, backend.requests[1].Date)
 	assertions.Equal(original.Mode, backend.requests[1].Mode)
 	assertions.Empty(refreshed.timelineState.request.Cursor)
+	assertions.Len(refreshed.timelineState.history, 2)
 }
 
 func TestTimelineRefreshPreservesNavigationHistory(t *testing.T) {
@@ -771,6 +786,7 @@ func TestTimelineRefreshPreservesNavigationHistory(t *testing.T) {
 		requirements.NotNil(cmd)
 		next = sendMsg(t, next, cmd())
 		assertions.Len(next.timelineState.history, 1)
+		assertions.Empty(next.timelineState.request.Cursor)
 	}
 	back, _ := sendKey(t, next, keyEsc())
 	assertions.Equal(m.timelineState.request, back.timelineState.request)

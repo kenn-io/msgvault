@@ -80,7 +80,9 @@ func TestTimelineHTTPPreservesNeighborPresence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, tc.wantBefore != "", r.URL.Query().Has("before"))
 				assert.Equal(t, tc.wantBefore, r.URL.Query().Get("before"))
+				assert.Equal(t, tc.wantAfter != "", r.URL.Query().Has("after"))
 				assert.Equal(t, tc.wantAfter, r.URL.Query().Get("after"))
 				w.Header().Set("Content-Type", "text/markdown")
 				_, err := w.Write([]byte("# Timeline\n"))

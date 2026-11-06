@@ -60,13 +60,18 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 }
 
 func TestTimelineRowSanitizesTerminalControls(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	m := timelineModeModel()
-	m.timelineState.result.Days[0].Bursts[0].Burst.Snippet.Text = "Update\x1b]52;c;unsafe\x07"
+	m.timelineState.result.Mode = timeline.ModeRelationship
+	m.timelineState.result.History = m.timelineState.result.Days[0].Bursts
+	m.timelineState.result.Days = nil
+	m.timelineState.result.Person = &timeline.PersonHeader{Channels: []string{"email\x1b]52;c;unsafe\x07"}}
 	m.rebuildTimelineRows()
+	assertions.Contains(strings.Join(m.timelineState.lines, "\n"), "\x1b]52;c;unsafe\x07", "the shared Markdown must reach the terminal sanitizer")
 	view := m.renderView()
-	assert.Contains(stripANSI(view), "Update")
-	assert.NotContains(view, "\x1b]52;")
+	assertions.Contains(stripANSI(view), "email")
+	assertions.NotContains(view, "\x1b]52;")
+	assertions.NotContains(view, "unsafe")
 }
 
 func TestTimelineRowsMapRepeatedRefsToTheirOwnRenderedOccurrences(t *testing.T) {

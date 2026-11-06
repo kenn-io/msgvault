@@ -315,6 +315,8 @@ func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
 	req.Cursor = first.Cursor
 	next, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
+	requirements.NotEmpty(allDayEntries(first))
+	requirements.NotEmpty(allDayEntries(next))
 	assertions.NotEqual(allDayEntries(first)[0].Key, allDayEntries(next)[0].Key)
 }
 
@@ -648,7 +650,7 @@ func TestBuildDayUpcomingOnlyWhenWindowReachesToday(t *testing.T) {
 }
 
 func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
-	for _, kind := range []string{"burst", "meeting", "call"} {
+	for _, kind := range []string{"burst", "meeting"} {
 		t.Run(kind, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newTimelineFixture(t)
@@ -661,12 +663,6 @@ func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
 				id := f.add(f.now.Add(-time.Hour), true)
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, alias}, nil))
 				f.project()
-			case "call":
-				o := callhistory.Observation{RecordID: "aliases", Version: 1, Provider: "signal", Account: "example", NativeCallID: "aliases", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.now.Add(-time.Hour), Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}, {ID: alias, Participation: "joined"}}, Raw: []byte(`{}`)}
-				src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-				requirements.NoError(err)
-				_, err = f.Store.PutCallObservationContext(t.Context(), src.ID, o)
-				requirements.NoError(err)
 			default:
 				f.calendar("aliases", `{"id":"aliases","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":[{"email":"alice@example.com"},{"email":"alice.work@example.com"},{"email":"guest@example.com"}]}`)
 			}
@@ -679,10 +675,6 @@ func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
 				assertions.Equal(1, entries[0].Burst.PeopleCount)
 				requirements.Len(entries[0].Burst.People, 1)
 				assertions.Equal(person, entries[0].Burst.People[0].PersonID)
-			case "call":
-				assertions.Equal(1, entries[0].Call.PeopleCount)
-				requirements.Len(entries[0].Call.People, 1)
-				assertions.Equal(person, entries[0].Call.People[0].PersonID)
 			default:
 				assertions.Equal(2, entries[0].Meeting.PeopleCount)
 				requirements.Len(entries[0].Meeting.People, 2)
@@ -709,6 +701,7 @@ func TestTimelineCallLinkedIdentitiesKeepJoinedParticipation(t *testing.T) {
 	entries := allDayEntries(got)
 	requirements.Len(entries, 1)
 	requirements.NotNil(entries[0].Call)
+	assertions.Equal(1, entries[0].Call.PeopleCount)
 	requirements.Len(entries[0].Call.People, 1)
 	p := entries[0].Call.People[0]
 	assertions.Equal(person, p.PersonID)

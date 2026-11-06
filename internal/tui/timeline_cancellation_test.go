@@ -200,6 +200,7 @@ func TestTimelineCancelledDayKeepsDisplayedPageAndHistory(t *testing.T) {
 			m, cmd = sendKey(t, m, key(']'))
 			defer m.cancelTimelineRequest()
 			requirements.NotNil(cmd)
+			late := cmd()
 			m, _ = sendKey(t, m, cancelKey)
 			assertions.Same(displayed, m.timelineState.result)
 			assertions.Equal(displayedRequest, m.timelineState.request)
@@ -208,6 +209,11 @@ func TestTimelineCancelledDayKeepsDisplayedPageAndHistory(t *testing.T) {
 			assertions.False(m.timelineState.loading)
 			assertions.False(m.timelineState.needsLoad)
 			assertions.Contains(stripANSI(m.renderView()), "Project update")
+			m = sendMsg(t, m, late)
+			assertions.Same(displayed, m.timelineState.result)
+			assertions.Equal(displayedRequest, m.timelineState.request)
+			assertions.Equal(1, m.timelineState.scroll)
+			assertions.Len(m.timelineState.history, 1)
 		})
 	}
 }

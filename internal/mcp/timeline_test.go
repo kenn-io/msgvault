@@ -166,13 +166,19 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 	assertions := assert.New(t)
 	backend := &timelineTestBackend{}
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, Timeline: backend}
-	for _, args := range []map[string]any{{}, {"before": 0}, {"after": 0}, {"before": 0, "after": 0}} {
-		got := rawCallTool(t, opts, ToolTimeline, args)
+	for _, tc := range []struct {
+		args          map[string]any
+		before, after bool
+	}{
+		{map[string]any{}, false, false},
+		{map[string]any{"before": 0}, true, false},
+		{map[string]any{"after": 0}, false, true},
+		{map[string]any{"before": 0, "after": 0}, true, true},
+	} {
+		got := rawCallTool(t, opts, ToolTimeline, tc.args)
 		require.NotEqual(t, true, got["isError"], fmt.Sprint(got))
-		_, before := args["before"]
-		_, after := args["after"]
-		assertions.Equal(before, backend.req.BeforeSet)
-		assertions.Equal(after, backend.req.AfterSet)
+		assertions.Equal(tc.before, backend.req.BeforeSet)
+		assertions.Equal(tc.after, backend.req.AfterSet)
 		assertions.Zero(backend.req.Before)
 		assertions.Zero(backend.req.After)
 	}
