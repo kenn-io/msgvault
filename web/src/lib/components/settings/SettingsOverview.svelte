@@ -99,7 +99,7 @@
 <style>
   .overview {
     display: grid;
-    grid-template-columns: minmax(max-content, 1fr) 8rem minmax(0, max-content);
+    grid-template-columns: minmax(max-content, 1fr) max-content minmax(0, max-content);
     margin: 0;
     padding: 0;
     border: 1px solid var(--border-default);
@@ -121,7 +121,7 @@
   .row__local { display: grid; grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; min-width: 0; }
   .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-template-columns: subgrid; grid-template-rows: minmax(24px, auto); min-height: 24px; gap: var(--control-gap) var(--section-gap); }
   .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
-  .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; justify-self: start; }
+  .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; justify-self: end; }
   .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
   .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
@@ -152,7 +152,7 @@
     display: flex;
     min-width: 0;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
     gap: var(--control-gap);
   }
   .row__guide {

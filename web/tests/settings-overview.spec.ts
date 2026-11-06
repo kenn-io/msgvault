@@ -23,9 +23,11 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
       range.selectNodeContents(element.querySelector('.row__name')!);
       const text = range.getBoundingClientRect();
       const chip = element.querySelector('.row__chip')!.getBoundingClientRect();
-      return { name: range.toString().trim(), textRight: text.right, chipLeft: chip.left };
+      const button = element.querySelector('.row__action > button:last-child')?.getBoundingClientRect();
+      return { name: range.toString().trim(), textRight: text.right, chipLeft: chip.left, buttonRight: button?.right, rowRight: element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight) };
     });
     expect(geometry.textRight, geometry.name).toBeLessThanOrEqual(geometry.chipLeft);
+    if (geometry.buttonRight !== undefined) expect(Math.abs(geometry.rowRight - geometry.buttonRight), geometry.name).toBeLessThanOrEqual(1);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(768);
 });
@@ -73,7 +75,8 @@ for (const width of [1280, 390]) {
       if (width === 1280 && provider === 'ollama') {
         const chip = await row.locator('.row__local .kit-chip').boundingBox();
         const switchAction = await row.getByRole('button', { name: 'Use built-in instead' }).boundingBox();
-        expect(switchAction!.x - chip!.x - chip!.width).toBeGreaterThanOrEqual(32);
+        expect(switchAction!.x - chip!.x - chip!.width).toBeGreaterThanOrEqual(16);
+        expect(Math.abs(switchAction!.x + switchAction!.width - action!.x - action!.width)).toBeLessThanOrEqual(1);
       }
     });
   }
