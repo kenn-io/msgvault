@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/kit/agenthook"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -27,7 +28,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		return errors.New("invocation state is unavailable")
 	}
 	logger := state.logger
-	s, _, err := OpenHTTPStore(cmd.Context())
+	s, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -96,8 +97,12 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	}
 	if searchJSON {
 		next := ""
-		if resp.HasMore {
-			next, err = semanticMoreResultsCommand(cmd, queryStr)
+		maxLimit := math.MaxInt
+		if info.Kind == HTTPStoreConfiguredRemote {
+			maxLimit = api.RemoteSearchLimit
+		}
+		if nextLimit := min(searchLimit*2, maxLimit); resp.HasMore && nextLimit > searchLimit {
+			next, err = semanticMoreResultsCommand(cmd, queryStr, nextLimit)
 			if err != nil {
 				return err
 			}
@@ -264,14 +269,14 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 	})
 }
 
-func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) (string, error) {
+func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string, nextLimit int) (string, error) {
 	args := []string{"msgvault", "search"}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		if flag.Name != "limit" {
 			args = appendDaemonCLIFlag(args, flag)
 		}
 	})
-	args = append(args, "--limit", strconv.Itoa(searchLimit*2), "--", queryStr)
+	args = append(args, "--limit", strconv.Itoa(nextLimit), "--", queryStr)
 	commands, err := agenthook.BuildCommand(args[0], args[1:]...)
 	if err != nil {
 		return "", fmt.Errorf("build search retry: %w", err)
