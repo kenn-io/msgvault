@@ -155,6 +155,9 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 	if profileErr == nil && profile.DisplayName != "" {
 		senderSnapshotErr = p.store.UpdateLineMessageSenderDisplayNameContext(ctx, p.sourceID, messageID, profile.DisplayName)
 	}
+	if previous.ID != 0 {
+		p.recordMutation(ctx, 0, 1)
+	}
 	title := ""
 	var titleErr error
 	if kind == "direct_chat" {
