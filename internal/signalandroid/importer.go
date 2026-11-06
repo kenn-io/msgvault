@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ type run struct {
 	participantErrs map[int64]error
 	pendingReplies  map[string]bool
 	written         int64
+	olderBackup     bool
 }
 
 // Import reads the Signal database at dbPath and writes its chats, messages,
@@ -107,9 +109,20 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		}
 	}
 
-	source, err := imp.store.GetOrCreateSource(SourceType, phone)
+	var newestDate int64
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(date_sent), 0) FROM message`).Scan(&newestDate); err != nil {
+		return nil, fmt.Errorf("read Signal backup date: %w", err)
+	}
+	source, err := r.source(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get or create source: %w", err)
+	}
+	if source.SyncCursor.Valid && source.SyncCursor.String != "" {
+		previousDate, err := strconv.ParseInt(source.SyncCursor.String, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("read archived Signal backup date: %w", err)
+		}
+		r.olderBackup = newestDate < previousDate
 	}
 	conversationIDs, err := imp.store.ListSourceConversationIDsContext(ctx, source.ID)
 	if err != nil {
@@ -143,6 +156,9 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 			retErr = errors.Join(retErr, fmt.Errorf("recompute conversation stats: %w", err))
 		}
 		r.checkpoint()
+		if retErr == nil && !r.olderBackup {
+			retErr = r.imp.store.UpdateSourceSyncCursor(source.ID, strconv.FormatInt(newestDate, 10))
+		}
 		if retErr != nil {
 			_ = r.imp.store.FailSync(syncID, retErr.Error())
 		} else {
@@ -176,6 +192,37 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	}
 
 	return r.summary, nil
+}
+
+// source keeps an owner's archive when Signal changes the account's number.
+func (r *run) source(ctx context.Context) (*store.Source, error) {
+	if aci := r.recipients[r.selfRecipientID].ACI; aci != "" {
+		owner, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, aci)
+		if err != nil {
+			return nil, err
+		}
+		if owner != 0 {
+			sources, err := r.imp.store.ListSourcesContext(ctx, SourceType)
+			if err != nil {
+				return nil, err
+			}
+			for _, source := range sources {
+				pid, err := r.imp.store.PhoneParticipantContext(ctx, source.Identifier)
+				if err != nil {
+					return nil, err
+				}
+				if pid == owner {
+					if source.Identifier != r.opts.Phone {
+						if err := r.imp.store.UpdateSourceIdentifier(source.ID, r.opts.Phone); err != nil {
+							return nil, err
+						}
+					}
+					return source, nil
+				}
+			}
+		}
+	}
+	return r.imp.store.GetOrCreateSource(SourceType, r.opts.Phone)
 }
 
 // resolveSelf finds the account owner's recipient row from the backup
@@ -521,6 +568,11 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		rowAttachments := attachments[p.row.RowID]
 		preferredID := p.id
 		archivedID, isExisting := keepArchivedID(existing, &p)
+		if isExisting && r.olderBackup {
+			r.written++
+			r.summary.MessagesUpdated++
+			continue
+		}
 		if isExisting && p.id != preferredID {
 			rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
 			if err != nil {

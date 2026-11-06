@@ -35,6 +35,70 @@ func countRows(t *testing.T, st *store.Store, query string, args ...any) int {
 	return n
 }
 
+func TestImportOwnerChangesNumber(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	dir, storage := t.TempDir(), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	first := runImport(t, st, dir, storage)
+	before := importedMessages(t, st)
+
+	const newPhone = "+15555550109"
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '`+newPhone+`' WHERE _id = 1`)
+	opts := DefaultOptions()
+	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = newPhone, dir, storage
+	summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+	require.NoError(err)
+	assert.Equal(first.SourceID, summary.SourceID)
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = 'signal'`))
+	assert.Equal(len(before), countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	assert.Equal(before, importedMessages(t, st))
+	source, err := st.GetSourceByID(first.SourceID)
+	require.NoError(err)
+	assert.Equal(newPhone, source.Identifier)
+}
+
+func TestImportOlderBackupPreservesArchivedState(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	newer, older, storage := t.TempDir(), t.TempDir(), t.TempDir()
+	signalfixture.Write(t, newer, signalfixture.Current, 0)
+	signalfixture.Write(t, older, signalfixture.Current, 0)
+	// The older copy predates the edit and Carol's latest message, but has
+	// an earlier message absent from the newer copy.
+	changeFixture(t, older,
+		`DELETE FROM message WHERE _id IN (104, 105, 106, 300, 400)`,
+		`UPDATE message SET latest_revision_id = NULL WHERE _id = 102`,
+		`UPDATE reaction SET message_id = 102, emoji = 'old' WHERE message_id = 106`,
+		`UPDATE reaction SET emoji = 'old' WHERE message_id = 200`,
+		`UPDATE attachment SET file_name = 'old.jpg', caption = 'Old caption' WHERE _id = 500`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		 VALUES (99, 1699999999000, 1699999999001, 10, 2, 1, `+ms(signalfixture.TypeIncoming)+`, 'Earlier message')`)
+	first := runImport(t, st, newer, storage)
+	before := importedMessages(t, st)
+	var editedID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
+		"signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TEditOld)).Scan(&editedID))
+
+	summary := runImport(t, st, older, storage)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	got := importedMessages(t, st)
+	for id, message := range before {
+		assert.Equal(message, got[id], id)
+	}
+	assert.Len(got, len(before)+1)
+	var reaction string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reaction_value FROM reactions WHERE message_id = ?`), editedID).Scan(&reaction))
+	assert.Equal("\u2764", reaction)
+	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
+	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'old'`))
+	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE filename = 'old.jpg'`))
+	source, err := st.GetSourceByID(first.SourceID)
+	require.NoError(err)
+	assert.Equal(ms(signalfixture.TSMS+1), source.SyncCursor.String)
+}
+
 func TestRerunReplacesReactions(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
