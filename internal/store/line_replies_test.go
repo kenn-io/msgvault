@@ -333,8 +333,12 @@ func TestLineReplyReceiptCannotOverwriteInboundMessage(t *testing.T) {
 func TestLineReplyUnresolvedAttemptPreventsSourceRetirement(t *testing.T) {
 	require := require.New(t)
 	st, draft, _ := replyStoreFixture(t)
-	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), allowLineReply)
+	now := time.Now()
+	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 	require.NoError(err)
+	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+	require.NoError(err)
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 	target, err := st.GetOrCreateSource("line", "2000000002")
 	require.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
