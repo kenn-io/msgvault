@@ -354,7 +354,7 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 				assert.Equal(1, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
 
 				f.resetClient()
-				f.now = f.now.Add(24 * time.Hour)
+				f.now = f.now.Add(22 * time.Hour)
 				sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 				require.NoError(err)
 				assert.Equal(store.LineReplySent, sent.Status)
@@ -362,7 +362,7 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 				completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 				require.NoError(err)
 				assert.Equal(attempt.RetryKey, completed.RetryKey)
-				assert.Equal(f.now.Add(23*time.Hour), completed.RetryUntil)
+				assert.Equal(attempt.RetryUntil, completed.RetryUntil)
 				var keys []string
 				for _, request := range f.fake.Requests() {
 					if request.Path == "/v2/bot/message/push" {
@@ -795,10 +795,10 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 			must.NoError(err)
 			checks.Equal(attempt.RetryKey, completed.RetryKey)
 			if strings.HasPrefix(tc.name, "initial/") {
-				checks.Equal(f.now.Add(23*time.Hour), completed.RetryUntil)
+				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
 				must.NoError(err)
-				checks.Equal(f.now, message.SentAt.UTC())
+				checks.Equal(attempt.AdmittedAt, message.SentAt.UTC())
 			} else if tc.recovery {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 			}

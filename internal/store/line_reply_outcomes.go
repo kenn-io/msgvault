@@ -109,11 +109,6 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 		if lineReplyTerminal(a.State) || a.RemoteMessageID != "" {
 			return ErrLineReplyInvalidState
 		}
-		if a.State == LineReplyAdmitted {
-			a.AdmittedAt = now
-			a.RetryUntil = now.Add(23 * time.Hour)
-			a.NextRetryAt = now
-		}
 		if lineReplyExpired(a.State) || !now.Before(a.RetryUntil) {
 			accepted := LineReplyHasAcceptance(a.State)
 			a.State = LineReplyRemoteUnknownExpired

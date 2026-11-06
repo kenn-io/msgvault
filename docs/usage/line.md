@@ -207,8 +207,8 @@ The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
 | `provider_rejected` | The first submission was definitively rejected. The draft stays frozen for edits and can be deleted. This draft ID keeps its terminal receipt; a new send requires a new reviewed draft. |
 | `remote_unknown_expired` | Provider retries have stopped without acceptance evidence. The draft can be deleted; its receipt is retained. Sending a replacement could duplicate a message already accepted by LINE. |
 | `accepted_unresolved_expired` | Provider retries have stopped after known acceptance. The draft can be deleted; its receipt is kept. |
-| `credentials_unavailable` error | LINE returned HTTP 401 or 403, or local credentials are unavailable. Fix credentials or channel permissions, then repeat the same reviewed send with its original retry key. |
-| HTTP 429 | A rate limit on the first submission returns the attempt to `admitted`; retry after `retry_after` with the same key, even after the original cutoff. A rate limit during recovery keeps the attempt retryable with the same key after `retry_after`. |
+| `credentials_unavailable` error | LINE returned HTTP 401 or 403, or local credentials are unavailable. Fix credentials or channel permissions, then repeat the same reviewed send with its original retry key before the original cutoff. |
+| HTTP 429 | A rate limit on the first submission returns the attempt to `admitted`; retry after `retry_after` with the same key, before the original cutoff. A rate limit during recovery keeps the same key and cutoff. |
 
 Every admitted LINE draft can be deleted, even after sending is disabled.
 Deletion cancels an unsent `admitted` attempt and keeps its receipt. A request
@@ -225,13 +225,13 @@ conversation key. Attempts that can still send or recover keep their frozen cont
 An admitted attempt keeps one persisted UUID. Its text, recipient, and quote
 token stay frozen while it can still send or recover. Explicit retries reuse
 that UUID. LINE remembers retry keys for
-24 hours; msgvault stops provider retries 23 hours after the first push request and waits
+24 hours; msgvault stops provider retries 23 hours after admission and waits
 at least 30 seconds between attempts, honoring longer rate-limit or service
 retry delays. There are no background sends. See
 [LINE's retry semantics](https://developers.line.biz/en/docs/messaging-api/retrying-api-request/).
 Never create a replacement draft just to bypass an uncertain or expired send.
 A receipt without a remote ID may remain unarchived after the recovery window.
-The archived timestamp estimates send time from the first push request.
+The archived timestamp estimates send time from admission.
 
 The daemon HTTP API accepts the same command through
 [`POST /api/v1/cli/run`](../api-server.md#line-reply).
