@@ -37,6 +37,30 @@ func (f *inboxFixture) fileEvent() Event {
 	return e
 }
 
+func TestMediaPolicyChangeRecoversRetryingEvent(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments,
+		WithProcessorClock(func() time.Time { return f.now }),
+		WithProcessorMediaPolicy(attachmentpolicy.Policy{DisabledReason: attachmentpolicy.SkipAccountPolicy}))
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusInternalServerError})
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	f.run(t)
+	checks.Equal(attachmentpolicy.StateSkipped, f.media(t).State)
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	must.Equal("retry", state)
+	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	f.now = f.now.Add(time.Hour)
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+	f.run(t)
+	checks.Equal(attachmentpolicy.StateStored, f.media(t).State)
+	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	checks.Equal("processed", state)
+}
+
 func TestMediaConversationPreview(t *testing.T) {
 	for _, tc := range []struct {
 		kind     string
