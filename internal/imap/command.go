@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -16,6 +17,56 @@ import (
 )
 
 var retryHint = regexp.MustCompile(`(?i)\bretry\s+in\s+([0-9]+)\s+seconds?\b`)
+
+type retryFloorCaptureKey struct{}
+
+// RetryFloorCapture records the latest provider-directed command deadline
+// observed during one acquisition pass.
+type RetryFloorCapture struct {
+	mu        sync.Mutex
+	notBefore time.Time
+}
+
+// WithRetryFloorCapture adds a private retry-floor capture to ctx. Child
+// contexts inherit the capture; each acquisition should create its own.
+func WithRetryFloorCapture(ctx context.Context) (context.Context, *RetryFloorCapture) {
+	capture := &RetryFloorCapture{}
+	return context.WithValue(ctx, retryFloorCaptureKey{}, capture), capture
+}
+
+// RetryNotBefore returns the latest captured provider deadline.
+func (c *RetryFloorCapture) RetryNotBefore() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.notBefore
+}
+
+type retryFloorError struct {
+	err       error
+	notBefore time.Time
+}
+
+func (e *retryFloorError) Error() string             { return e.err.Error() }
+func (e *retryFloorError) Unwrap() error             { return e.err }
+func (e *retryFloorError) RetryNotBefore() time.Time { return e.notBefore }
+
+func withRetryFloor(err error, floor time.Time) error {
+	if err == nil || !floor.After(time.Now()) {
+		return err
+	}
+	var existing interface{ RetryNotBefore() time.Time }
+	if errors.As(err, &existing) && !existing.RetryNotBefore().Before(floor) {
+		return err
+	}
+	return &retryFloorError{err: err, notBefore: floor}
+}
+
+func maxRetryFloor(left, right time.Time) time.Time {
+	if right.After(left) {
+		return right
+	}
+	return left
+}
 
 // commandRetryDelay accepts server-directed throttling only on a typed NO.
 // A bare LIMIT has no delay, so use a one-second fallback.
@@ -39,12 +90,56 @@ func commandRetryDelay(err error) (time.Duration, bool) {
 // one new invocation on the replacement connection.
 func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)) (T, error) {
 	var zero T
+	var capture *RetryFloorCapture
+	if value, ok := ctx.Value(retryFloorCaptureKey{}).(*RetryFloorCapture); ok {
+		capture = value
+	}
+	var observedFloor time.Time
 	result, err := backoff.Retry(ctx, func() (T, error) {
 		if err := c.waitCommand(ctx); err != nil {
 			return zero, backoff.Permanent(err)
 		}
+		if capture != nil {
+			capture.mu.Lock()
+			if err := ctx.Err(); err != nil {
+				capture.mu.Unlock()
+				return zero, backoff.Permanent(err)
+			}
+			if now := time.Now(); now.Before(capture.notBefore) {
+				floor := capture.notBefore
+				capture.mu.Unlock()
+				return zero, backoff.Permanent(&retryFloorError{
+					err:       errors.New("IMAP command deferred by provider retry deadline"),
+					notBefore: floor,
+				})
+			}
+		}
 		conn := c.conn
-		result, err := runCommandContext(ctx, conn, command)
+		// runCommandContext can replace a completed response with ctx.Err; it
+		// joins this callback before returning, so retain its raw result here.
+		var callbackErr error
+		var callbackAt time.Time
+		result, err := runCommandContext(ctx, conn, func() (T, error) {
+			result, err := command()
+			callbackErr = err
+			if err != nil {
+				callbackAt = time.Now()
+			}
+			return result, err
+		})
+		if callbackErr != nil {
+			delay, retry := commandRetryDelay(callbackErr)
+			if retry {
+				floor := callbackAt.Add(delay)
+				observedFloor = maxRetryFloor(observedFloor, floor)
+				if capture != nil {
+					capture.notBefore = maxRetryFloor(capture.notBefore, floor)
+				}
+			}
+		}
+		if capture != nil {
+			capture.mu.Unlock()
+		}
 		if ctx.Err() != nil {
 			c.invalidateConnLocked(conn)
 		}
@@ -60,10 +155,13 @@ func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)
 		c.logger.Debug("IMAP command limited; waiting to retry", "delay", delay)
 	}))
 	if err != nil {
-		if ctx.Err() != nil {
-			return zero, ctx.Err()
+		if capture != nil {
+			observedFloor = maxRetryFloor(observedFloor, capture.RetryNotBefore())
 		}
-		return zero, backoff.AsRetryError(err).LastErr
+		if ctx.Err() != nil {
+			return zero, withRetryFloor(ctx.Err(), observedFloor)
+		}
+		return zero, withRetryFloor(backoff.AsRetryError(err).LastErr, observedFloor)
 	}
 	return result, nil
 }

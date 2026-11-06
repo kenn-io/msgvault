@@ -164,9 +164,10 @@ func runRapidEmailSync(ctx context.Context, identifier string, st *store.Store, 
 		if err := validateRapidIMAP(src, state.cfg); err != nil {
 			return rapidAcquisitionResult(ctx, err, false, time.Time{})
 		}
-		summary, err := runScheduledIMAPSync(ctx, src, st, state)
+		passCtx, retryFloor := imaplib.WithRetryFloorCapture(ctx)
+		summary, err := runScheduledIMAPSync(passCtx, src, st, state)
 		defer rapidRefreshCache(ctx, identifier, state)
-		return rapidAcquisitionResult(ctx, err, summary == nil || summary.Errors > 0, time.Time{})
+		return rapidAcquisitionResult(ctx, err, summary == nil || summary.Errors > 0, retryFloor.RetryNotBefore())
 	}
 	return rapidAcquisitionResult(ctx, errors.New("rapid email source is unavailable"), false, time.Time{})
 }

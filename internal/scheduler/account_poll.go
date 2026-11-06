@@ -101,6 +101,7 @@ func (s *Scheduler) SetAccountPollInterval(identifier string, interval time.Dura
 	r.interval = interval
 	if interval == 0 {
 		r.pollPending = false
+		r.providerFloor = time.Time{}
 		r.state = ""
 		return nil
 	}
@@ -180,12 +181,12 @@ func accountPollBackoff(interval time.Duration, failures int) time.Duration {
 }
 
 func (s *Scheduler) recordAccountPollLocked(r *accountRegistration, err error, yielded, cancelled bool) {
+	if r.interval == 0 {
+		return
+	}
 	var floor interface{ RetryNotBefore() time.Time }
 	if errors.As(err, &floor) && floor.RetryNotBefore().After(r.providerFloor) {
 		r.providerFloor = floor.RetryNotBefore()
-	}
-	if r.interval == 0 {
-		return
 	}
 	now := time.Now()
 	var acquisition *AcquisitionError
