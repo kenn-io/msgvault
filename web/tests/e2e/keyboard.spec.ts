@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
 import { exploreHistoryState } from '../explore-state';
+import { stubOperationStatus } from '../kit-ui';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen = new Set<string>();
@@ -19,6 +20,12 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
 }
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [{
+    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Example archive',
+    updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null,
+    last_successful_sync: null, can_sync: false, scheduled: false, next_sync_at: null
+  }] } }));
   const fixture = await loadMixedArchive();
   const firstServedRow = fixture.firstPage.rows[0]!;
   const terminalServedRow = fixture.firstPage.rows.at(-1)!;

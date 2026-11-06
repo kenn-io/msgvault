@@ -1,9 +1,10 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTemporaryDensity } from '../kit-ui';
+import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTemporaryDensity, stubOperationStatus } from '../kit-ui';
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
+import type { SourceStatus } from '../../src/lib/api/generated/models';
 
 async function openPersonFacts(page: Page): Promise<void> {
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
@@ -518,6 +519,9 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
     test(`${theme}/${density} login, loading, empty, error, and degraded states have no axe violations`, async ({ page }) => {
+      await stubOperationStatus(page);
+      let sources: SourceStatus[] = [];
+      await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources } }));
       let sessionRequired = true;
       let exploreMode: 'loading' | 'empty' | 'error' | 'degraded' = 'loading';
       await page.addInitScript(({ theme, density }) => {
@@ -566,8 +570,17 @@ for (const theme of ['light', 'dark'] as const) {
 
       exploreMode = 'empty';
       await page.reload();
+      await expect(page.getByText('No mail yet')).toBeVisible();
+      await assertNoViolations(page, `empty archive ${theme}/${density}`);
+
+      sources = [{
+        id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Example archive',
+        updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null,
+        last_successful_sync: null, can_sync: false, scheduled: false, next_sync_at: null
+      }];
+      await page.reload();
       await expect(page.getByText('No items match this view')).toBeVisible();
-      await assertNoViolations(page, `empty ${theme}/${density}`);
+      await assertNoViolations(page, `empty view with a source ${theme}/${density}`);
 
       exploreMode = 'error';
       await page.reload();
