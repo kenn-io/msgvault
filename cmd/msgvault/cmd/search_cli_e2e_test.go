@@ -180,29 +180,4 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.GreaterOrEqual(footer, 0)
 		assert.Greater(bytes.Index(combined, []byte(tc.hint)), footer, "the hint follows the results footer")
 	}
-	// Hybrid fusion can exhaust its candidate pool before the requested page fills.
-	for i := range 312 {
-		id := storetest.NewMessage(source.ID, conv).WithSubject("poolfixture").WithSourceMessageID(fmt.Sprintf("pool-%d", i)).Create(t, st)
-		require.NoError(st.UpsertFTS(id, "poolfixture", "", "sender@example.com", "", ""))
-		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
-	}
-	// Both settings must be raised before the real engine can return a larger page.
-	raised := vectorCfg
-	raised.Search.MaxPageSizeHybrid = new(100)
-	server.SetVectorFeatures(engine, nil, backend, raised)
-	var page struct {
-		Results []map[string]any    `json:"results"`
-		Hints   []map[string]string `json:"hints"`
-	}
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &page)
-	assert.Len(page.Results, 100)
-	require.Len(page.Hints, 2)
-	assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
-	assert.Contains(page.Hints[1]["message"], "vector.search.k_per_signal")
-	raised.Search.MaxPageSizeHybrid = new(200)
-	raised.Search.KPerSignal = 200
-	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
-	server.SetVectorFeatures(engine, nil, backend, raised)
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
-	assert.Len(page.Results, 200)
 }

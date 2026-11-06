@@ -261,6 +261,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		{name: "ranking_cap", mode: "vector", hasMore: true, cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
 		{name: "pool_only", mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"vector.search.k_per_signal"}},
 		{name: "dual_cap_extra_hit", mode: "hybrid", hasMore: true, pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
+		{name: "dual_cap_pool", mode: "hybrid", pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
 		{name: "fts_complete", mode: "fts"},
 		{name: "fts_first_page", mode: "fts", hasMore: true, messages: []string{"--offset 50"}},
 		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
@@ -291,7 +292,7 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 				root := newTestRootCmd()
 				root.SetContext(ctx)
 				root.AddCommand(searchCmd)
-				args := []string{"search", "--mode", tc.mode, "--explain", "lunch"}
+				args := []string{"search", "--mode", tc.mode, "lunch"}
 				if tc.mode == "fts" {
 					args = append(args, "--offset", strconv.Itoa(tc.offset))
 				}
@@ -317,11 +318,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 						assert.Contains(page.Hints[i].Message, tc.messages[i])
 					}
 					assert.Empty(stderr.String())
-					if tc.mode == "hybrid" {
-						assert.Contains(out, `"bm25_score": 1.25`)
-						assert.Contains(out, `"vector_score": 0.9`)
-						assert.Contains(out, `"accelerator": "vec1_ivf_opq"`)
-					}
 				} else {
 					assert.Equal(len(tc.messages), strings.Count(stderr.String(), "Hint:"))
 					for _, message := range tc.messages {

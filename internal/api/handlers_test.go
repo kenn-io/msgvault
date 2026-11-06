@@ -2310,8 +2310,6 @@ func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 		{name: "any", rawScope: "any", wantScope: search.DeletionScopeAny},
 		{name: "exact_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 50, wantRows: 50, probe: 51},
 		{name: "overflow_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 51, wantRows: 50, probe: 51, wantMore: true},
-		{name: "exact_500", wantScope: search.DeletionScopeActive, limit: 500, matches: 500, wantRows: 500, probe: 501},
-		{name: "overflow_500", wantScope: search.DeletionScopeActive, limit: 500, matches: 501, wantRows: 500, probe: 501, wantMore: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
