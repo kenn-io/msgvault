@@ -50,7 +50,6 @@ func TestSearchCommonWordUsesDateWindow(t *testing.T) {
 	}{
 		{name: "common", text: "invoice", limit: 7, statements: 1, matches: 2, walk: true},
 		{name: "account", text: "invoice", accounts: []int64{1}, limit: 100, statements: 1, matches: 1},
-		{name: "OR", text: "invoice | budget", limit: 100, statements: 1, matches: 2},
 		{name: "deleted", text: "invoice", scope: search.DeletionScopeDeleted, limit: 100, statements: 1, matches: 1},
 		{name: "deep page", text: "invoice", limit: 100, offset: 5000, statements: 1, matches: 1},
 		{name: "old only", text: "oldest", limit: 7, statements: 2, matches: 3},

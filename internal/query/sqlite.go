@@ -2229,11 +2229,8 @@ const (
 )
 
 func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, bool, error) {
-	if limit == 0 {
-		limit = 100
-	}
 	// Text-only means visibility plus the FTS match.
-	if ftsJoin == "" || len(conditions) != 2 || q.DeletionScope == search.DeletionScopeDeleted || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
+	if ftsJoin == "" || len(conditions) != 2 || q.DeletionScope == search.DeletionScopeDeleted || limit <= 0 || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
 		return nil, false, nil
 	}
 	window := searchWalkWindow * (limit + offset)
