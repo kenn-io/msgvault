@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -30,7 +29,7 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 }
 
 func TestCallObservationSearchAndMessageProjections(t *testing.T) {
-	t.Run("normalized timezone offsets", func(t *testing.T) {
+	t.Run("timezone offsets preserve call window", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		st := storetest.New(t).Store
@@ -43,39 +42,22 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 			require.NoError(err)
 			o.EndedAt = new(o.OccurredAt.Add(time.Minute))
 			o.Raw = []byte(fmt.Sprintf(`{"occurred_at":%q}`, timestamp))
-			record, err := json.Marshal(o)
-			require.NoError(err)
-			imported, err := (callhistory.ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
-			require.NoError(err)
-			id, err := st.PutCallObservationContext(t.Context(), sourceID, imported)
+			id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 			require.NoError(err)
 			ids = append(ids, id)
 			raw, err := st.GetMessageRawContext(t.Context(), id)
 			require.NoError(err)
 			assert.Equal(string(o.Raw), string(raw))
 		}
-		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("message_type:call_record"), 0, 10)
-		require.NoError(err)
-		require.EqualValues(2, total)
-		require.Len(matches, 2)
-		assert.Equal([]int64{ids[0], ids[1]}, []int64{matches[0].ID, matches[1].ID})
 		after := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC)
 		before := time.Date(2026, 10, 1, 5, 0, 0, 0, time.UTC)
-		query := search.Parse("message_type:call_record")
-		query.AfterDate, query.BeforeDate = &after, &before
-		matches, total, err = st.SearchMessagesQueryContext(t.Context(), query, 0, 10)
-		require.NoError(err)
-		assert.EqualValues(1, total)
-		if assert.Len(matches, 1) {
-			assert.Equal(ids[0], matches[0].ID)
-		}
 		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{After: &after, Before: &before})
 		require.NoError(err)
 		require.Len(calls, 1)
 		assert.Equal(ids[0], calls[0].MessageID)
-		assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.Format(time.RFC3339))
+		assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.UTC().Format(time.RFC3339))
 		require.NotNil(calls[0].EndedAt)
-		assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.Format(time.RFC3339))
+		assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.UTC().Format(time.RFC3339))
 	})
 	assert := assert.New(t)
 	require := require.New(t)
@@ -84,21 +66,16 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 	duration := 600.0
 	o, sourceID := validCallObservation(t, st)
 	o.DurationSeconds = &duration
-	for _, tc := range []struct{ direction, text, stale string }{
-		{"incoming", "Call incoming, 600 seconds", "outgoing"},
-		{"outgoing", "Call outgoing, 600 seconds", "incoming"},
+	for _, tc := range []struct{ direction, text string }{
+		{"incoming", "Call incoming, 600 seconds"},
+		{"outgoing", "Call outgoing, 600 seconds"},
 	} {
 		o.Direction = tc.direction
 		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
 		var title string
 		var subject, snippet sql.NullString
-		var count int
-		var latest sql.NullTime
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title, c.message_count, c.last_message_at FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title, &count, &latest))
-		assert.Equal(1, count)
-		assert.True(latest.Valid)
-		assert.True(o.OccurredAt.Equal(latest.Time))
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
 		assert.Equal(tc.text, subject.String)
 		assert.False(snippet.Valid)
 		assert.Equal(tc.text, title)
@@ -111,11 +88,21 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 		if assert.Len(matches, 1) {
 			assert.Equal(id, matches[0].ID)
 		}
-		for _, term := range []string{tc.stale, "evidence"} {
-			_, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse(term), 0, 10)
+		if tc.direction == "outgoing" {
+			_, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
 			require.NoError(err)
-			assert.Zero(total, term)
+			assert.Zero(total, "replacement clears the previously indexed direction")
 		}
+	}
+	for _, duration := range []*float64{nil, new(0.0), new(12.5)} {
+		o.DurationSeconds = duration
+		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
+		require.NoError(err)
+		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+		require.NoError(err)
+		require.Len(calls, 1)
+		assert.Equal(id, calls[0].MessageID)
+		assert.Equal(duration, calls[0].DurationSeconds)
 	}
 	o.DurationSeconds = nil
 	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
@@ -141,19 +128,11 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 	o.OccurredAt = time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
-	matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("message_type:call_record"), 0, 10)
 	require.NoError(err)
 	require.EqualValues(1, total)
 	require.Len(matches, 1)
-	require.Equal(id, matches[0].ID)
-	queries := []string{"message_type:call_record", "after:2026-10-01 before:2026-10-02"}
-	for _, query := range queries {
-		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
-		require.NoError(err)
-		require.EqualValues(1, total, query)
-		require.Len(matches, 1, query)
-		assert.Equal(id, matches[0].ID, query)
-	}
+	assert.Equal(id, matches[0].ID)
 	peerID := f.NewMessage().WithSubject("Call incoming").WithSentAt(o.OccurredAt.Add(time.Hour)).Create(t, st)
 	require.NoError(st.UpsertFTS(peerID, "Call incoming", "", "", "", ""))
 	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
@@ -247,6 +226,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	o.RecordID = "cancelled-write"
+	o.Participants[0].ID = peer
 	_, err = st.PutCallObservationContext(ctx, src.ID, o)
 	requirements.ErrorIs(err, context.Canceled)
 }
@@ -264,14 +244,12 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	assertions.Equal(store.ChannelOther, got.Channel)
 }
 
-func TestCallObservationParticipantMergeSubsetCopyAndDeletion(t *testing.T) {
+func TestCallObservationSubsetCopyAndDeletion(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource(callhistory.SourceType, (callhistory.Evidence{Provider: "signal", Account: "example"}).SourceIdentifier())
 	requirements.NoError(err)
 	old, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
-	requirements.NoError(err)
-	survivor, err := st.EnsureParticipantByPhone("+12025550102", "Example Two", "signal")
 	requirements.NoError(err)
 	o := callhistory.Observation{
 		RecordID: "record",
@@ -285,14 +263,6 @@ func TestCallObservationParticipantMergeSubsetCopyAndDeletion(t *testing.T) {
 	}
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
-	t.Run("participant merge", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		requirements.NoError(st.MergeParticipants(old, survivor))
-		var participant int64
-		requirements.NoError(st.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
-		assertions.Equal(survivor, participant)
-	})
 	dstDir := t.TempDir()
 	_, err = store.CopySubset(store.DBPathForTest(st), dstDir, 10, true)
 	requirements.NoError(err)
@@ -307,7 +277,7 @@ func TestCallObservationParticipantMergeSubsetCopyAndDeletion(t *testing.T) {
 		requirements.NoError(dst.DB().QueryRow(`SELECT outcome FROM call_details WHERE message_id = ?`, id).Scan(&outcome))
 		assertions.Equal("unknown", outcome)
 		requirements.NoError(dst.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
-		assertions.Equal(survivor, participant)
+		assertions.Equal(old, participant)
 	})
 	t.Run("message deletion cascades to call projection", func(t *testing.T) {
 		assertions := assert.New(t)

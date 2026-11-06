@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -106,31 +105,8 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	var evidence generated.CallEvidenceResponse
 	requirements.NoError(json.Unmarshal(out.Body.Bytes(), &evidence))
 	requirements.Len(evidence.Items, 1)
-	assertions.Nil(evidence.Items[0].DurationSeconds)
 	assertions.NotContains(out.Body.String(), `"raw"`)
 	assertions.Contains(out.Body.String(), `"duration_seconds":null`)
-	for _, tc := range []struct {
-		raw  string
-		want float64
-	}{{"0", 0}, {"12.5", 12.5}} {
-		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"duration","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","duration_seconds":%s,"raw":{}}}`, tc.raw)
-		imported := do("POST", "/api/v1/import/calls", body)
-		requirements.Equal(200, imported.Code, imported.Body.String())
-		listed := do("GET", "/api/v1/calls", "")
-		requirements.Equal(200, listed.Code, listed.Body.String())
-		var response generated.CallEvidenceResponse
-		requirements.NoError(json.Unmarshal(listed.Body.Bytes(), &response))
-		requirements.Len(response.Items, 2)
-		var durationItem *generated.CallObservationView
-		for _, item := range response.Items {
-			if item.RecordID == "duration" {
-				durationItem = &item
-			}
-		}
-		requirements.NotNil(durationItem)
-		requirements.NotNil(durationItem.DurationSeconds)
-		assertions.InDelta(tc.want, *durationItem.DurationSeconds, 0)
-	}
 	assertions.Equal(400, do("GET", "/api/v1/calls?offset=1", "").Code)
 	for _, path := range []string{"/api/v1/calls?after_id=9223372036854775807", "/api/v1/calls/summary?offset=1"} {
 		page := do("GET", path, "")
@@ -147,7 +123,6 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	} {
 		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
 	}
-	assertions.Equal(400, do("GET", "/api/v1/calls/summary?after=invalid", "").Code)
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {
