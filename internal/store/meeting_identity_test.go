@@ -395,24 +395,28 @@ func TestMeetingIdentityUpdatedExceptionOrder(t *testing.T) {
 	}
 }
 
-func TestMeetingIdentityOccurrenceOnlyFindsGranolaWithOrphanRepresentative(t *testing.T) {
+func TestMeetingIdentityOccurrenceOnlyPreservesGranolaRepresentative(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, orphan := calendarFixture(t, st, "orphan", `{"id":"orphan","iCalUID":"weekly@example.org","recurringEventId":"other-series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "other@example.com")
 	_, series := calendarFixture(t, st, "series", linkSeriesRaw)
 	note := granolaLinkFixture(t, st, "series_20270314T100000Z")
+	seriesRef := formatMeetingOccurrence(OccurrenceRef{MessageID: series}) + "@20270314T100000Z"
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	require.Equal(seriesRef, record.Links[0].Ref)
 	ref := formatMeetingOccurrence(OccurrenceRef{MessageID: orphan})
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
 	require.NoError(err)
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-	assert.Equal("occ:"+ref, got.ByTranscript[note].Key)
-	assert.Equal(ref, got.ByTranscript[note].OccurrenceRef)
-	// The normal series copy shares the orphan representative and its note.
-	seriesRef := formatMeetingOccurrence(OccurrenceRef{MessageID: series}) + "@20270314T100000Z"
+	assert.Equal("occ:"+seriesRef, got.ByTranscript[note].Key)
+	assert.Equal(record.Links[0].Ref, got.ByTranscript[note].OccurrenceRef)
+	// Both copies share the representative selected for the note.
 	got, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{seriesRef}})
 	require.NoError(err)
 	assert.Equal([]int64{note}, got.ByOccurrence[seriesRef].LinkedTranscriptIDs)
-	assert.Equal("occ:"+ref, got.ByOccurrence[seriesRef].Key)
+	assert.Equal("occ:"+seriesRef, got.ByOccurrence[seriesRef].Key)
 }
 
 func TestMeetingIdentityOccurrenceOnlyFindsOrphanDecisionAfterMasterArrives(t *testing.T) {
@@ -478,7 +482,11 @@ func TestMeetingIdentityMovedCopyReverseDiscovery(t *testing.T) {
 			_, note := projectionFixture(t, st, "moved-note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":"2027-03-14T12:00:00Z"}}`, tc.uid))
 			forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
 			require.NoError(err)
-			require.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: original})+"@20270314T100000Z", forward.ByTranscript[note].OccurrenceRef)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			require.NoError(err)
+			require.Len(record.Links, 1)
+			require.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: moved})+"@20270314T100000Z", record.Links[0].Ref)
+			require.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: edited}), forward.ByTranscript[note].OccurrenceRef)
 			refs := []string{formatMeetingOccurrence(OccurrenceRef{MessageID: original}) + "@20270314T100000Z", formatMeetingOccurrence(OccurrenceRef{MessageID: moved}) + "@20270314T100000Z"}
 			if tc.name == "edited UID" {
 				require.Equal([]int64{note}, forward.ByOccurrence[refs[0]].LinkedTranscriptIDs)
