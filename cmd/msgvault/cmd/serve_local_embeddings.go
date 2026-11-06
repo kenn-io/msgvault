@@ -120,7 +120,7 @@ func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir st
 }
 
 func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
-	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
+	server := strings.TrimSuffix(strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/embeddings"), "/v1")
 	return embeddingProviderName(endpoint) == "local" && probeOllamaServer(ctx, server).Catalog
 }
 

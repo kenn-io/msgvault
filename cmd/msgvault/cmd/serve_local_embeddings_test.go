@@ -159,7 +159,10 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": models}))
 			return
 		}
-		assert.Equal(t, "/v1/embeddings", r.URL.Path)
+		if r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
 		var body struct {
 			Input []string `json:"input"`
 		}
@@ -425,11 +428,12 @@ func TestLocalEmbeddingsRejectsSharedEndpointAfterOllamaStops(t *testing.T) {
 
 func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 	for _, tc := range []struct {
-		name, catalog string
-		enabled       bool
+		name, catalog, endpointSuffix string
+		enabled                       bool
 	}{
 		{name: "paused"},
 		{name: "active with empty catalog", enabled: true, catalog: `{"models":[]}`},
+		{name: "active full request endpoint", enabled: true, endpointSuffix: "/embeddings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -440,8 +444,10 @@ func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 			require.NoError(err)
 			content = []byte(strings.Replace(string(content), "enabled = true", "enabled = "+strconv.FormatBool(tc.enabled), 1))
 			content = []byte(strings.Replace(string(content), "server = "+strconv.Quote(f.cfg.Chat.Server), "server = \"https://chat.example.test\"", 1))
+			content = []byte(strings.Replace(string(content), strconv.Quote(f.cfg.Vector.Embeddings.Endpoint), strconv.Quote(f.cfg.Vector.Embeddings.Endpoint+tc.endpointSuffix), 1))
 			require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), content, 0o600))
 			f.cfg.Chat.Server = "https://chat.example.test"
+			f.cfg.Vector.Embeddings.Endpoint += tc.endpointSuffix
 			f.start(t)
 			f.ollamaCatalog = tc.catalog
 			status, err := f.controller.Inspect(f.ctx)
