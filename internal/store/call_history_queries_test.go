@@ -121,12 +121,10 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	serial := 0
 	put := func(native, account, outcome, owner, role string) int64 {
 		t.Helper()
-		serial++
 		o := callhistory.Observation{
-			RecordID: strconv.Itoa(serial),
+			RecordID: native,
 
 			Version: 1, Provider: "signal", Account: account, NativeCallID: native,
 			Kind: "call", Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
@@ -142,18 +140,18 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 		return id
 	}
 	first := put("one", "a", "answered", "joined", "joined")
-	put("one", "a", "answered", "joined", "joined")
+	assertions.Equal(first, put("one", "a", "answered", "joined", "joined"))
 	put("one", "b", "answered", "joined", "joined")
-	put("partial", "a", "answered", "unknown", "joined")
-	put("partial", "a", "unknown", "joined", "unknown")
-	put("separate", "a", "answered", "joined", "joined")
-	put("separate", "a", "missed", "not_joined", "unknown")
+	put("partial-1", "a", "answered", "unknown", "joined")
+	put("partial-2", "a", "unknown", "joined", "unknown")
+	put("separate-1", "a", "answered", "joined", "joined")
+	put("separate-2", "a", "missed", "not_joined", "unknown")
 	put("missed", "a", "missed", "not_joined", "unknown")
 	got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(person.ID, got[0].PersonID)
-	assertions.Equal(4, got[0].Answered)
+	assertions.Equal(3, got[0].Answered)
 	assertions.Equal(2, got[0].Unknown)
 	assertions.Equal(2, got[0].Missed)
 	assertions.Equal(first, got[0].ExampleMessageID)
@@ -187,7 +185,7 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	o := callhistory.Observation{
 		RecordID: "one",
 
-		Version: 1, Provider: "signal", Account: "a", NativeCallID: "native",
+		Version: 1, Provider: "signal", Account: "a",
 		Kind: "call", Direction: "unknown", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: at, Precision: "instant",
 
