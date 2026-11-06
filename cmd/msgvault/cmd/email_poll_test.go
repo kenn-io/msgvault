@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -124,4 +126,29 @@ func TestRapidEmailRecordsSelectedSourceFailureTelemetry(t *testing.T) {
 	assert.Equal(t, 2, credentials)
 	require.Len(t, events, 1, "consecutive selected-source failures keep existing telemetry deduplication")
 	assert.Equal(t, map[string]any{"sync_source": "gmail", "reason": "other"}, events[0], "only existing sanitized fields are recorded")
+}
+
+func TestRapidEmailCooperativeYieldDoesNotRecordFailureTelemetry(t *testing.T) {
+	f := storetest.New(t)
+	src, err := f.Store.GetOrCreateSource("gmail", "sample@example.test")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}, Accounts: []config.AccountSchedule{{Email: src.Identifier, Schedule: "0 * * * *", Enabled: true, PollInterval: 30 * time.Second}}}
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
+	state := invocationFromContext(ctx)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+	cause := errors.New("synthetic source failure during cooperative yield")
+	err = runScheduledSync(ctx, src.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
+		requestPreemption()
+		return nil, cause
+	}, state)
+	var acquisition *scheduler.AcquisitionError
+	require.ErrorAs(t, err, &acquisition)
+	assert.Equal(t, scheduler.AcquisitionCancelled, acquisition.Outcome)
+	assert.ErrorIs(t, err, cause, "suppressing telemetry must preserve the actual returned cause")
+	assert.NoError(t, ctx.Err(), "cooperative preemption does not cancel its context")
+	assert.True(t, jobctx.PreemptionRequested(ctx))
+	assert.Zero(t, events, "an interrupted acquisition keeps ordinary cooperative-yield telemetry semantics")
 }

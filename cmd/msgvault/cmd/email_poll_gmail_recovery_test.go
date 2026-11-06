@@ -102,7 +102,7 @@ func TestRapidEmailGmailPartialQuotaDebtReopensWithUnchangedHistory(t *testing.T
 	var partial *scheduler.AcquisitionError
 	require.ErrorAs(t, first, &partial)
 	assert.Equal(t, scheduler.AcquisitionIncomplete, partial.Outcome)
-	require.Eventually(t, func() bool { return !s.Status()[0].Running }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { status := s.Status()[0]; return !status.Running && !status.Queued }, 5*time.Second, time.Millisecond)
 	status := s.Status()[0]
 	assert.True(t, status.LastCompleted.IsZero(), "a completed History run with fetch debt is not complete acquisition")
 	assert.False(t, status.LastAttempted.IsZero())
@@ -115,9 +115,11 @@ func TestRapidEmailGmailPartialQuotaDebtReopensWithUnchangedHistory(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "1001", current.SyncCursor.String)
 
+	require.False(t, partial.RetryNotBefore().IsZero(), "the partial fetch must carry quota evidence")
+	require.True(t, partial.RetryNotBefore().After(time.Now()), "admission is tested while the provider prohibition is still active")
 	before := requests.Load()
 	require.NoError(t, s.TriggerSync(src.Identifier, true))
-	require.Eventually(t, func() bool { return !s.Status()[0].Running }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { status := s.Status()[0]; return !status.Running && !status.Queued }, 5*time.Second, time.Millisecond)
 	assert.EqualValues(t, 1, clients.Load(), "the retained floor stops a new acquisition client before profile reads")
 	assert.Equal(t, before, requests.Load())
 	assert.Empty(t, completed)
