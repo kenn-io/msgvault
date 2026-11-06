@@ -14,6 +14,20 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		{"hash code", Content{Text: "Your verification code is #482913"}, true},
+		{"quoted code", Content{Text: `Your verification code is "482913"`}, true},
+		{"italic code", Content{Text: "Your verification code is *482913*"}, true},
+		{"bracketed code", Content{Text: "Your code: [482913]"}, true},
+		{"bold code", Content{Text: "Your code is: **482913**"}, true},
+		{"parenthesized code", Content{Text: "Your code is (482913)"}, true},
+		{"curly quoted code", Content{Text: "Your code is “482913”"}, true},
+		{"angle bracketed code", Content{Text: "Your code is <482913>"}, true},
+		{"narrow no-break spaced code", Content{Text: "Your code is 482\u202f913"}, true},
+		{"thin spaced code", Content{Text: "Your code is 482\u2009913"}, true},
+		{"2FA bracketed code", Content{Text: "Your 2FA code: [482913]"}, true},
+		{"2FA quoted code", Content{Text: `Your 2FA code: "482913"`}, true},
+		{"hash order number", Content{Text: "Your order number is #482913"}, false},
+		{"bracketed password reset count", Content{Text: "Password reset requested for [482913] accounts"}, false},
 		{"verify account", Content{Text: "Use 482913 to verify your account"}, true},
 		{"enter this code", Content{Text: "Enter this code to verify: 482913"}, true},
 		{"code below", Content{Text: "Enter this code below: 482913"}, true},
