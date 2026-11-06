@@ -19,10 +19,11 @@ import (
 
 func TestRecorderRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		send func(context.Context, *storeAPIAdapter, string, string, bool, bool) (bool, string, error)
+		name, key string
+		hook      *func(context.Context, string) error
+		send      func(context.Context, *storeAPIAdapter, string, string, bool, bool) (bool, string, error)
 	}{
-		{"Hex", func(ctx context.Context, adapter *storeAPIAdapter, action, title string, skip, build bool) (bool, string, error) {
+		{"Hex", hex.SourceType, &rebuildHexCacheAfterScheduledSync, func(ctx context.Context, adapter *storeAPIAdapter, action, title string, skip, build bool) (bool, string, error) {
 			request := hex.RemoteRequest{Action: action, Source: meetingimport.Source{Identifier: "recorder", AccountEmail: "you@example.com"}, NoBuildCache: skip, BuildCache: build}
 			if action == "upsert" {
 				request.Meeting = &hex.Meeting{Manifest: hex.Manifest{SchemaVersion: 1, ID: "cache-fixture", Title: title, Status: "failed", CreatedAtMS: 1790000000123}, TranscriptState: "missing"}
@@ -30,7 +31,7 @@ func TestRecorderRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 			result, err := adapter.ImportHex(ctx, request)
 			return result.Changed, result.Status, err
 		}},
-		{"Muesli", func(ctx context.Context, adapter *storeAPIAdapter, action, title string, skip, build bool) (bool, string, error) {
+		{"Muesli", muesli.SourceType, &rebuildMuesliCacheAfterScheduledSync, func(ctx context.Context, adapter *storeAPIAdapter, action, title string, skip, build bool) (bool, string, error) {
 			request := muesli.RemoteRequest{Action: action, Source: meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}, NoBuildCache: skip, BuildCache: build}
 			if action == "upsert" {
 				request.Meeting = muesli.NewRemoteMeeting(muesli.Meeting{ID: 42, Title: title, Status: "completed", CreatedAt: "2026-09-01 14:00:03", StartTime: "2026-09-01T14:00:00Z", RawTranscript: "Synthetic transcript"})
@@ -41,6 +42,10 @@ func TestRecorderRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			must, check := require.New(t), assert.New(t)
+			original := *tc.hook
+			t.Cleanup(func() { *tc.hook = original })
+			var automatic []string
+			*tc.hook = func(ctx context.Context, key string) error { automatic = append(automatic, key); return ctx.Err() }
 			st := testutil.NewTestStore(t)
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir = t.TempDir()
@@ -62,18 +67,22 @@ func TestRecorderRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 			changed, _, err := tc.send(t.Context(), adapter, "upsert", "Initial", false, false)
 			must.NoError(err)
 			check.True(changed)
+			check.Equal([]string{tc.key}, automatic, "changed imports request automatic refresh")
 			changed, _, err = tc.send(t.Context(), adapter, "upsert", "Initial", false, false)
 			must.NoError(err)
 			check.False(changed)
+			check.Equal([]string{tc.key}, automatic, "unchanged imports do not request another automatic refresh")
 			must.True(jobs.waitContext(t.Context()))
-			check.Empty(modes, "disabled automatic caching stays disabled")
+			check.Empty(modes, "automatic refresh does not use the explicit refresh job queue")
 			changed, _, err = tc.send(t.Context(), adapter, "upsert", "Edited", true, false)
 			must.NoError(err)
 			check.True(changed)
+			check.Equal([]string{tc.key}, automatic, "no-build-cache suppresses the automatic refresh hook")
 			check.Empty(modes)
 			_, status, err := tc.send(t.Context(), adapter, "refresh", "", false, true)
 			must.NoError(err)
 			check.Equal("refreshed", status)
+			check.Equal([]string{tc.key}, automatic, "explicit refresh uses the job queue rather than the automatic hook")
 			wait, stop := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 			defer stop()
 			must.True(jobs.waitContext(wait))

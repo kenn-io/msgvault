@@ -106,7 +106,7 @@ func (e *Entry) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	return nil
 }
 
-func (e Entry) Speaker() string {
+func (e *Entry) Speaker() string {
 	if e.Source == "microphone" {
 		return "You"
 	}

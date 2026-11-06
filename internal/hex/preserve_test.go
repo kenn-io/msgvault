@@ -1,11 +1,11 @@
 package hex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -198,7 +198,7 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 			check.Contains(snapshot.Body, "Original: "+v.Title)
 		}
 		if source == "user" {
-			check.Equal(1, bytes.Count([]byte(snapshot.Body), []byte("Provisional title: Provisional")))
+			check.Equal(1, strings.Count(snapshot.Body, "Provisional title: Provisional"))
 			check.NotContains(snapshot.Body, "Notes title:", "a repeated title must be omitted")
 		}
 		account := meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}
