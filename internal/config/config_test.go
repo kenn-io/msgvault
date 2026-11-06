@@ -2634,8 +2634,6 @@ func TestLoadApplePhonePrefix(t *testing.T) {
 func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	warnedRemovedDocuments.Store(false)
-	t.Cleanup(func() { warnedRemovedDocuments.Store(false) })
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -2653,5 +2651,5 @@ func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	assert.Contains(logs.String(), "level=WARN")
 	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
 	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
-	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
+	assert.Equal(2, strings.Count(logs.String(), "[attachments.documents]"))
 }
