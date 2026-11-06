@@ -17,7 +17,7 @@ const Masked = "[verification content masked]"
 const MaxFieldBytes = 1024 * 1024
 
 const localizedCodeCues = `bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드`
-const englishCodeCues = `\b(code|passcode|otp|2fa|(?:one[- ]time|temporary|verification|security|login|sign[ -]in|authentication) password|verification number|pin)\b`
+const englishCodeCues = `\b(code|passcode|otp|2fa|(?:one[- ]time|temporary|verification|security|login|sign[ -]in|authentication) password|verification number|(?:your|verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) pin)\b|\bpin(?: is\b|:)`
 const englishQualifiedCodeCues = `\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`
 
 type Content struct {
@@ -35,7 +35,7 @@ var (
 	ordinaryCodePrefix      = regexp.MustCompile(`(?i)\b(?:promo|coupon|discount|voucher|referral|gift|zip|postal|area|tracking|order|invoice|product|project)\s+$`)
 
 	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\u202f", "", "\u2009", "", "\n", "")
-	codeToken   = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}\x{202f}\x{2009}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
+	codeToken   = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}\x{202f}\x{2009}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Za-z]*[0-9][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 	codeGap     = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|lautet|war|was|:|：|は|是|为|-|your|the|verification|security|to verify|this|below|[#*_\x60"'“”‘’\[\](){}<>])[\s\x{00a0}]*)*$`)
 	introGap    = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?(?:\pL[\pL'’-]*[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?){0,6}(?:is[\s\x{00a0}]*:?|:|=)[\s\x{00a0}]*$`)
 	reverseGap  = regexp.MustCompile(`(?i)^\s+(?:is|as) (?:your |the )?(?:[a-z]+ ){0,3}$`)
@@ -209,7 +209,7 @@ func nearCue(field string, left, right int, before bool, matches [][]int) bool {
 					gap = " "
 				}
 			}
-			breaks = 4
+			breaks = 60
 		}
 		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || before && introGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
 			return true
