@@ -123,7 +123,6 @@ func TestIs(t *testing.T) {
 		{"reverse", Content{Text: "482913 is your verification code"}, true},
 		{"Unicode window", Content{Text: "code " + strings.Repeat("\u00a0", 59) + "482913"}, true},
 		{"outside window", Content{Text: "code " + strings.Repeat("\u00a0", 61) + "482913"}, false},
-		{"French", Content{Text: "code de vérification: 482913"}, true},
 		{"French copula", Content{Text: "Votre code de vérification est 482913"}, true},
 		{"German copula", Content{Text: "Ihr Bestätigungscode ist 482913"}, true},
 		{"Spanish copula", Content{Text: "Tu código de verificación es 482913"}, true},
@@ -178,24 +177,19 @@ func TestIs(t *testing.T) {
 	for _, cue := range []string{"verification code", "security code", "login code", "sign-in code", "confirmation code", "authentication code", "one-time code", "passcode", "OTP", "2FA"} {
 		cases = append(cases, testCase{cue, Content{Subject: "Your " + cue, Text: "482913"}, true})
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, Is(tc.content))
-		})
-	}
-}
-
-func TestIsLocalizedGaps(t *testing.T) {
 	for _, cue := range []string{
 		"Bestätigungscode", "Sicherheitscode", "code de vérification", "code de sécurité",
 		"código de verificación", "código de seguridad", "codice di verifica",
 		"Код подтверждения", "Код безопасности", "验证码", "驗證碼", "認証コード", "인증 코드",
 	} {
 		for _, gap := range []string{"：", ": ", " "} {
-			t.Run(cue+gap, func(t *testing.T) {
-				assert.True(t, Is(Content{Text: cue + gap + "482913"}))
-			})
+			cases = append(cases, testCase{cue + gap, Content{Text: cue + gap + "482913"}, true})
 		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, Is(tc.content))
+		})
 	}
 }
 

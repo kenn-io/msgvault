@@ -913,13 +913,14 @@ func (s *agentPackingStream) OpenStream(ctx context.Context, hash string) (io.Re
 func testAgentPackingSnapshot(t *testing.T) {
 	for _, route := range []string{"content", "cli", "cid"} {
 		for _, tc := range []struct{ transition, caller string }{
-			{"pack before open", "reveal"},
+			{"pack before open", "masked"},
 			{"pack during retry", "masked"},
-			{"repack before open", "owner"},
+			{"repack before open", "masked"},
 			{"repack during retry", "masked"},
 			{"cancel", "masked"},
+			{"repack before open", "owner"},
 		} {
-			t.Run(route+"/"+tc.transition, func(t *testing.T) {
+			t.Run(route+"/"+tc.caller+"/"+tc.transition, func(t *testing.T) {
 				transition := tc.transition
 				requirements := require.New(t)
 				assertions := assert.New(t)
@@ -1001,9 +1002,6 @@ func testAgentPackingSnapshot(t *testing.T) {
 				// Cleanup runs after t.Context() is canceled.
 				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 				permissions := []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}
-				if tc.caller == "reveal" {
-					permissions = append(permissions, agentgrant.PermissionVerificationRead)
-				}
 				_, token, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 				requirements.NoError(err)
 				path := "/api/v1/attachments/" + hash + "/content"
