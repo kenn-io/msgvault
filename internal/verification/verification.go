@@ -42,6 +42,7 @@ var (
 	signInAfter = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your (?:account|identity|email))\b`)
 	useBefore   = regexp.MustCompile(`(?i)\b(?:use|enter|type)\s+$`)
 	link        = regexp.MustCompile(`https?://[^\s<>"']+`)
+	textAngle   = regexp.MustCompile(`<([^a-zA-Z/!?])`)
 )
 
 // Is fails closed for oversized fields. Cue distance is at most 60 runes.
@@ -56,7 +57,7 @@ func Is(c Content) bool {
 	}
 	// Keep block separators so a code cannot merge with a neighboring number.
 	// Single-digit cells remain recognizable through codeToken's whitespace run.
-	fields[3] = mime.StripHTML(c.HTML)
+	fields[3] = mime.StripHTML(textAngle.ReplaceAllString(c.HTML, "&lt;$1")) // browsers render these as text
 	for i, field := range fields {
 		fields[i] = strings.Map(func(r rune) rune {
 			switch r {

@@ -22,6 +22,8 @@ func TestIs(t *testing.T) {
 		{"parenthesized code", Content{Text: "Your code is (482913)"}, true},
 		{"curly quoted code", Content{Text: "Your code is “482913”"}, true},
 		{"angle bracketed code", Content{Text: "Your code is <482913>"}, true},
+		{"HTML angle bracketed code", Content{Text: "View this email in a browser", HTML: "<p>Your verification code is <482913></p>"}, true},
+		{"HTML bare less-than", Content{HTML: "<p>Orders <5 items ship free.</p><p>Your verification code is <b>482913</b></p>"}, true},
 		{"narrow no-break spaced code", Content{Text: "Your code is 482\u202f913"}, true},
 		{"thin spaced code", Content{Text: "Your code is 482\u2009913"}, true},
 		{"2FA bracketed code", Content{Text: "Your 2FA code: [482913]"}, true},
