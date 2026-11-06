@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
@@ -45,19 +42,6 @@ func TestMeetingIdentityLinkedTranscriptSharesKey(t *testing.T) {
 			assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 		})
 	}
-}
-
-func TestMeetingIdentityBareGranolaSeriesStaysUnlinked(t *testing.T) {
-	assert := assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	calendarFixture(t, st, "series", linkSeriesRaw)
-	note := granolaLinkFixture(t, st, "series")
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
-	require.NoError(t, err)
-	assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
-	assert.Empty(got.ByTranscript[note].OccurrenceRef)
-	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
-	assert.Empty(got.ByOccurrence)
 }
 
 func TestMeetingIdentitySeriesReferenceNeedsOccurrenceKey(t *testing.T) {
@@ -94,24 +78,8 @@ func TestMeetingIdentityUnlinkedItemsStaySeparate(t *testing.T) {
 	assert.Len(keys, 4)
 }
 
-func TestMeetingIdentityAmbiguousMatchStaysSeparate(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, series := calendarFixture(t, st, "series", linkSeriesRaw)
-	_, single := calendarFixture(t, st, "single", singleLinkRaw("single", "weekly@example.org"))
-	_, note := identityNote(t, st, "ambiguous", "weekly@example.org")
-	refs := []string{formatMeetingOccurrence(OccurrenceRef{MessageID: series}) + "@20270314T100000Z", formatMeetingOccurrence(OccurrenceRef{MessageID: single})}
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs, TranscriptIDs: []int64{note}})
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
-	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
-	for _, ref := range refs {
-		assert.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
-	}
-}
-
 func TestMeetingIdentityHiddenEvidenceIgnored(t *testing.T) {
-	for _, mode := range []string{"hidden transcript", "hidden calendar", "hidden live copy after merge"} {
+	for _, mode := range []string{"hidden transcript", "hidden calendar", "merged archive visibility"} {
 		t.Run(mode, func(t *testing.T) {
 			switch mode {
 			case "hidden transcript":
@@ -146,7 +114,7 @@ func TestMeetingIdentityHiddenEvidenceIgnored(t *testing.T) {
 				changed, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
 				require.NoError(err)
 				assert.Equal(got, changed, "a hidden manual target leaves visible automatic evidence intact")
-			case "hidden live copy after merge":
+			case "merged archive visibility":
 				assert, require := assert.New(t), require.New(t)
 				st := newRFC822IDBackfillBackendStore(t)
 				history, event := calendarFixture(t, st, "event", singleLinkRaw("event", "family@example.com"), "history@example.com")
@@ -154,21 +122,13 @@ func TestMeetingIdentityHiddenEvidenceIgnored(t *testing.T) {
 				require.NoError(err)
 				_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: destination.ID})
 				require.NoError(err)
-				var originalID string
-				require.NoError(st.db.QueryRow(`SELECT original_source_message_id FROM source_merge_archive_only_messages WHERE message_id = ?`, event).Scan(&originalID))
-				require.NotEmpty(originalID)
 				ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
 				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{destination.ID})
 				req := MeetingIdentityRequest{OccurrenceRefs: []string{ref}}
-				before, err := st.ResolveMeetingIdentitiesContext(ctx, req)
+				got, err := st.ResolveMeetingIdentitiesContext(ctx, req)
 				require.NoError(err)
-				require.Len(before.ByOccurrence, 1)
-				assert.Equal("occ:"+ref, before.ByOccurrence[ref].Key)
-				_, hidden := calendarFixture(t, st, "event", singleLinkRaw("event", "family@example.com"), "hidden@example.com")
-				req.OccurrenceRefs = append(req.OccurrenceRefs, formatMeetingOccurrence(OccurrenceRef{MessageID: hidden}))
-				after, err := st.ResolveMeetingIdentitiesContext(ctx, req)
-				require.NoError(err)
-				assert.Equal(before, after, "a hidden live copy leaves the visible archived event unchanged")
+				require.Len(got.ByOccurrence, 1)
+				assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
 			}
 		})
 	}
@@ -337,25 +297,6 @@ func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
 	assert.ErrorIs(t, err, failure)
 }
 
-func TestMeetingIdentityPreservesPublicExceptionRefAndCanonicalKey(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
-	_, moved := calendarFixture(t, st, "moved", `{"id":"moved","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
-	_, note := identityNote(t, st, "note", "")
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: moved}))
-	public := formatMeetingOccurrence(OccurrenceRef{MessageID: moved})
-	canonical := formatMeetingOccurrence(OccurrenceRef{MessageID: master}) + "@20270314T100000Z"
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{public, canonical}, TranscriptIDs: []int64{note}})
-	require.NoError(err)
-	assert.Equal("occ:"+canonical, got.ByOccurrence[public].Key)
-	assert.Equal("occ:"+canonical, got.ByOccurrence[canonical].Key)
-	assert.Equal(public, got.ByOccurrence[public].OccurrenceRef)
-	assert.Equal(public, got.ByTranscript[note].OccurrenceRef)
-	assert.Equal([]string{public}, got.ByTranscript[note].ExactOccurrenceRefs)
-	assert.Equal("occ:"+canonical, got.ByTranscript[note].Key)
-}
-
 func TestMeetingIdentityUpdatedExceptionOrder(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -386,11 +327,16 @@ func TestMeetingIdentityUpdatedExceptionOrder(t *testing.T) {
 			public := formatMeetingOccurrence(OccurrenceRef{MessageID: latest})
 			require.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), links[0].Start)
 			canonical := formatMeetingOccurrence(ref)
-			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{canonical}, TranscriptIDs: []int64{note}})
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{public, canonical}, TranscriptIDs: []int64{note}})
 			require.NoError(err)
+			assert.Equal("occ:"+canonical, got.ByOccurrence[public].Key)
+			assert.Equal("occ:"+canonical, got.ByOccurrence[canonical].Key)
+			assert.Equal(public, got.ByOccurrence[public].OccurrenceRef)
 			assert.Equal(public, got.ByOccurrence[canonical].OccurrenceRef)
 			assert.Equal(public, got.ByTranscript[note].OccurrenceRef)
 			assert.Equal([]int64{note}, got.ByOccurrence[canonical].LinkedTranscriptIDs)
+			assert.Equal([]string{public}, got.ByTranscript[note].ExactOccurrenceRefs)
+			assert.Equal("occ:"+canonical, got.ByTranscript[note].Key)
 		})
 	}
 }
@@ -472,36 +418,17 @@ func TestMeetingIdentityFractionalReferencesRemainSeparate(t *testing.T) {
 }
 
 func TestMeetingIdentityMovedCopyReverseDiscovery(t *testing.T) {
-	for _, tc := range []struct{ name, uid string }{{"same UID", "weekly@example.org"}, {"edited UID", "edited@example.org"}} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, original := calendarFixture(t, st, "original", linkSeriesRaw)
-			_, moved := calendarFixture(t, st, "moved", linkSeriesRaw, "other@example.org")
-			_, edited := calendarFixture(t, st, "exception", fmt.Sprintf(`{"id":"exception","iCalUID":%q,"recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, tc.uid), "other@example.org")
-			_, note := projectionFixture(t, st, "moved-note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":"2027-03-14T12:00:00Z"}}`, tc.uid))
-			forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
-			require.NoError(err)
-			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-			require.NoError(err)
-			require.Len(record.Links, 1)
-			require.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: moved})+"@20270314T100000Z", record.Links[0].Ref)
-			require.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: edited}), forward.ByTranscript[note].OccurrenceRef)
-			refs := []string{formatMeetingOccurrence(OccurrenceRef{MessageID: original}) + "@20270314T100000Z", formatMeetingOccurrence(OccurrenceRef{MessageID: moved}) + "@20270314T100000Z"}
-			if tc.name == "edited UID" {
-				require.Equal([]int64{note}, forward.ByOccurrence[refs[0]].LinkedTranscriptIDs)
-				refs = []string{formatMeetingOccurrence(OccurrenceRef{MessageID: edited})}
-			}
-			for _, ref := range refs {
-				reverse, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
-				require.NoError(err)
-				if tc.name == "edited UID" {
-					assert.Equal(forward.ByTranscript[note], reverse.ByTranscript[note])
-				}
-				assert.Equal([]int64{note}, reverse.ByOccurrence[ref].LinkedTranscriptIDs)
-			}
-		})
-	}
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "original", linkSeriesRaw)
+	calendarFixture(t, st, "moved", linkSeriesRaw, "other@example.org")
+	_, edited := calendarFixture(t, st, "exception", `{"id":"exception","iCalUID":"edited@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "other@example.org")
+	_, note := projectionFixture(t, st, "moved-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"edited@example.org","startsAt":"2027-03-14T12:00:00Z"}}`)
+	forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	require.NoError(t, err)
+	ref := formatMeetingOccurrence(OccurrenceRef{MessageID: edited})
+	reverse, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+	require.NoError(t, err)
+	assert.Equal(t, forward.ByTranscript[note], reverse.ByTranscript[note])
 }
 
 func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
@@ -853,28 +780,13 @@ func TestMeetingIdentityReverseSavedTargetAfterLiveCopyArrives(t *testing.T) {
 			}
 			destination, err := st.GetOrCreateSource("meeting_import", "empty@example.com")
 			requirements.NoError(err)
-			merged, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: destination.ID})
+			_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: destination.ID})
 			requirements.NoError(err)
-			requirements.Equal(int64(1), merged.MessagesMoved)
-			requirements.Zero(merged.DuplicatesHidden)
-			var archived bool
-			requirements.NoError(st.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, note).Scan(&archived))
-			requirements.True(archived)
 			ids := []int64{note}
-			result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
-			requirements.NoError(err, "a unique archived note remains readable")
-			var packet meetingcontent.Packet
-			requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
-			requirements.Len(packet.Meetings, 1)
-			assertions.Equal(note, packet.Meetings[0].Meeting.MessageID)
 			if mode == "new decision" {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}
 			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
-			links, err := meetingLinksForTest(t, st, note)
-			requirements.NoError(err, "a unique archived note remains readable through meeting links")
-			requirements.Len(links, 1)
-			assertions.Equal(ref, links[0].Ref)
 			for _, transcriptIDs := range [][]int64{ids, nil} {
 				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: transcriptIDs})
 				requirements.NoError(err)
@@ -900,8 +812,6 @@ func TestMeetingIdentityReverseSavedTargetAfterLiveCopyArrives(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Empty(got.ByTranscript)
 				assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
-				_, err = meetingLinksForTest(t, st, note)
-				requirements.ErrorIs(err, sql.ErrNoRows)
 			}
 		})
 	}

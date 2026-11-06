@@ -188,21 +188,12 @@ func TestMeetingLinksIdentityHasSeparateFields(t *testing.T) {
 	assertions.Empty(linkedMeetingRefs(t, st, note)[note])
 }
 
-func TestMeetingLinksBareGranolaSeriesStaysUnlinked(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	calendarFixture(t, st, "series", linkSeriesRaw)
-	note := granolaLinkFixture(t, st, "series")
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{note}, record.MessageIDs)
-	assert.Empty(t, record.Links)
-}
-
 func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, exception, key string
 		want                      bool
 	}{
+		{name: "bare series", raw: linkSeriesRaw},
 		{name: "generated", raw: linkSeriesRaw, want: true},
 		{name: "exdate", raw: strings.Replace(linkSeriesRaw, `"RRULE:FREQ=WEEKLY;COUNT=6"`, `"RRULE:FREQ=WEEKLY;COUNT=6","EXDATE:20270314T100000Z"`, 1)},
 		{name: "cancelled override", raw: strings.Replace(linkSeriesRaw, `"RRULE:FREQ=WEEKLY;COUNT=6"`, `"RRULE:FREQ=WEEKLY;COUNT=6","EXDATE:20270314T100000Z"`, 1), exception: `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`, want: true},
@@ -213,6 +204,7 @@ func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 		{name: "all day instance", raw: `{"id":"series","iCalUID":"day@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`, key: "20270314", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			_, master := calendarFixture(t, st, "master", tc.raw)
 			if tc.exception != "" {
@@ -222,12 +214,23 @@ func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 			if key == "" {
 				key = "20270314T100000Z"
 			}
-			note := granolaLinkFixture(t, st, "series_"+key)
+			eventID := "series_" + key
+			if tc.name == "bare series" {
+				eventID = "series"
+			}
+			note := granolaLinkFixture(t, st, eventID)
 			want := ""
 			if tc.want {
 				want = fmt.Sprintf("evt:%d@%s", master, key)
 			}
-			assert.Equal(t, want, linkedMeetingRefs(t, st, note)[note])
+			if tc.name == "bare series" {
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+				require.NoError(err)
+				assert.Equal([]int64{note}, record.MessageIDs)
+				assert.Empty(record.Links)
+			} else {
+				assert.Equal(want, linkedMeetingRefs(t, st, note)[note])
+			}
 		})
 	}
 }

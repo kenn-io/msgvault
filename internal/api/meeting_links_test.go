@@ -66,28 +66,35 @@ func TestMeetingLinkRoutes(t *testing.T) {
 		name, method, path, body, token string
 		status                          int
 		err                             error
+		message                         string
 	}{
-		{"link", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"link"}`, "", 200, nil},
-		{"unlink", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"unlink"}`, "", 200, nil},
-		{"links", "GET", "/meetings/record?ref=msg:42", "", "", 200, nil},
-		{"event record", "GET", "/meetings/record?ref=evt:81@20270314T100000Z", "", "", 200, nil},
-		{"invalid links ID", "GET", "/meetings/record?ref=msg:0", "", "", 400, nil},
-		{"missing links ID", "GET", "/meetings/record", "", "", 400, nil},
-		{"missing links", "GET", "/meetings/record?ref=msg:42", "", "", 404, sql.ErrNoRows},
-		{"delegated links", "GET", "/meetings/record?ref=msg:42", "", secret, 401, nil},
-		{"remote links", "GET", "/meetings/record?ref=msg:42", "", "synthetic-reader-key", 403, nil},
-		{"note suggestions", "GET", "/meetings/suggestions?ref=msg:42", "", "", 200, nil},
-		{"event suggestions", "GET", "/meetings/suggestions?ref=evt:81@20270314T100000Z", "", "", 200, nil},
-		{"invalid ref", "GET", "/meetings/suggestions?ref=msg:42@20270314", "", "", 400, nil},
-		{"invalid decision", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"split"}`, "", 400, nil},
-		{"invalid key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270230","decision":"link"}`, "", 400, nil},
-		{"prefixed key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@extra_20270314","decision":"link"}`, "", 400, nil},
-		{"missing", "GET", "/meetings/suggestions?ref=msg:42", "", "", 404, sql.ErrNoRows},
-		{"broad", "GET", "/meetings/suggestions?ref=msg:42", "", "", 400, store.ErrQueryTooBroad},
-		{"delegated read", "GET", "/meetings/suggestions?ref=msg:42", "", secret, 401, nil},
-		{"remote read", "GET", "/meetings/suggestions?ref=msg:42", "", "synthetic-reader-key", 403, nil},
-		{"delegated write", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"link"}`, secret, 401, nil},
-		{"remote write", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"link"}`, "synthetic-reader-key", 403, nil},
+		{"link", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"link"}`, "", 200, nil, ""},
+		{"unlink", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"unlink"}`, "", 200, nil, ""},
+		{"links", "GET", "/meetings/record?ref=msg:42", "", "", 200, nil, ""},
+		{"event record", "GET", "/meetings/record?ref=evt:81@20270314T100000Z", "", "", 200, nil, ""},
+		{"invalid links ID", "GET", "/meetings/record?ref=msg:0", "", "", 400, nil, ""},
+		{"missing links ID", "GET", "/meetings/record", "", "", 400, nil, ""},
+		{"missing links", "GET", "/meetings/record?ref=msg:42", "", "", 404, sql.ErrNoRows, ""},
+		{"delegated links", "GET", "/meetings/record?ref=msg:42", "", secret, 401, nil, ""},
+		{"remote links", "GET", "/meetings/record?ref=msg:42", "", "synthetic-reader-key", 403, nil, ""},
+		{"note suggestions", "GET", "/meetings/suggestions?ref=msg:42", "", "", 200, nil, ""},
+		{"event suggestions", "GET", "/meetings/suggestions?ref=evt:81@20270314T100000Z", "", "", 200, nil, ""},
+		{"invalid ref", "GET", "/meetings/suggestions?ref=msg:42@20270314", "", "", 400, nil, ""},
+		{"invalid decision", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"split"}`, "", 400, nil, ""},
+		{"invalid key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270230","decision":"link"}`, "", 400, nil, ""},
+		{"prefixed key", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@extra_20270314","decision":"link"}`, "", 400, nil, ""},
+		{"missing", "GET", "/meetings/suggestions?ref=msg:42", "", "", 404, sql.ErrNoRows, ""},
+		{"broad", "GET", "/meetings/suggestions?ref=msg:42", "", "", 400, store.ErrQueryTooBroad, ""},
+		{"delegated read", "GET", "/meetings/suggestions?ref=msg:42", "", secret, 401, nil, ""},
+		{"remote read", "GET", "/meetings/suggestions?ref=msg:42", "", "synthetic-reader-key", 403, nil, ""},
+		{"delegated write", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"link"}`, secret, 401, nil, ""},
+		{"remote write", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81","decision":"link"}`, "synthetic-reader-key", 403, nil, ""},
+		{"record invalid event ID", "GET", "/meetings/record?ref=evt:0", "", "", 400, nil, "invalid meeting reference"},
+		{"record empty occurrence key", "GET", "/meetings/record?ref=evt:81@", "", "", 400, nil, "invalid meeting reference"},
+		{"record invalid occurrence key", "GET", "/meetings/record?ref=evt:81@20270230", "", "", 400, nil, "invalid occurrence key"},
+		{"suggestions invalid event ID", "GET", "/meetings/suggestions?ref=evt:0", "", "", 400, nil, "invalid meeting reference"},
+		{"suggestions empty occurrence key", "GET", "/meetings/suggestions?ref=evt:81@", "", "", 400, nil, "invalid meeting reference"},
+		{"suggestions invalid occurrence key", "GET", "/meetings/suggestions?ref=evt:81@20270230", "", "", 400, nil, "invalid occurrence key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -107,6 +114,9 @@ func TestMeetingLinkRoutes(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			requirements.Equal(tc.status, w.Code, w.Body.String())
+			if tc.message != "" {
+				assertions.JSONEq(fmt.Sprintf(`{"error":"invalid_argument","message":%q}`, tc.message), w.Body.String())
+			}
 			if tc.status >= 400 && tc.err == nil {
 				assertions.Equal(before, backend.calls)
 			}
@@ -143,25 +153,4 @@ func TestMeetingLinkRoutes(t *testing.T) {
 		assert.Equal(t, 404, w.Code)
 		assert.Contains(t, w.Body.String(), "cancelled event missing bounds")
 	})
-}
-
-func TestMeetingLinkMalformedEventResponse(t *testing.T) {
-	for _, path := range []string{"/meetings/record", "/meetings/suggestions"} {
-		for _, tc := range []struct{ ref, message string }{
-			{"evt:0", "invalid meeting reference"},
-			{"evt:81@", "invalid meeting reference"},
-			{"evt:81@20270230", "invalid occurrence key"},
-			{"evt:81@extra_20270314", "invalid occurrence key"},
-		} {
-			t.Run(path+"/"+tc.ref, func(t *testing.T) {
-				backend := &meetingLinksTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
-				srv := NewServer(&config.Config{}, backend, nil, testLogger())
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1"+path+"?ref="+tc.ref, nil))
-				assert.Equal(t, http.StatusBadRequest, w.Code)
-				assert.JSONEq(t, fmt.Sprintf(`{"error":"invalid_argument","message":%q}`, tc.message), w.Body.String())
-				assert.Zero(t, backend.calls)
-			})
-		}
-	}
 }
