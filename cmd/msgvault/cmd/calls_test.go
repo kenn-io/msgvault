@@ -103,11 +103,13 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 			require := require.New(t)
 			client = &fakeCallCommandClient{importErrorAt: tc.importErrorAt}
 			path := "-"
+			stdin := tc.input
 			if tc.file {
 				path = filepath.Join(t.TempDir(), "calls.json")
 				require.NoError(os.WriteFile(path, []byte(tc.input), 0600))
+				stdin = ""
 			}
-			output, err := run(tc.input, "import", path)
+			output, err := run(stdin, "import", path)
 			if tc.wantError == "" {
 				require.NoError(err, output)
 			} else {
