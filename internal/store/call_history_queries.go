@@ -183,8 +183,8 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	return out, nil
 }
 
-// SummarizeCallsContext counts each active record within the time window.
-// Each record must establish attendance on its own.
+// SummarizeCallsContext counts logical calls within the time window.
+// Each observation must establish attendance on its own.
 // Current curated person bindings determine whose evidence is counted.
 func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]PersonCallSummary, error) {
 	if q.AfterID != 0 {
@@ -199,10 +199,10 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "p.person_id = ?"), append(args, q.PersonID)
 	}
 	if q.After != nil {
-		where, args = append(where, "a.occurred_at >= ?"), append(args, q.After.UTC())
+		where, args = append(where, "i.occurred_at >= ?"), append(args, q.After.UTC())
 	}
 	if q.Before != nil {
-		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
+		where, args = append(where, "i.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
@@ -210,22 +210,18 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	out := []PersonCallSummary{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `
-		WITH active AS (
-			SELECT c.*
+		WITH `+callIdentityCTEs(`SELECT c.*, `+callIdentitySQL("c")+` AS identity_key
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
-			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`+scope+`
-		), per_person AS (
-			SELECT a.message_id, pp.person_id,
+			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`+scope)+`, per_person AS (
+			SELECT a.identity_key, MIN(a.message_id) AS message_id, pp.person_id,
 				MAX(`+callConfirmedSQL()+`) AS confirmed
 			FROM active a JOIN (`+s.callRolesSQL()+`) r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
-			GROUP BY a.message_id, pp.person_id
+			GROUP BY a.identity_key, pp.person_id
 		), classified AS (
 			SELECT p.person_id, p.message_id AS example_id,
-				CASE WHEN p.confirmed = 1 THEN 'answered'
-					WHEN a.outcome IN ('missed', 'declined', 'cancelled') THEN a.outcome
-					ELSE 'unknown' END AS category
-			FROM per_person p JOIN active a ON a.message_id = p.message_id
+				`+callCategorySQL("p.confirmed")+` AS category
+			FROM per_person p JOIN identities i ON i.identity_key = p.identity_key
 			WHERE `+strings.Join(where, " AND ")+`
 		)
 		SELECT person_id,
@@ -277,7 +273,7 @@ func (s *Store) callActiveSQL(extra string) string {
  CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds,
  ` + callIdentitySQL("c") + ` AS identity_key
  FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
- WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
+ WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
 }
 
 // An identity takes its earliest record's time. Any whole observation can
