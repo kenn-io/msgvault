@@ -174,3 +174,13 @@ func BenchmarkIsCueDense(b *testing.B) {
 		Is(content)
 	}
 }
+
+func BenchmarkIsLargeNumericText(b *testing.B) {
+	const size = 400 * 1024
+	body := "Report code\n" + strings.Repeat("id,1234567,2024\n", size/len("id,1234567,2024\n")+1)
+	content := Content{Text: body[:size]}
+	b.SetBytes(int64(len(content.Text)))
+	for b.Loop() {
+		assert.False(b, Is(content))
+	}
+}
