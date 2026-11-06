@@ -72,7 +72,8 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          kit-retry 3 5 apt-get -o APT::Update::Error-Mode=any update
+          # CI only needs Ubuntu packages; runner-added repositories can fail independently.
+          kit-retry 3 5 apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update
           kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
 
       - uses: actions/checkout@v7.0.1
@@ -169,7 +170,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       - name: Check PostgreSQL build coverage
         run: make pg-shipped-only-check
@@ -230,7 +231,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       # Go's test cache keys repo files by mtime.
       # Checkout rewrites them, so derive stable times from file contents.
@@ -330,7 +331,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
@@ -973,7 +974,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Enable pgvector extension
         run: |
@@ -1062,7 +1063,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       - *stable-mtimes
 
@@ -1165,7 +1166,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
