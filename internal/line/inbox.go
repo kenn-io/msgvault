@@ -202,7 +202,9 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		return nil
 	}
 	completed := false
+	var localFailure error
 	defer func() {
+		resultErr = errors.Join(resultErr, localFailure)
 		if !completed {
 			settleCtx, cancelSettle := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			resultErr = errors.Join(resultErr, settle(settleCtx))
@@ -237,8 +239,8 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 				if err = pass.store.FinishLineEventContext(ctx, row.ID, "pending", eventErr.Error(), pass.retryAt(row, eventErr)); err != nil {
 					return err
 				}
-				if resultErr == nil {
-					resultErr = fmt.Errorf("process LINE inbox event: %w", eventErr)
+				if localFailure == nil {
+					localFailure = fmt.Errorf("process LINE inbox event: %w", eventErr)
 				}
 				return nil
 			}
@@ -358,13 +360,12 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err = saveCheckpoint(ctx); err != nil {
 		return err
 	}
-	if resultErr != nil {
-		return resultErr
+	if localFailure == nil {
+		if err = p.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, p.sourceID, ""); err != nil {
+			return err
+		}
+		completed = true
 	}
-	if err = p.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, p.sourceID, ""); err != nil {
-		return err
-	}
-	completed = true
 	return nil
 }
 

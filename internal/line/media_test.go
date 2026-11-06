@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
@@ -476,6 +477,34 @@ func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
 	checks.Equal(1, count)
 	checks.Equal(first.ContentHash, again.ContentHash)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+}
+
+func TestMediaLocalFailureSurvivesYieldToWaiter(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	blocked := filepath.Join(t.TempDir(), "attachments")
+	must.NoError(os.WriteFile(blocked, []byte("blocked"), 0o600))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
+	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	second := f.fileEvent()
+	second.WebhookEventID = "event-2"
+	second.Message.ID = "2"
+	second.Timestamp++
+	f.enqueue(t, second, time.Time{})
+	ctx, request := jobctx.WithPreemption(t.Context())
+	request()
+
+	passErr := f.processor.Process(ctx)
+	must.ErrorIs(passErr, jobctx.ErrYieldedToWaiter)
+	checks.ErrorContains(passErr, "store LINE media")
+	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/2/content"))
+	run, err := f.st.GetLatestSync(f.source.ID)
+	must.NoError(err)
+	checks.Equal(store.SyncStatusFailed, run.Status)
+	checks.Contains(run.ErrorMessage.String, "store LINE media")
 }
 
 func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
