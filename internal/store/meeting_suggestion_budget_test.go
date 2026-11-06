@@ -9,6 +9,21 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+func TestMeetingChosenLinkRejectsBroadAutomaticEvidence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 201 {
+		id := fmt.Sprintf("copy-%d", i)
+		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
+	}
+	_, chosen := calendarFixture(t, st, "chosen", singleLinkRaw("chosen", "chosen@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	require.ErrorIs(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: chosen}), ErrQueryTooBroad)
+	var decisions int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&decisions))
+	assert.Zero(decisions, "a choice the reader cannot return must not be committed")
+}
+
 func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
