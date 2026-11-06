@@ -256,6 +256,71 @@ func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 	assert.Equal(store.LineReplySent, sent.State)
 }
 
+func TestLineReplyCompletionProjectsDirectChatRoster(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002", "Example Peer")
+	require.NoError(err)
+	require.NoError(st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
+	accepted := acceptedReply(t, st, draft)
+	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	policies, err := st.ListConversationPolicies(t.Context())
+	require.NoError(err)
+	require.Len(policies, 1)
+	assert.Equal(2, policies[0].Participants)
+	var joined time.Time
+	var left sql.NullTime
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cp.joined_at,cp.left_at FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+replyBotID).Scan(&joined, &left))
+	assert.True(accepted.AdmittedAt.Equal(joined))
+	assert.False(left.Valid)
+}
+
+func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		state := store.LineReplyRemoteUnknownExpired
+		if accepted {
+			state = store.LineReplyAcceptedUnresolvedExpired
+		}
+		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Microsecond)
+			admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+			require.NoError(err)
+			if accepted {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
+				require.NoError(err)
+			}
+			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+			unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal("Thanks!", unchanged.Body)
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(state, receipt.State)
+			assert.Empty(receipt.Body)
+			assert.Empty(receipt.QuoteToken)
+			assert.Empty(receipt.RemoteQuoteToken)
+			assert.Empty(receipt.SourceConversationID)
+			assert.Equal(admitted.RetryKey, receipt.RetryKey)
+			if accepted {
+				assert.Equal("accepted-request", receipt.RequestID)
+				assert.Equal(200, receipt.StatusCode)
+			}
+			target, err := st.GetOrCreateSource("line", "2000000002")
+			require.NoError(err)
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
+			require.NoError(err)
+		})
+	}
+}
+
 func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 	for _, phase := range []string{"delayed first push", "accepted"} {
 		t.Run(phase, func(t *testing.T) {
@@ -479,7 +544,7 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, draft, _ := replyStoreFixture(t)
-			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			now := time.Now().UTC().Truncate(time.Microsecond)
 			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
 			if state != store.LineReplyAdmitted {
