@@ -62,21 +62,14 @@ func TestMediaSizeSearch(t *testing.T) {
 				e.Message.FileName = ""
 			}
 			f.enqueue(t, e, time.Time{})
-			before, err := f.st.DerivedDataRevisionContext(t.Context())
-			must.NoError(err)
 			f.run(t)
 			if tc.retry {
 				_, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
 				must.NoError(err)
 				checks.Zero(total)
 				f.now = f.now.Add(time.Minute)
-				before, err = f.st.DerivedDataRevisionContext(t.Context())
-				must.NoError(err)
 				f.run(t)
 			}
-			after, err := f.st.DerivedDataRevisionContext(t.Context())
-			must.NoError(err)
-			checks.Greater(after, before, "stored media must refresh cached message facts")
 			messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
 			must.NoError(err)
 			checks.Equal(int64(1), total)

@@ -627,10 +627,7 @@ func (s *Store) UpsertLineAttachmentContext(ctx context.Context, messageID int64
 			return err
 		}
 		if write.State == attachmentpolicy.StateStored {
-			if err := recomputeMessageSizeEstimateWith(q, messageID); err != nil {
-				return err
-			}
-			return s.bumpDerivedDataRevisionContext(ctx, tx)
+			return recomputeMessageSizeEstimateWith(q, messageID)
 		}
 		return nil
 	})
