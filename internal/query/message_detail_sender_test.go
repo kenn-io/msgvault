@@ -114,18 +114,18 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 
 func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	db := dbtest.NewTestDB(t, "../store/schema.sql").DB
+	seedMessageDetailSenderRows(t, db)
+	_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
+	require.NoError(t, err)
 	for _, backend := range []string{"sqlite", "duckdb"} {
 		t.Run(backend, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-			db := dbtest.NewTestDB(t, "../store/schema.sql").DB
-			seedMessageDetailSenderRows(t, db)
-			_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
-			requirements.NoError(err)
 			var reader messageDetailReader = NewSQLiteEngine(db)
 			if backend == "duckdb" {
-				engine, err := NewDuckDBEngine("", "", db, DuckDBOptions{DisableSQLiteScanner: true})
+				engine, err := NewDuckDBEngine("", "", db)
 				requirements.NoError(err)
 				t.Cleanup(func() { _ = engine.Close() })
 				reader = engine
