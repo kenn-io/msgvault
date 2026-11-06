@@ -45,17 +45,18 @@ func TestSearchCommonWordUsesDateWindow(t *testing.T) {
 		accounts                  []int64
 		scope                     search.DeletionScope
 		limit, offset, statements int
+		matches                   int
 		walk                      bool
 	}{
-		{name: "common", text: "invoice", limit: 7, statements: 1, walk: true},
-		{name: "account", text: "invoice", accounts: []int64{1}, limit: 100, statements: 1},
-		{name: "OR", text: "invoice | budget", limit: 100, statements: 1},
-		{name: "deleted", text: "invoice", scope: search.DeletionScopeDeleted, limit: 100, statements: 1},
-		{name: "deep page", text: "invoice", limit: 100, offset: 5000, statements: 1},
-		{name: "old only", text: "oldest", limit: 7, statements: 2},
-		{name: "below window cap", text: "belowcap", limit: 10, statements: 1},
-		{name: "at window cap", text: "atcap", limit: 10, statements: 2},
-		{name: "no matches", text: "zzqx", limit: 100},
+		{name: "common", text: "invoice", limit: 7, statements: 1, matches: 2, walk: true},
+		{name: "account", text: "invoice", accounts: []int64{1}, limit: 100, statements: 1, matches: 1},
+		{name: "OR", text: "invoice | budget", limit: 100, statements: 1, matches: 2},
+		{name: "deleted", text: "invoice", scope: search.DeletionScopeDeleted, limit: 100, statements: 1, matches: 1},
+		{name: "deep page", text: "invoice", limit: 100, offset: 5000, statements: 1, matches: 1},
+		{name: "old only", text: "oldest", limit: 7, statements: 2, matches: 3},
+		{name: "below window cap", text: "belowcap", limit: 10, statements: 1, matches: 2},
+		{name: "at window cap", text: "atcap", limit: 10, statements: 2, matches: 3},
+		{name: "no matches", text: "zzqx", limit: 100, matches: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -73,9 +74,9 @@ func TestSearchCommonWordUsesDateWindow(t *testing.T) {
 					pages = append(pages, statement)
 				}
 			}
+			assert.Equal(tc.matches, matches)
 			require.Len(pages, tc.statements)
 			if tc.statements == 0 {
-				assert.Equal(1, matches)
 				return
 			}
 			if tc.statements == 2 {
