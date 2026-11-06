@@ -1185,7 +1185,7 @@ func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T)
 	assert.Empty(conflicts)
 }
 
-func TestCardDAVRemoteChangesKeepDeliveryPolicyPersons(t *testing.T) {
+func TestCardDAVRemoteChangesIgnoreDeliveryPolicyOwnership(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
 	input := remoteResource(book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`)

@@ -639,7 +639,7 @@ func TestDeliveryPolicyRestrictionNeedsAnAddressThePersonHolds(t *testing.T) {
 	assert.Equal(p.ID, seenPerson.ID)
 	require.NoError(f.Store.ReplaceMessageRecipients(f.CreateMessage("seen-in-mail"), "from", []int64{seen}, []string{"Seen In Mail"}))
 
-	// The restricting path is separate: a held but undeclared row can still be restricted.
+	// Approval needs a declared contact point; restriction needs a held row.
 	for _, c := range []struct {
 		address  string
 		policies []store.DeliveryPolicy
@@ -661,6 +661,12 @@ func TestDeliveryPolicyRestrictionNeedsAnAddressThePersonHolds(t *testing.T) {
 	var stored int
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM delivery_policies`).Scan(&stored))
 	assert.Zero(stored)
+
+	// A held but undeclared row can still be restricted.
+	restricted := setDelivery(t, f.Store, p.VCardUID, "extracted@example.test", store.DeliveryDraftOnly)
+	require.NotNil(restricted.After.StoredPolicy)
+	assert.Equal(store.DeliveryDraftOnly, *restricted.After.StoredPolicy)
+	assert.Equal(store.DeliveryDraftOnly, readDelivery(t, f.Store, p.VCardUID, "extracted@example.test").EffectivePolicy)
 
 	// Restricting cannot change on another person's spelling, so it succeeds.
 	deliveryContactPoint(t, f, other.ID, "<"+addresses[0]+">")
