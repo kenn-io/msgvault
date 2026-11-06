@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestImportCallObservationPreservesRawInteger(t *testing.T) {
+func TestCallClientImportPayloadAndQueryEncoding(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	var captured []byte

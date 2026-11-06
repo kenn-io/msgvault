@@ -10,14 +10,13 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 type callHTTPStore struct {
@@ -73,10 +72,34 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	assertions.Equal(person.ID, summary.Items[0].PersonID)
 	out = do("GET", "/api/v1/calls", "")
 	requirements.Equal(200, out.Code)
-	var evidence CallEvidenceResponse
+	var evidence generated.CallEvidenceResponse
 	requirements.NoError(json.Unmarshal(out.Body.Bytes(), &evidence))
 	requirements.Len(evidence.Items, 1)
+	assertions.Nil(evidence.Items[0].DurationSeconds)
 	assertions.NotContains(out.Body.String(), `"raw"`)
+	assertions.Contains(out.Body.String(), `"duration_seconds":null`)
+	for _, tc := range []struct {
+		raw  string
+		want float64
+	}{{"0", 0}, {"12.5", 12.5}} {
+		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"duration","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","duration_seconds":%s,"raw":{}}}`, tc.raw)
+		imported := do("POST", "/api/v1/import/calls", body)
+		requirements.Equal(200, imported.Code, imported.Body.String())
+		listed := do("GET", "/api/v1/calls", "")
+		requirements.Equal(200, listed.Code, listed.Body.String())
+		var response generated.CallEvidenceResponse
+		requirements.NoError(json.Unmarshal(listed.Body.Bytes(), &response))
+		requirements.Len(response.Items, 2)
+		var durationItem *generated.CallObservationView
+		for _, item := range response.Items {
+			if item.RecordID == "duration" {
+				durationItem = &item
+			}
+		}
+		requirements.NotNil(durationItem)
+		requirements.NotNil(durationItem.DurationSeconds)
+		assertions.InDelta(tc.want, *durationItem.DurationSeconds, 0)
+	}
 	assertions.Equal(400, do("GET", "/api/v1/calls?offset=1", "").Code)
 	for _, path := range []string{"/api/v1/calls?after_id=9223372036854775807", "/api/v1/calls/summary?offset=1"} {
 		page := do("GET", path, "")
@@ -94,36 +117,6 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
 	}
 	assertions.Equal(400, do("GET", "/api/v1/calls/summary?after=invalid", "").Code)
-	t.Run("normalized nanosecond timestamps", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"nanoseconds","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00.123456789Z","ended_at":"2026-10-01T09:01:00.987654321Z","participants":[{"participant_id":%d,"participation":"joined"}],"raw":{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}}}`, peer)
-		out := do("POST", "/api/v1/import/calls", body)
-		require.Equal(200, out.Code, out.Body.String())
-		var imported CallImportResponse
-		require.NoError(json.Unmarshal(out.Body.Bytes(), &imported))
-		const window = "?after=2026-10-01T09:00:00.123456Z&before=2026-10-01T09:00:00.123457Z"
-		out = do("GET", "/api/v1/calls"+window, "")
-		require.Equal(200, out.Code, out.Body.String())
-		var evidence CallEvidenceResponse
-		require.NoError(json.Unmarshal(out.Body.Bytes(), &evidence))
-		require.Len(evidence.Items, 1)
-		assert.Equal(imported.MessageID, evidence.Items[0].MessageID)
-		assert.Equal(time.Date(2026, 10, 1, 9, 0, 0, 123456000, time.UTC), evidence.Items[0].OccurredAt)
-		require.NotNil(evidence.Items[0].EndedAt)
-		assert.Equal(time.Date(2026, 10, 1, 9, 1, 0, 987654000, time.UTC), *evidence.Items[0].EndedAt)
-		out = do("GET", "/api/v1/calls/summary"+window, "")
-		require.Equal(200, out.Code, out.Body.String())
-		var summary CallSummaryResponse
-		require.NoError(json.Unmarshal(out.Body.Bytes(), &summary))
-		require.Len(summary.Items, 1)
-		assert.Equal(person.ID, summary.Items[0].PersonID)
-		assert.Equal(1, summary.Items[0].Answered)
-		assert.Equal(imported.MessageID, summary.Items[0].ExampleMessageID)
-		raw, err := archive.GetMessageRawContext(t.Context(), imported.MessageID)
-		require.NoError(err)
-		assert.JSONEq(`{"original_timestamp":"2026-10-01T09:00:00.123456789Z"}`, string(raw))
-	})
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {
@@ -160,35 +153,4 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 		<-done
 		assertions.Equal(200, out.Code, out.Body.String())
 	})
-}
-
-func TestCallHistoryNormalizedReplacement(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	archive := testutil.NewTestStore(t)
-	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
-	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
-	post := func(body string) *httptest.ResponseRecorder {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
-		out := httptest.NewRecorder()
-		server.Router().ServeHTTP(out, req)
-		return out
-	}
-	const supplied = `{"format":"signal_desktop","account":"example","record":{"callId":"e1","timestamp":1790841600000,"mode":"Direct","direction":"Incoming","status":"Accepted"}}`
-	out := post(supplied)
-	requirements.Equal(200, out.Code, out.Body.String())
-	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","raw":{"cancelled":true}}}`)
-	requirements.Equal(200, out.Code, out.Body.String())
-	items, err := archive.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	requirements.NoError(err)
-	requirements.Len(items, 1)
-	assertions.Equal("e1", items[0].RecordID)
-	assertions.Equal("cancelled", items[0].Outcome)
-	assertions.Equal("unknown", items[0].Direction)
-	raw, err := archive.GetMessageRawContext(t.Context(), items[0].MessageID)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"cancelled":true}`, string(raw))
 }

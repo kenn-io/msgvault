@@ -31,6 +31,8 @@ func TestObservationValidation(t *testing.T) {
 		{"unknown status", func(o *Observation) { o.Outcome = "unknown" }, true},
 		{"invalid status", func(o *Observation) { o.Outcome = "perhaps" }, false},
 		{"missing time", func(o *Observation) { o.OccurredAt = time.Time{} }, false},
+		{"blank account", func(o *Observation) { o.Account = " " }, false},
+		{"zero participant", func(o *Observation) { o.Participants[0].ID = 0 }, false},
 		{"negative participant", func(o *Observation) { o.Participants[0].ID = -1 }, false},
 		{"conflicting participant", func(o *Observation) {
 			o.Participants = append(o.Participants, Participant{ID: 1, Participation: "unknown"})

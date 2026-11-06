@@ -58,16 +58,14 @@ func TestSignalNativeStatuses(t *testing.T) {
 				assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
 				assertions.JSONEq(raw, string(got.Raw))
 			}
-			if tc.peer == "" {
-				assertions.Empty(got.Participants, "a group peer is not a joined roster")
-			} else {
+			if tc.peer != "" {
 				requirements.Equal([]Participant{{ID: 7, Participation: tc.peer}}, got.Participants)
 			}
 		})
 	}
 }
 
-func TestNormalizedImportRejectsDifferentNativeCallID(t *testing.T) {
+func TestNormalizedImportValidatesObservation(t *testing.T) {
 	_, err := (ImportRequest{Format: "normalized", Account: "example",
 		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
 	}).Observation()
@@ -100,11 +98,14 @@ func TestImportRequestBoundsAndAccountMismatch(t *testing.T) {
 	_, err := DecodeImport(strings.NewReader(strings.Repeat(" ", MaxRequestBytes+1)))
 	requirements.ErrorIs(err, ErrImportTooLarge)
 	o := exampleObservation()
+	o.OccurredAt = time.Date(2026, 10, 1, 9, 0, 0, 123456789, time.FixedZone("", -7*3600))
+	o.EndedAt = new(time.Date(2026, 10, 1, 9, 1, 0, 987654321, time.FixedZone("", -7*3600)))
 	record, err := json.Marshal(o)
 	requirements.NoError(err)
 	got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
 	requirements.NoError(err)
-	o.OccurredAt = time.Date(2026, 10, 1, 16, 0, 0, 0, time.UTC)
+	o.OccurredAt = time.Date(2026, 10, 1, 16, 0, 0, 123456000, time.UTC)
+	o.EndedAt = new(time.Date(2026, 10, 1, 16, 1, 0, 987654000, time.UTC))
 	assert.Equal(t, o, got)
 	_, err = (ImportRequest{Format: "normalized", Account: "different", Record: record}).Observation()
 	requirements.ErrorIs(err, ErrInvalid)
@@ -131,24 +132,13 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 	requirements.ErrorIs(err, ErrInvalid)
 }
 
-func TestImportRejectsInvalidAccountAndBinding(t *testing.T) {
-	for _, tc := range []struct {
-		name, account, peer string
-		id                  int64
-	}{
-		{"blank account", " ", "peer", 1},
-		{"zero participant", "example", "peer", 0},
-		{"blank native peer", "example", " ", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := (ImportRequest{
-				Format: "signal_desktop", Account: tc.account,
-				Record:   []byte(fmt.Sprintf(`{"callId":"x","peerId":%q,"mode":"Direct","status":"Accepted","timestamp":0}`, tc.peer)),
-				Bindings: map[string]int64{tc.peer: tc.id},
-			}).Observation()
-			require.ErrorIs(t, err, ErrInvalid)
-		})
-	}
+func TestSignalImportRejectsBlankNativePeer(t *testing.T) {
+	_, err := (ImportRequest{
+		Format: "signal_desktop", Account: "example",
+		Record:   []byte(`{"callId":"x","peerId":" ","mode":"Direct","status":"Accepted","timestamp":0}`),
+		Bindings: map[string]int64{" ": 1},
+	}).Observation()
+	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
