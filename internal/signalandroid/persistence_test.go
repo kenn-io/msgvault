@@ -96,6 +96,40 @@ func TestFailedWriteCounts(t *testing.T) {
 	assert.Equal(int64(1), summary.AttachmentsStored)
 }
 
+func TestRerunAfterGroupMemberWriteFailureRestoresRecipients(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir, storage := testutil.NewSQLiteTestStore(t), t.TempDir(), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	// Alice is only a group member, so her write failure reaches the to lookup.
+	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_group_member BEFORE INSERT ON participants WHEN NEW.phone_number = '+15555550101' BEGIN SELECT RAISE(ABORT, 'participant failure'); END`)
+	require.NoError(err)
+
+	summary := runImport(t, st, dir, storage)
+	assert.Positive(summary.Errors)
+	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the message unarchived until its recipients can be written")
+
+	_, err = st.DB().Exec(`DROP TRIGGER fail_group_member`)
+	require.NoError(err)
+	assert.Zero(runImport(t, st, dir, storage).Errors)
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT p.phone_number FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		JOIN participants p ON p.id = mr.participant_id
+		WHERE mr.recipient_type = 'to' AND m.source_message_id = ?`),
+		"signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup))
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var phones []string
+	for rows.Next() {
+		var phone string
+		require.NoError(rows.Scan(&phone))
+		phones = append(phones, phone)
+	}
+	require.NoError(rows.Err())
+	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
+}
+
 func TestRerunCountsUnchanged(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewTestStore(t), t.TempDir()
