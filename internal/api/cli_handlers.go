@@ -2423,8 +2423,8 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > RemoteSearchLimit && s.remoteClientRequest(r) {
-		writeError(w, http.StatusBadRequest, "remote_search_limit", fmt.Sprintf("Remote client search limit must not exceed %d", RemoteSearchLimit))
+	if limit > remoteSearchLimit && s.remoteClientRequest(r) {
+		writeError(w, http.StatusBadRequest, "remote_search_limit", fmt.Sprintf("Remote client search limit must not exceed %d", remoteSearchLimit))
 		return
 	}
 	offset := max(parseCLISearchInt(r.URL.Query().Get("offset"), 0), 0)

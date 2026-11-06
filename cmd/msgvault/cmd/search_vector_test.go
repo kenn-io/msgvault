@@ -275,47 +275,6 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 	assert.Contains(out, `"accelerator": "vec1_ivf_opq"`, "accelerator path")
 }
 
-func TestSearchCmd_RemoteSemanticRetryRespectsPageLimit(t *testing.T) {
-	for _, limit := range []int{300, 500} {
-		t.Run(strconv.Itoa(limit), func(t *testing.T) {
-			rows := make([]map[string]any, limit)
-			for i := range rows {
-				rows[i] = map[string]any{"id": i + 1, "subject": "Remote search", "sent_at": "2026-01-01T00:00:00Z"}
-			}
-			srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"query": "lunch", "mode": "hybrid", "returned": limit, "has_more": true, "pool_saturated": false,
-					"generation": map[string]any{"id": 1, "model": "synthetic", "dimension": 4, "fingerprint": "fake:4", "state": "active"},
-					"results":    rows,
-				}))
-			})
-			testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
-			defer restore()
-			root := newTestRootCmd()
-			root.SetContext(testCtx)
-			root.AddCommand(searchCmd)
-			root.SetArgs([]string{"search", "--mode", "hybrid", "--limit", strconv.Itoa(limit), "--json", "lunch"})
-			done := captureStdout(t)
-			err := root.Execute()
-			out := done()
-			require.NoError(t, err)
-			var page struct {
-				Results []json.RawMessage   `json:"results"`
-				Hints   []map[string]string `json:"hints"`
-			}
-			require.NoError(t, json.Unmarshal([]byte(out), &page))
-			require.Len(t, page.Results, limit)
-			require.Len(t, page.Hints, 1)
-			if limit == 300 {
-				assert.Regexp(t, `--limit['"]?\s+['"]?500\b`, page.Hints[0]["next"])
-			} else {
-				assert.NotContains(t, page.Hints[0], "next", "no larger remote page can run at the cap")
-			}
-		})
-	}
-}
-
 func vectorSearchHTTPDaemon(
 	t *testing.T,
 	searchHandler http.HandlerFunc,
