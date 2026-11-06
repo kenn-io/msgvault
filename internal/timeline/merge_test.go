@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,8 +10,61 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestTimelineMeetingKeepsAttendeesWithoutEmail(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	source, err := f.Store.GetOrCreateSource("caldav", "calendar@example.com")
+	requirements.NoError(err)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:named-guests@example.com\r\nDTSTART:20261022T100000Z\r\nDTEND:20261022T110000Z\r\nATTENDEE;CN=Guest One:\r\nATTENDEE;CN=Guest Two:\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "named-guests", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "named-guests", ConversationType: "calendar"},
+		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+		Metadata: &sql.NullString{String: `{"event_id":"[\"named-guests@example.com\",\"\"]","account_email":"calendar@example.com"}`, Valid: true},
+	})
+	requirements.NoError(err)
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	requirements.NotNil(entries[0].Meeting)
+	assertions.Equal(2, entries[0].Meeting.AttendeeCount)
+	assertions.Equal(2, entries[0].Meeting.PeopleCount)
+	var names []string
+	for _, person := range entries[0].Meeting.Attendees {
+		names = append(names, person.Name)
+	}
+	assertions.ElementsMatch([]string{"Guest One", "Guest Two"}, names)
+	req := dayRequest()
+	req.Date, req.From, req.To = "", "2026-10-22", "2026-10-24"
+	summarized, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(summarized.Days, 1)
+	requirements.NotNil(summarized.Days[0].Summary)
+	assertions.Equal(2, summarized.Days[0].Summary.PeopleCount)
+}
+
+func TestTimelinePeopleIdentityPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		people []Person
+		want   int
+	}{
+		{"saved aliases", []Person{{PersonID: 1, ParticipantID: 2}, {PersonID: 1, ParticipantID: 3}}, 1},
+		{"different people", []Person{{PersonID: 1, ParticipantID: 2}, {PersonID: 3, ParticipantID: 2}}, 2},
+		{"participant", []Person{{ParticipantID: 2}, {ParticipantID: 2}}, 1},
+		{"email", []Person{{email: " Guest@example.com "}, {email: "guest@example.com"}}, 1},
+		{"unknown", []Person{{Name: "Guest"}, {Name: "Guest"}}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Len(t, uniquePeople(tc.people), tc.want)
+		})
+	}
+}
 
 func TestTimelineLinkedMeetingPeopleOutsideNoteDay(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

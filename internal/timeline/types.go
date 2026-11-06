@@ -123,6 +123,7 @@ type ProjectionFreshness struct {
 
 // Person contains display metadata only; a zero PersonID denotes an unsaved contact.
 type Person struct {
+	email         string
 	TierSource    string `json:"tier_source"`
 	Truncated     bool   `json:"truncated,omitzero"`
 	PersonID      int64  `json:"person_id,omitempty"`

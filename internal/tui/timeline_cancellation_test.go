@@ -10,8 +10,35 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/timeline"
 )
+
+func TestTimelineModeExitSettlesLoading(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	m.engine = &querytest.MockEngine{}
+	cmd := m.startTimelineRequest(m.timelineState.request, false)
+	requirements.NotNil(cmd)
+	late := cmd()
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	requirements.True(ok)
+	away, cmd := sendKey(t, m, key('m'))
+	requirements.Equal(modeEmail, away.mode)
+	requirements.ErrorIs(backend.contexts[0].Err(), context.Canceled)
+	assertions.False(away.timelineState.loading)
+	away = sendMsg(t, away, late)
+	requirements.NotNil(cmd)
+	batch, ok := cmd().(tea.BatchMsg)
+	requirements.True(ok)
+	for _, load := range batch {
+		msg := load()
+		if _, ok := msg.(dataLoadedMsg); ok {
+			away = sendMsg(t, away, msg)
+		}
+	}
+	assertions.False(away.loading)
+}
 
 func TestTimelineRefreshFailureRestoresLastResult(t *testing.T) {
 	m := timelineModeModel()

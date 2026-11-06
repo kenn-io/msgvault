@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -647,7 +648,7 @@ func TestBuildDayUpcomingOnlyWhenWindowReachesToday(t *testing.T) {
 }
 
 func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
-	for _, kind := range []string{"burst", "meeting"} {
+	for _, kind := range []string{"burst", "meeting", "call"} {
 		t.Run(kind, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newTimelineFixture(t)
@@ -655,22 +656,34 @@ func TestBuildDayCountsLinkedAddressesOnce(t *testing.T) {
 			alias := f.EnsureParticipant("alice.work@example.com", "Alice work", "example.com")
 			_, err := f.Store.LinkParticipants(f.peer, alias)
 			requirements.NoError(err)
-			if kind == "burst" {
+			switch kind {
+			case "burst":
 				id := f.add(f.now.Add(-time.Hour), true)
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, alias}, nil))
 				f.project()
-			} else {
+			case "call":
+				o := callhistory.Observation{RecordID: "aliases", Version: 1, Provider: "signal", Account: "example", NativeCallID: "aliases", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.now.Add(-time.Hour), Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}, {ID: alias, Participation: "joined"}}, Raw: []byte(`{}`)}
+				src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+				requirements.NoError(err)
+				_, err = f.Store.PutCallObservationContext(t.Context(), src.ID, o)
+				requirements.NoError(err)
+			default:
 				f.calendar("aliases", `{"id":"aliases","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":[{"email":"alice@example.com"},{"email":"alice.work@example.com"},{"email":"guest@example.com"}]}`)
 			}
 			got, err := Build(t.Context(), f.src, dayRequest())
 			requirements.NoError(err)
 			entries := allDayEntries(got)
 			requirements.Len(entries, 1)
-			if kind == "burst" {
+			switch kind {
+			case "burst":
 				assertions.Equal(1, entries[0].Burst.PeopleCount)
 				requirements.Len(entries[0].Burst.People, 1)
 				assertions.Equal(person, entries[0].Burst.People[0].PersonID)
-			} else {
+			case "call":
+				assertions.Equal(1, entries[0].Call.PeopleCount)
+				requirements.Len(entries[0].Call.People, 1)
+				assertions.Equal(person, entries[0].Call.People[0].PersonID)
+			default:
 				assertions.Equal(2, entries[0].Meeting.PeopleCount)
 				requirements.Len(entries[0].Meeting.People, 2)
 				assertions.Equal(person, entries[0].Meeting.People[0].PersonID)

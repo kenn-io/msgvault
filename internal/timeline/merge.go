@@ -220,15 +220,10 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 				linked = append(linked, id)
 				hidden = hidden || d.HiddenText
 				count += actions[id]
-				for _, p := range transcriptPeople[id] {
-					if !slices.ContainsFunc(people, func(existing Person) bool {
-						return p.PersonID > 0 && p.PersonID == existing.PersonID || p.ParticipantID > 0 && p.ParticipantID == existing.ParticipantID
-					}) {
-						people = append(people, p)
-					}
-				}
+				people = append(people, transcriptPeople[id]...)
 			}
 		}
+		people = uniquePeople(people)
 		if !c.admitTier(people) {
 			continue
 		}
@@ -382,24 +377,17 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	c.gap("people", r.err, false)
 
 	people := []Person{}
-	seen := map[string]bool{}
-	seenPeople := map[int64]bool{}
 	for _, a := range o.Attendees {
 		email := strings.ToLower(strings.TrimSpace(a.Email))
-		if !slices.Contains(emails, a.Email) || seen[email] {
+		if !slices.Contains(emails, a.Email) {
 			continue
 		}
-		seen[email] = true
 		p := resolved[email]
-		if p.PersonID > 0 && seenPeople[p.PersonID] {
-			continue
-		}
-		seenPeople[p.PersonID] = true
 		name := a.DisplayName
 		if name == "" {
 			name = a.Email
 		}
-		people = append(people, Person{PersonID: p.PersonID, ParticipantID: p.ParticipantID, Name: name, TierSource: "none"})
+		people = append(people, Person{PersonID: p.PersonID, ParticipantID: p.ParticipantID, Name: name, email: email, TierSource: "none"})
 	}
 	return c.tierPeople(people)
 }
@@ -520,7 +508,7 @@ func (c *composer) groupDays(entries []Entry) {
 				continue
 			}
 			summary := &DaySummary{People: []Person{}}
-			people := map[string]Person{}
+			people := []Person{}
 			for _, e := range items {
 				if e.Meeting != nil {
 					summary.Meetings++
@@ -531,21 +519,9 @@ func (c *composer) groupDays(entries []Entry) {
 				if e.Call != nil {
 					summary.Calls++
 				}
-				for _, p := range EntryPeople(e) {
-					key := "name:" + p.Name
-					if p.PersonID > 0 {
-						key = fmt.Sprintf("person:%d", p.PersonID)
-					} else if p.ParticipantID > 0 {
-						key = fmt.Sprintf("participant:%d", p.ParticipantID)
-					}
-					if _, exists := people[key]; !exists {
-						people[key] = p
-					}
-				}
+				people = append(people, EntryPeople(e)...)
 			}
-			for _, p := range people {
-				summary.People = append(summary.People, p)
-			}
+			summary.People = uniquePeople(people)
 			slices.SortFunc(summary.People, func(a, b Person) int {
 				if n := cmp.Compare(a.Name, b.Name); n != 0 {
 					return n

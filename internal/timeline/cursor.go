@@ -2,7 +2,6 @@ package timeline
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
@@ -94,7 +93,7 @@ func EncodeCursor(b CursorBinding, positions map[string]string) (string, error) 
 }
 func DecodeCursor(value string, b CursorBinding) (Cursor, error) {
 	fail := func() (Cursor, error) { return Cursor{}, ErrCursorExpired }
-	if b.ArchiveUID == "" || len(value) > base64.RawURLEncoding.EncodedLen(cursorMaxBytes) {
+	if b.ArchiveUID == "" {
 		return fail()
 	}
 	var wire cursorWire

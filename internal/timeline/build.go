@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -340,6 +341,7 @@ func (c *composer) loadTiers(ids []int64) {
 	maps.Copy(c.tiers, r.value)
 }
 func (c *composer) tierPeople(people []Person) []Person {
+	people = uniquePeople(people)
 	ids := make([]int64, 0, len(people))
 	for _, p := range people {
 		ids = append(ids, p.PersonID)
@@ -354,23 +356,40 @@ func (c *composer) tierPeople(people []Person) []Person {
 	}
 	return people
 }
+
+func uniquePeople(people []Person) []Person {
+	seen := map[string]bool{}
+	return slices.DeleteFunc(people, func(p Person) bool {
+		var key string
+		switch {
+		case p.PersonID > 0:
+			key = fmt.Sprintf("person:%d", p.PersonID)
+		case p.ParticipantID > 0:
+			key = fmt.Sprintf("participant:%d", p.ParticipantID)
+		case strings.TrimSpace(p.email) != "":
+			key = "email:" + strings.ToLower(strings.TrimSpace(p.email))
+		default:
+			return false
+		}
+		duplicate := seen[key]
+		seen[key] = true
+		return duplicate
+	})
+}
+
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
 	people := []Person{}
-	seen := map[int64]bool{}
-	seenPeople := map[int64]bool{}
 	for _, p := range counterparts {
-		if p.Excluded != "" || seen[p.ParticipantID] || p.PersonID > 0 && seenPeople[p.PersonID] {
+		if p.Excluded != "" {
 			continue
 		}
-		seen[p.ParticipantID] = true
-		seenPeople[p.PersonID] = true
 		name := p.DisplayName
 		if name == "" {
 			name = p.Address
 		}
-		people = append(people, Person{PersonID: p.PersonID, ParticipantID: p.ParticipantID, Name: name, TierSource: "none"})
+		people = append(people, Person{PersonID: p.PersonID, ParticipantID: p.ParticipantID, Name: name, email: p.Address, TierSource: "none"})
 	}
-	return people
+	return uniquePeople(people)
 }
 
 func (c *composer) loopLimit() int {
