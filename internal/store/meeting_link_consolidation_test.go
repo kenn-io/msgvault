@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingcontent"
-	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestMeetingLinksDedupUndoAndPurge(t *testing.T) {
@@ -173,7 +172,7 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			eventData, event := calendarFixture(t, st, "event", singleLinkRaw("event", "merge@example.org"))
+			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "merge@example.org"))
 			var data *MessagePersistData
 			var note int64
 			if mode == "automatic" {
@@ -205,35 +204,15 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}
 			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
-			_, err = meetingLinksForTest(t, st, note)
+			links, err := meetingLinksForTest(t, st, note)
 			requirements.NoError(err, "a unique archived note remains readable through meeting links")
-			for _, transcriptIDs := range [][]int64{ids, nil} {
-				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: transcriptIDs})
-				requirements.NoError(err)
-				assertions.Equal("occ:"+ref, got.ByTranscript[note].Key)
-				assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-			}
-			// Grant visibility follows the destination, not the retired source.
-			for _, sourceID := range []int64{data.Message.SourceID, destination.ID} {
-				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{sourceID, eventData.Message.SourceID})
-				got, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
-				requirements.NoError(err)
-				if sourceID == destination.ID {
-					assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-				} else {
-					assertions.Empty(got.ByTranscript)
-					assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
-				}
-			}
+			requirements.Len(links, 1)
+			assertions.Equal(ref, links[0].Ref)
 			if mode == "automatic" {
 				_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
 				requirements.NoError(err)
 				_, err = meetingLinksForTest(t, st, note)
 				requirements.ErrorIs(err, sql.ErrNoRows)
-				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
-				requirements.NoError(err)
-				assertions.Empty(got.ByTranscript)
-				assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
 			}
 		})
 	}
