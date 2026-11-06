@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -134,6 +135,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 				assertions.Equal(int64(42), fake.id)
 				assertions.Equal("evt:81@20270314T100000Z", fake.event)
 				assertions.Equal(tc.args[0], fake.decision)
+				assertions.Equal("Cache state: ready\n", out.String())
 			}
 		})
 	}
@@ -143,6 +145,31 @@ func TestMeetingLinkCommands(t *testing.T) {
 		command, _, err := root.Find([]string{name})
 		requirements.NoError(err)
 		assertions.Equal(name, command.Name())
+	}
+}
+
+func TestIndependentCLIReportsStaleMeetingCounts(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newMeetingCountSeriesFixture(t, 1)
+	server := httptest.NewServer(api.NewServer(&config.Config{}, f.st, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(client.Close()) })
+	for _, decision := range []string{"link", "unlink"} {
+		command := newMeetingLinkDecisionCommand(decision, func(context.Context) (meetingLinkClient, func(), error) { return client, func() {}, nil })
+		var out bytes.Buffer
+		command.SetOut(&out)
+		command.SetArgs([]string{strconv.FormatInt(f.notes[0], 10), "--event", fmt.Sprintf("evt:%d@20260314T100000Z", f.event)})
+		requirements.NoError(command.Execute())
+		assertions.Equal("Cache state: stale\n", out.String(), decision)
+		record, err := f.st.MeetingRecordContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: f.notes[0]})
+		requirements.NoError(err)
+		if decision == "link" {
+			assertions.Len(record.Links, 1)
+		} else {
+			assertions.Empty(record.Links)
+		}
 	}
 }
 
