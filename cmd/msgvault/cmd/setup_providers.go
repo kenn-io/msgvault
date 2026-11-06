@@ -235,7 +235,7 @@ func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
 
 func (r ollamaProbeResult) hasModel(name string) bool {
 	for _, model := range r.Models {
-		if model == name || strings.HasPrefix(model, name+":") {
+		if model == name || model == name+":latest" {
 			return true
 		}
 	}

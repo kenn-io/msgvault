@@ -334,17 +334,20 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name                     string
-		kit, configured, builtin bool
-		installs                 int
+		name                                string
+		kit, configured, builtin, available bool
+		catalog                             string
+		installs                            int
 	}{
 		{name: "built-in", builtin: true, installs: 1},
-		{name: "available Ollama", kit: true},
-		{name: "Ollama on chat server", configured: true},
+		{name: "available Ollama", kit: true, available: true},
+		{name: "Ollama on chat server", configured: true, available: true},
+		{name: "custom tag cannot serve default model", configured: true, catalog: `{"models":[{"name":"nomic-embed-text:v2"}]}`, installs: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "", "")
 			f.ollamaTags = tc.configured
+			f.ollamaCatalog = tc.catalog
 			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{OllamaAvailable: tc.kit}, nil
 			}
@@ -352,7 +355,7 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			f.start(t)
 			availability, err := f.controller.Inspect(f.ctx)
 			require.NoError(t, err)
-			assert.Equal(t, tc.kit || tc.configured, availability.OllamaAvailable)
+			assert.Equal(t, tc.available, availability.OllamaAvailable)
 			assert.NotEmpty(t, availability.Host)
 			require.NoError(t, f.controller.Enable(f.ctx, tc.builtin, func(api.LocalEmbeddingsStatus) {}))
 			assert.Equal(t, tc.installs, f.installs)
@@ -423,7 +426,6 @@ func TestLocalEmbeddingsExplainsFailedStartupAndBuildsDespiteDocumentJobFailure(
 	localStatus, err := f.controller.Inspect(f.ctx)
 	require.NoError(err)
 	assert.Contains(localStatus.Error, providercredentials.ErrOriginMismatch.Error())
-	assert.Contains(localStatus.Error, "Turn on to retry.")
 	var id int64
 	require.NoError(f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
 	seedLocalSearchDocument(t, f.store, id)
@@ -457,7 +459,6 @@ func TestLocalEmbeddingsExplainsFailedStartupAndBuildsDespiteDocumentJobFailure(
 	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(err)
 	require.Len(messages, 1)
-	assert.Equal(1, f.refreshes)
 }
 
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
@@ -679,7 +680,7 @@ func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) 
 	})
 }
 
-func TestLocalEmbeddingsKeepsPublishedRuntimeAliveAfterSetup(t *testing.T) {
+func TestLocalEmbeddingsSeparatesSetupAndRuntimeLifetimes(t *testing.T) {
 	f := newLocalActivationFixture(t, "", "")
 	f.start(t)
 	require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))

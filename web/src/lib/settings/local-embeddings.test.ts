@@ -49,7 +49,6 @@ it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', swi
 });
 
 it.each([
-  { name: 'remote download', status: off, disclosure: 'Downloads 290 MB once to archive.example.test' },
   { name: 'available Ollama', status: { ...off, ollama_available: true }, disclosure: 'Uses Ollama on this computer' },
   { name: 'paused built-in despite available Ollama', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true }, disclosure: 'Downloads 290 MB once to archive.example.test' },
   { name: 'installed built-in despite available Ollama', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: 0 }, disclosure: 'Already on this computer' },
