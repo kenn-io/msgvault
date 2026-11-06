@@ -391,6 +391,47 @@ func TestReplyExpiryPermanentlyStopsProviderIO(t *testing.T) {
 	})
 }
 
+func TestReplyExpiredAdmittedAttemptNeedsNoCredentials(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newReplyFixture(t, "user", nil)
+			initial := f.now
+			f.resetClient()
+			f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
+			sender := f.sender()
+			pending, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			must.ErrorIs(err, line.ErrCredentialsUnavailable)
+			must.Equal(store.LineReplyAdmitted, pending.Status)
+			f.now = initial.Add(22 * time.Hour)
+			f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"90000"}}})
+			pending, err = sender.Send(t.Context(), f.draft.DraftID, 1)
+			must.ErrorIs(err, line.ErrCredentialsUnavailable)
+			must.Equal(store.LineReplyAdmitted, pending.Status)
+			must.NotNil(pending.RetryAfter)
+			if status == http.StatusTooManyRequests {
+				checks.True(pending.RetryAfter.After(initial.Add(23 * time.Hour)))
+			}
+			f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
+			f.now = initial.Add(23 * time.Hour)
+			expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			must.NoError(err)
+			checks.Equal(store.LineReplyRemoteUnknownExpired, expired.Status)
+			checks.False(expired.Accepted)
+			attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+			must.NoError(err)
+			checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
+			checks.Empty(attempt.Body)
+			checks.Empty(attempt.QuoteToken)
+			checks.Empty(attempt.RemoteQuoteToken)
+			checks.Empty(attempt.SourceConversationID)
+			checks.Equal(3, f.fake.Count(http.MethodPost, "/oauth2/v3/token"))
+			checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		})
+	}
+}
+
 func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 	t.Run("Bad Request", func(t *testing.T) {
 		assert := assert.New(t)
