@@ -137,3 +137,27 @@ func TestMeetingRecordIncludesFormerCopyGoogleOccurrence(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, []int64{note}, record.MessageIDs)
 }
+
+func TestMeetingRecordSparseCancelledCopySkipsUnidentifiedNotes(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
+	cancelled := `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`
+	calendarFixture(t, st, "cancelled", cancelled)
+	calendarFixture(t, st, "copy-cancelled", cancelled, "copy@example.com")
+	logs := captureSlog(t)
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true, SlowMs: 60_000})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	ref := MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"}
+	_, err := st.MeetingRecordContext(t.Context(), ref)
+	require.NoError(err)
+	queries := strings.Count(logs.String(), `"msg":"sql"`)
+	require.Positive(queries)
+	projectionFixture(t, st, "unrelated", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-21T10:00:00Z"}}`)
+	logs.Reset()
+	record, err := st.MeetingRecordContext(t.Context(), ref)
+	require.NoError(err)
+	assert.Empty(t, record.MessageIDs)
+	assert.Equal(t, queries, strings.Count(logs.String(), `"msg":"sql"`), "unrelated scheduled-only notes must not add candidate reads")
+}
