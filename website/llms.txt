@@ -86,6 +86,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
 - [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files
 - [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md)
+- [One-to-one continuity](https://msgvault.io/docs/guides/one-to-one.md)
 - [FAQ](https://msgvault.io/docs/faq.md)
 - [Changelog](https://msgvault.io/docs/changelog.md): released and unreleased changes, with upgrade notes
 

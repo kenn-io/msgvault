@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-06"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4550,8 +4550,8 @@ msgvault skills uninstall
 ```
 
 Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
-writes the `msgvault-search`, `msgvault-attachments`, and
-`msgvault-analytics` skills to their user-level skill directories. Existing
+writes the `msgvault-search`, `msgvault-attachments`, `msgvault-analytics`, and
+`msgvault-one-to-one` skills to their user-level skill directories. Existing
 generated copies are updated in place; files without msgvault's generation
 marker are preserved unless `--force` is supplied.
 
