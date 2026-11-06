@@ -2214,35 +2214,46 @@ func appendSQLiteAddressCondition(
 }
 
 func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
-	if page, ok, err := e.searchNewestFirst(ctx, q, limit, offset); ok || err != nil {
+	conditions, args, ftsJoin := e.buildSearchCriteria(ctx, q, false)
+	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
 		return page, err
 	}
-	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, q)
+	conditions = append([]string{searchMessageVisibilityWhere("m", q)}, conditions...)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
 const (
-	searchWalkWindow     = 16
+	// Sixteen messages per wanted result fills pages at roughly 6% recent matches.
+	searchWalkWindow = 16
+	// Cap the window at 16,000 messages to bound the cost of an unsuccessful try.
 	searchWalkMaxResults = 1000
 )
 
-func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, bool, error) {
+func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, bool, error) {
 	if limit == 0 {
 		limit = 100
 	}
-	if _, ok := e.dialect.(SQLiteQueryDialect); !ok || len(q.TextTerms) == 0 || q.HasOR() || q.DeletionScope == search.DeletionScopeDeleted || limit+offset <= 0 || limit+offset > searchWalkMaxResults || !e.hasFTSTable(ctx) {
+	if _, ok := e.dialect.(SQLiteQueryDialect); !ok || len(q.TextTerms) == 0 || q.HasOR() || q.DeletionScope == search.DeletionScopeDeleted || limit+offset <= 0 || limit+offset > searchWalkMaxResults || ftsJoin == "" {
 		return nil, false, nil
 	}
-	conditions, args, _ := e.buildSearchCriteria(ctx, q, true)
+	// Text-only means buildSearchCriteria returned just the FTS condition.
 	if len(conditions) != 1 {
+		return nil, false, nil
+	}
+	var hits int
+	if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?)`, args[0], limit+offset).Scan(&hits); err != nil {
+		return nil, false, fmt.Errorf("count search hits for newest-first page: %w", err)
+	}
+	if hits < limit+offset {
 		return nil, false, nil
 	}
 	// A full page from this date prefix is also the full archive's page.
 	// Include cutoff ties to preserve the existing id ordering within a date.
-	conditions = append([]string{
+	conditions = []string{
 		searchMessageVisibilityWhere("m", q),
 		"m.sent_at >= (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
-	}, conditions...)
+		store.SQLiteFTSRowIDCondition(conditions[0]),
+	}
 	args = append([]any{searchWalkWindow*(limit+offset) - 1}, args...)
 	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
 	return page, len(page) == limit, err

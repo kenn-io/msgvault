@@ -52,8 +52,8 @@ func TestSearchCommonWordUsesDateWindow(t *testing.T) {
 		{name: "OR", text: "invoice | budget", limit: 100, statements: 1},
 		{name: "deleted", text: "invoice", scope: search.DeletionScopeDeleted, limit: 100, statements: 1},
 		{name: "deep page", text: "invoice", limit: 100, offset: 5000, statements: 1},
-		{name: "rare", text: "rareword", limit: 100, statements: 2},
-		{name: "no matches", text: "zzqx", limit: 100, statements: 2},
+		{name: "rare", text: "rareword", limit: 100, statements: 1},
+		{name: "no matches", text: "zzqx", limit: 100, statements: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
