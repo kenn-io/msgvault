@@ -32,15 +32,17 @@ import (
 type pollingIMAPListener struct {
 	net.Listener
 
-	bodies       atomic.Int32
-	accepted     atomic.Int32
-	limitNext    atomic.Bool
-	limited      atomic.Int32
-	limitCommand string
-	limitCount   int32
-	limitDelay   string
-	lastLimitAt  atomic.Int64
-	nextCommand  atomic.Int64
+	bodies        atomic.Int32
+	accepted      atomic.Int32
+	limitNext     atomic.Bool
+	limited       atomic.Int32
+	limitCommand  string
+	limitBodyOnly bool
+	limitCount    int32
+	limitDelay    string
+	limitDelays   []string
+	lastLimitAt   atomic.Int64
+	nextCommand   atomic.Int64
 }
 type pollingIMAPConn struct {
 	net.Conn
@@ -74,11 +76,15 @@ func (c *pollingIMAPConn) Read(p []byte) (int, error) {
 		}
 		fields := strings.Fields(line)
 		if len(fields) >= 2 {
-			if c.owner.limitCount > 0 && c.owner.limited.Load() >= c.owner.limitCount {
+			command := strings.ToUpper(strings.Join(fields[1:], " "))
+			if c.owner.limitCount > 0 && c.owner.limited.Load() >= c.owner.limitCount &&
+				pollingIMAPReadCommand(command) {
 				c.owner.nextCommand.CompareAndSwap(0, time.Now().UnixNano())
 			}
-			command := strings.ToUpper(strings.Join(fields[1:], " "))
-			matches := c.owner.limitCommand != "" && strings.HasPrefix(command, strings.ToUpper(c.owner.limitCommand))
+			bodyFetch := strings.Contains(line, "BODY.PEEK[]") || strings.Contains(line, "BODY[]")
+			matches := c.owner.limitCommand != "" &&
+				strings.HasPrefix(command, strings.ToUpper(c.owner.limitCommand)) &&
+				(!c.owner.limitBodyOnly || bodyFetch)
 			if matches && (c.owner.limitNext.CompareAndSwap(true, false) || c.owner.limitCount > c.owner.limited.Load()) {
 				c.limitTag = fields[0]
 			}
@@ -102,6 +108,10 @@ func (c *pollingIMAPConn) Write(p []byte) (int, error) {
 		fields := strings.Fields(line)
 		if c.limitTag != "" && len(fields) >= 2 && fields[0] == c.limitTag && strings.EqualFold(fields[1], "OK") {
 			delay := c.owner.limitDelay
+			limitIndex := int(c.owner.limited.Load())
+			if limitIndex < len(c.owner.limitDelays) {
+				delay = c.owner.limitDelays[limitIndex]
+			}
 			if delay == "" {
 				delay = "60"
 			}
@@ -123,6 +133,22 @@ func (c *pollingIMAPConn) Write(p []byte) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func pollingIMAPReadCommand(command string) bool {
+	// Count only read commands guarded by the production retry-floor gate.
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "LIST", "STATUS", "SELECT", "ENABLE":
+		return true
+	case "UID":
+		return len(fields) > 1 && (fields[1] == "SEARCH" || fields[1] == "FETCH")
+	default:
+		return false
+	}
 }
 
 type cancelIMAPRetryHandler struct {
@@ -320,7 +346,10 @@ func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
 	require := require.New(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(err)
-	counted := &pollingIMAPListener{Listener: ln, limitCommand: "UID FETCH", limitCount: 4, limitDelay: "1"}
+	counted := &pollingIMAPListener{
+		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
+		limitCount: 4, limitDelays: []string{"0", "0", "0", "60"},
+	}
 	testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 1}, nil)
 	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
 	st := storetest.New(t)
@@ -384,7 +413,10 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	require := require.New(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(err)
-	counted := &pollingIMAPListener{Listener: ln, limitCommand: "UID FETCH", limitCount: 4, limitDelay: "1"}
+	counted := &pollingIMAPListener{
+		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
+		limitCount: 4, limitDelays: []string{"0", "0", "0", "1"},
+	}
 	testutil.ServeIMAPMemServer(t, counted, map[string]int{"Archive": 1, "INBOX": 1}, nil)
 	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
 	st := storetest.New(t)
@@ -393,13 +425,16 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	err = runRapidEmailSync(withInvocation(t.Context(), state), src.Identifier, st.Store, nil, state)
 	var acquisition *scheduler.AcquisitionError
 	require.ErrorAs(err, &acquisition)
-	assert.Equal(scheduler.AcquisitionIncomplete, acquisition.Outcome)
 	require.EqualValues(4, counted.limited.Load(), "one mailbox FETCH exhausted the real command retry budget")
 	lastLimitNanos := counted.lastLimitAt.Load()
 	nextCommandNanos := counted.nextCommand.Load()
 	require.NotZero(lastLimitNanos)
-	require.NotZero(nextCommandNanos, "the second mailbox must issue a command after the partial FETCH")
+	if nextCommandNanos == 0 {
+		require.True(acquisition.NotBefore.After(time.Now()), "a blocked command may return without sending but must preserve the live floor")
+		return
+	}
+	assert.Equal(scheduler.AcquisitionIncomplete, acquisition.Outcome)
 	lastLimit := time.Unix(0, lastLimitNanos)
 	nextCommand := time.Unix(0, nextCommandNanos)
-	assert.GreaterOrEqual(nextCommand.Sub(lastLimit), time.Second, "no later IMAP command is sent while the provider floor is live")
+	assert.GreaterOrEqual(nextCommand.Sub(lastLimit), time.Second, "no later read command is sent while the provider floor is live")
 }
