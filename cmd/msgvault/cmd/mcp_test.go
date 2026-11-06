@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -23,6 +24,14 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
+
+func TestMCPToolSummaryFlagsExist(t *testing.T) {
+	for _, summary := range mcpserver.ToolSummaries() {
+		if summary.Flag != "" {
+			assert.NotNil(t, mcpCmd.Flags().Lookup(strings.TrimPrefix(summary.Flag, "--")), "%s", summary.Name)
+		}
+	}
+}
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)

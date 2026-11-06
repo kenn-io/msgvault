@@ -219,14 +219,42 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	}
 }
 
+var aggregateBaselineConditions = map[string]struct{}{
+	store.LiveMessagesWhere("m", false): {},
+	store.LiveMessagesWhere("m", true):  {},
+	emailOnlyFilterM:                    {},
+	textMsgTypeFilter():                 {},
+}
+
 // buildAggregateSQL builds a complete aggregate query from a dimension and filter parts.
-func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string, sort string) string {
+func buildAggregateSQL(dim aggDimension, filterJoins string, filterConditions []string, sort string) string {
 	allJoins := dim.joins
 	if filterJoins != "" {
 		allJoins += "\n" + filterJoins
 	}
 
-	allWhere := filterWhere
+	narrowed := false
+	for _, condition := range filterConditions {
+		if _, baseline := aggregateBaselineConditions[condition]; !baseline {
+			narrowed = true
+			break
+		}
+	}
+	attachmentSize := "COALESCE(SUM(att.att_size), 0)"
+	attachmentCount := "COALESCE(SUM(att.att_count), 0)"
+	if narrowed {
+		attachmentSize = "COALESCE(SUM((SELECT SUM(a.size) FROM attachments a WHERE a.message_id = m.id)), 0)"
+		attachmentCount = "COALESCE(SUM((SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id)), 0)"
+	} else {
+		allJoins += `
+			LEFT JOIN (
+				SELECT message_id, SUM(size) as att_size, COUNT(*) as att_count
+				FROM attachments
+				GROUP BY message_id
+			) att ON att.message_id = m.id`
+	}
+
+	allWhere := strings.Join(filterConditions, " AND ")
 	if dim.whereExpr != "" {
 		allWhere += " AND " + dim.whereExpr
 	}
@@ -245,22 +273,17 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 				%s as key,
 				COUNT(*) as count,
 				COALESCE(SUM(m.size_estimate), 0) as total_size,
-				COALESCE(SUM(att.att_size), 0) as attachment_size,
-				COALESCE(SUM(att.att_count), 0) as attachment_count,
+				%s as attachment_size,
+				%s as attachment_count,
 				COUNT(*) OVER() as total_unique
 			FROM messages m
 			%s
-			LEFT JOIN (
-				SELECT message_id, SUM(size) as att_size, COUNT(*) as att_count
-				FROM attachments
-				GROUP BY message_id
-			) att ON att.message_id = m.id
 			WHERE %s
 		GROUP BY %s
 	) AS agg
 		%s
 		LIMIT ?
-	`, dim.keyExpr, allJoins, allWhere, groupExpr, sort)
+	`, dim.keyExpr, attachmentSize, attachmentCount, allJoins, allWhere, groupExpr, sort)
 }
 
 // optsToFilterConditions converts AggregateOptions into WHERE conditions and args.
@@ -328,10 +351,10 @@ func sortClause(opts AggregateOptions) (string, error) {
 // This is used for SubAggregate to apply drill-down filters before sub-grouping.
 func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (string, []string, []any) {
 	predicate, args := senderMatchSQL(filter, 0)
-	return e.buildFilterWithSender(filter, predicate, args)
+	return e.buildFilterWithSender(filter, "m.source_id", predicate, args)
 }
 
-func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, senderPredicate string, senderArgs []any) (string, []string, []any) {
+func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn string, senderPredicate string, senderArgs []any) (string, []string, []any) {
 	// Structured filters use membership or correlated subqueries, so this
 	// builder emits no JOIN of its own. The empty join slot is preserved because callers
 	// (SubAggregate) concatenate the search-side FTS join onto it.
@@ -346,8 +369,8 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, senderPredica
 	// source-deleted on filter.HideDeletedFromSource via the helper.
 	conditions = append(conditions, store.LiveMessagesWhere("m", filter.HideDeletedFromSource))
 
-	conditions, args = appendSourceFilter(
-		conditions, args, prefix, filter.SourceID, filter.SourceIDs,
+	conditions, args = appendIDFilter(
+		conditions, args, sourceColumn, filter.SourceID, filter.SourceIDs,
 	)
 	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "m")
 
@@ -880,12 +903,7 @@ func (e *SQLiteEngine) executeAggregate(ctx context.Context, groupBy ViewType, o
 		limit = 100
 	}
 
-	filterWhere := "1=1"
-	if len(filterConditions) > 0 {
-		filterWhere = strings.Join(filterConditions, " AND ")
-	}
-
-	query := buildAggregateSQL(dim, filterJoins, filterWhere, sort)
+	query := buildAggregateSQL(dim, filterJoins, filterConditions, sort)
 	args = append(args, limit)
 	return e.executeAggregateQuery(ctx, query, args)
 }
@@ -986,8 +1004,12 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			membership = true
 		}
 	}
-	filterJoins, conditions, args := e.buildFilterWithSender(filter, senderPredicate, senderArgs)
-	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	sourceColumn := "m.source_id"
+	if filter.Sorting.Field == MessageSortByDate && filter.ConversationID == nil {
+		sourceColumn = e.dialect.SourceTimelineColumn()
+	}
+	filterJoins, conditions, args := e.buildFilterWithSender(filter, sourceColumn, senderPredicate, senderArgs)
+	conditions, args = appendIDFilter(conditions, args, sourceColumn, nil, sourcescope.IDs(ctx))
 
 	// IN and EXISTS predicates keep each matching message to one row, so
 	// SELECT DISTINCT is unnecessary (and avoided per the SQL guideline:
@@ -2193,7 +2215,45 @@ func appendSQLiteAddressCondition(
 
 func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, q)
+	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
+		return page, err
+	}
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+}
+
+const (
+	// 128 messages per wanted result fills pages at about 0.8% recent density.
+	// Only try when the full sort would touch at least a window of hits.
+	searchWalkWindow     = 128
+	searchWalkMaxResults = 1000
+)
+
+func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, bool, error) {
+	// Text-only means visibility plus the FTS match.
+	if ftsJoin == "" || len(conditions) != 2 || q.DeletionScope == search.DeletionScopeDeleted || limit <= 0 || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
+		return nil, false, nil
+	}
+	window := searchWalkWindow * (limit + offset)
+	var hits int
+	if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?)`, args[0], window).Scan(&hits); err != nil {
+		return nil, false, fmt.Errorf("count search hits for newest-first page: %w", err)
+	}
+	if hits == 0 {
+		return nil, true, nil
+	}
+	if hits < window {
+		return nil, false, nil
+	}
+	// A full page from this date prefix is also the full archive's page.
+	// Exclude cutoff ties to keep the prefix within the window bound.
+	conditions = []string{
+		conditions[0],
+		"m.sent_at > (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
+		store.SQLiteFTSRowIDCondition(conditions[1]),
+	}
+	args = append([]any{window - 1}, args...)
+	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
+	return page, len(page) == limit, err
 }
 
 // SearchMessageBodies performs exact body-only full-text search and uses the
@@ -2405,10 +2465,9 @@ func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
-// executeSearchQuery runs a search query built from conditions and the
-// optional FTS join, returning paginated MessageSummary results. Shared
-// by Search and SearchFast.
-func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, error) {
+// executeSearchQuery returns paginated MessageSummary results from conditions
+// and joins or an index hint that follow messages m. Shared by Search and SearchFast.
+func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, pageSource string, limit, offset int) ([]MessageSummary, error) {
 	if limit == 0 {
 		limit = 100
 	}
@@ -2420,7 +2479,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 
 	// Choose the page before joining display details. The sender join selects
 	// one row per message, preserving the page's size and order.
-	query := searchResultsSQL(ftsJoin, whereClause)
+	query := searchResultsSQL(pageSource, whereClause)
 	args = append(args, limit, offset)
 
 	rows, err := e.queryContext(ctx, query, args...)
@@ -2481,7 +2540,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 
 // searchResultsSQL selects the result page before loading sender and
 // conversation details. Tests EXPLAIN it to pin the plan.
-func searchResultsSQL(ftsJoin, whereClause string) string {
+func searchResultsSQL(pageSource, whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -2513,7 +2572,7 @@ func searchResultsSQL(ftsJoin, whereClause string) string {
 		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		ORDER BY m.sent_at DESC, m.id DESC
-	`, sqliteSenderNameExpr, ftsJoin, whereClause, sqliteSenderJoin)
+	`, sqliteSenderNameExpr, pageSource, whereClause, sqliteSenderJoin)
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.

@@ -268,6 +268,7 @@ type Server struct {
 	statsSnapshotWait       time.Duration
 	vectorStatsTimeout      time.Duration
 
+	senderAuthPins         map[int64][]string
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
@@ -645,6 +646,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                    opts.Config,
+		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,

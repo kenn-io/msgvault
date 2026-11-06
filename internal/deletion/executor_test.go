@@ -1504,28 +1504,51 @@ func TestExecutor_OnStartRetryDoesNotShow100Percent(t *testing.T) {
 // ErrManifestCancelled, and leaves the manifest cancelled rather than resurrected
 // or completed.
 func TestExecutor_Execute_CooperativeCancel(t *testing.T) {
-	tc := NewTestContext(t)
-	manifest := tc.CreateManifest("coop cancel", msgIDs(10))
+	t.Run("before checkpoint", func(t *testing.T) {
+		tc := NewTestContext(t)
+		manifest := tc.CreateManifest("coop cancel", msgIDs(10))
 
-	callCount := 0
-	tc.MockAPI.BeforeTrash = func(string) error {
-		callCount++
-		if callCount == 1 {
-			// Simulate the daemon cancelling the in-progress batch mid-run.
-			require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+		callCount := 0
+		tc.MockAPI.BeforeTrash = func(string) error {
+			callCount++
+			if callCount == 1 {
+				// Simulate the daemon cancelling the in-progress batch mid-run.
+				require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+			}
+			return nil
 		}
-		return nil
-	}
 
-	err := tc.Execute(manifest.ID)
-	require.ErrorIs(t, err, ErrManifestCancelled, "Execute() error")
+		err := tc.Execute(manifest.ID)
+		require.ErrorIs(t, err, ErrManifestCancelled, "Execute() error")
 
-	assert.Less(t, len(tc.MockAPI.TrashCalls), 10, "stopped before deleting all messages")
-	tc.AssertNotCompleted()
-	tc.AssertInProgressCount(0)
-	tc.AssertCompletedCount(0)
-	tc.AssertFailedCount(0)
-	tc.AssertCancelledCount(1)
+		assert.Less(t, len(tc.MockAPI.TrashCalls), 10, "stopped before deleting all messages")
+		tc.AssertNotCompleted()
+		tc.AssertInProgressCount(0)
+		tc.AssertCompletedCount(0)
+		tc.AssertFailedCount(0)
+		tc.AssertCancelledCount(1)
+	})
+	t.Run("after checkpoint", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tc := NewTestContext(t)
+		m := tc.CreateManifest("cancel progress", msgIDs(3))
+		tc.MockAPI.BeforeTrash = func(id string) error {
+			if id == "msg1" {
+				require.NoError(tc.Mgr.CancelManifest(m.ID))
+			}
+			return nil
+		}
+		require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
+		assert.True(tc.Mgr.ManifestCancelled(m.ID))
+		assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
+		cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
+		require.NoError(err)
+		assert.Equal(StatusCancelled, status)
+		require.NotNil(cancelled.Execution)
+		assert.Equal(1, cancelled.Execution.Succeeded)
+		assert.Equal(1, cancelled.Execution.LastProcessedIndex)
+	})
 }
 
 // TestExecutor_Execute_NoResurrectionOnFinalize cancels the manifest on the
@@ -1595,32 +1618,34 @@ func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
 	tc.AssertCancelledCount(1)
 }
 
-// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest drives the
-// exact checkpoint-write race: a manifest is claimed into in_progress/, then a
-// daemon cancel moves it to cancelled/ in the window where the executor's
-// cancellation stat would previously have already passed. The subsequent
-// checkpoint write must NOT recreate in_progress/<id>.json; the manifest must
-// remain only in cancelled/.
+// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest verifies that
+// a checkpoint after cancellation leaves the manifest and its journal absent
+// from the active execution state.
 func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("checkpoint race", msgIDs(10))
 
 	// Claim into in_progress/ as prepareExecution would.
-	require.NoError(t, tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
+	require.NoError(tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
 	manifest.Status = StatusInProgress
 	manifest.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
 	path := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
 
 	// The daemon cancels right before the checkpoint write lands.
-	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+	require.NoError(tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
 
 	// Invoke the checkpoint write directly at the race boundary.
-	tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil)
+	assert.False(tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0))
 
+	// A false return alone would miss an executor write after manager rejection.
 	// The in_progress file must not be resurrected; the manifest lives only
 	// in cancelled/.
 	_, statErr := os.Stat(path)
-	assert.True(t, os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
+	assert.True(os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
+	_, err := os.Stat(journalPath(path))
+	require.ErrorIs(err, os.ErrNotExist, "cancelled execution must leave no journal")
 	tc.AssertInProgressCount(0)
 	tc.AssertCompletedCount(0)
 	tc.AssertCancelledCount(1)

@@ -31,7 +31,7 @@ const (
 )
 
 // removeAccountAfterCascadeHook pauses tests after the database mutation and
-// before the lock-held cache rebuild.
+// before the cache rebuild.
 var removeAccountAfterCascadeHook func()
 
 // removeAccountBeforeDiscordLifecycleLockHook lets tests observe that store
@@ -331,7 +331,6 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			cfg.AnalyticsDir(),
 			true,
 			false,
-			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		)
 		return errors.Join(

@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
@@ -414,6 +415,16 @@ func (c CardDAVConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 	return origin, addresses, nil
 }
 
+// WhatsAppAppleSource schedules imports from a native macOS WhatsApp store.
+type WhatsAppAppleSource struct {
+	Name        string `toml:"name"`
+	Enabled     bool   `toml:"enabled"`
+	Path        string `toml:"path"`
+	Phone       string `toml:"phone"`
+	DisplayName string `toml:"display_name"`
+	Schedule    string `toml:"schedule"`
+}
+
 type SynctechSMSConfig struct {
 	Sources []SynctechSMSSource `toml:"sources"`
 }
@@ -563,7 +574,27 @@ func (b *BackupConfig) Validate() error {
 	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
 }
 
+// SenderAuthConfig pins receiver identities for each archive source.
+type SenderAuthConfig struct {
+	Sources []SenderAuthSource `toml:"sources"`
+}
+
+type SenderAuthSource struct {
+	SourceID           int64    `toml:"source_id"`
+	TrustedAuthservIDs []string `toml:"trusted_authserv_ids"`
+}
+
+// Pins returns a snapshot that callers can retain across config edits.
+func (c SenderAuthConfig) Pins() map[int64][]string {
+	pins := make(map[int64][]string, len(c.Sources))
+	for _, source := range c.Sources {
+		pins[source.SourceID] = append([]string(nil), source.TrustedAuthservIDs...)
+	}
+	return pins
+}
+
 type Config struct {
+	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -582,6 +613,7 @@ type Config struct {
 	CardDAV            CardDAVConfig                   `toml:"carddav"`
 	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
 	Accounts           []AccountSchedule               `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
@@ -1168,6 +1200,16 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
+	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
+	for i := range cfg.WhatsAppApple {
+		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
+		if !cfg.WhatsAppApple[i].Enabled {
+			continue
+		}
+		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
+		}
+	}
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for i := range cfg.Hex {
 		cfg.Hex[i].MeetingsDir = expandPath(cfg.Hex[i].MeetingsDir)
@@ -1192,6 +1234,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
+		cfg.IMessage.DBPath = resolveRelative(cfg.IMessage.DBPath, cfg.HomeDir)
+		for i := range cfg.WhatsAppApple {
+			cfg.WhatsAppApple[i].Path = resolveRelative(cfg.WhatsAppApple[i].Path, cfg.HomeDir)
+		}
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for i := range cfg.Hex {
 			cfg.Hex[i].MeetingsDir = resolveRelative(cfg.Hex[i].MeetingsDir, cfg.HomeDir)
@@ -1305,6 +1351,9 @@ type draftSelector struct {
 
 func (c *Config) validateDraftSources(content []byte) error {
 	var raw struct {
+		SenderAuth struct {
+			Sources []draftSelector `toml:"sources"`
+		} `toml:"sender_auth"`
 		IMAP struct {
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"imap"`
@@ -1324,8 +1373,22 @@ func (c *Config) validateDraftSources(content []byte) error {
 		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
 		return err
 	}
-	return validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
-		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
+	if err := validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
+		return err
+	}
+	return validateDraftSelectors("sender_auth.sources", c.SenderAuth.Sources, raw.SenderAuth.Sources,
+		func(s SenderAuthSource) int64 { return s.SourceID }, func(s SenderAuthSource) error {
+			if len(s.TrustedAuthservIDs) == 0 {
+				return errors.New("trusted_authserv_ids must contain at least one ID")
+			}
+			for _, id := range s.TrustedAuthservIDs {
+				if id == "" || strings.ContainsFunc(id, unicode.IsSpace) {
+					return errors.New("trusted_authserv_ids must be nonblank and contain no whitespace")
+				}
+			}
+			return nil
+		})
 }
 
 func validateDraftSelectors[T any](section string, entries []T, raw []draftSelector, sourceID func(T) int64, check func(T) error) error {
@@ -1800,12 +1863,15 @@ type TeamsConfig struct {
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
-// IMessageConfig configures media limits for import-imessage ([imessage]
-// table). MediaMaxParticipants follows the same omitted-versus-explicit-zero
-// rule as the other providers.
+// IMessageConfig configures scheduled imports and media limits for Messages.
+// MediaMaxParticipants distinguishes omitted values from explicit zero.
 type IMessageConfig struct {
-	MediaMaxParticipants int `toml:"media_max_participants"`
-	MaxMediaMB           int `toml:"max_media_mb"`
+	Enabled              bool   `toml:"enabled"`
+	Schedule             string `toml:"schedule"`
+	DBPath               string `toml:"db_path"`
+	Me                   string `toml:"me"`
+	MediaMaxParticipants int    `toml:"media_max_participants"`
+	MaxMediaMB           int    `toml:"max_media_mb"`
 }
 
 // MediaEnabled reports whether file download is on (default true).
@@ -2653,6 +2719,17 @@ func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {
 func (c *Config) ScheduledSynctechSMSSources() []SynctechSMSSource {
 	var out []SynctechSMSSource
 	for _, src := range c.SynctechSMS.Sources {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// ScheduledWhatsAppAppleSources returns enabled stores with a cron schedule.
+func (c *Config) ScheduledWhatsAppAppleSources() []WhatsAppAppleSource {
+	var out []WhatsAppAppleSource
+	for _, src := range c.WhatsAppApple {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

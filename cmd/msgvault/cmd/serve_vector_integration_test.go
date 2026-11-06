@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // TestRunServeServesHealthWhileVectorInitBlocked verifies the daemon starts
@@ -31,6 +33,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
 	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.AutoBuildCache = false
 	c.Vector.ApplyDefaults()
 	c.Vector.Enabled = true
 	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
@@ -38,6 +41,22 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	c.Vector.Embeddings.Dimension = 768
 	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
+
+	// An existing archive starts with sampled statistics. Startup maintenance
+	// must repair them even while vector initialization remains blocked.
+	s := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
+	fixture := &dbtest.TestDB{DB: s.DB(), T: t}
+	source := fixture.AddSource(dbtest.SourceOpts{Identifier: "account@example.com"})
+	conversation := fixture.AddConversation(dbtest.ConversationOpts{SourceID: source})
+	for range 3003 {
+		fixture.AddMessage(dbtest.MessageOpts{SourceID: source, ConversationID: conversation})
+	}
+	_, err := s.DB().Exec("PRAGMA analysis_limit=1000; ANALYZE messages")
+	require.NoError(err)
+	var stat string
+	require.NoError(s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat))
+	require.NotEqual("3003 3003", stat)
+	sampled := stat
 
 	// The seam blocks until the daemon shuts down (ctx cancelled), so
 	// health is polled while vector init is guaranteed still pending. It
@@ -56,6 +75,15 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	go func() {
 		errCh <- runServe(cmd, nil)
 	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			require.NoError(err, "runServe")
+		case <-time.After(10 * time.Second):
+			require.FailNow("runServe did not stop after context cancellation")
+		}
+	})
 
 	// Health must answer 200 while the vector init seam is still blocked.
 	waitForServeHealth(t, cfg.Server.APIPort, errCh)
@@ -81,16 +109,9 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	require.NotNil(health.Vector)
 	assert.Equal("initializing", health.Vector.Status)
 
-	// Shut down via context cancellation (which also unblocks the seam)
-	// and confirm a clean exit.
-	cancel()
-
-	select {
-	case err := <-errCh:
-		require.NoError(err, "runServe")
-	case <-time.After(10 * time.Second):
-		require.FailNow("runServe did not stop after context cancellation")
-	}
+	require.Eventually(func() bool {
+		return s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat) == nil && stat != sampled
+	}, serveLifecycleTestTimeout, 25*time.Millisecond, "daemon startup must replace sampled message statistics")
 }
 
 func TestRunServeStartsVectorWhileAnalyticsInitializationBlocked(t *testing.T) {

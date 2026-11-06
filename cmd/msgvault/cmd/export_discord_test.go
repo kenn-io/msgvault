@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -25,7 +26,11 @@ func TestExportDiscordWritesVersionedBoundedJSON(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.CompleteSync(runID, "complete"))
 
-	cmd := newExportDiscordLocalCmd(testDiscordCommandDeps(t, st, "", ""))
+	deps := testDiscordCommandDeps(t, st, "", "")
+	deps.openStore = func() (*store.Store, func(), error) {
+		return nil, nil, errors.New("export must use the read-only opener")
+	}
+	cmd := newExportDiscordLocalCmd(deps)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
@@ -68,7 +73,11 @@ func TestExportDiscordRequiresSuccessfulSync(t *testing.T) {
 	_, err := st.GetOrCreateSource(sourceTypeDiscord, testDiscordGuildA)
 	require.NoError(t, err)
 
-	cmd := newExportDiscordLocalCmd(testDiscordCommandDeps(t, st, "", ""))
+	deps := testDiscordCommandDeps(t, st, "", "")
+	deps.openStore = func() (*store.Store, func(), error) {
+		return nil, nil, errors.New("export must use the read-only opener")
+	}
+	cmd := newExportDiscordLocalCmd(deps)
 	cmd.SetArgs([]string{
 		testDiscordGuildA,
 		"--start", "2026-07-20T00:00:00Z",

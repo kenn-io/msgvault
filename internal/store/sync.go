@@ -381,7 +381,8 @@ func (s *Store) RecoverSyncRunsContext(ctx context.Context, recoveredAt time.Tim
 type Checkpoint struct {
 	PageToken string
 	// HandoffCursor, when set, is saved atomically with the checkpoint. Gmail
-	// recovery keeps this baseline until its final source-cursor publication.
+	// full sync keeps its starting History boundary across retries; recovery
+	// keeps it until catch-up publishes the final source cursor.
 	HandoffCursor string
 	// InheritFromSyncID carries the predecessor's people-sweep lower sequence
 	// into this run so final publication covers mutations from earlier recovery

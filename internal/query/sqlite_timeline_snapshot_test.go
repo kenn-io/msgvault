@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,21 +12,10 @@ import (
 )
 
 func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
-	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
-	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1, 1)
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(rows.Err())
-	assert.Contains(t, plan.String(), "COVERING INDEX idx_messages_conversation_content_changed")
-	assert.NotContains(t, plan.String(), "SCAN m")
+	plan := dbtest.ExplainQueryPlan(t, s.DB(), query.SQLiteTimelineSnapshotProbe, 1, 1, 1, 1)
+	assert.Contains(t, plan, "COVERING INDEX idx_messages_conversation_content_changed")
+	assert.NotContains(t, plan, "SCAN m")
 }
 
 func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {

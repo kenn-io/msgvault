@@ -173,10 +173,7 @@ func (d *PostgreSQLDialect) TimestampParam(t time.Time) any { return t.UTC() }
 const pgWriteLockModes = `('RowExclusiveLock', 'ShareRowExclusiveLock', ` +
 	`'ExclusiveLock', 'AccessExclusiveLock')`
 
-const pgWatermarkBoundsQuery = `
-	SELECT clock_timestamp(),
-	       transaction_timestamp(),
-	       LEAST(transaction_timestamp(),
+const pgContentCommitBoundSQL = `LEAST(transaction_timestamp(),
 	             COALESCE((SELECT MIN(a.xact_start)
 	                       FROM pg_stat_activity a
 	                       JOIN pg_locks l ON l.pid = a.pid
@@ -184,15 +181,22 @@ const pgWatermarkBoundsQuery = `
 	                         AND a.xact_start IS NOT NULL
 	                         AND l.relation = to_regclass('messages')
 	                         AND l.mode IN ` + pgWriteLockModes + `),
-	                      transaction_timestamp())),
-	       to_regclass('messages') IS NOT NULL,
-	       (SELECT count(*)
+	                      transaction_timestamp()))`
+
+const pgRedactedMessageWritersSQL = `(SELECT count(*)
 	          FROM pg_stat_activity a
 	          JOIN pg_locks l ON l.pid = a.pid
 	          WHERE a.datname = current_database()
 	            AND a.backend_type IS NULL
 	            AND l.relation = to_regclass('messages')
 	            AND l.mode IN ` + pgWriteLockModes + `)`
+
+const pgWatermarkBoundsQuery = `
+	SELECT clock_timestamp(),
+	       transaction_timestamp(),
+	       ` + pgContentCommitBoundSQL + `,
+	       to_regclass('messages') IS NOT NULL,
+	       ` + pgRedactedMessageWritersSQL
 
 // ReadWatermarkBounds implements Dialect. See pgWatermarkBoundsQuery for why
 // the bound is what it is.
@@ -502,7 +506,7 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
 	return "",
 		"m.search_fts @@ to_tsquery('simple', ?)",
-		"ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC",
+		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
 		1
 }
 
@@ -2366,8 +2370,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //
 //   - source_import_items: written by UpsertSourceImportItem (internal/store/sync.go)
 //     and cascade-reachable from sources — a real race before it was added here.
-//   - sync_checkpoints: cascade-reachable from sources; no writer today, but
-//     included so a future checkpoint writer cannot race the cascade.
+//   - sync_checkpoints: written during authoritative IMAP apply and
+//     cascade-reachable from sources.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
 //

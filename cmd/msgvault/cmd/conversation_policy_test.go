@@ -23,17 +23,35 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.ConversationPolicy.Overrides = []conversationpolicy.Override{{SourceType: "beeper", SourceIdentifier: "policy-cli-account", ConversationID: "room", Tier: conversationpolicy.Full}}
+	var readOpens, writeOpens int
 	deps := conversationPolicyDeps{
-		open:   func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
+		openReadOnly: func(context.Context) (*store.Store, func(), error) {
+			readOpens++
+			return st, func() {}, nil
+		},
+		open: func(context.Context) (*store.Store, func(), error) {
+			writeOpens++
+			return st, func() {}, nil
+		},
 		config: func(context.Context) *config.Config { return cfg },
 	}
 	run := func(args ...string) (string, error) {
+		readOpens, writeOpens = 0, 0
 		cmd := newPolicyLocalCmd(deps)
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)
 		cmd.SetArgs(args)
 		err := cmd.ExecuteContext(t.Context())
+		if err == nil {
+			if args[0] == "list" {
+				assertions.Equal(1, readOpens)
+				assertions.Equal(0, writeOpens)
+			} else {
+				assertions.Equal(0, readOpens)
+				assertions.Equal(1, writeOpens)
+			}
+		}
 		return out.String(), err
 	}
 	out, err := run("set", "1", "room", "cold")

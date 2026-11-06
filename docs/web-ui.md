@@ -92,6 +92,8 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 
 ## Messages and search
 
+At 640px or narrower, message rows show the sender and time, subject, and a one-line preview. Conversation rows show their participants. Group rows show the name, item count, size, and latest date. Columns still chooses which parts appear.
+
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
   <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
@@ -120,17 +122,17 @@ One toolbar sits above the results:
 - **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
+On a phone-width window, **View** holds Show as, Group by, and Sort.
+
 Each active search, filter, and grouping appears as a removable chip below the
 toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+Selecting rows opens a selection bar with the selection's estimated size beside the count. **Review deletion…** opens a review dialog over Messages; see
 [Deletions](#deletions). The button is disabled when the daemon
-reports that staging is unavailable for the selection, and the bar states the
-reason beside it, for example "None of the selected items can be deleted from
-their source." Export and **Open selection in source** explain their
-unavailability the same way.
+reports that staging is unavailable for the selection. Hover over or focus the
+disabled button to see why. Export shows unavailable reasons the same way.
 
 Search mode is always explicit:
 
@@ -200,19 +202,23 @@ mirrored PDFs and documents.
 
 ## Read messages
 
-Open a `/messages/<id>` link to go directly to an archived message. CLI
-`search --json` and `show-message --json` responses include a `web_url` when
-the selected daemon has an HTTP address. The link uses that daemon's address;
-the person opening it still needs access to the archive. Links to chat messages
-open a bounded part of the conversation around the selected message, with
-controls to load earlier or later messages.
+Open a `/messages/<id>` link to open Messages with that message in the reader.
+CLI `search --json` and `show-message --json` responses include a `web_url`
+when the selected daemon has an HTTP address. The link uses that daemon's
+address; the person opening it still needs access to the archive. Links to chat
+messages open a bounded part of the conversation around the selected message,
+with controls to load earlier or later messages.
 
 Click an entry in Messages to open its preview below the results. On wide
 windows, choose **Display → Reader position → Right** to read beside the results.
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
-choice and each layout's size. Narrow windows use the preview below the results
-and restore your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
+choice and each layout's size. In windows 640 pixels wide or less, the reader
+fills the results area, and **Back to results** or Escape returns to the list.
+Above 640 pixels, the preview appears below the results when the results area is
+narrower than 960 pixels and restores your right-side layout when there is room
+again. Escape closes the reader. Next/previous result shortcuts move between
+ordinary message previews and are inactive while a recording match is open.
 
 HTML email follows the app's dark theme by replacing sender-defined text,
 background, and border colors. Images keep their original colors. Choose
@@ -225,8 +231,9 @@ Each expanded message lists its files, recordings, linked tasks, and Kata issues
 ## Meeting context and follow-ups
 
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
-Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
+Select meeting rows and choose **Meeting context…** in the selection bar.
+In its popover, choose JSON or Markdown, optionally turn on **Include transcript**,
+and choose **Export meeting context**. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.
@@ -240,6 +247,9 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
 ## Files and containing context
+
+At 640px or narrower, files use stacked rows with the filename above the date, size, and sender.
+Type, source, containing message, and person-file direction are hidden at this width. Availability appears only for files without local content.
 
 Files is the single file view. It is a searchable table of attachment date,
 filename, type, size, person or domain, source, Message, and content
@@ -268,6 +278,9 @@ PNG, or WebP query image. The UI discloses that the query goes to the
 configured provider. It requires the separate
 [visual index](/docs/usage/vector-search/#visual-attachment-search); ordinary
 filename browsing does not use that provider.
+
+On a phone-width window, Visual search is in **Filter**.
+**Clear filters** also clears the visual query and query image there.
 
 ### Images in email
 
@@ -313,7 +326,7 @@ menu sorts by Name, Most recently contacted, or Least recently contacted.
 
 Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
-Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
+Below the fields, Work and Connections keep employment and typed relationships editable. Network offers **Direct**, **2 steps**, or **3 steps**, with every connection drawn and its label at the line's middle. Relationship labels use the type's forward or reverse wording to read left to right across columns or top to bottom within a column. If the type is unavailable, **←** and **↑** mark relationships in the opposite direction. Ended connections follow Connections’ **Show ended** setting. Select a name to open the person or organization. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 people and organizations and 500 connections. A hidden list describes each connection for screen readers. Network stays hidden for someone with no connections at Direct, unless its first load failed.
 
 Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
 
@@ -421,21 +434,24 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `Esc` | Close the current layer or restore the prior context |
 | `/` | Focus search |
 | `Space` | Toggle selection of the focused row |
-| `Shift+Space` | Extend the selection to the focused row |
+| `⇧ Space` | Extend the selection to the focused row |
 | `A` | Select all visible rows |
 | `x` | Clear the selection |
-| `d` / `D` | Review the selected or all matching items for deletion |
+| `D` / `⇧ D` | Review the selected or all matching items for deletion |
 | `f` | Open Filters |
 | `g` | Open Group by |
 | `s` | Open Sort |
 | `r` | Show sort order; in Files, point to the Sort menu |
 | `?` | Open the searchable Keyboard shortcuts dialog |
-| `Cmd/Ctrl+K` | Open the command palette |
+| `Ctrl K`, `⌘ K` on Mac | Open the command palette |
 
 Select **Help** in the sidebar, or press `?`, to search this list
 in the app. Destructive keys open a review; they never execute deletion
 immediately. Shortcuts are suspended while typing and inside message/file
-content.
+content. `Ctrl K` or `Command K` on Mac still opens the command palette while
+typing in Help's search.
+
+The command palette lists Go to, Saved views, Actions, and Appearance. It remembers up to five recent commands across reloads. Choose **Group by…** to pick an available grouping, or search for a dimension directly. Type a query to find commands, search the archive from any workspace, or choose **Find person…** to filter People. Help's **Search commands instead** carries your query into the palette.
 
 ## Settings and restart behavior
 

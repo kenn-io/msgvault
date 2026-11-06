@@ -335,11 +335,11 @@ credentials, and archive consent records. It does not contact a provider. An
 coverage.
 
 ```text
-LANE                                      STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
-Text search (messages, chats, meetings)   on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
-Semantic people search                    pending  voyage    voyage-context-4  missing  -
-Visual attachment search                  pending  -         -                 -        -
-Document attachments (...)                pending  mistral   mistral-ocr-4-1   missing  -
+LANE                                           STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
+Search by meaning (messages, chats, meetings)  on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
+Semantic people search                         pending  voyage    voyage-context-4  missing  -
+Visual attachment search                       pending  -         -                 -        -
+Document attachments (...)                     pending  mistral   mistral-ocr-4-1   missing  -
 ```
 
 `pending` means the lane is configured or the key is present but an operator

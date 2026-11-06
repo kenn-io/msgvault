@@ -17,6 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("MSGVAULT_TEST_PLANNER_DB") != "" {
+		runPlannerRefreshChild()
+	}
 	// Default configs must never inherit the caller's archive, including an
 	// explicit MSGVAULT_HOME. Individual fixtures can still choose their own paths.
 	testHome, err := os.MkdirTemp("", "msgvault-cli-test-")

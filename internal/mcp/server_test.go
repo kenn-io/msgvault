@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -26,10 +27,12 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -1999,6 +2002,99 @@ func TestSearchMessageBodies_UnknownMode(t *testing.T) {
 }
 
 func TestGetMessage(t *testing.T) {
+	t.Run("segment windows and limits", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, body, messageType, html string
+			args                          map[string]any
+			want                          []msgsegment.Segment
+			truncated                     bool
+		}{
+			{"first page", "New\n> Old\n", "email", "", map[string]any{"max_chars": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}, {Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
+			{"second page", "New\n> Old\n", "email", "", map[string]any{"offset": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
+			{"chat", "> my markdown\n", "beeper", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 14}}, false},
+			{"HTML only", "", "email", "<p>Hello</p>", nil, nil, false},
+			{"explicit HTML", "Hello", "email", "<p>Hello</p>", map[string]any{"body_format": "html"}, nil, false},
+			{"empty text", "", "beeper", "", nil, nil, false},
+			{"past end", "New\n> Old\n", "email", "", map[string]any{"offset": float64(10)}, nil, false},
+			{"scan limit", strings.Repeat("a", msgsegment.MaxBodyBytes+1), "email", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: msgsegment.MaxBodyBytes + 1}}, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				message := testutil.NewMessageDetail(42).WithBodyText(tc.body).WithBodyHTML(tc.html).BuildPtr()
+				message.MessageType = tc.messageType
+				h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: message}})
+				args := map[string]any{"id": float64(42), "include_segments": true}
+				maps.Copy(args, tc.args)
+				got := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, args)
+				assert.Equal(t, tc.want, got.Segments)
+				assert.Equal(t, tc.truncated, got.SegmentsTruncated)
+				if got.BodyFormat == bodyFormatHTML {
+					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
+					assert.Empty(t, got.SegmentsVersion)
+				} else {
+					assert.Equal(t, "seg-v1", got.SegmentsVersion)
+					assert.Empty(t, got.SegmentsUnavailable)
+				}
+			})
+		}
+	})
+
+	t.Run("alternating body", func(t *testing.T) {
+		assert := assert.New(t)
+		body := strings.Repeat("a\n> b\n", 70000)
+		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText(body).BuildPtr(),
+		}})
+		page := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "max_chars": float64(4)})
+		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 2}, {Kind: msgsegment.Quoted, Start: 2, End: 6, Depth: 1}}, page.Segments)
+		assert.False(page.SegmentsTruncated)
+		late := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "offset": float64(419996), "max_chars": float64(4)})
+		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 419996, End: 420000, Depth: 1}}, late.Segments)
+		assert.False(late.SegmentsTruncated)
+	})
+
+	t.Run("segment flag off", func(t *testing.T) {
+		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("New\n> Old\n").BuildPtr(),
+		}})
+		for _, args := range []map[string]any{{"id": float64(42)}, {"id": float64(42), "include_segments": false}} {
+			got := runTool[map[string]any](t, ToolGetMessage, h.getMessage, args)
+			for _, key := range []string{"segments", "segments_version", "segments_truncated", "segments_unavailable"} {
+				assert.NotContains(t, got, key)
+			}
+		}
+	})
+
+	t.Run("segments through SDK", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		eng := &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("New\n> Old\n").BuildPtr(),
+			43: testutil.NewMessageDetail(43).WithBodyText("New\n> Old\n>> Older\n-- \nSender\nBegin forwarded message:\nOld").BuildPtr(),
+		}}
+		ctx := context.Background()
+		session := task5ConnectClient(t, ServeOptions{Engine: eng}, false)
+		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": 42, "include_segments": true}})
+		require.NoError(err)
+		require.False(result.IsError)
+		got := task5StructuredAs[map[string]any](t, result)
+		assert.Equal("seg-v1", got["segments_version"])
+		assert.Equal([]any{
+			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
+			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
+		}, got["segments"])
+		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": 43, "include_segments": true}})
+		require.NoError(err)
+		require.False(result.IsError)
+		got = task5StructuredAs[map[string]any](t, result)
+		assert.Equal([]any{
+			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
+			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
+			map[string]any{"kind": "quoted", "start": float64(10), "end": float64(19), "depth": float64(2)},
+			map[string]any{"kind": "signature", "start": float64(19), "end": float64(30)},
+			map[string]any{"kind": "forwarded", "start": float64(30), "end": float64(58)},
+		}, got["segments"])
+	})
+
 	eng := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: testutil.NewMessageDetail(42).WithSubject("Test Message").WithBodyText("Hello world").WithSourceConversationID("thread-xyz").BuildPtr(),
@@ -2016,6 +2112,13 @@ func TestGetMessage(t *testing.T) {
 		assert.Equal(11, msg.BodyLength, "body_length")
 		assert.Equal(11, msg.BodyReturned, "body_returned")
 		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("sender authentication", func(t *testing.T) {
+		verdict := &senderauth.Verdict{Verified: true, Domain: "example.test", AuthservID: "mx.google.com", DMARC: "pass"}
+		handlers := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, BodyText: "Archived body", SenderAuth: verdict}}})
+		got := runTool[getMessageResponse](t, "get_message", handlers.getMessage, map[string]any{"id": float64(42)})
+		assert.Equal(t, verdict, got.SenderAuth)
 	})
 
 	t.Run("stored HTML hidden text", func(t *testing.T) {

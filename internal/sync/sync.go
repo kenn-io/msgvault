@@ -103,6 +103,9 @@ type Syncer struct {
 	// relocation targets that failed this run. It is set only on the scoped
 	// Syncer copy a single full() run uses and never persists.
 	failedRelocationGuards *failedRelocationGuards
+
+	// Recovery must refresh existing memberships before advancing its page.
+	requireLabelRefresh bool
 }
 
 // SuccessfulSyncHook runs after the durable sync run is marked complete.
@@ -465,10 +468,14 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
 // pre-coverage checkpoints as safe to resume with the wider acquisition scope.
-const gmailHistoryRecoveryCoverageFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
+// The membership version also restarts older recovery scans: their processed
+// prefix may still carry stale labels, even if they reached catch-up.
+const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
+const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
 	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
 		run.CursorAfter.Valid && run.CursorAfter.String != ""
 }
@@ -480,7 +487,8 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	)
 	version := "full:v1"
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
-		version = "full:v2-spam-trash"
+		// Checkpoints from before the History boundary was saved must restart.
+		version = "full:v3-history-boundary"
 	}
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
@@ -513,6 +521,7 @@ func (s *Syncer) initSyncState(
 			if priorSync.CursorBefore.Valid {
 				state.pageToken = priorSync.CursorBefore.String
 			}
+			state.handoffCursor = priorSync.CursorAfter.String
 			state.checkpoint = &store.Checkpoint{
 				PageToken:         state.pageToken,
 				MessagesProcessed: priorSync.MessagesProcessed,
@@ -709,6 +718,11 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// for clients that cannot fetch labels separately.
 	snapshotComplete := s.labelsSnapshotComplete()
 	labelReader, canReadLabels := s.client.(messageLabelBatchReader)
+	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery
+	// instead establishes a fresh membership snapshot after lost History.
+	if s.opts.SourceType != sourceTypeIMAP && !s.requireLabelRefresh {
+		canReadLabels = false
+	}
 	var fetchIDs []string
 	var labelRefreshIDs []string
 	var existingCount int
@@ -748,6 +762,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	if len(labelRefreshIDs) > 0 {
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
+			if s.requireLabelRefresh {
+				return nil, fmt.Errorf("fetch recovery message labels: %w", err)
+			}
 			for _, id := range labelRefreshIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
 			}
@@ -765,7 +782,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
-			if errors.Is(labelResult.Err, gmail.ErrMessageGone) {
+			if _, gone := messageGoneKind(labelResult.Err); gone {
 				// The message left the mailbox mid-run. Deletion detection
 				// retires it; acknowledging here is what lets the folder keep
 				// its high water mark instead of re-enumerating next run.
@@ -775,6 +792,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			if labelResult.Err != nil {
+				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
+				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, labelResult.Err)
@@ -873,6 +894,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				snapshotComplete,
 			)
 			if err != nil {
+				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf("replace recovery labels for %s: %w", sourceMessageID, err)
+				}
 				s.logger.Warn("failed to refresh existing message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
@@ -1328,8 +1353,8 @@ func (s *Syncer) full(
 	startTime := time.Now()
 	summary = &gmail.SyncSummary{StartTime: startTime}
 
-	// Recovery may only resume a run that pinned its history handoff cursor.
-	// Ordinary full-sync checkpoints predate that cursor and are unsafe to reuse.
+	// Recovery has its own phase protocol and cannot reuse an ordinary
+	// full-sync checkpoint, even if it pinned a History boundary.
 	var state *syncState
 	if reconcilePresence {
 		state, err = s.initHistoryRecoveryState(ctx, source.ID, execution)
@@ -1342,6 +1367,7 @@ func (s *Syncer) full(
 	scoped := *s
 	scoped.store = s.store.ScopedToSync(source.ID, state.syncID)
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
+	scoped.requireLabelRefresh = reconcilePresence
 	s = &scoped
 	summary.SyncRunID = state.syncID
 
@@ -1385,18 +1411,21 @@ func (s *Syncer) full(
 		return nil, err
 	}
 	handoffHistoryID := profile.HistoryID
-	if reconcilePresence {
+	isUnrestrictedGmailFull := source.SourceType == sourceTypeGmail && s.opts.Query == "" && s.opts.Limit == 0
+	if isUnrestrictedGmailFull {
 		if state.handoffCursor == "" {
 			state.handoffCursor = strconv.FormatUint(profile.HistoryID, 10)
-			if err := s.saveFullCheckpoint(ctx, state); err != nil {
-				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
+			if reconcilePresence {
+				if err := s.saveFullCheckpoint(ctx, state); err != nil {
+					s.failStoppedSync(state.syncID, err)
+					return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
+				}
 			}
 		} else {
 			handoffHistoryID, err = strconv.ParseUint(state.handoffCursor, 10, 64)
 			if err != nil {
 				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("parse Gmail history recovery cursor %q: %w", state.handoffCursor, err)
+				return nil, fmt.Errorf("parse Gmail full-sync history cursor %q: %w", state.handoffCursor, err)
 			}
 		}
 	}
@@ -1558,8 +1587,20 @@ func (s *Syncer) full(
 	}
 
 	// Ordinary full sync publishes its starting History cursor even with item
-	// errors. Recovery retains H until catch-up succeeds; it cannot publish here.
-	historyIDStr := strconv.FormatUint(handoffHistoryID, 10)
+	// errors, preserving a newer cursor from an intervening incremental on resume.
+	// Recovery retains H until catch-up succeeds; it cannot publish here.
+	completionHistoryID := handoffHistoryID
+	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
+		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
+		if err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, fmt.Errorf("read saved sync progress: %w", err)
+		}
+		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {
+			completionHistoryID = currentHistoryID
+		}
+	}
+	historyIDStr := strconv.FormatUint(completionHistoryID, 10)
 	if state.checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("full sync completed with errors",
 			"errors", state.checkpoint.ErrorsCount,
@@ -1591,7 +1632,7 @@ func (s *Syncer) full(
 	summary.MessagesUpdated = state.checkpoint.MessagesUpdated
 	summary.MessagesSkipped = state.checkpoint.MessagesProcessed - state.checkpoint.MessagesAdded - state.checkpoint.MessagesUpdated
 	summary.Errors = state.checkpoint.ErrorsCount
-	summary.FinalHistoryID = handoffHistoryID
+	summary.FinalHistoryID = completionHistoryID
 
 	if !reconcilePresence {
 		s.progress.OnComplete(summary)

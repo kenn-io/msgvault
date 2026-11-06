@@ -1,6 +1,7 @@
 package hex
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -125,7 +126,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 		}
 		if err == nil && opts.Progress != nil {
-			opts.Progress("Processed " + m.Manifest.DisplayTitle())
+			opts.Progress("Processed " + cmp.Or(snapshot.Title, m.Manifest.DisplayTitle()))
 		}
 		if err != nil {
 			sum.Errors++

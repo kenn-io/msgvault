@@ -181,27 +181,31 @@ func (c *Client) readAttachments(ctx context.Context, rowID int64) ([]sourceAtta
 
 // importAttachments writes only the occurrences that changed, as gvoice does. Archived rows stay
 // when chat.db drops their join row, and an archived capture survives an unreadable source.
-func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageID int64, msg *messageRow, summary *ImportSummary) error {
+func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageID int64, msg *messageRow, summary *ImportSummary, existingMessage bool) (bool, error) {
 	previous, err := s.MessageIMessageAttachmentsContext(ctx, messageID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var attachments []sourceAttachment
 	if c.attachmentQuery != "" {
 		attachments, err = c.readAttachments(ctx, msg.ROWID)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 	if len(attachments) == 0 {
 		if len(previous) > 0 {
-			return nil
+			return false, nil
 		}
 		// With no rows to count, the archived flag follows the source flag.
 		flag := msg.HasAttachments != 0
-		_, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE messages SET has_attachments = ? WHERE id = ? AND has_attachments <> ?`),
+		result, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE messages SET has_attachments = ? WHERE id = ? AND has_attachments <> ?`),
 			flag, messageID, flag)
-		return err
+		if err != nil {
+			return false, err
+		}
+		rows, err := result.RowsAffected()
+		return rows > 0, err
 	}
 	conversation := attachmentpolicy.Conversation{Type: "direct_chat", ParticipantCount: 2}
 	if msg.ChatROWID != nil {
@@ -210,6 +214,7 @@ func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageI
 		}
 	}
 	var captureErrs []error
+	changed := false
 	for _, attachment := range attachments {
 		ref := attachment.ref
 		old, existing := previous[ref.SourceAttachmentID]
@@ -230,7 +235,7 @@ func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageI
 			}
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return changed, err
 		}
 		// This run's outcome counts even when the archived bytes keep the row stored.
 		switch ref.State {
@@ -252,11 +257,12 @@ func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageI
 		if existing && sameAttachmentRef(old, ref) {
 			continue
 		}
-		if err := s.UpsertAttachmentRecordWithStats(ctx, messageID, attachmentWrite(ref), messageID <= c.maxMessageID); err != nil {
-			return errors.Join(append(captureErrs, fmt.Errorf("%w: %w", errAttachmentStore, err))...)
+		if err := s.UpsertAttachmentRecordWithStats(ctx, messageID, attachmentWrite(ref), existingMessage); err != nil {
+			return changed, errors.Join(append(captureErrs, fmt.Errorf("%w: %w", errAttachmentStore, err))...)
 		}
+		changed = true
 	}
-	return errors.Join(captureErrs...)
+	return changed, errors.Join(captureErrs...)
 }
 
 // chatParticipantCount returns the chat's roster size including the owner, read once per run.

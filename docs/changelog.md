@@ -8,9 +8,25 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-### API schema 3.43.0
-
 - Archive stopped [Hex meetings](usage/meetings.md#hex) from a local folder or a remote recorder, including transcripts, notes, available participant evidence and optional separate audio tracks. Schedule capture before Hex expires unsynced meetings; partial replacements preserve previously readable evidence.
+- [Open loops](usage/open-loops.md) list conversations waiting on your reply
+  and replies you are waiting on, with separate results for each person and
+  decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
+  `reopen` manage them, and the HTTP API has matching routes. Each request
+  computes evidence for up to 1,000 uncached messages; repeated requests
+  continue using retained evidence. They need HTTP API schema 3.44.0.
+- Keep Apple WhatsApp and iMessage archives current with daemon schedules,
+  run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
+- Resumed Gmail full syncs preserve their starting History point so the next
+  incremental sync catches mail that arrived meanwhile. A full sync interrupted
+  under an earlier release starts from the first page once; previously archived
+  messages aren't downloaded again.
+- Recovering from an expired Gmail History cursor now refreshes the labels of
+  messages already in the archive, so a message moved from Inbox to Trash in
+  Gmail no longer stays in the archive's Inbox.
+- A Gmail incremental sync that cannot save a label change or deletion now
+  fails and keeps its History position, so the next sync retries the change
+  instead of skipping it.
 
 ## 0.23.0
 <small>2026-11-04</small>
