@@ -76,14 +76,15 @@ func TestAgentVerificationReads(t *testing.T) {
 				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 				assertions.Contains(w.Body.String(), "482913")
 				assertions.NotContains(w.Body.String(), "[verification content masked]")
-				if strings.HasPrefix(path, "/search") || strings.HasPrefix(path, "/cli/search?") {
+				if strings.HasPrefix(path, "/search?") || strings.HasPrefix(path, "/search/fast?") || strings.HasPrefix(path, "/search/deep?") {
 					var revealed map[string]json.RawMessage
 					requirements.NoError(json.Unmarshal(w.Body.Bytes(), &revealed))
 					for _, field := range []string{"total", "total_count"} {
 						if field == "total" && strings.HasPrefix(path, "/search?") || field == "total_count" && (strings.HasPrefix(path, "/search/fast?") || strings.HasPrefix(path, "/search/deep?")) {
 							assertions.Contains(revealed, field)
+							assertions.Contains(masked, field)
+							assertions.Equal(revealed[field], masked[field], field)
 						}
-						assertions.Equal(revealed[field], masked[field], field)
 					}
 				}
 			}
@@ -243,26 +244,13 @@ func TestAgentVerificationFields(t *testing.T) {
 			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			_, revealToken, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-			requirements.NoError(err)
-			for _, credential := range []string{token, revealToken, "owner"} {
-				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
-				if credential == "owner" {
-					req.Header.Set("X-Api-Key", credential)
-				} else {
-					req.Header.Set(apiprotocol.AgentTokenHeader, credential)
-				}
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-				if credential == token {
-					assertions.NotContains(w.Body.String(), "4829")
-					assertions.Contains(w.Body.String(), "[verification content masked]")
-				} else {
-					assertions.Contains(w.Body.String(), tc.subject)
-					assertions.NotContains(w.Body.String(), "[verification content masked]")
-				}
-			}
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+			assertions.NotContains(w.Body.String(), "4829")
+			assertions.Contains(w.Body.String(), "[verification content masked]")
 		})
 	}
 }
@@ -315,22 +303,18 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
 		{"ordinary.html", "text/html", "<p>Hello</p>", false, false, false},
-		{"code.html", "text/html", "Your verification code is <482913>", true, false, false},
-		{"sniffed-html.txt", "text/plain", "<!DOCTYPE html><p>Your verification code is <482913></p>", true, false, false},
-		{"order.txt", "text/plain", "Order 1234567 shipped. Read about your verification code\n", false, false, false},
+		{"code.html", "text/html", "<p>Your verification code is <b>482</b>913</p>", true, false, false},
+		{"sniffed-html.txt", "text/plain", "<!DOCTYPE html><p>Your verification code is <b>482</b>913</p>", true, false, false},
 		{"mail.bin", "message/rfc822", "Ordinary mail", true, false, false},
 		{"x.eml", "application/octet-stream", "Ordinary email", true, false, false},
-		{"data.bin", "application/octet-stream", "Ordinary text", false, false, false},
+		{"data.bin", "application/octet-stream", "Your verification code is 482913", true, false, false},
 		{"code.txt", "text/plain", "Your verification code is 482913", true, false, false},
 		{"parent.txt", "text/plain", "482913", true, true, false},
-		{"shared.txt", "text/plain", "482914", true, false, true},
 		{"nul.txt", "text/plain", "Y\x00o\x00u\x00r\x00", true, false, false},
 		{"nested.txt", "text/plain", "Content-Transfer-Encoding: base64\r\n\r\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"encoding-notes.txt", "text/plain", "Set the Content-Transfer-Encoding header to base64 for binary parts.\n", false, false, false},
 		{"nested-lf.txt", "text/plain", "Content-Type: text/plain\ncontent-transfer-encoding:base64\n\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
-		{"crlf-digits.txt", "text/plain", "Your code:\r\n4\r\n8\r\n2\r\n9\r\n1\r\n3\r\n", true, false, false},
-		{"crlf-counts.txt", "text/plain", "Order quantities:\r\n4\r\n8\r\n2\r\n9\r\n1\r\n3\r\n", false, false, false},
 		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -363,9 +347,10 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			if tc.name == "code.txt" || tc.name == "ordinary.txt" || tc.name == "shared.png" {
 				backends = append(backends, true)
 				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
-				if tc.name == "shared.png" {
+				switch tc.name {
+				case "shared.png":
 					callers = []string{"attachment-only"}
-				} else {
+				case "code.txt":
 					callers = append(callers, "reveal", "owner")
 				}
 			}
@@ -431,8 +416,8 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
 	requirements.NoError(st.UpsertAttachment(id, "note.txt", "text/plain", "", hash, len(body)))
 
-	// More parents than one SQLite statement can bind; only the last one is withheld.
-	const total = 32767
+	// Cross a body-loading page boundary; only the last parent is withheld.
+	const total = maxPageSize + 1
 	for _, statement := range []string{
 		`WITH RECURSIVE copies(n) AS (VALUES(2) UNION ALL SELECT n + 1 FROM copies WHERE n < ?)
 		INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, snippet)

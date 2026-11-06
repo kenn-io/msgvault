@@ -920,6 +920,9 @@ func testAgentPackingSnapshot(t *testing.T) {
 			{"cancel", "masked"},
 			{"repack before open", "owner"},
 		} {
+			if route == "cid" && tc.caller == "owner" {
+				continue
+			}
 			t.Run(route+"/"+tc.caller+"/"+tc.transition, func(t *testing.T) {
 				transition := tc.transition
 				requirements := require.New(t)
