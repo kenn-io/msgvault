@@ -349,6 +349,9 @@ func publicMeetingOccurrenceRef(o linkOccurrence) string {
 	return formatMeetingOccurrence(o.Ref)
 }
 
+// ErrInvalidMeetingOccurrenceKey identifies a malformed occurrence key.
+var ErrInvalidMeetingOccurrenceKey = errors.New("invalid meeting occurrence key")
+
 // ParseMeetingIdentityRef validates a public calendar occurrence reference.
 func ParseMeetingIdentityRef(value string) (OccurrenceRef, error) {
 	text, ok := strings.CutPrefix(value, "evt:")
@@ -362,7 +365,7 @@ func ParseMeetingIdentityRef(value string) (OccurrenceRef, error) {
 	}
 	if strings.Contains(text, "@") {
 		if _, identity, ok := calrecur.ParseInstanceID("event_" + key); !ok || identity.Key() != key {
-			return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence key %q", key)
+			return OccurrenceRef{}, fmt.Errorf("%w %q", ErrInvalidMeetingOccurrenceKey, key)
 		}
 	}
 	return OccurrenceRef{MessageID: id, Key: key}, nil

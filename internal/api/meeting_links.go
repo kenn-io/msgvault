@@ -76,7 +76,7 @@ func meetingLinkParseError(value string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if strings.HasPrefix(err.Error(), "invalid meeting occurrence key") && !strings.HasSuffix(value, "@") {
+	if errors.Is(err, store.ErrInvalidMeetingOccurrenceKey) && !strings.HasSuffix(value, "@") {
 		return errors.New("invalid occurrence key")
 	}
 	return errors.New("invalid meeting reference")
