@@ -22,7 +22,7 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 		RecordID: row.CallID,
 
 		Version: 1, Provider: "signal", Account: r.Account, NativeCallID: row.CallID,
-		Kind: "call", Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
+		Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
 		OccurredAt: time.UnixMilli(*row.Timestamp).UTC(),
 
 		Raw: r.Record,

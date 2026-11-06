@@ -34,7 +34,7 @@ func TestCallImportRequestsCacheRefresh(t *testing.T) {
 	})
 	o := callhistory.Observation{
 		Version: 1, Provider: "signal", Account: "example",
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
 		RecordID:   "call-1",
 		Raw:        []byte(`{"callId":"call-1"}`),

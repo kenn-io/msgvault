@@ -67,7 +67,7 @@ func TestSignalNativeStatuses(t *testing.T) {
 
 func TestNormalizedImportValidatesObservation(t *testing.T) {
 	_, err := (ImportRequest{Format: "normalized", Account: "example",
-		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
+		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
 }
