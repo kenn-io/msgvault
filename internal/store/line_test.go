@@ -391,6 +391,77 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 	}
 }
 
+func TestLineInboxScrubsLateEditAfterGC(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	// Exercise the full purge lifecycle on SQLite, where archive GC is supported.
+	st := testutil.NewSQLiteTestStore(t)
+	server := httptest.NewServer(lineapi.New())
+	t.Cleanup(server.Close)
+	client := line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(server.URL, server.URL))
+	source, err := line.Register(t.Context(), st, client, "2000000001")
+	must.NoError(err)
+	processor := line.NewProcessor(st, client, source.ID, source.Identifier, t.TempDir())
+	now := time.Now().UTC().Truncate(time.Second)
+	message := line.Event{Type: "message", WebhookEventID: "gc-original", Timestamp: now.UnixMilli(), Source: line.Source{Type: "group", GroupID: "C00000000000000000000000000000001", UserID: "U00000000000000000000000000000002"}, Message: &line.Message{ID: "gc-message", Type: "text", Text: "text to purge"}}
+	unsend := line.Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &line.Unsend{MessageID: message.Message.ID}}
+	edit := line.Event{Type: "messageEdited", WebhookEventID: "gc-late-edit", Timestamp: message.Timestamp + 1, Source: message.Source, Message: &line.Message{ID: message.Message.ID, Type: "text", Text: "earlier edit delivered after GC"}}
+	for _, event := range []line.Event{message, unsend} {
+		raw, err := json.Marshal(event)
+		must.NoError(err)
+		clean, err := line.SanitizeEvent(raw)
+		must.NoError(err)
+		must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: message.Message.ID, EventTimestamp: event.Timestamp, RawJSON: string(clean), ReceivedAt: now}}))
+		must.NoError(processor.Process(t.Context()))
+	}
+	plan, err := st.PlanGCContext(t.Context())
+	must.NoError(err)
+	deleted, err := st.ExecuteGCContext(t.Context(), plan)
+	must.NoError(err)
+	must.Equal(int64(1), deleted)
+	raw, err := json.Marshal(edit)
+	must.NoError(err)
+	clean, err := line.SanitizeEvent(raw)
+	must.NoError(err)
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: edit.WebhookEventID, EventType: edit.Type, TargetMessageID: message.Message.ID, EventTimestamp: edit.Timestamp, RawJSON: string(clean), ReceivedAt: now}}))
+	var stored string
+	must.NoError(st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, edit.WebhookEventID).Scan(&stored))
+	checks.Equal("{}", stored)
+}
+
+func TestLineInboxScrubsPayloadsForGCPurgedTargets(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000001")
+	must.NoError(err)
+	other, err := st.GetOrCreateSource("line", "2000000002")
+	must.NoError(err)
+	// PostgreSQL has no archive GC. Seed its durable evidence through enqueue
+	// to exercise the same receipt rule on either backend.
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{
+		{WebhookEventID: "purged-unsend", EventType: "unsend", TargetMessageID: "purged", EventTimestamp: 30, RawJSON: "{}"},
+		{WebhookEventID: "retained-unsend", EventType: "unsend", TargetMessageID: "retained", EventTimestamp: 30, RawJSON: `{"unsend":{"messageId":"retained"}}`},
+		{WebhookEventID: "scrubbed-message", EventType: "message", TargetMessageID: "other-target", EventTimestamp: 10, RawJSON: "{}"},
+	}))
+	for _, tc := range []struct {
+		name   string
+		source *store.Source
+		target string
+		want   string
+	}{
+		{"purged", source, "purged", "{}"},
+		{"other source", other, "purged", `{"text":"late edit"}`},
+		{"retained", source, "retained", `{"text":"late edit"}`},
+		{"other target", source, "other-target", `{"text":"late edit"}`},
+	} {
+		must.NoError(st.EnqueueLineEventsContext(t.Context(), tc.source.ID, tc.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: tc.name, EventType: "messageEdited", TargetMessageID: tc.target, EventTimestamp: 20, RawJSON: `{"text":"late edit"}`}}))
+		var raw string
+		must.NoError(st.DB().QueryRow(st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), tc.source.ID, tc.name).Scan(&raw))
+		checks.Equal(tc.want, raw, tc.name)
+	}
+}
+
 func TestLineGCPurgesRetryPayloadsAfterSourceMerge(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)

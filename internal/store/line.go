@@ -70,9 +70,13 @@ func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, ch
 			if received.IsZero() {
 				received = time.Now().UTC()
 			}
+			// A scrubbed unsend preserves GC's purge decision for late deliveries.
 			_, err := tx.ExecContext(ctx, `INSERT INTO line_webhook_events
     (source_id,webhook_event_id,event_type,target_message_id,event_timestamp,raw_json,state,received_at)
-    VALUES (?,?,?,?,?,?,'pending',?) ON CONFLICT(source_id,webhook_event_id) DO NOTHING`, sourceID, e.WebhookEventID, e.EventType, e.TargetMessageID, e.EventTimestamp, e.RawJSON, received)
+    VALUES (?,?,?,?,?,CASE WHEN EXISTS (
+      SELECT 1 FROM line_webhook_events
+      WHERE source_id=? AND target_message_id=? AND event_type='unsend' AND raw_json='{}'
+    ) THEN '{}' ELSE ? END,'pending',?) ON CONFLICT(source_id,webhook_event_id) DO NOTHING`, sourceID, e.WebhookEventID, e.EventType, e.TargetMessageID, e.EventTimestamp, sourceID, e.TargetMessageID, e.RawJSON, received)
 			if err != nil {
 				return fmt.Errorf("enqueue LINE event: %w", err)
 			}
