@@ -77,12 +77,16 @@ phone numbers and similar titles never merge calls. `--after` is inclusive and
 
 ## Coverage and limitations
 
+- **Beeper/hosted iMessage:** live call-record validation remains pending.
+  No personal examples have been validated. The [documented message API](https://developers.beeper.com/desktop-api-reference/go/resources/messages/methods/list/)
+  has no structured CALL type; automatic extraction is not enabled.
 - **Signal:** the [bridge converter](https://github.com/mautrix/signal/blob/main/pkg/connector/handlesignal.go)
   emits incoming/end notices. Those notices alone establish neither answer nor
   talk duration. The native adapter follows [Signal's call dispositions](https://github.com/signalapp/Signal-Desktop/blob/main/ts/types/CallDisposition.std.ts):
   group `Accepted` does not imply `Joined`. Unknown enums stay unknown; end
   minus start never becomes talk duration. Epoch timestamps do not identify
   the original time zone.
+- **Calendar:** synced events stay in the [calendar archive](calendar.md). Invitations never count as calls.
 
 Call observations do not create ordinary message-contact activity. The
 per-person Store summary is available for relationship-tier integration;

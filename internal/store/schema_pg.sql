@@ -4139,8 +4139,7 @@ CREATE TABLE IF NOT EXISTS call_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     outcome TEXT NOT NULL,
     owner_participation TEXT NOT NULL,
-    occurred_at TIMESTAMPTZ NOT NULL,
-    evidence_version INTEGER NOT NULL
+    occurred_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
 

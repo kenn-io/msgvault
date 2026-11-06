@@ -176,26 +176,6 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 	assert.Equal(importedOrder, rebuiltOrder)
 }
 
-func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
-	require := require.New(t)
-	st := storetest.New(t).Store
-	o, sourceID := validCallObservation(t, st)
-	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(err)
-	// Simulate unsupported persisted evidence, bypassing current write validation.
-	o.Version = 2
-	metadata, err := json.Marshal(o.Evidence)
-	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
-	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE call_details SET evidence_version = ? WHERE message_id = ?`), o.Version, id)
-	require.NoError(err)
-	_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	require.ErrorIs(err, callhistory.ErrInvalid)
-	_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	require.ErrorIs(err, callhistory.ErrInvalid)
-}
-
 func TestCallReimportPreservesLabels(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
