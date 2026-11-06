@@ -17,6 +17,7 @@ All notable changes to msgvault, grouped by release.
 
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
 - Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
+- Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
 
 ## 0.23.0
 <small>2026-11-04</small>
