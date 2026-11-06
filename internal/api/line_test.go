@@ -102,12 +102,9 @@ func lineEvent(id string) string {
 	return `{"type":"message","webhookEventId":"` + id + `","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}`
 }
 
-func TestLineReceiptDuringBackupFreeze(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
-	oldLimit := operationGateWaitLimit
-	operationGateWaitLimit = 20 * time.Millisecond
-	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("line", "2000000000")
@@ -115,12 +112,14 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) { //nolint:paralleltest // 
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
 	gate := NewSerialOperationGate()
 	wakes := 0
+	var server *Server
 	receiver := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, func(string) {
-		_, _, held := gate.Holder()
-		checks.False(held, "release the receipt gate before waking processing")
+		if checks.True(server.backupFreeze.mu.TryLock(), "release the freeze mutex before waking processing") {
+			server.backupFreeze.mu.Unlock()
+		}
 		wakes++
 	})
-	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
+	server = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
 	t.Cleanup(func() { must.NoError(server.Shutdown(context.Background())) })
 	router := server.Router()
 	body := lineEnvelope("[" + lineEvent("freeze-event") + "]")
@@ -163,6 +162,9 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) { //nolint:paralleltest // 
 	var snapshotReceipts int
 	must.NoError(session.Tx().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&snapshotReceipts))
 	checks.Zero(snapshotReceipts)
+	var liveReceipts int
+	must.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&liveReceipts))
+	checks.Zero(liveReceipts, "rejected receipts must leave the live archive empty")
 	captured, err := os.ReadFile(dbPath)
 	must.NoError(err)
 	capturedPath := filepath.Join(t.TempDir(), "captured.db")

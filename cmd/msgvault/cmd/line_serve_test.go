@@ -159,7 +159,7 @@ func TestLineServeSecondReceiptDuringEnrichment(t *testing.T) {
 	defer func() { must.NoError(server.Shutdown(context.Background())) }()
 	listener := httptest.NewServer(server.Router())
 	defer listener.Close()
-	client := &http.Client{Timeout: 2 * time.Second} //nolint:kennlint // deadlinetest: LINE requires webhook acknowledgement within two seconds
+	client := &http.Client{Timeout: 2 * time.Second} // LINE requires acknowledgement within two seconds.
 	for id := range 2 {
 		if id == 1 {
 			select {
