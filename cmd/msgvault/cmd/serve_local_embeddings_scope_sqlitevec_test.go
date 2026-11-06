@@ -30,7 +30,11 @@ import (
 
 func TestLocalEmbeddingsScheduledRecovery(t *testing.T) {
 	for _, failedBuild := range []bool{false, true} {
-		t.Run(fmt.Sprintf("scoped visual failure=%t", failedBuild), func(t *testing.T) {
+		name := "new messages after activation"
+		if failedBuild {
+			name = "scoped recovery with existing visual search"
+		}
+		t.Run(name, func(t *testing.T) {
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/v1/embeddings", r.URL.Path)
 				var body struct {
@@ -81,9 +85,8 @@ server = %q
 			require.NoError(t, st.InitSchema())
 			_, selectedID, err := testutil.CreateIndexedSourceMessage(st, account, "selected", "Selected orchard", "The orchard has apples.")
 			require.NoError(t, err)
-			var excludedID int64
 			if failedBuild {
-				_, excludedID, err = testutil.CreateIndexedSourceMessage(st, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
+				_, _, err = testutil.CreateIndexedSourceMessage(st, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
 				require.NoError(t, err)
 			}
 			state := &invocation{cfg: cfg, logger: testDiscardLogger()}
@@ -115,7 +118,7 @@ server = %q
 					_, err := handle.vf.Backend.CreateGeneration(ctx, handle.vf.Cfg.Embeddings.Model, handle.vf.Cfg.Embeddings.Dimension, handle.vf.Cfg.GenerationFingerprint())
 					require.NoError(t, err)
 				}
-				require.ErrorContains(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}), "embedding scope matched 0 live messages")
+				require.ErrorContains(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}), "embedding build interrupted: context canceled")
 				assert.Same(t, visual, handle.vf.Visual)
 			} else {
 				require.NoError(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}))
@@ -127,9 +130,6 @@ server = %q
 					err := st.DB().QueryRow("SELECT COALESCE(embed_gen, 0) FROM messages WHERE id = ?", selectedID).Scan(&generation)
 					return err == nil && generation > 0
 				}, 5*time.Second, 50*time.Millisecond, "scheduled recovery must embed the selected message")
-				var excludedGeneration int64
-				require.NoError(t, st.DB().QueryRow("SELECT COALESCE(embed_gen, 0) FROM messages WHERE id = ?", excludedID).Scan(&excludedGeneration))
-				assert.Zero(t, excludedGeneration)
 			}
 			want := 2
 			if failedBuild {

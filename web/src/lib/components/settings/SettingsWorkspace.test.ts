@@ -842,9 +842,11 @@ it('refreshes local setup after a network interruption and explains activation r
 it('turns on local search once and keeps unrelated drafts when setup finishes', async () => {
   let phase = 'idle';
   let enabled = false;
+  let releaseActivation!: () => void;
+  const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') phase = 'indexing';
+    if (request.method === 'POST') { phase = 'indexing'; await activation; }
     return Response.json({ enabled, provider: enabled ? 'builtin' : '', compatible: true, ollama_available: false,
       phase, download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
   });
@@ -853,8 +855,10 @@ it('turns on local search once and keeps unrelated drafts when setup finishes', 
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   const turnOn = await screen.findByRole('button', { name: 'Turn on' });
   await fireEvent.click(turnOn);
-  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  await fireEvent.click(turnOn);
   expect(seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')).toHaveLength(1);
+  releaseActivation();
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
   phase = 'idle'; enabled = true;
   await screen.findByText('On', {}, { timeout: 3000 });

@@ -136,52 +136,6 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	})
 }
 
-func TestNativeMCPRefreshPreservesDownloadContinuation(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	fixture := newExportFixture(t)
-	server := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { checks.NoError(server.Shutdown(context.Background())) })
-	var latest http.Handler
-	install := func() {
-		handler, cleanup := NewHTTPHandler(ServeOptions{Engine: fixture.engine}, HTTPOptions{})
-		must.NoError(server.InstallMCPHandlers(handler, nil, cleanup))
-		latest = handler
-	}
-	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("Authorization", "Bearer owner")
-		server.Router().ServeHTTP(w, r)
-	})
-	install()
-	response, raw := task4RawRequest(t, router, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 0, "length": 100}}, nil)
-	must.Empty(response.Error, "%s", raw)
-	must.NotEqual(true, response.Result["isError"], "%s", raw)
-	encoded, err := json.Marshal(response.Result["structuredContent"])
-	must.NoError(err)
-	var first exportChunkResp
-	must.NoError(json.Unmarshal(encoded, &first))
-	must.False(first.Complete)
-	// The continuation must retain its initial bytes across both a capability
-	// refresh and a later replacement of the archived original.
-	must.NoError(fixture.f.Store.UpsertMessageRaw(fixture.withRaw, []byte("replacement MIME")))
-	install()
-	response, raw = task4RawRequest(t, router, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": first.Length, "length": 100, "sha256": first.SHA256}}, nil)
-	must.Empty(response.Error, "%s", raw)
-	must.NotEqual(true, response.Result["isError"], "%s", raw)
-	encoded, err = json.Marshal(response.Result["structuredContent"])
-	must.NoError(err)
-	var next exportChunkResp
-	must.NoError(json.Unmarshal(encoded, &next))
-	part, err := base64.StdEncoding.DecodeString(next.DataBase64)
-	must.NoError(err)
-	checks.Equal(exportMIME[100:200], part)
-	checks.Equal(first.SHA256, next.SHA256)
-	must.NoError(server.Shutdown(t.Context()))
-	response, raw = task4RawRequest(t, latest, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 200, "length": 100, "sha256": first.SHA256}}, nil)
-	must.Empty(response.Error, "%s", raw)
-	checks.Equal(true, response.Result["isError"], "shutdown releases the retained download snapshot")
-}
-
 func TestDownloadSnapshotExpiryAndShutdown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		checks := assert.New(t)

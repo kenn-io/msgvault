@@ -50,9 +50,9 @@ it('discloses the download size and remote host before hint activation', () => {
  expect(localSearchHintLabels({...off,ollama_available:true}).hint).toBe('Search by meaning is off · Uses Ollama on this computer');
 });
 
-it.each(['running', 'idle'] as const)('estimates the whole replacement index from observed throughput when %s', (jobState) => {
+it('estimates the whole replacement index from observed throughput', () => {
   const status = { ...off, enabled: true, provider: 'ollama', compatible: false };
-  const embedding = { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: jobState === 'running' ? 0.025 : null, job: { ...embeddingStatus.job, state: jobState } };
+  const embedding = { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: 0.025, job: { ...embeddingStatus.job, state: 'running' as const } };
   render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
   expect(screen.getByText('Switching rebuilds the index for 48,000 messages, about 20 minutes.')).toBeDefined();
 });

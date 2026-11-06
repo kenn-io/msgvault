@@ -64,8 +64,8 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 		r.failBuild = false
 		if emit != nil {
 			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: strings.Repeat("index progress\n", 1024)}))
-			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "embedding scope matched 0 live messages; "}))
-			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "sync the scoped account(s) first\n"}))
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "embedding build interrupted: "}))
+			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "context canceled\n"}))
 		}
 		return errors.New(cliSubprocessExitSentinel)
 	}
@@ -436,7 +436,7 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-	require.ErrorContains(t, err, "embedding scope matched 0 live messages; sync the scoped account(s) first")
+	require.ErrorContains(t, err, "embedding build interrupted: context canceled")
 	assert.LessOrEqual(t, len(err.Error()), len(cliSubprocessExitSentinel)+2+8192)
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(t, err)
