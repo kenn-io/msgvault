@@ -168,9 +168,10 @@ func TestLocalEmbeddingsPublishesVisualRecoveryAfterFailedStartup(t *testing.T) 
 	for _, tc := range []struct {
 		method, path, body string
 		code               int
+		errorCode          string
 	}{
 		{method: http.MethodGet, path: "/api/v1/multimodal/status", code: http.StatusOK},
-		{method: http.MethodPost, path: "/api/v1/search/attachments/visual", body: `{}`, code: http.StatusBadRequest},
+		{method: http.MethodPost, path: "/api/v1/search/attachments/visual", body: `{}`, code: http.StatusBadRequest, errorCode: "invalid_visual_query"},
 		{method: http.MethodPost, path: "/api/v1/multimodal/build", body: `{"consent":true}`, code: http.StatusOK},
 	} {
 		request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -179,6 +180,11 @@ func TestLocalEmbeddingsPublishesVisualRecoveryAfterFailedStartup(t *testing.T) 
 		response := httptest.NewRecorder()
 		f.server.Router().ServeHTTP(response, request)
 		assert.Equal(tc.code, response.Code, "%s: %s", tc.path, response.Body.String())
+		if tc.errorCode != "" {
+			var result api.ErrorResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+			assert.Equal(tc.errorCode, result.Error)
+		}
 	}
 	require.NoError(f.scheduler.TriggerJob("multimodal-attachments"))
 }

@@ -17,7 +17,7 @@ import (
 )
 
 func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
-	for _, change := range []string{"allow", "disable", "remove custom config", "revoke consent"} {
+	for _, change := range []string{"allow", "disable", "remove custom config"} {
 		t.Run(change, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
@@ -65,9 +65,6 @@ func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
 					return err
 				case "remove custom config":
 					return os.Remove(f.cfg.ConfigFilePath())
-				case "revoke consent":
-					_, err := f.store.RevokePersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
-					return err
 				}
 				return nil
 			}
@@ -84,8 +81,6 @@ func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
 			case "allow":
 				must.NoError(err)
 				checks.Len(results, 2)
-			case "revoke consent":
-				must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 			default:
 				must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
 			}

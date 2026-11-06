@@ -68,7 +68,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					controller.failurePhase = "downloading"
 				}
 				if behavior == "publication failure" {
-					// Scheduling can fail after the index build and idle publication.
+					// An idle failure must not mark the indexing phase as failed.
 					controller.failurePhase = "idle"
 				}
 				srv.SetLocalEmbeddings(controller)

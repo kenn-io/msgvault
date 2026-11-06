@@ -365,17 +365,18 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name                                string
-		kit, configured, builtin, available bool
-		installs                            int
+		name                                         string
+		kit, configured, builtin, available, stopped bool
+		installs                                     int
 	}{
 		{name: "built-in", builtin: true, installs: 1},
 		{name: "available Ollama", kit: true, available: true},
+		{name: "Ollama stops after inspection", kit: true, available: true, stopped: true},
 		{name: "Ollama on chat server", configured: true, available: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "", "")
-			f.ollamaTags = tc.configured || tc.kit
+			f.ollamaTags = tc.configured || tc.kit && !tc.stopped
 			if tc.kit {
 				f.ollamaCatalog = `{"models":[]}`
 				f.cfg.Chat.Server = "http://127.0.0.1:11434"
@@ -390,6 +391,16 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.available, availability.OllamaAvailable)
 			assert.NotEmpty(t, availability.Host)
+			if tc.stopped {
+				before, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(t, err)
+				err = f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {})
+				require.EqualError(t, err, "Ollama stopped during setup. Turn on to retry.")
+				after, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(t, err)
+				assert.Equal(t, string(before), string(after), "retry must retain the saved provider choice")
+				return
+			}
 			require.NoError(t, f.controller.Enable(f.ctx, tc.builtin, func(api.LocalEmbeddingsStatus) {}))
 			assert.Equal(t, tc.installs, f.installs)
 			assert.Equal(t, 1, f.refreshes)
@@ -406,24 +417,6 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			assert.Equal(t, "nomic-embed-text", generation.Model)
 		})
 	}
-}
-
-func TestLocalEmbeddingsRejectsSharedEndpointAfterOllamaStops(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newLocalActivationFixture(t, "", "")
-	f.start(t)
-	before, err := os.ReadFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-		return embedlocal.Status{OllamaAvailable: true}, nil
-	}
-	// Endpoint discovery falls back to the shared server if inspected Ollama stops.
-	// The fixture endpoint serves embeddings but has no Ollama catalog.
-	err = f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {})
-	require.EqualError(err, "Ollama stopped during setup. Turn on to retry.")
-	after, err := os.ReadFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	assert.Equal(string(before), string(after), "retry must retain the saved provider choice")
 }
 
 func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
