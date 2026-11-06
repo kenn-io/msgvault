@@ -502,3 +502,26 @@ func participantCount(t *testing.T, st *store.Store, id int64) int64 {
 	).Scan(&count))
 	return count
 }
+
+func TestGetPersonUsesReadSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	oldID := f.EnsureParticipant("person@example.com", "Example Person", "example.com")
+	newID := f.EnsureParticipant("alias@example.com", "Example Alias", "example.com")
+	person, _, err := f.Store.CreatePersonFromParticipant(oldID)
+	require.NoError(err)
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	require.NoError(err)
+	defer release()
+	// Pin the snapshot before a sync merges the person's participant.
+	_, err = f.Store.ListSourcesContext(ctx, "")
+	require.NoError(err)
+	require.NoError(f.Store.MergeParticipants(oldID, newID))
+	before, err := f.Store.GetPersonContext(ctx, person.ID)
+	require.NoError(err)
+	assert.Equal([]int64{oldID}, before.ParticipantIDs)
+	after, err := f.Store.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal([]int64{newID}, after.ParticipantIDs)
+}

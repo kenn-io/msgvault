@@ -12,26 +12,27 @@
     type ChipTone,
   } from '@kenn-io/kit-ui';
   import { getContext } from 'svelte';
+  import { cardDAVRepairCopy } from '../../carddav/account-settings';
   import { scheduleSummary } from '../../settings/cron';
 
   import type { CardDAVBook, CardDAVBookRoles, CardDAVController } from '../../carddav/controller.svelte';
   import type {
     CardDAVRunResponse as GeneratedCardDAVRunResponse,
-    CardDAVStatusResponse as GeneratedCardDAVStatusResponse,
   } from '../../api/generated/models';
 
   type CardDAVRun = GeneratedCardDAVRunResponse;
-  type RepairReason = NonNullable<GeneratedCardDAVStatusResponse['repair_reason']>;
 
   let {
     controller,
     syncConnection = undefined,
     connectionReady = true,
+    onStatusChange = () => undefined,
     onOpenOperations: providedOpenOperations = undefined
   }: {
     controller: CardDAVController;
     syncConnection?: string;
     connectionReady?: boolean;
+    onStatusChange?: () => void;
     onOpenOperations?: () => void;
   } = $props();
   const shellOpenOperations = getContext<(() => void) | undefined>('msgvault:open-carddav-operations');
@@ -39,17 +40,6 @@
   function openOperations(): void {
     (providedOpenOperations ?? shellOpenOperations)?.();
   }
-
-  const repairCopy: Record<RepairReason, string> = {
-    account_missing: 'CardDAV account discovery is missing. Test and save the account again.',
-    credential_missing: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.',
-    credential_mismatch: 'The stored credential belongs to different CardDAV account settings. Connect the account again and save.',
-    credential_unavailable: 'The stored credential cannot be read right now. Check that its credential store is available, then try again. For password-based accounts, reconnect the provider account or save its password again in CardDAV settings.',
-    google_authorization_required: 'Check the selected OAuth app\'s client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.',
-    microsoft_authorization_required: 'Run msgvault carddav authorize-microsoft with your account email, then try again.',
-    runtime_unavailable:
-      'CardDAV is configured but unavailable in this daemon session. Test and save the account again, or restart the daemon.',
-  };
 
   function changeRole(book: CardDAVBook, field: keyof CardDAVBookRoles, checked: boolean): void {
     const next = { ...controller.rolesFor(book), [field]: checked };
@@ -122,7 +112,7 @@
           >
         {/if}
       </div>
-      {#if status.repair_reason}<p class="notice notice--error" role="alert">{repairCopy[status.repair_reason]}</p>{/if}
+      {#if status.repair_reason}<p class="notice notice--error" role="alert">{cardDAVRepairCopy[status.repair_reason]}</p>{/if}
       {#if status.queued_at}
         <p class="helper">
           Queued since <time datetime={status.queued_at} title={status.queued_at}
@@ -182,7 +172,7 @@
       <Button
         label={controller.syncPending ? 'Checking CardDAV state…' : 'Sync now'}
         disabled={!controller.canSync || !connectionReady}
-        onclick={() => void controller.sync(syncConnection)}
+        onclick={async () => { await controller.sync(syncConnection); onStatusChange(); }}
       />
       <Button label="View CardDAV operations" surface="soft" onclick={openOperations} />
     </div>

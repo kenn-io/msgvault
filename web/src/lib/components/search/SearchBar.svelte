@@ -13,10 +13,12 @@
     compact: boolean;
     onDraft: (query: string, mode: ExploreSearchMode) => void;
     onSubmit: (query: string, mode: ExploreSearchMode) => void;
+    /** Names the People list the box narrows, such as "Filter domains". */
+    filterLabel?: string;
     inputEl?: HTMLInputElement;
   }
 
-  let { workspace, query, mode, live, compact, onDraft, onSubmit, inputEl = $bindable() }: Props = $props();
+  let { workspace, query, mode, live, compact, onDraft, onSubmit, filterLabel = 'Filter people', inputEl = $bindable() }: Props = $props();
 
   let draft = $state(untrack(() => query));
   let draftMode = $state<ExploreSearchMode>(untrack(() => mode));
@@ -63,7 +65,7 @@
   class="global-search"
   class:global-search--compact={compact}
   role="search"
-  aria-label="Search Everything"
+  aria-label={workspace === 'relationships' ? filterLabel : 'Search Messages'}
   onsubmit={submit}
 >
   <div class="global-search__query">
@@ -71,14 +73,17 @@
       id="everything-search"
       bind:inputEl
       value={draft}
-      ariaLabel="Search everything"
-      placeholder={compact ? 'Search' : 'Search people, conversations, events, and files…'}
+      ariaLabel={workspace === 'relationships' ? filterLabel : 'Search messages'}
+      placeholder={workspace === 'relationships' ? filterLabel : compact ? 'Search' : 'Search people, conversations, events, and files…'}
       block
       oninput={changeQuery}
     />
   </div>
-  {#if compact}
+  {#if workspace === 'relationships'}
+    <!-- People filters as you type, so it has no Search button. -->
+  {:else if compact}
     <SelectDropdown
+      class="search-mode"
       title="Search mode"
       value={draftMode}
       options={modeOptions}
@@ -108,5 +113,10 @@
 
   .global-search--compact {
     gap: var(--space-2);
+  }
+
+  .global-search :global(.search-mode) {
+    min-width: 0;
+    flex: none;
   }
 </style>

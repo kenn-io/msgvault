@@ -2,13 +2,10 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/hex"
 	"errors"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -167,43 +164,18 @@ func (r *dailyNoteGateRows) Close() error {
 }
 
 func newGatedPostgresStore(
-	t *testing.T, dbURL string, gate *dailyNoteListGate,
+	t *testing.T, gate *dailyNoteListGate,
 ) *Store {
 	t.Helper()
-	admin, err := sql.Open("pgx", dbURL)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = admin.Close() })
-
-	random := make([]byte, 8)
-	_, err = rand.Read(random)
-	require.NoError(t, err)
-	schema := "msgvault_test_" + hex.EncodeToString(random)
-	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+schema)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-	})
-
-	separator := "?"
-	if strings.Contains(dbURL, "?") {
-		separator = "&"
-	}
-	testURL := dbURL + separator + "search_path=" + schema
-	config, err := postgresConnConfig(testURL, false)
+	base := newPGStoreInternal(t)
+	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	baseConnector := stdlib.GetConnector(*config)
 	db := sql.OpenDB(&dailyNoteGateConnector{Connector: baseConnector, gate: gate})
 	db.SetMaxOpenConns(8)
 
-	dialect := &PostgreSQLDialect{}
-	st := &Store{
-		db:      newLoggedDB(db, dialect.Rebind),
-		dbPath:  testURL,
-		dialect: dialect,
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
-	return st
+	replaceTestStoreDB(t, base, db)
+	return base
 }
 
 // TestDailyNotePersonListingUsesOneSnapshot observes production statements at
@@ -219,7 +191,7 @@ func TestDailyNotePersonListingUsesOneSnapshot(t *testing.T) {
 	require := require.New(t)
 	gate := newDailyNoteListGate()
 	defer gate.releaseSecond()
-	st := newGatedPostgresStore(t, dbURL, gate)
+	st := newGatedPostgresStore(t, gate)
 
 	firstParticipant, err := st.EnsureParticipant(
 		"snapshot-first@example.invalid", "Test First", "example.invalid",

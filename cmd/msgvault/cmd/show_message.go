@@ -107,7 +107,7 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 
 func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 	output := bufio.NewWriter(w)
-	body := messageTextBody(msg, showMessageStripQuoted)
+	body, hasBody := messageTextBody(msg, showMessageStripQuoted)
 	if showMessageBodyOnly {
 		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 		if err := output.Flush(); err != nil {
@@ -177,7 +177,7 @@ func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 
 	// Body
 	_, _ = fmt.Fprintln(output, "\n═══════════════════════════════════════════════════════════════════════════════")
-	if msg.BodyText != "" {
+	if hasBody {
 		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 	} else if msg.Snippet != "" {
 		_, _ = fmt.Fprintf(output, "[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
@@ -251,6 +251,9 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"hidden_text_present":    msg.HiddenTextPresent,
 	}
 
+	if msg.SenderAuth != nil {
+		output["sender_auth"] = msg.SenderAuth
+	}
 	if msg.RelatedMessageID != nil {
 		output["related_message_id"] = *msg.RelatedMessageID
 	}

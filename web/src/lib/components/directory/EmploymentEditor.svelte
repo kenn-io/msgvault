@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Checkbox, Modal, Typeahead, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization } from '../../directory/models';
+  import OrganizationEditor from './OrganizationEditor.svelte';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
 
   interface Props {
@@ -19,6 +20,7 @@
   let { controller, personID, employment = undefined, action = 'edit', onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialEmployment = untrack(() => employment);
   const initialAction = untrack(() => action);
+  let creatingOrganization = $state(false);
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');
@@ -42,10 +44,7 @@
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
     if (selectedOrganization && !organizations.some((item) => item.id === selectedOrganization?.id)) organizations.push(selectedOrganization);
-    return [
-      { value: '', label: 'Choose an organization', disabled: true },
-      ...organizations.map((organization) => ({ value: String(organization.id), label: organization.name }))
-    ];
+    return organizations.map((organization) => ({ name: String(organization.id), label: organization.name }));
   });
 
   onMount(() => {
@@ -177,6 +176,7 @@
   title={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
   ariaLabel={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
   closeLabel="Close employment editor"
+  maxWidth="min(560px, calc(100vw - 32px))"
   onclose={requestClose}
 >
   <form class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -186,15 +186,16 @@
       <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
       {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
-      <label>Organization<SelectDropdown title="Organization" value={organizationID} options={organizationOptions} onchange={(value) => { organizationID = value; }} disabled={submitting || !!initialEmployment} /></label>
-      <label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
-      <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label>
-      <label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
-      <label>Location<TextInput ariaLabel="Employment location" bind:value={location} block disabled={submitting} /></label>
-      <label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} /></label>
-      {#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
-      {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
+      <div class="field"><span class="label">Organization</span><div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} />
+        {#if !initialEmployment}<Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} />{/if}</div></div>
+      <div class="pair"><label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
+      <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label></div>
+      <div class="pair"><label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
+      <label>Location<TextInput ariaLabel="Employment location" bind:value={location} block disabled={submitting} /></label></div>
+      <div class="pair">
+        <div class="field"><label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} /></label>{#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}</div>
+        <div class="field"><label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>{#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}</div>
+      </div>
       <label>Description<textarea aria-label="Employment description" bind:value={description} disabled={submitting}></textarea></label>
       <div class="checks"><Checkbox checked={isCurrent} label="Current employment" onchange={(checked) => { isCurrent = checked; }} disabled={submitting} /><Checkbox checked={isPrimary} label="Primary employment" onchange={(checked) => { isPrimary = checked; }} disabled={submitting} /></div>
     {/if}
@@ -215,13 +216,18 @@
     </div>
   </form>
 </Modal>
+{#if creatingOrganization}<OrganizationEditor {controller} onDone={(organization) => { selectedOrganization = organization; organizationID = String(organization?.id ?? ''); creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
+
 
 <style>
-  .editor { display: grid; gap: var(--space-3); min-width: min(30rem, 80vw); }
-  label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
+  .editor { display: grid; gap: var(--field-gap); min-width: 0; }
+  label, .field { display: grid; gap: var(--label-gap); align-content: start; color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--field-gap); }
+  .org { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--control-gap); align-items: center; }
+  textarea { min-height: 5rem; resize: vertical; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font: inherit; }
   .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }
   p { margin: 0; } [role="alert"] { color: var(--text-danger); }
-  .checks, .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-  .actions { justify-content: flex-end; }
+  .checks, .actions { display: flex; gap: var(--space-5); flex-wrap: wrap; }
+  .actions { gap: var(--control-gap); justify-content: flex-end; padding-top: var(--space-2); }
+  @media (max-width: 640px) { .pair { grid-template-columns: minmax(0, 1fr); } }
 </style>

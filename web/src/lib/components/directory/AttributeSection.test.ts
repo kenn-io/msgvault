@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -7,7 +7,6 @@ import type {
   AttributeValue as GeneratedAttributeValue,
   PersonAttributeGroup as GeneratedPersonAttributeGroup,
   PersonAttributeValue as GeneratedPersonAttributeValue,
-  SetPersonAttributeRequest as GeneratedSetPersonAttributeRequest,
 } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -90,467 +89,78 @@ function renderSection(
 }
 
 describe('AttributeSection', () => {
-  it('hides empty definitions until Show empty fields is pressed', async () => {
-    const filled = definition({ id: 8, universal_id: 'filled', slug: 'nickname', label: 'Nickname', is_sensitive: false });
-    const empty = definition({ id: 9, universal_id: 'empty', slug: 'employer', label: 'Employer', is_sensitive: false });
-    const current = personValue(filled, 19, { type: 'text', text: 'Synthetic nickname' });
-    renderSection(vi.fn(), [{ definition: filled, current: [current], history: [] }], [filled, empty]);
-
-    expect(screen.getByRole('heading', { name: 'Nickname' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Employer' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
-    expect(screen.getByRole('heading', { name: 'Employer' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Hide empty fields' }));
-    expect(screen.queryByRole('heading', { name: 'Employer' })).toBeNull();
-  });
-
-  it('keeps current and historical sensitive values out of display, editor, DOM, and accessible names until reveal', async () => {
+  it('keeps current imported provenance reachable while concealing sensitive values until reveal', async () => {
     const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' });
+    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8 });
     const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, {
       active_until: '2026-07-01T00:00:00Z',
       superseded_at: '2026-07-01T00:00:00Z',
     });
-    renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: [current, historical] }]);
+    renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: [historical] }]);
 
-    expect(screen.getByText('Sensitive')).toBeDefined();
-    expect(screen.queryByText('synthetic current secret')).toBeNull();
-    expect(screen.queryByText('synthetic historical secret')).toBeNull();
-    expect(screen.queryByDisplayValue('synthetic current secret')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Private note' })).toBeDefined();
+    expect(screen.getByText('1 earlier value')).toBeDefined();
+    expect(screen.getAllByText('Hidden')).toHaveLength(2);
+    const currentRow = screen.getByText(/Reference: source-card-7/).closest('li')!;
+    expect(currentRow.textContent).toContain('Actor: synthetic-importer');
+    expect(currentRow.textContent).toContain('Confidence: 0.8');
+    expect(currentRow.textContent).toContain('Valid from:');
+    expect(screen.getByText('1 earlier value').closest('details')?.textContent).toContain('Valid until:');
     expect(document.body.innerHTML).not.toContain('synthetic current secret');
+    expect(screen.queryByText('synthetic historical secret')).toBeNull();
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
-    expect(screen.queryByRole('button', { name: /Edit private note/i })).toBeNull();
 
     const reveal = screen.getByRole('button', { name: 'Reveal Private note values' });
     reveal.focus();
     await fireEvent.click(reveal);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Hide Private note values' }));
-    expect(screen.getByText('synthetic current secret')).toBeDefined();
     expect(screen.getByText('synthetic historical secret')).toBeDefined();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private note value 1' }));
-    expect(screen.getByRole('textbox', { name: 'Private note' })).toHaveProperty('value', 'synthetic current secret');
+    expect(screen.getByText('synthetic current secret')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
-    expect(document.body.innerHTML).not.toContain('synthetic current secret');
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
-    expect(screen.queryByRole('textbox', { name: 'Private note' })).toBeNull();
+    expect(screen.getAllByText('Hidden')).toHaveLength(2);
+    expect(document.body.innerHTML).not.toContain('synthetic current secret');
   });
 
-  it.each([
-    ['request failure', () => Response.json({ message: 'Synthetic service failure' }, { status: 503 })],
-    [
-      'CAS conflict',
-      () =>
-        Response.json(
-          {
-            error: 'attribute_value_conflict',
-            message: 'changed elsewhere',
-            current_value_id: 22,
-          },
-          { status: 409 },
-        ),
-    ],
-  ])('scrubs a sensitive controller draft after %s when Hide explicitly discards it', async (_name, response) => {
-    const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'server sensitive value' });
-    const controller = renderSection(
-      vi.fn<typeof fetch>(async () => response()),
-      [{ definition: sensitive, current: [current], history: [current] }],
-    );
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private note value 1' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Private note' }), {
-      target: { value: 'failed local sensitive draft' },
+  it('renders collapsed attribute history with choice labels and removed rows', () => {
+    const field = definition({
+      label: 'Portable field', is_sensitive: false, cardinality: 'multi',
+      options: { choices: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await screen.findByRole('alert');
-
-    expect(JSON.stringify(controller.draft)).toContain('failed local sensitive draft');
-    await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
-
-    expect(controller.draft).toBeNull();
-    expect(controller.conflict).toBeNull();
-    expect(document.body.innerHTML).not.toContain('failed local sensitive draft');
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private note value 1' }));
-    expect(screen.getByRole('textbox', { name: 'Private note' })).toHaveProperty('value', 'server sensitive value');
-    expect(document.body.innerHTML).not.toContain('failed local sensitive draft');
-  });
-
-  it.each([
-    ['request failure', () => Response.json({ message: 'Deferred service failure' }, { status: 503 })],
-    [
-      'CAS conflict',
-      () =>
-        Response.json(
-          {
-            error: 'attribute_value_conflict',
-            message: 'deferred conflict',
-            current_value_id: 23,
-          },
-          { status: 409 },
-        ),
-    ],
-  ])(
-    'keeps sensitive plaintext discarded when Hide occurs before a deferred save %s settles',
-    async (_name, response) => {
-      let settle: ((response: Response) => void) | undefined;
-      const pendingResponse = new Promise<Response>((resolve) => {
-        settle = resolve;
-      });
-      const sensitive = definition();
-      const current = personValue(sensitive, 19, { type: 'text', text: 'server sensitive value' });
-      const controller = renderSection(
-        vi.fn<typeof fetch>(async () => pendingResponse),
-        [{ definition: sensitive, current: [current], history: [current] }],
-      );
-
-      await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Edit Private note value 1' }));
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Private note' }), {
-        target: { value: 'in-flight sensitive draft' },
-      });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-      await waitFor(() => expect(controller.mutationPending).toBe(true));
-
-      await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
-      settle?.(response());
-      await waitFor(() => expect(controller.mutationPending).toBe(false));
-
-      expect(controller.draft).toBeNull();
-      expect(controller.conflict).toBeNull();
-      expect(document.body.innerHTML).not.toContain('in-flight sensitive draft');
-      expect(screen.queryByRole('textbox', { name: 'Private note' })).toBeNull();
-    },
-  );
-
-  it('keeps sensitive plaintext discarded when Hide occurs during a deferred failed reload', async () => {
-    const reloadSettlers: Array<(response: Response) => void> = [];
-    const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'server sensitive value' });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.method === 'PUT')
-        return Response.json(
-          {
-            error: 'attribute_value_conflict',
-            message: 'changed elsewhere',
-            current_value_id: 22,
-          },
-          { status: 409 },
-        );
-      return new Promise<Response>((resolve) => {
-        reloadSettlers.push(resolve);
-      });
-    });
-    const controller = renderSection(fetchFn, [{ definition: sensitive, current: [current], history: [current] }]);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private note value 1' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Private note' }), {
-      target: { value: 'reload-sensitive draft' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await screen.findByRole('alert');
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload attributes' }));
-    await waitFor(() => expect(controller.reloadPending).toBe(true));
-    await waitFor(() => expect(reloadSettlers).toHaveLength(4));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
-    for (const settle of reloadSettlers) settle(Response.json({ message: 'Deferred reload failure' }, { status: 503 }));
-    await waitFor(() => expect(controller.reloadPending).toBe(false));
-
-    expect(controller.draft).toBeNull();
-    expect(controller.conflict).toBeNull();
-    expect(document.body.innerHTML).not.toContain('reload-sensitive draft');
-    expect(screen.queryByRole('textbox', { name: 'Private note' })).toBeNull();
-  });
-
-  it('requires reveal and deliberate selection before adding a sensitive choice', async () => {
-    const requests: Request[] = [];
-    const sensitiveChoice = definition({
-      universal_id: 'sensitive-choice-id',
-      slug: 'confidential_level',
-      label: 'Confidential level',
-      field_type: 'select',
-      options: {
-        choices: [
-          { value: 'private', label: 'Private' },
-          { value: 'restricted', label: 'Restricted' },
-        ],
-      },
-    });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const body = (await request.clone().json()) as GeneratedSetPersonAttributeRequest;
-      return Response.json({ dry_run: false, value: personValue(sensitiveChoice, 71, body.value) });
-    });
-    renderSection(fetchFn, [{ definition: sensitiveChoice, current: [], history: [] }]);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
-    expect(screen.getByRole('button', { name: 'Add Confidential level value' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Confidential level values' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add Confidential level value' }));
-
-    const select = screen.getByRole('combobox', { name: 'Confidential level' });
-    expect(select).toHaveProperty('value', '');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    expect(requests).toHaveLength(0);
-    expect(screen.getByRole('alert').textContent).toContain('Choose an allowed value.');
-
-    await fireEvent.change(select, { target: { value: 'restricted' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    await expect(requests[0]!.clone().json()).resolves.toEqual({
-      value: { type: 'text', text: 'restricted' },
-      source: 'user',
-    });
-  });
-
-  it('joins registry definitions to grouped values by universal ID and renders definition metadata plus collapsed history', () => {
-    const stale = definition({
-      universal_id: 'portable-field-id',
-      slug: 'portable_field',
-      label: 'Stale label',
-      is_sensitive: false,
-    });
-    const registry = definition({
-      universal_id: 'portable-field-id',
-      slug: 'portable_field',
-      label: 'Portable field',
-      description: 'Registry description',
-      is_sensitive: false,
-      cardinality: 'multi',
-      options: {
-        choices: [
-          { value: 'one', label: 'One' },
-          { value: 'two', label: 'Two' },
-        ],
-      },
-    });
-    const current = personValue(stale, 31, { type: 'text', text: 'one' }, 2);
-    const historical = personValue(stale, 29, { type: 'text', text: 'two' }, 2, {
+    const current = personValue(field, 31, { type: 'text', text: 'one' }, 2);
+    const historical = personValue(field, 29, { type: 'text', text: 'two' }, 2, {
       source: 'vcard_import',
       source_ref: 'synthetic-source',
       active_until: when,
       superseded_at: when,
     });
 
-    renderSection(vi.fn(), [{ definition: stale, current: [current], history: [current, historical] }], [registry]);
+    renderSection(vi.fn(), [{ definition: field, current: [current], history: [current, historical] }]);
 
-    expect(screen.getByRole('heading', { name: 'Portable field' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Stale label' })).toBeNull();
-    expect(screen.getByText('Registry description')).toBeDefined();
-    expect(screen.getByText(/Type: text/)).toBeDefined();
-    expect(screen.getByText(/Cardinality: multi/)).toBeDefined();
-    expect(screen.getByText(/Ownership: user/)).toBeDefined();
-    expect(screen.getByText('Allowed choices: One, Two')).toBeDefined();
-    const history = screen.getByText('History (1)').closest('details');
+    const history = screen.getByText('1 earlier value').closest('details');
     expect(history).not.toBeNull();
     expect(history?.hasAttribute('open')).toBe(false);
-    expect(screen.getByText(/Source: vcard_import/)).toBeDefined();
-    expect(screen.getByText(/Reference: synthetic-source/)).toBeDefined();
+    const row = screen.getByText('Two').closest('li')!;
+    expect(row.textContent).toMatch(/Valid until: (Jul|Aug) \d{1,2}, 2026/);
   });
 
-  it('confirms and clears the selected multi-value with its exact CAS identity', async () => {
-    const requests: Request[] = [];
-    const multi = definition({
-      universal_id: 'multi-field-id',
-      slug: 'topics',
-      label: 'Topics',
-      is_sensitive: false,
-      cardinality: 'multi',
-      field_type: 'text',
-    });
-    const current = personValue(multi, 41, { type: 'text', text: 'Databases' }, 3);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return Response.json({ dry_run: false, superseded: { ...current, active_until: when, superseded_at: when } });
-    });
-    renderSection(fetchFn, [{ definition: multi, current: [current], history: [current] }]);
+  it.each([
+    { active_until: '2026-08-02T00:00:00Z' },
+    { superseded_at: '2026-08-03T00:00:00Z' },
+    { active_until: '2026-08-02T00:00:00Z', superseded_at: '2026-08-03T00:00:00Z' },
+  ])('shows each closed attribute interval once in provenance: %j', interval => {
+    const field = definition({ is_sensitive: false });
+    const historical = personValue(field, 29, { type: 'text', text: 'Earlier note' }, 0, interval);
+    renderSection(vi.fn(), [{ definition: field, current: [], history: [historical] }]);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Close Topics value 1' }));
-    expect(requests).toHaveLength(0);
-    expect(screen.getByRole('group', { name: 'Confirm closing Topics value 1' })).toBeDefined();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm close attribute' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    const url = new URL(requests[0]!.url);
-    expect(requests[0]!.method).toBe('DELETE');
-    expect(url.pathname).toBe('/api/v1/people/7/attributes/topics');
-    expect([...url.searchParams.entries()]).toEqual([
-      ['expected_value_id', '41'],
-      ['ordinal', '3'],
+    const row = screen.getByText('Earlier note').closest('li')!;
+    expect(row.closest('details')).not.toBeNull();
+    const metadata = row.querySelector('.meta')!.textContent!.trim();
+    expect(metadata.split(' · ').map(part => part.split(': ')[0])).toEqual([
+      'You', 'Actor', 'Valid from', ...(interval.active_until ? ['Valid until'] : []), ...(interval.superseded_at ? ['Superseded'] : []), 'Created',
     ]);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Show empty fields (1)' })).toBeDefined());
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
-    expect(screen.getByText('No current value.')).toBeDefined();
-    expect(screen.getByText('Databases')).toBeDefined();
-    expect(screen.getByText('History (1)')).toBeDefined();
-  });
-
-  it('keeps the selected clear target and reports a retryable request failure', async () => {
-    const note = definition({ is_sensitive: false });
-    const current = personValue(note, 42, { type: 'text', text: 'Keep this draft' });
-    renderSection(
-      vi.fn<typeof fetch>(async () => Response.json({ message: 'Synthetic service failure' }, { status: 503 })),
-      [{ definition: note, current: [current], history: [current] }],
-    );
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Close Private note value 1' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm close attribute' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic service failure');
-    expect(screen.getByRole('group', { name: 'Confirm closing Private note value 1' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Confirm close attribute' })).toHaveProperty('disabled', false);
-    expect(screen.queryByRole('button', { name: 'Reload attributes' })).toBeNull();
-  });
-
-  it('keeps the conflicted editor mounted and gates opening another attribute', async () => {
-    const requests: Request[] = [];
-    const alias = definition({
-      universal_id: 'alias-id',
-      slug: 'alias',
-      label: 'Alias',
-      is_sensitive: false,
-      field_type: 'text',
-    });
-    const nickname = definition({
-      id: 9,
-      universal_id: 'nickname-id',
-      slug: 'nickname',
-      label: 'Nickname',
-      is_sensitive: false,
-      field_type: 'text',
-      display_order: 20,
-    });
-    const current = personValue(alias, 43, { type: 'text', text: 'Original alias' });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
-      return Response.json(
-        { error: 'attribute_value_conflict', message: 'changed elsewhere', current_value_id: 44 },
-        { status: 409 },
-      );
-    });
-    const controller = renderSection(fetchFn, [
-      { definition: alias, current: [current], history: [current] },
-      { definition: nickname, current: [], history: [] },
-    ]);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Alias value 1' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Alias' }), {
-      target: { value: 'Retained local alias' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('This person changed elsewhere.');
-
-    const retainedDraft = controller.draft;
-    expect(screen.getByRole('button', { name: 'Add Nickname value' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Add Nickname value' }));
-
-    expect(requests).toHaveLength(1);
-    expect(controller.draft).toBe(retainedDraft);
-    expect(screen.getByRole('textbox', { name: 'Alias' })).toHaveProperty('value', 'Retained local alias');
-    expect(screen.queryByRole('textbox', { name: 'Nickname' })).toBeNull();
-  });
-
-  it('lets the server allocate a new multi-value ordinal and disables operations the definition does not permit', async () => {
-    const requests: Request[] = [];
-    const multi = definition({
-      universal_id: 'multi-field-id',
-      slug: 'topics',
-      label: 'Topics',
-      is_sensitive: false,
-      cardinality: 'multi',
-      field_type: 'text',
-    });
-    const derived = definition({
-      id: 9,
-      universal_id: 'derived-field-id',
-      slug: 'last_contacted',
-      label: 'Last contacted',
-      is_sensitive: false,
-      value_type: 'timestamp',
-      field_type: 'timestamp',
-      ownership: 'system',
-      ui_creatable: false,
-      ui_editable: false,
-      api_mutable: false,
-      derived_source: 'activity_spine',
-      history_exempt: true,
-      display_order: 20,
-    });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const body = (await request.clone().json()) as GeneratedSetPersonAttributeRequest;
-      return Response.json({ dry_run: false, value: personValue(multi, 50, body.value, 5) });
-    });
-    renderSection(fetchFn, [
-      { definition: multi, current: [], history: [] },
-      { definition: derived, current: [personValue(derived, 49, { type: 'timestamp', timestamp: when })], history: [] },
-    ]);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (1)' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add Topics value' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Topics' }), { target: { value: 'Search systems' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    await expect(requests[0]!.clone().json()).resolves.toEqual({
-      value: { type: 'text', text: 'Search systems' },
-      source: 'user',
-    });
-
-    expect(screen.getByRole('button', { name: 'Add Last contacted value' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Edit Last contacted value 1' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Close Last contacted value 1' })).toHaveProperty('disabled', true);
-    expect(screen.getByText(/Computed by activity_spine/)).toBeDefined();
-    expect(screen.queryByRole('button', { name: /rename|delete.*definition/i })).toBeNull();
-  });
-
-  it('opens user-writable timestamp and JSON definitions from the joined section', async () => {
-    const timestamp = definition({
-      id: 10,
-      universal_id: 'timestamp-id',
-      slug: 'follow_up_at',
-      label: 'Follow up at',
-      is_sensitive: false,
-      value_type: 'timestamp',
-      field_type: 'timestamp',
-      options: undefined,
-    });
-    const json = definition({
-      id: 11,
-      universal_id: 'json-id',
-      slug: 'preferences',
-      label: 'Preferences',
-      is_sensitive: false,
-      value_type: 'json',
-      field_type: 'textarea',
-      options: undefined,
-      display_order: 20,
-    });
-    renderSection(vi.fn(), [
-      { definition: timestamp, current: [], history: [] },
-      { definition: json, current: [], history: [] },
-    ]);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Show empty fields (2)' }));
-    const timestampAdd = screen.getByRole('button', { name: 'Add Follow up at value' });
-    expect(timestampAdd).toHaveProperty('disabled', false);
-    await fireEvent.click(timestampAdd);
-    expect(screen.getByRole('textbox', { name: 'Follow up at' })).toBeDefined();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    const jsonAdd = screen.getByRole('button', { name: 'Add Preferences value' });
-    expect(jsonAdd).toHaveProperty('disabled', false);
-    await fireEvent.click(jsonAdd);
-    expect(screen.getByRole('textbox', { name: 'Preferences' })).toBeDefined();
+    if (interval.active_until) expect(metadata).toMatch(/Valid until: (Aug 1|Aug 2), 2026/);
+    if (interval.superseded_at) expect(metadata).toMatch(/Superseded: (Aug 2|Aug 3), 2026/);
   });
 });

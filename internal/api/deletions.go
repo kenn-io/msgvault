@@ -122,6 +122,7 @@ type DeletionManifestSummary struct {
 	CreatedAt    time.Time `json:"created_at"`
 	CreatedBy    string    `json:"created_by"`
 	Description  string    `json:"description"`
+	Account      string    `json:"account,omitempty"`
 	MessageCount int       `json:"message_count"`
 }
 
@@ -515,6 +516,7 @@ func (s *Server) handleListDeletions(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:    m.CreatedAt,
 			CreatedBy:    m.CreatedBy,
 			Description:  m.Description,
+			Account:      m.Filters.Account,
 			MessageCount: len(m.GmailIDs),
 		})
 	}

@@ -718,6 +718,7 @@ const (
 	ExploreFilterDimensionDeletion    ExploreFilterDimension = "deletion"
 	ExploreFilterDimensionDomain      ExploreFilterDimension = "domain"
 	ExploreFilterDimensionIdentity    ExploreFilterDimension = "identity"
+	ExploreFilterDimensionKind        ExploreFilterDimension = "kind"
 	ExploreFilterDimensionMailingList ExploreFilterDimension = "mailing_list"
 	ExploreFilterDimensionMessageType ExploreFilterDimension = "message_type"
 	ExploreFilterDimensionParticipant ExploreFilterDimension = "participant"
@@ -727,7 +728,7 @@ const (
 // Validate checks if the ExploreFilterDimension value is valid
 func (e ExploreFilterDimension) Validate() error {
 	switch e {
-	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
+	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionKind, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreFilterDimension value, got: %v", e))
@@ -737,6 +738,7 @@ func (e ExploreFilterDimension) Validate() error {
 type ExploreGroupDimension string
 
 const (
+	ExploreGroupDimensionDay         ExploreGroupDimension = "day"
 	ExploreGroupDimensionDomain      ExploreGroupDimension = "domain"
 	ExploreGroupDimensionKind        ExploreGroupDimension = "kind"
 	ExploreGroupDimensionMailingList ExploreGroupDimension = "mailing_list"
@@ -750,10 +752,30 @@ const (
 // Validate checks if the ExploreGroupDimension value is valid
 func (e ExploreGroupDimension) Validate() error {
 	switch e {
-	case ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
+	case ExploreGroupDimensionDay, ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupDimension value, got: %v", e))
+	}
+}
+
+type ExploreGroupRowLevel string
+
+const (
+	ExploreGroupRowLevelFirstQuartile  ExploreGroupRowLevel = "FIRST_QUARTILE"
+	ExploreGroupRowLevelFourthQuartile ExploreGroupRowLevel = "FOURTH_QUARTILE"
+	ExploreGroupRowLevelNone           ExploreGroupRowLevel = "NONE"
+	ExploreGroupRowLevelSecondQuartile ExploreGroupRowLevel = "SECOND_QUARTILE"
+	ExploreGroupRowLevelThirdQuartile  ExploreGroupRowLevel = "THIRD_QUARTILE"
+)
+
+// Validate checks if the ExploreGroupRowLevel value is valid
+func (e ExploreGroupRowLevel) Validate() error {
+	switch e {
+	case ExploreGroupRowLevelFirstQuartile, ExploreGroupRowLevelFourthQuartile, ExploreGroupRowLevelNone, ExploreGroupRowLevelSecondQuartile, ExploreGroupRowLevelThirdQuartile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupRowLevel value, got: %v", e))
 	}
 }
 
@@ -1137,6 +1159,59 @@ func (i ImportJobResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ImportJobResponseStatus value, got: %v", i))
+	}
+}
+
+type LoopDecisionResponseState string
+
+const (
+	Done    LoopDecisionResponseState = "done"
+	Open    LoopDecisionResponseState = "open"
+	Snoozed LoopDecisionResponseState = "snoozed"
+)
+
+// Validate checks if the LoopDecisionResponseState value is valid
+func (l LoopDecisionResponseState) Validate() error {
+	switch l {
+	case Done, Open, Snoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))
+	}
+}
+
+type LoopItemChannel string
+
+const (
+	Chat  LoopItemChannel = "chat"
+	Email LoopItemChannel = "email"
+)
+
+// Validate checks if the LoopItemChannel value is valid
+func (l LoopItemChannel) Validate() error {
+	switch l {
+	case Chat, Email:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemChannel value, got: %v", l))
+	}
+}
+
+// LoopItemKind reply_owed waits on you; awaiting_reply waits on them
+type LoopItemKind string
+
+const (
+	AwaitingReply LoopItemKind = "awaiting_reply"
+	ReplyOwed     LoopItemKind = "reply_owed"
+)
+
+// Validate checks if the LoopItemKind value is valid
+func (l LoopItemKind) Validate() error {
+	switch l {
+	case AwaitingReply, ReplyOwed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemKind value, got: %v", l))
 	}
 }
 
@@ -1914,22 +1989,22 @@ func (o OrganizationCategoryBodySource) Validate() error {
 type OrganizationContactPointBodyContactKind string
 
 const (
-	Calendar     OrganizationContactPointBodyContactKind = "calendar"
-	ContactURI   OrganizationContactPointBodyContactKind = "contact_uri"
-	Email        OrganizationContactPointBodyContactKind = "email"
-	Impp         OrganizationContactPointBodyContactKind = "impp"
-	Language     OrganizationContactPointBodyContactKind = "language"
-	OrgDirectory OrganizationContactPointBodyContactKind = "org_directory"
-	Phone        OrganizationContactPointBodyContactKind = "phone"
-	Social       OrganizationContactPointBodyContactKind = "social"
-	URL          OrganizationContactPointBodyContactKind = "url"
-	Username     OrganizationContactPointBodyContactKind = "username"
+	Calendar                                     OrganizationContactPointBodyContactKind = "calendar"
+	ContactURI                                   OrganizationContactPointBodyContactKind = "contact_uri"
+	Impp                                         OrganizationContactPointBodyContactKind = "impp"
+	Language                                     OrganizationContactPointBodyContactKind = "language"
+	OrgDirectory                                 OrganizationContactPointBodyContactKind = "org_directory"
+	OrganizationContactPointBodyContactKindEmail OrganizationContactPointBodyContactKind = "email"
+	Phone                                        OrganizationContactPointBodyContactKind = "phone"
+	Social                                       OrganizationContactPointBodyContactKind = "social"
+	URL                                          OrganizationContactPointBodyContactKind = "url"
+	Username                                     OrganizationContactPointBodyContactKind = "username"
 )
 
 // Validate checks if the OrganizationContactPointBodyContactKind value is valid
 func (o OrganizationContactPointBodyContactKind) Validate() error {
 	switch o {
-	case Calendar, ContactURI, Email, Impp, Language, OrgDirectory, Phone, Social, URL, Username:
+	case Calendar, ContactURI, Impp, Language, OrgDirectory, OrganizationContactPointBodyContactKindEmail, Phone, Social, URL, Username:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationContactPointBodyContactKind value, got: %v", o))
@@ -2510,6 +2585,7 @@ const (
 	SavedViewFilterFieldDeletion      SavedViewFilterField = "deletion"
 	SavedViewFilterFieldDomain        SavedViewFilterField = "domain"
 	SavedViewFilterFieldIdentity      SavedViewFilterField = "identity"
+	SavedViewFilterFieldKind          SavedViewFilterField = "kind"
 	SavedViewFilterFieldMailingList   SavedViewFilterField = "mailing_list"
 	SavedViewFilterFieldMessageType   SavedViewFilterField = "message_type"
 	SavedViewFilterFieldParticipant   SavedViewFilterField = "participant"
@@ -2521,7 +2597,7 @@ const (
 // Validate checks if the SavedViewFilterField value is valid
 func (s SavedViewFilterField) Validate() error {
 	switch s {
-	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
+	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldKind, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterField value, got: %v", s))

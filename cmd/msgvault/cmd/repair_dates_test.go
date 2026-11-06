@@ -465,11 +465,11 @@ func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.
 	_, statErr := os.Stat(statePath)
 	require.ErrorIs(statErr, os.ErrNotExist)
 
-	cacheLock, err := cacheBuildFileLock(cfg.AnalyticsDir())
+	cacheLock, err := cacheBuilderFileLock(cfg.AnalyticsDir())
 	require.NoError(err)
 	locked, err := cacheLock.TryLock()
 	require.NoError(err)
-	require.True(locked, "date repair must release the cache lock on failure")
+	require.True(locked, "date repair must release the builder lock on failure")
 	require.NoError(cacheLock.Unlock())
 }
 

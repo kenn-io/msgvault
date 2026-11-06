@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,7 @@ import (
 // The real importer must capture authoritative bridge proof and the exact
 // roster. A display label or provider user ID must not classify the network.
 func TestImportMessagingRouteBridgeProof(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ name, accountJSON, status, reason string }{
 		{"bridge", "{\"accountID\":\"account-a\",\"bridge\":{\"type\":\"whatsapp\"},\"status\":\"connected\"}", "archive_verified", ""},
 		{"label only", "{\"accountID\":\"account-a\",\"network\":\"WhatsApp\"}", "unresolved", "network_unverified"},
@@ -89,6 +91,7 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 }
 
 func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newFakeBeeper(t)
@@ -180,6 +183,7 @@ func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
 }
 
 func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, accountJSON, reason string
 	}{
@@ -277,6 +281,7 @@ func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
 }
 
 func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -341,6 +346,7 @@ func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T)
 }
 
 func TestImportClearsSourceRouteFailureAfterAccountLookupRecovers(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -396,6 +402,7 @@ func TestImportClearsSourceRouteFailureAfterAccountLookupRecovers(t *testing.T) 
 	assertions.NotContains(page.Routes.Items[0].Reasons, "account_lookup_failed")
 }
 
+// serial: changes tailScanInterval.
 func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -445,10 +452,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			sourcePath := filepath.Join(t.TempDir(), "msgvault.db")
-			originalStore, err := store.Open(sourcePath)
-			requirements.NoError(err)
-			t.Cleanup(func() { requirements.NoError(originalStore.Close()) })
-			requirements.NoError(originalStore.InitSchema())
+			originalStore := testutil.NewSQLiteTestStoreAt(t, sourcePath)
 			st := originalStore
 			imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
 			first, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", Limit: test.limit, NoMedia: true})
@@ -551,6 +555,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 }
 
 func TestImportUnfinishedChatFetchFailureInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -624,136 +629,140 @@ func TestImportUnfinishedChatFetchFailureInvalidatesMessagingRoute(t *testing.T)
 }
 
 func TestEnumerateUnfinishedChatBudgetExpiredProbeInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t, false)
 }
 
 func TestEnumerateUnfinishedChatCanceledProbeInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t, true)
 }
 
 func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *testing.T, cancelParent bool) {
 	t.Helper()
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	now := time.Now().UTC().Truncate(time.Second)
-	base := now.Add(-30 * 24 * time.Hour)
-	chatID := "!unfinished-budget-error:example.test"
-	f := newFakeBeeper(t)
-	f.addChat(&fakeChat{
-		ID: chatID, AccountID: "account-a", Network: "Display label",
-		Type: "single", Title: "Avery Example", LastActivity: base.Add(time.Minute),
-		Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}, {"id": "@avery:example.test", "fullName": "Avery Example"}},
-		Msgs: []fakeMsg{
-			{ID: "unfinished-budget-one", SortKey: 1, Timestamp: base, Text: "one", SenderID: "@avery:example.test", SenderName: "Avery Example"},
-			{ID: "unfinished-budget-two", SortKey: 2, Timestamp: base.Add(time.Minute), Text: "two", SenderID: "@avery:example.test", SenderName: "Avery Example"},
-		},
-	})
-	f.addChat(&fakeChat{
-		ID: "!surviving-budget-anchor:example.test", AccountID: "account-a", Network: "Display label",
-		Type: "group", Title: "Surviving anchor", LastActivity: now,
-		Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}},
-		Msgs: []fakeMsg{{
-			ID: "surviving-budget-anchor-message", SortKey: 1, Timestamp: now,
-			Text: "anchor", SenderID: "@self:example.test", SenderName: "Self",
-		}},
-	})
-	provider := f.handler()
-	probeStarted := make(chan struct{})
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/accounts/account-a" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"accountID":"account-a","bridge":{"type":"whatsapp"},"status":"connected"}`))
-			return
-		}
-		if r.URL.Path == "/v1/chats/"+chatID {
-			close(probeStarted)
-			<-r.Context().Done()
-			return
-		}
-		provider(w, r)
-	})
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(handler)
-
 	st := testutil.NewSQLiteTestStore(t)
-	source, err := st.GetOrCreateSource("beeper", "account-a")
-	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
-	requirements.NoError(err)
-	participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participantID)
-	requirements.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(source.ID, chatID, "direct_chat", "Avery Example")
-	requirements.NoError(err)
-	requirements.NoError(st.EnsureConversationParticipant(conversationID, participantID, "member"))
-	requirements.NoError(st.SetConversationMessagingRouteEvidence(t.Context(), conversationID, store.MessagingRouteEvidence{
-		ChatID: chatID, AccountID: "account-a", Network: "whatsapp", ProviderType: "single",
-		ObservedAt: now, MembershipComplete: true, ParticipantIDs: []int64{participantID},
-		SelfParticipantIDs: []int64{}, MemberChatIDs: []string{},
-	}))
-	account, err := client.GetAccount(t.Context(), "account-a")
-	requirements.NoError(err)
-	requirements.Empty(accountRouteProofFailure(account, "account-a"))
-	requirements.NoError(st.SetSourceMessagingRouteFailureContext(t.Context(), source.ID, ""))
-	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
-	verified, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(verified.Routes.Items, 1)
-	assertions.Equal("archive_verified", verified.Routes.Items[0].Status)
-
-	state := NewSyncState()
-	state.ListWatermark = formatWatermark(now)
-	state.EnsureChat(chatID).Done = false
-	syncID, err := st.StartSync(source.ID, sourceTypeBeeper)
-	requirements.NoError(err)
+	client := NewClient("http://beeper.test", testToken, 10000)
 	imp := NewImporter(st, client)
-	sum := &ImportSummary{}
-	opts := ImportOptions{
-		AccountID: "account-a", NoMedia: true, routeAccount: account,
-	}
-	ctx := t.Context()
-	if cancelParent {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(ctx)
-		t.Cleanup(cancel)
-		go func() {
-			<-probeStarted
-			cancel()
-		}()
-	} else {
-		opts.StopAt = time.Now().Add(2 * time.Second)
-	}
-	chats, err := imp.enumerateChats(ctx, syncID, source.ID, opts, state, now.Add(-reconcileWindow), false, sum)
-	if cancelParent {
-		requirements.ErrorIs(err, context.Canceled)
-		assertions.False(sum.Stopped)
-		assertions.Empty(chats)
-	} else {
+	synctest.Test(t, func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+
+		now := time.Now().UTC().Truncate(time.Second)
+		base := now.Add(-30 * 24 * time.Hour)
+		chatID := "!unfinished-budget-error:example.test"
+		f := newFakeBeeper(t)
+		f.addChat(&fakeChat{
+			ID: chatID, AccountID: "account-a", Network: "Display label",
+			Type: "single", Title: "Avery Example", LastActivity: base.Add(time.Minute),
+			Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}, {"id": "@avery:example.test", "fullName": "Avery Example"}},
+			Msgs: []fakeMsg{
+				{ID: "unfinished-budget-one", SortKey: 1, Timestamp: base, Text: "one", SenderID: "@avery:example.test", SenderName: "Avery Example"},
+				{ID: "unfinished-budget-two", SortKey: 2, Timestamp: base.Add(time.Minute), Text: "two", SenderID: "@avery:example.test", SenderName: "Avery Example"},
+			},
+		})
+		f.addChat(&fakeChat{
+			ID: "!surviving-budget-anchor:example.test", AccountID: "account-a", Network: "Display label",
+			Type: "group", Title: "Surviving anchor", LastActivity: now,
+			Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}},
+			Msgs: []fakeMsg{{
+				ID: "surviving-budget-anchor-message", SortKey: 1, Timestamp: now,
+				Text: "anchor", SenderID: "@self:example.test", SenderName: "Self",
+			}},
+		})
+		provider := f.handler()
+		probeStarted := make(chan struct{})
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/accounts/account-a" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"accountID":"account-a","bridge":{"type":"whatsapp"},"status":"connected"}`))
+				return
+			}
+			if r.URL.Path == "/v1/chats/"+chatID {
+				close(probeStarted)
+				<-r.Context().Done()
+				return
+			}
+			provider(w, r)
+		})
+		imp.client.http.Transport = handlerTransport(handler)
+		source, err := st.GetOrCreateSource("beeper", "account-a")
 		requirements.NoError(err)
-		assertions.True(sum.Stopped)
-		assertions.Len(chats, 1, "the old unfinished chat is excluded from search and its probe stops the pass")
-	}
-	select {
-	case <-probeStarted:
-	default:
-		requirements.FailNow("the direct unfinished-chat probe did not start")
-	}
-	after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(after.Routes.Items, 1)
-	assertions.Equal("unresolved", after.Routes.Items[0].Status)
-	if cancelParent {
-		assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
-	} else {
-		assertions.Contains(after.Routes.Items[0].Reasons, "membership_fetch_failed")
-	}
-	assertions.NotContains(after.Routes.Items[0].Reasons, "account_lookup_failed")
-	requirements.NoError(st.CompleteSyncAndPreserveSourceCursorContext(t.Context(), syncID, source.ID, ""))
+		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
+		requirements.NoError(err)
+		participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
+		requirements.NoError(err)
+		person, _, err := st.CreatePersonFromParticipant(participantID)
+		requirements.NoError(err)
+		conversationID, err := st.EnsureConversationWithType(source.ID, chatID, "direct_chat", "Avery Example")
+		requirements.NoError(err)
+		requirements.NoError(st.EnsureConversationParticipant(conversationID, participantID, "member"))
+		requirements.NoError(st.SetConversationMessagingRouteEvidence(t.Context(), conversationID, store.MessagingRouteEvidence{
+			ChatID: chatID, AccountID: "account-a", Network: "whatsapp", ProviderType: "single",
+			ObservedAt: now, MembershipComplete: true, ParticipantIDs: []int64{participantID},
+			SelfParticipantIDs: []int64{}, MemberChatIDs: []string{},
+		}))
+		account, err := imp.client.GetAccount(t.Context(), "account-a")
+		requirements.NoError(err)
+		requirements.Empty(accountRouteProofFailure(account, "account-a"))
+		requirements.NoError(st.SetSourceMessagingRouteFailureContext(t.Context(), source.ID, ""))
+		query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+		verified, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+		requirements.NoError(err)
+		requirements.Len(verified.Routes.Items, 1)
+		assertions.Equal("archive_verified", verified.Routes.Items[0].Status)
+
+		state := NewSyncState()
+		state.ListWatermark = formatWatermark(now)
+		state.EnsureChat(chatID).Done = false
+		syncID, err := st.StartSync(source.ID, sourceTypeBeeper)
+		requirements.NoError(err)
+		sum := &ImportSummary{}
+		opts := ImportOptions{
+			AccountID: "account-a", NoMedia: true, routeAccount: account,
+		}
+		ctx := t.Context()
+		if cancelParent {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			t.Cleanup(cancel)
+			go func() {
+				<-probeStarted
+				cancel()
+			}()
+		} else {
+			opts.StopAt = time.Now().Add(2 * time.Second)
+		}
+		chats, err := imp.enumerateChats(ctx, syncID, source.ID, opts, state, now.Add(-reconcileWindow), false, sum)
+		if cancelParent {
+			requirements.ErrorIs(err, context.Canceled)
+			assertions.False(sum.Stopped)
+			assertions.Empty(chats)
+		} else {
+			requirements.NoError(err)
+			assertions.True(sum.Stopped)
+			assertions.Len(chats, 1, "the old unfinished chat is excluded from search and its probe stops the pass")
+		}
+		select {
+		case <-probeStarted:
+		default:
+			requirements.FailNow("the direct unfinished-chat probe did not start")
+		}
+		after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+		requirements.NoError(err)
+		requirements.Len(after.Routes.Items, 1)
+		assertions.Equal("unresolved", after.Routes.Items[0].Status)
+		if cancelParent {
+			assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+		} else {
+			assertions.Contains(after.Routes.Items[0].Reasons, "membership_fetch_failed")
+		}
+		assertions.NotContains(after.Routes.Items[0].Reasons, "account_lookup_failed")
+		requirements.NoError(st.CompleteSyncAndPreserveSourceCursorContext(t.Context(), syncID, source.ID, ""))
+	})
 }
 
 func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -804,6 +813,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 }
 
 func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		cancelContext bool
@@ -812,75 +822,78 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 		{name: "caller cancellation", cancelContext: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-
-			requestStarted := make(chan struct{})
-			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				close(requestStarted)
-				<-r.Context().Done()
-			}))
-			t.Cleanup(srv.Close)
-
 			st := testutil.NewSQLiteTestStore(t)
-			source, err := st.GetOrCreateSource("beeper", "account-a")
-			requirements.NoError(err)
-			_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
-			requirements.NoError(err)
-			imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
-			opts := ImportOptions{
-				AccountID:    "account-a",
-				routeAccount: &Account{AccountID: "account-a", Bridge: &AccountBridge{Type: "whatsapp"}, Status: "connected"},
-			}
-			ch := &Chat{ID: "!roster-interruption:example.test", AccountID: "account-a", Type: "single"}
-			ch.Participants.Items = []Participant{
-				{ID: "@self:example.test", IsSelf: true},
-				{ID: "@avery:example.test", FullName: "Avery Example"},
-			}
-			ch.Participants.Total = 2
-			conversationID, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
-			requirements.NoError(err)
-			var participantID int64
-			requirements.NoError(st.DB().QueryRow(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`, conversationID).Scan(&participantID))
-			person, _, err := st.CreatePersonFromParticipant(participantID)
-			requirements.NoError(err)
-			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
-			before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-			requirements.NoError(err)
-			requirements.Len(before.Routes.Items, 1)
-			assertions.Equal("archive_verified", before.Routes.Items[0].Status)
+			client := NewClient("http://beeper.test", testToken, 10000)
+			imp := NewImporter(st, client)
+			synctest.Test(t, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
 
-			ch.Participants.HasMore = true
-			ch.Participants.Items = ch.Participants.Items[:1]
-			ctx := t.Context()
-			if test.cancelContext {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				t.Cleanup(cancel)
-				go func() {
-					<-requestStarted
-					cancel()
-				}()
-			} else {
-				opts.StopAt = time.Now().Add(500 * time.Millisecond) //nolint:kennlint // deadlinetest: the blocked roster request must exhaust the import budget
-			}
-			_, _, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{})
-			if test.cancelContext {
-				requirements.ErrorIs(err, context.Canceled)
-			} else {
-				requirements.ErrorIs(err, errBeeperBudgetExpired)
-			}
-			select {
-			case <-requestStarted:
-			default:
-				requirements.FailNow("the full-roster request did not start")
-			}
+				requestStarted := make(chan struct{})
+				handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					close(requestStarted)
+					<-r.Context().Done()
+				})
 
-			after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-			requirements.NoError(err)
-			requirements.Len(after.Routes.Items, 1)
-			assertions.Equal("unresolved", after.Routes.Items[0].Status)
-			assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+				imp.client.http.Transport = handlerTransport(handler)
+				source, err := st.GetOrCreateSource("beeper", "account-a")
+				requirements.NoError(err)
+				_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
+				requirements.NoError(err)
+				opts := ImportOptions{
+					AccountID:    "account-a",
+					routeAccount: &Account{AccountID: "account-a", Bridge: &AccountBridge{Type: "whatsapp"}, Status: "connected"},
+				}
+				ch := &Chat{ID: "!roster-interruption:example.test", AccountID: "account-a", Type: "single"}
+				ch.Participants.Items = []Participant{
+					{ID: "@self:example.test", IsSelf: true},
+					{ID: "@avery:example.test", FullName: "Avery Example"},
+				}
+				ch.Participants.Total = 2
+				conversationID, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
+				requirements.NoError(err)
+				var participantID int64
+				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`), conversationID).Scan(&participantID))
+				person, _, err := st.CreatePersonFromParticipant(participantID)
+				requirements.NoError(err)
+				query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+				before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(before.Routes.Items, 1)
+				assertions.Equal("archive_verified", before.Routes.Items[0].Status)
+
+				ch.Participants.HasMore = true
+				ch.Participants.Items = ch.Participants.Items[:1]
+				ctx := t.Context()
+				if test.cancelContext {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithCancel(ctx)
+					t.Cleanup(cancel)
+					go func() {
+						<-requestStarted
+						cancel()
+					}()
+				} else {
+					opts.StopAt = time.Now().Add(500 * time.Millisecond)
+				}
+				_, _, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{})
+				if test.cancelContext {
+					requirements.ErrorIs(err, context.Canceled)
+				} else {
+					requirements.ErrorIs(err, errBeeperBudgetExpired)
+				}
+				select {
+				case <-requestStarted:
+				default:
+					requirements.FailNow("the full-roster request did not start")
+				}
+
+				after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(after.Routes.Items, 1)
+				assertions.Equal("unresolved", after.Routes.Items[0].Status)
+				assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+			})
 		})
 	}
 }
@@ -888,6 +901,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 // Media refresh does not reconcile the roster, so it clears route proof
 // whatever it reads. Only a later sync that visits the chat restores it.
 func TestMediaChatRefreshInvalidatesPriorRouteProof(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		chat       bool
@@ -961,6 +975,7 @@ func TestMediaChatRefreshInvalidatesPriorRouteProof(t *testing.T) {
 }
 
 func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -991,10 +1006,10 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 		}
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	})
+	st := testutil.NewSQLiteTestStore(t)
 	client := NewClient("http://beeper.test", testToken, 10000)
 	client.http.Transport = handlerTransport(handler)
-
-	st := testutil.NewSQLiteTestStore(t)
+	imp := NewImporter(st, client)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
 	state := NewSyncState()
@@ -1002,7 +1017,6 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 	for _, chatID := range []string{"!gone-a:example.test", "!gone-b:example.test", "!gone-c:example.test"} {
 		state.EnsureChat(chatID).Done = true
 	}
-	imp := NewImporter(st, client)
 	enumerate := func(budget time.Duration) ([]chatVisit, *ImportSummary) {
 		syncID, err := st.StartSync(source.ID, sourceTypeBeeper)
 		requirements.NoError(err)
@@ -1051,6 +1065,7 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 }
 
 func TestRouteEvidenceUsesServiceNetworkForBeeperBridgeTypes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ bridgeType, want string }{
 		{bridgeType: "discordgo", want: "discord"},
 		{bridgeType: "slackgo", want: "slack"},
@@ -1070,6 +1085,7 @@ func TestRouteEvidenceUsesServiceNetworkForBeeperBridgeTypes(t *testing.T) {
 // Route proof is written before a chat's messages are read. A chat that
 // disappears in between must not keep that proof.
 func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1140,6 +1156,7 @@ func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
 
 // A throttled account endpoint must not spend a scheduled run's budget: the
 // lookup gives up, records the failure, and chats still sync.
+// serial: changes routeProbeTimeout.
 func TestScheduledImportSyncsChatsWhenAccountLookupIsThrottled(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -1195,6 +1212,7 @@ func TestScheduledImportSyncsChatsWhenAccountLookupIsThrottled(t *testing.T) {
 // before visiting any chat, so neither can clear that chat's route proof.
 // Both record the re-anchor marker, which route lookup reports.
 func TestReanchorRequiredKeepsRoutesUnresolved(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		run  func(*Importer) error
@@ -1268,6 +1286,7 @@ func TestReanchorRequiredKeepsRoutesUnresolved(t *testing.T) {
 // A chat synced earlier in a tail scan and deleted before the scan resumes
 // is skipped without a probe, but it must not keep its route proof.
 func TestResumedTailScanClearsProofForChatMissingSinceItsVisit(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1331,6 +1350,7 @@ func TestResumedTailScanClearsProofForChatMissingSinceItsVisit(t *testing.T) {
 // Probes of chats missing from an unfiltered listing run before listed chats
 // sync. A throttled probe must not spend the scheduled budget: each run gives
 // up after one probe timeout, defers the rest, and still syncs listed chats.
+// serial: changes tailScanInterval, routeProbeTimeout.
 func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

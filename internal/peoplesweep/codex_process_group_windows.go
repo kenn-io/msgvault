@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"go.kenn.io/kit/consolewindow"
 	"golang.org/x/sys/windows"
 )
 
@@ -25,6 +26,7 @@ func newCodexAppServerProcessTree(command *exec.Cmd) (*codexAppServerProcessTree
 		return nil, fmt.Errorf("create Codex app-server process tree: %w", err)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
+	consolewindow.Hide(command)
 	return &codexAppServerProcessTree{handle: job.handle}, nil
 }
 
@@ -79,6 +81,7 @@ func runCodexVersionCommand(command *exec.Cmd) (retErr error) {
 		}
 	}()
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
+	consolewindow.Hide(command)
 	command.Cancel = func() error {
 		if err := windows.TerminateJobObject(job.handle, 1); err != nil {
 			return fmt.Errorf("terminate Codex version Job Object: %w", err)

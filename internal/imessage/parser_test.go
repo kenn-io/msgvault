@@ -333,6 +333,27 @@ func TestExtractAttributedBodyText(t *testing.T) {
 	}
 }
 
+func TestExtractAttributedBodyTextReportsDecodeStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []byte
+		want        string
+		wantDecoded bool
+	}{
+		{name: "unsupported blob", input: []byte("not an attributed body")},
+		{name: "empty keyed archive", input: makeAttributedBodyBlob(""), wantDecoded: true},
+		{name: "empty streamtyped archive", input: makeStreamtypedBlob(""), wantDecoded: true},
+		{name: "decoded text", input: makeAttributedBodyBlob("Synthetic text"), want: "Synthetic text", wantDecoded: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, decoded := extractAttributedBodyTextWithStatus(tt.input)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantDecoded, decoded)
+		})
+	}
+}
+
 func TestSnippet(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -56,10 +56,6 @@ describe('explore labels', () => {
   it('turns every server preflight reason into a sentence', () => {
     const reasons: [string, string, string][] = [
       [
-        'open_in_source', 'trusted_source_link_unavailable',
-        'Your sources don’t provide links to open these items.'
-      ],
-      [
         'export', 'browser_export_requires_single_message',
         'Export works for one message at a time.'
       ],
@@ -92,8 +88,11 @@ describe('entryKindPresentation', () => {
     ['chatwoot', 'Conversation'],
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
+    ['telegram', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
+    ['meeting_note', 'Meeting'],
+    ['meeting_minutes', 'Meeting'],
     ['calendar_event', 'Calendar event'],
     ['email', 'Email'],
     ['', 'Item'],

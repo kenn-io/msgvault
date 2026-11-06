@@ -35,7 +35,7 @@ A same-service, same-scope username match can become a review candidate instead
 of an automatic link. Conflicting existing bindings remain conflicts. This is
 why two entries for the same person may stay separate after a sync.
 
-Open the Web [Directory review queues](/docs/web-ui/#directory-and-reviews) to inspect
+Open the Web [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates) to inspect
 identity candidates and accept or reject the proposed match. Check the source
 and identifier evidence before linking. See [people and source identities](/docs/usage/people/)
 for the difference between an observed participant and a curated profile.
@@ -238,9 +238,9 @@ WHERE m.message_type = 'beeper'
 GROUP BY is_share;
 ```
 
-## Mirror all attachments to Docbank (unreleased)
+## Mirror all attachments to Docbank
 
-Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank).
 
 ## Send audio to Docbank
 
@@ -438,6 +438,8 @@ separable (different sources and different `message_type` values), and
 participants still unify across archives via phone-number and email matching
 (the Beeper user ID is also persisted as an identifier, so later runs keep
 resolving to the same person).
+
+Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
 
 ## Caveats
 

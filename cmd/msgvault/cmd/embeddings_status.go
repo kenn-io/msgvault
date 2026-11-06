@@ -39,7 +39,7 @@ var embeddingsStatusCmd = &cobra.Command{
 		defer func() { _ = current.Close() }()
 		var reconnect func(context.Context) (embeddingStatusReader, error)
 		if inv := invocationFromContext(cmd.Context()); info.Kind == HTTPStoreLocalDaemon && inv != nil && inv.cfg != nil {
-			endpoint := localDaemonEndpoint{url: info.URL, key: inv.cfg.Server.AuthenticationKey()}
+			endpoint := daemonclient.LocalDaemonEndpoint{URL: info.URL, APIKey: inv.cfg.Server.AuthenticationKey()}
 			reconnect = func(ctx context.Context) (embeddingStatusReader, error) {
 				next, moved, err := reconnectLocalDaemon(ctx, endpoint)
 				if err != nil {
@@ -58,16 +58,12 @@ var embeddingsStatusCmd = &cobra.Command{
 	},
 }
 
-// localDaemonEndpoint is where a status client connects and the API key it
-// sends.
-type localDaemonEndpoint struct{ url, key string }
-
 // reconnectLocalDaemon connects to the running local daemon when its address
 // or API key differs from current, as after a restart on the default port 0
 // or a key rotation; it returns a nil client when neither changed. It never
 // starts a daemon, so a watch left open after the daemon is stopped does not
 // start it again.
-func reconnectLocalDaemon(ctx context.Context, current localDaemonEndpoint) (*daemonclient.Client, localDaemonEndpoint, error) {
+func reconnectLocalDaemon(ctx context.Context, current daemonclient.LocalDaemonEndpoint) (*daemonclient.Client, daemonclient.LocalDaemonEndpoint, error) {
 	inv := invocationFromContext(ctx)
 	if inv == nil || inv.cfg == nil {
 		return nil, current, errors.New("invocation state is required")
@@ -84,7 +80,7 @@ func reconnectLocalDaemon(ctx context.Context, current localDaemonEndpoint) (*da
 	if err := inv.cfg.ResolveServerKey(); err != nil {
 		return nil, current, fmt.Errorf("resolve server API key: %w", err)
 	}
-	next := localDaemonEndpoint{url: urlFromDaemonRuntime(rt), key: inv.cfg.Server.AuthenticationKey()}
+	next := daemonclient.LocalDaemonEndpoint{URL: urlFromDaemonRuntime(rt), APIKey: inv.cfg.Server.AuthenticationKey()}
 	if next == current {
 		return nil, current, nil
 	}

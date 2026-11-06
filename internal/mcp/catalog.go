@@ -217,6 +217,20 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 }
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
+	definitions := operationDefinitions(capabilities)
+	available := definitions[:0]
+	for _, definition := range definitions {
+		if definition.availability(capabilities) {
+			available = append(available, definition)
+		}
+	}
+	sort.Slice(available, func(i, j int) bool {
+		return available[i].name < available[j].name
+	})
+	return available
+}
+
+func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
@@ -278,16 +292,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	}
 	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)
 
-	available := definitions[:0]
-	for _, definition := range definitions {
-		if definition.availability(capabilities) {
-			available = append(available, definition)
-		}
-	}
-	sort.Slice(available, func(i, j int) bool {
-		return available[i].name < available[j].name
-	})
-	return available
+	return definitions
 }
 
 func querySQLDefinition() toolDefinition {
@@ -663,19 +668,24 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
+			"sender_auth.verified covers only the sender domain; empty results mean the pinned receiver reported nothing. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
+			"Set include_segments to return authored, quoted, forwarded, and signature byte ranges overlapping the body window, with absolute offsets and depth on quoted ranges. "+
+			"Authored means no relay marker was recognized; markers are recognized in English, plus Thunderbird's German and French separators and single-line dated reply headers, so other languages' history can appear authored. "+
+			"Non-email messages get one authored range. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
 			"To read sequentially: call again with offset += body_returned. "+
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
-			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
-			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
-			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
-			"body_format":   bodyFormat,
-			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"id":               safeIDSchema("Message ID"),
+			toolArgOffset:      nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
+			"center_at":        signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			toolArgMaxChars:    signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
+			"body_format":      bodyFormat,
+			"full_body":        booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"include_segments": booleanSchema("Include plain-text body ranges; HTML returns segments_unavailable=unsupported_format."),
 		}, "id"),
 		outputSchemaFor[getMessageResponse](),
 		(*handlers).getMessage,
@@ -724,6 +734,7 @@ func listThreadDefinition() toolDefinition {
 	return readDefinition(
 		ToolListThread,
 		"List visible archived messages in one conversation in chronological order (sent_at, undated last, then id). "+
+			"SQLite compares instants to the millisecond, with ties in message-ID order. "+
 			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Page with offset until has_more is false; total counts the whole conversation. "+
@@ -780,7 +791,8 @@ func exportAttachmentDefinition(_ *handlers) toolDefinition {
 
 func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition {
 	description := "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
-		"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
+		"Each match includes char_offset (byte offset into the plain-text body, or the raw HTML body for HTML-only mail), snippet, and line. " +
+		"This is the same body get_message returns with the automatic body format. " +
 		"Use char_offset with get_message center_at to read a larger window around any match."
 	properties := map[string]*jsonschema.Schema{
 		"id":          safeIDSchema("Message ID"),

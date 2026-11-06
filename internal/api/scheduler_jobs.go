@@ -58,6 +58,14 @@ const SlackJobName = sourceTypeSlack
 // InlineJobName drives every configured Inline account and its chat selection.
 const InlineJobName = sourceTypeInline
 
+// IMessageJobName drives the selected Apple Messages source.
+const IMessageJobName = "apple-messages"
+
+// WhatsAppAppleJobName identifies a native WhatsApp store by its owner phone.
+func WhatsAppAppleJobName(phone string) string {
+	return "whatsapp:" + phone
+}
+
 // CardDAVJobName is the scheduler identity for the default CardDAV connection.
 const CardDAVJobName = "carddav"
 
@@ -102,6 +110,10 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case "whatsapp":
+		return WhatsAppAppleJobName(identifier), true
+	case "apple_messages":
+		return IMessageJobName, true
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {

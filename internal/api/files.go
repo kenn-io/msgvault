@@ -66,6 +66,7 @@ type PersonFileSearchHTTPRequest struct {
 }
 
 type FileSearchRow struct {
+	SenderLabel        string               `json:"sender_label,omitempty"`
 	ID                 int64                `json:"id"`
 	Key                string               `json:"key"`
 	EntryKey           string               `json:"entry_key"`
@@ -549,6 +550,7 @@ func (s *Server) handleSearchFilesRequest(
 		state, available := s.fileContentState(r.Context(), authority)
 		response.Files = append(response.Files, FileSearchRow{
 			ID: file.ID, Key: file.Key, EntryKey: file.EntryKey, MessageID: file.MessageID,
+			SenderLabel:    file.SenderLabel,
 			ConversationID: file.ConversationID, OccurredAt: file.OccurredAt,
 			SourceID: file.SourceID, SourceType: file.SourceType, SourceIdentifier: file.SourceIdentifier,
 			ContainingTitle: file.ContainingTitle, Filename: file.Filename, MimeType: file.MimeType,

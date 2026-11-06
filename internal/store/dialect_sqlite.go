@@ -1833,6 +1833,33 @@ func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 		             revision = activity_projection_queue.revision + 1,
 		             queued_at = CURRENT_TIMESTAMP;
 		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_insert`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_insert
+		     AFTER INSERT ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_update`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_update
+		     AFTER UPDATE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_delete`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_delete
+		     AFTER DELETE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update
 		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
@@ -2071,6 +2098,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE document_extractions ADD COLUMN failure_detail TEXT`, "document_extractions.failure_detail"},
 		{`ALTER TABLE document_extractions ADD COLUMN rebuild_id TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL`, "document_extractions.rebuild_id"},
 		{`ALTER TABLE document_extractions ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
+		{`ALTER TABLE document_extractions ADD COLUMN upload_count INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0)`, "document_extractions.upload_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
 		{`ALTER TABLE document_extractions ADD COLUMN provider_latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
 		{`ALTER TABLE document_extractions ADD COLUMN normalization_version INTEGER`, "document_extractions.normalization_version"},

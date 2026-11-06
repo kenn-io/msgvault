@@ -12,6 +12,7 @@
     type SegmentedControlOption,
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
+  import { createBrowserRequestID } from '../../api/request-id';
   import type { APIClient } from '../../api/client';
   import {
     isMatchingPersonETag,
@@ -137,7 +138,7 @@
     const survivor = profiles.find((profile) => profile.person.id === survivorID);
     const absorbed = profiles.find((profile) => profile.person.id !== survivorID);
     if (!survivor || !absorbed) return;
-    const key = idempotencyKey ?? crypto.randomUUID();
+    const key = idempotencyKey ?? createBrowserRequestID();
     idempotencyKey = key;
     pending = true;
     error = null;

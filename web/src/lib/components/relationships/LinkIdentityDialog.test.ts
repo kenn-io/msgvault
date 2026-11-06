@@ -1,3 +1,4 @@
+import { directoryPerson } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +32,7 @@ function fetchHandler(overrides: Record<string, (request: Request) => Promise<Re
     requests.push(request);
     const handler = overrides[pathOf(request)];
     if (handler) return handler(request);
+    if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [] });
     throw new Error(`unexpected path ${pathOf(request)}`);
   });
   return { fetchFn, requests };
@@ -52,6 +54,8 @@ function renderDialog(overrides: Partial<{
   const { unmount } = render(LinkIdentityDialog, {
     client: createAPIClient(fetchFn),
     excludeID: overrides.excludeID ?? 1,
+    excludePersonID: null,
+    onConfirmPerson: vi.fn(),
     personLabel: 'Alice Example',
     onConfirm,
     onMergeRequired,
@@ -65,7 +69,7 @@ describe('LinkIdentityDialog', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests } = renderDialog();
-      const input = await openTypeahead('Search people to link');
+      const input = await openTypeahead('Search people');
 
       await fireEvent.input(input, { target: { value: 'B' } });
       await fireEvent.input(input, { target: { value: 'Bo' } });
@@ -73,8 +77,9 @@ describe('LinkIdentityDialog', () => {
       expect(requests).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(250);
-      expect(requests).toHaveLength(1);
-      await expect(requests[0]!.clone().json()).resolves.toMatchObject({ identity_query: 'Bob' });
+      const observedRequests = requests.filter(request => pathOf(request) === '/api/v1/participants/search');
+      expect(observedRequests).toHaveLength(1);
+      await expect(observedRequests[0]!.clone().json()).resolves.toMatchObject({ identity_query: 'Bob' });
 
       expect(await screen.findByText('Bob')).toBeDefined();
       expect(screen.getByText('Cara')).toBeDefined();
@@ -89,8 +94,8 @@ describe('LinkIdentityDialog', () => {
         rows: [person(1, 'Self'), person(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
       })
     });
-    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, personLabel: 'Alice Example', onConfirm: vi.fn(), onClose: vi.fn() });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'e' } });
+    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, excludePersonID: null, personLabel: 'Alice Example', onConfirm: vi.fn(), onConfirmPerson: vi.fn(), onMergeRequired: vi.fn(), onClose: vi.fn() });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'e' } });
 
     expect(await screen.findByText('Bob')).toBeDefined();
     expect(screen.queryByText('Self')).toBeNull();
@@ -103,7 +108,7 @@ describe('LinkIdentityDialog', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { onConfirm } = renderDialog();
-      const input = await openTypeahead('Search people to link');
+      const input = await openTypeahead('Search people');
       await fireEvent.input(input, { target: { value: label[0] } });
       const option = await screen.findByRole('option', { name: new RegExp(label) });
       if (how === 'click') {
@@ -112,15 +117,15 @@ describe('LinkIdentityDialog', () => {
         await fireEvent.keyDown(input, { key: 'ArrowDown' });
         await fireEvent.keyDown(input, { key: 'Enter' });
       }
-      const trigger = await screen.findByRole('button', { name: `Search people to link: ${label}` });
+      const trigger = await screen.findByRole('button', { name: `Search people: ${label}` });
       await waitFor(() => expect(document.activeElement).toBe(trigger));
 
       // Leaving the closed picker makes Typeahead send another empty query, which also clears the results.
-      const confirm = screen.getByRole('button', { name: 'These are the same person' });
+      const confirm = screen.getByRole('button', { name: 'Merge' });
       confirm.focus();
       await vi.advanceTimersByTimeAsync(250);
 
-      expect(screen.getByRole('button', { name: `Search people to link: ${label}` })).toBeDefined();
+      expect(screen.getByRole('button', { name: `Search people: ${label}` })).toBeDefined();
       expect(confirm).toHaveProperty('disabled', false);
       await fireEvent.click(confirm);
       await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(id));
@@ -131,53 +136,26 @@ describe('LinkIdentityDialog', () => {
 
   it('drops the prior selection when the picker reopens', async () => {
     const { onConfirm } = renderDialog();
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', false);
 
-    const input = await openTypeahead('Search people to link');
+    const input = await openTypeahead('Search people');
 
     expect(input.value).toBe('');
-    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('disables the confirm action until a result is selected', async () => {
-    renderDialog();
-    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', true);
-  });
-
-  it('closes silently on an ok/ready outcome', async () => {
+  it('shows an already-linked outcome inline and stays open', async () => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'Target unavailable' }));
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('closes on an ok/stale outcome too, leaving the banner to the header', async () => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'stale' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-  });
-
-  it('shows an inline already_linked error and stays open', async () => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'nope' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
     expect(onClose).not.toHaveBeenCalled();
@@ -195,25 +173,13 @@ describe('LinkIdentityDialog', () => {
     }));
     const onClose = vi.fn();
     const { onMergeRequired } = renderDialog({ onConfirm, onClose });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
     await waitFor(() => expect(onMergeRequired).toHaveBeenCalledWith(conflict));
     expect(onConfirm).toHaveBeenCalledOnce();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('shows the outcome message inline for invalid/error outcomes and stays open', async () => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -226,25 +192,25 @@ describe('LinkIdentityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('blocks Cancel, Escape, backdrop, and the close button while a confirm is pending', async () => {
+  it('blocks Cancel, Escape, and the backdrop while a confirm is pending', async () => {
     let resolveConfirm: ((outcome: LinkOutcome) => void) | undefined;
     const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
     const onClose = vi.fn();
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
 
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     await fireEvent.keyDown(window, { key: 'Escape' });
     await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose, 'no dismissal path may hide a pending confirm').not.toHaveBeenCalled();
 
     // Success still closes the dialog itself once the outcome is known.
     resolveConfirm?.({ ok: true, identityRevision: 4, cacheState: 'ready' });
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('stays open with the error and re-enabled dismissal after a failed confirm', async () => {
@@ -252,9 +218,9 @@ describe('LinkIdentityDialog', () => {
     const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
     const onClose = vi.fn();
     renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
 
     resolveConfirm?.({ ok: false, code: 'error', message: 'Request failed (500)' });
@@ -265,11 +231,11 @@ describe('LinkIdentityDialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('cancels a pending debounced search and aborts an in-flight request when the dialog unmounts', async () => {
+  it('cancels a pending debounced search when the dialog unmounts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { requests, unmount } = renderDialog();
-      const input = await openTypeahead('Search people to link');
+      const input = await openTypeahead('Search people');
 
       await fireEvent.input(input, { target: { value: 'Bob' } });
       expect(requests, 'debounce has not fired yet').toHaveLength(0);
@@ -294,7 +260,7 @@ describe('LinkIdentityDialog', () => {
           });
         }
       });
-      await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+      await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
       await vi.advanceTimersByTimeAsync(250);
       // the debounced search must have started the request before unmount
       expect(capturedSignal).toBeDefined();
@@ -306,4 +272,24 @@ describe('LinkIdentityDialog', () => {
       vi.useRealTimers();
     }
   });
+});
+
+it.each((['saved', 'observed'] as const).flatMap(source => (['HTTP 503', 'transport failure'] as const).map(failure => ({ source, failure }))))('keeps $source search choices usable when the other source has $failure', async ({ source, failure }) => {
+  const onConfirmPerson = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
+  const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/people/directory') && source === 'saved') return Response.json({ people: [directoryPerson(9, { revision: 1, display_name: 'Synthetic Saved' })] });
+    if (path.endsWith('/participants/search') && source === 'observed') return Response.json({ rows: [person(2, 'Synthetic Observed')], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
+    if (failure === 'transport failure') throw new TypeError('Source unavailable');
+    return Response.json({ error: 'unavailable', message: 'Source unavailable' }, { status: 503 });
+  });
+  const view = render(LinkIdentityDialog, { client, excludeID: 1, excludePersonID: null, personLabel: 'Alice Example', onConfirm, onConfirmPerson, onMergeRequired: vi.fn(), onClose: vi.fn() });
+  try {
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await screen.findByText('Source unavailable');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: source === 'saved' ? /Synthetic Saved/ : /Synthetic Observed/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(source === 'saved' ? onConfirmPerson : onConfirm).toHaveBeenCalledWith(source === 'saved' ? 9 : 2));
+  } finally { view.unmount(); }
 });

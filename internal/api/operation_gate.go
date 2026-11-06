@@ -377,6 +377,9 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// MCP envelopes delegate gate acquisition to their nested API requests.
+	"/mcp":        true,
+	"/mcp/writes": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.
@@ -605,6 +608,10 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
+	"export-messages":   true,
+	"export-discord":    true,
+	"list-folders":      true,
+	"policy list":       true,
 	"draft-get":         true,
 	"draft-send-as":     true,
 	"logs":              true,
@@ -678,6 +685,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 // cliRunCommandGroups are proxied parent commands whose second arg is a
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
+	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
 	"documents":  true,

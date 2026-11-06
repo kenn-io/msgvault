@@ -21,16 +21,16 @@ import (
 )
 
 const (
-	DefaultDirectoryPeopleLimit        = 50
-	MaxDirectoryPeopleLimit            = 100
-	maxDirectoryQueryRunes             = 256
-	maxDirectoryCursorBytes            = 1024
-	maxDirectoryRawCandidateChunkSize  = 64
-	directoryCursorVersion             = 6
-	directoryLastContactKeyLayout      = "2006-01-02T15:04:05.000000000Z"
-	DirectoryPeopleSortName            = "name"
-	DirectoryPeopleSortLastContactAsc  = "last_contact_asc"
-	DirectoryPeopleSortLastContactDesc = "last_contact_desc"
+	DefaultDirectoryPeopleLimit            = 50
+	MaxDirectoryPeopleLimit                = 100
+	maxDirectoryQueryRunes                 = 256
+	maxDirectoryCursorBytes                = 1024
+	maxDirectoryFirstRawCandidateChunkSize = 64
+	directoryCursorVersion                 = 6
+	directoryLastContactKeyLayout          = "2006-01-02T15:04:05.000000000Z"
+	DirectoryPeopleSortName                = "name"
+	DirectoryPeopleSortLastContactAsc      = "last_contact_asc"
+	DirectoryPeopleSortLastContactDesc     = "last_contact_desc"
 )
 
 // DirectoryPeopleQuery selects durable people for the Directory read surface.
@@ -253,7 +253,8 @@ func (s *Store) directoryPeoplePageContext(
 }
 
 // selectDirectoryPeopleTx scans indexed candidate chunks until it has the
-// requested verified page plus its cursor row. Hydration stays separate so
+// requested verified page plus its cursor row, doubling the chunk size after
+// each chunk that leaves the page short. Hydration stays separate so
 // current categories and employments are never read outside that window.
 func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query normalizedDirectoryPeopleQuery, after *directoryPeopleCursor) ([]directoryPersonCandidate, error) {
 	querySQL, args := directoryCandidateProjectionSQL(query)
@@ -285,6 +286,7 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 			break
 		}
 		rawAfter = &directoryRawCandidateCursor{quality: lastRaw.quality, sortKey: lastRaw.sortKey, orderName: lastRaw.orderName, personID: lastRaw.summary.ID}
+		chunkSize *= 2
 	}
 	if len(verified) > target {
 		verified = verified[:target]
@@ -360,7 +362,7 @@ func (s *Store) directoryCursorAnchorTx(
 }
 
 func directoryRawCandidateChunkSize(limit int) int {
-	return min(max(limit+1, 16), maxDirectoryRawCandidateChunkSize)
+	return min(max(limit+1, 16), maxDirectoryFirstRawCandidateChunkSize)
 }
 
 func (s *Store) selectDirectoryRawCandidateChunkTx(ctx context.Context, tx *loggedTx, candidateSQL string, args []any, after *directoryRawCandidateCursor, limit int, order string) ([]directoryPersonCandidate, error) {
@@ -424,27 +426,28 @@ func (s *Store) verifyDirectoryCandidatesTx(ctx context.Context, tx *loggedTx, c
 }
 
 // Address matching uses the same Go lowercase rules on both backends. Values
-// are streamed for one bounded candidate chunk under the serving snapshot.
+// are streamed for each growing candidate chunk under the serving snapshot.
 func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *loggedTx, candidates []directoryPersonCandidate, address string) ([]directoryPersonCandidate, error) {
-	ids := make([]any, len(candidates))
+	ids := make([]int64, len(candidates))
 	for index, candidate := range candidates {
 		ids[index] = candidate.summary.ID
 	}
-	in := ` IN (` + directoryPlaceholders(len(ids)) + `)`
-	points := ` FROM person_contact_points cp WHERE cp.person_id` + in + `
-		AND cp.active_until IS NULL AND cp.superseded_at IS NULL AND cp.address_kind <> 'language'`
-	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE pp.person_id` + in
-	parts := []string{
-		`SELECT cp.person_id, cp.original_value` + points,
-		`SELECT cp.person_id, cp.normalized_value` + points,
-		`SELECT pp.person_id, COALESCE(p.email_address, '')` + members,
-		`SELECT pp.person_id, COALESCE(p.phone_number, '')` + members,
-		`SELECT pp.person_id, identifier.identifier_value FROM person_participants pp
-			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE pp.person_id` + in,
+	membership, idArgs, err := s.meetingIDsMembership("person_id", ids)
+	if err != nil {
+		return nil, err
 	}
-	args := make([]any, 0, len(ids)*len(parts))
+	points := ` FROM person_contact_points cp WHERE ` + membership + `
+		AND cp.active_until IS NULL AND cp.superseded_at IS NULL AND cp.address_kind <> 'language'`
+	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE ` + membership
+	parts := []string{
+		`SELECT cp.person_id, cp.original_value, cp.normalized_value` + points,
+		`SELECT pp.person_id, COALESCE(p.email_address, ''), COALESCE(p.phone_number, '')` + members,
+		`SELECT pp.person_id, identifier.identifier_value, '' FROM person_participants pp
+			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE ` + membership,
+	}
+	args := make([]any, 0, len(idArgs)*len(parts))
 	for range parts {
-		args = append(args, ids...)
+		args = append(args, idArgs...)
 	}
 	rows, err := tx.QueryContext(ctx, strings.Join(parts, ` UNION ALL `), args...)
 	if err != nil {
@@ -457,11 +460,11 @@ func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *log
 			return nil, err
 		}
 		var id int64
-		var value string
-		if err := rows.Scan(&id, &value); err != nil {
+		var value, alternate string
+		if err := rows.Scan(&id, &value, &alternate); err != nil {
 			return nil, fmt.Errorf("scan directory candidate address: %w", err)
 		}
-		if !matched[id] && strings.Contains(strings.ToLower(value), address) {
+		if !matched[id] && (strings.Contains(strings.ToLower(value), address) || strings.Contains(strings.ToLower(alternate), address)) {
 			matched[id] = true
 		}
 	}
@@ -488,11 +491,15 @@ func (s *Store) verifyDirectoryCandidateTokensTx(ctx context.Context, tx *logged
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
-	ids, tokens := make([]any, 0, len(candidates)), make(map[int64][]string, len(candidates))
+	ids, tokens := make([]int64, 0, len(candidates)), make(map[int64][]string, len(candidates))
 	for _, candidate := range candidates {
 		ids = append(ids, candidate.summary.ID)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT person_id, token_key FROM directory_person_tokens WHERE person_id IN (`+directoryPlaceholders(len(ids))+`)`, ids...)
+	membership, args, err := s.meetingIDsMembership("person_id", ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT person_id, token_key FROM directory_person_tokens WHERE `+membership, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load directory candidate tokens: %w", err)
 	}

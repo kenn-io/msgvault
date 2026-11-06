@@ -7,8 +7,8 @@ description: Find words and topics inside archived documents, with explicit cont
 Document indexing lets you search inside archived attachments and return to
 the message that contained them. Msgvault sends eligible files to your selected
 extraction provider, stores their text locally, and builds a keyword index.
-Mistral OCR is the hosted option. On `main` after v0.21.0, a self-hosted
-Docling service is also supported.
+Mistral OCR is the hosted option. A self-hosted Docling service is also
+supported.
 Optional document embeddings add search by meaning.
 
 What works today:
@@ -38,7 +38,9 @@ below explain each provider’s consent and build workflow.
 The provider receives complete original bytes for each directly authorized format.
 Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. It does not retain the full raw
-provider JSON or Markdown response.
+provider JSON or Markdown response. Successful Docling PDF ranges keep
+normalized page units in local checkpoints until publication, `documents
+purge-derived`, or the weekly cleanup described under Docling retries.
 
 For Mistral, eligible CSV attachments use a local conversion step when enabled.
 Msgvault retains the CSV source hash and `text/csv` occurrence identity, then sends only
@@ -89,9 +91,10 @@ to send queries to the embedding provider.
     old model no longer validate: run a fresh probe, then
     `documents consent-mistral` again.
 
-Provider uploads are manual-only. `msgvault serve` performs weekly local
-reconciliation and derivative cleanup when document indexing is enabled, but it
-never starts extraction on its own. Start every upload batch explicitly with
+Provider uploads are manual-only. While `msgvault serve` runs, it cleans stale
+local derivatives weekly, even when document indexing is disabled. Attachment
+reconciliation runs weekly when document indexing is enabled. Neither job
+starts extraction on its own. Start every upload batch explicitly with
 `documents build` or `documents resume`; when the daemon owns the archive, it
 runs that requested batch so the command does not contend for the writer lock.
 
@@ -133,7 +136,7 @@ store_chunk_text = true
 enabled = true
 ```
 
-Document extraction includes standalone attachments by default. In v0.21.0, set
+Document extraction includes standalone attachments by default. Set
 `include_inline = true` when your mail client marks ordinary attached documents
 as inline. Only configured, authorized document formats with authoritative role
 provenance become eligible. Avatar, preview, sticker, and unknown roles stay out
@@ -168,7 +171,7 @@ the complete policy and run limits.
 
 ## Use a self-hosted Docling service
 
-Docling support is available on `main` after v0.21.0. Run Docling Serve on
+Run Docling Serve on
 hardware and a network you control. Msgvault uses its asynchronous conversion
 API; deploy a compatible service with `/v1/convert/file/async`,
 `/v1/status/poll/<id>`, and `/v1/result/<id>`.
@@ -237,6 +240,34 @@ Interrupted jobs retry the same way as other providers: after a server restart,
 a canceled build, or a lost submission response, the next `build` or `resume`
 uploads the document again once its retry delay or lease has passed. That can
 run a document twice on your server.
+
+PDFs over 50 pages use consecutive jobs of at most 50 pages. Each job uploads the
+original PDF again and gets its own `total_timeout` and `max_poll_attempts`.
+The existing whole-document page cap still applies. A 600-page PDF needs
+`max_pages_per_document >= 600`, then runs as twelve jobs. The fixed size aims
+to lower peak memory; memory scaling with page count is an inference, not a
+measured guarantee.
+
+Successful ranges save normalized page units in the local archive database, so
+retry and resume submit only missing ranges, even after a daemon restart. A full
+rebuild starts fresh. Publication removes these checkpoints, and
+`msgvault documents purge-derived --hash <sha256> --yes` removes them
+immediately. Removing the source or message does not: after no live message
+contains the PDF, its profile stops being the target, or a newer attempt
+replaces the checkpoints, the weekly `msgvault serve` cleanup deletes them once
+they have gone seven days without changes. Without `serve`, they stay until
+publication or purge. Backups made before removal can still contain that
+plaintext.
+
+Nothing becomes searchable until every range succeeds and one transaction
+publishes the combined document. Complete mappings preserve original page
+numbers, including blank pages. If any range needs Markdown fallback, every
+range's Markdown is joined in page order as one document without page claims.
+Degraded ranges, and ranges that would push saved normalized characters past
+`max_normalized_chars`, stay in memory for the current run and are resent on
+retry. The completed document is truncated at publication. Exceeding
+`max_response_bytes` fails the extraction.
+Partial-success results are rejected and never checkpointed.
 
 A job that is still running when `total_timeout` or `max_poll_attempts` runs
 out fails with `provider_timeout` and does not retry on its own. Docling Serve
@@ -352,6 +383,11 @@ heading path, normalized text, checksum, score, and an opaque stable cursor.
 The same search is available at `GET /api/v1/documents/search`; status is at
 `GET /api/v1/documents/status`.
 
+Status reports plaintext storage and backup exposure while either published
+chunks or unpublished Docling range checkpoints remain in the archive, including
+after a failed extraction. JSON status counts them separately in
+`stored_plaintext_chunks` and `stored_plaintext_ranges`.
+
 Use `--source-id`, `--message-id`, or `--attachment-id` for exact archive
 objects. `--person` selects a durable person; `--participant` selects an
 observed participant and uses their durable person when one is bound. They
@@ -454,10 +490,10 @@ ledger; later vector operations finish the cleanup.
 
 ## Diagnose extraction failures
 
-In v0.21.0, a failed build reports each document hash, reason code,
-and available local cause. For example, `invalid_local_source` can include
-`PDF structure is malformed`. Newer msgvault builds report
-`PDF structure could not be validated`. Size mismatches and spool capacity
+A failed build reports each document hash, reason code, and available local
+cause. For example, `invalid_local_source` can include
+`PDF structure could not be validated`; 0.21.0 reported
+`PDF structure is malformed`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`
 shows those diagnostics later (omit `--capabilities` for Docling). `--json`
 includes `status.failures` and `status.failures_exhausted` (false when more than 20 failures remain).

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 func gmailCoverageEnv(t *testing.T) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)
@@ -135,7 +137,7 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 		body = resp
 	case strings.Contains(p, "/messages/"):
 		id := p[strings.LastIndex(p, "/")+1:]
-		if q.Get("format") != "raw" {
+		if q.Get("format") != "raw" && q.Get("format") != "metadata" {
 			return nil, fmt.Errorf("unexpected format: %s", r.URL)
 		}
 		if f.failGet && id == "spam" {
@@ -150,10 +152,17 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 		if id == "trash" {
 			label = "TRASH"
 		}
-		body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}, "historyId": strconv.FormatUint(f.history, 10), "internalDate": "1700000000000", "raw": base64.RawURLEncoding.EncodeToString(testMIME())}
+		body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}}
+		if q.Get("format") == "raw" {
+			body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}, "historyId": strconv.FormatUint(f.history, 10), "internalDate": "1700000000000", "raw": base64.RawURLEncoding.EncodeToString(testMIME())}
+		}
 	default:
 		return nil, fmt.Errorf("unexpected synthetic endpoint: %s", r.URL)
 	}
+	return gmailJSONResponse(r, status, body)
+}
+
+func gmailJSONResponse(r *http.Request, status int, body any) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -165,11 +174,7 @@ func TestGmailCoverageScenario3(t *testing.T) {
 
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000, failPage: true}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	// nil source uses DefaultClient and does not construct any OAuth credential.
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	first, err := e.Syncer.Full(e.Context, testEmail)
 	require.Error(err)
 	require.Nil(first)

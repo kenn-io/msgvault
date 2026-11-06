@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { exploreHistoryState } from './explore-state';
 
@@ -55,6 +56,9 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'session', https: false, plain_http_warning: false }
   }));
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/files/search', (route) => route.fulfill({ json: {
     files: [row], total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   } }));
@@ -98,7 +102,9 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   const contentCookie = await prepare(page, baseURL, file('pixel.png', 'image/png', 'image'), png);
 
   const grid = page.getByRole('grid', { name: 'Files results' });
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('searchbox', { name: 'Filter filename' }).fill('pixel');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   await page.keyboard.press('Home');
@@ -113,7 +119,7 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   await expect(page.getByRole('img', { name: 'Preview pixel.png' })).toBeVisible();
   expect(contentCookie()).toContain('msgvault_session=browser-fixture-session');
   await page.keyboard.press('f');
-  await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => {
     (window as unknown as { previewEscapePrevented?: boolean }).previewEscapePrevented = false;
     window.addEventListener('keydown', (event) => {
@@ -165,7 +171,7 @@ test('malformed PDF fails without retaining a canvas', async ({ page, baseURL })
   await expect(page.locator('.pdf-preview canvas')).toHaveCount(0);
 });
 
-test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
+async function stubContainingConversation(page: Page) {
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [{
       key: 'message:11', kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -185,13 +191,17 @@ test('opening a containing conversation and one Back restores the exact Files UR
       body_html: '', attachments: []
     }]
   } }));
+}
+
+test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
+  await stubContainingConversation(page);
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back fixture'));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await page.keyboard.press('Enter');
   const filesURL = page.url();
 
-  await page.getByRole('button', { name: 'Open containing conversation' }).click();
+  await page.getByRole('button', { name: 'Open conversation' }).click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
   await expect(reading).toBeVisible();
   await expect(reading.getByRole('region', { name: 'Conversation thread' })).toBeVisible();
@@ -200,6 +210,27 @@ test('opening a containing conversation and one Back restores the exact Files UR
   await expect(page).toHaveURL(filesURL);
   await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toBeVisible();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
+});
+
+test('a phone opens a message from Files and returns to results', async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubContainingConversation(page);
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Phone fixture'));
+  const files = page.getByRole('grid', { name: 'Files results' });
+  await files.getByText('fixture.pdf').click();
+  const viewer = page.getByRole('dialog', { name: 'View fixture.pdf' });
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole('button', { name: 'Open message' }).click();
+  const reader = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
+  const messages = page.getByRole('grid', { name: 'Messages results' });
+  await expect(reader).toBeVisible();
+  await expect(reader.getByText('Archived body', { exact: true })).toBeVisible();
+  await expect(messages).toBeHidden();
+  const split = (await page.locator('.results-split').boundingBox())!;
+  expect((await reader.boundingBox())!.width).toBeCloseTo(split.width, 0);
+  await reader.getByRole('button', { name: 'Back to results' }).click();
+  await expect(messages).toBeVisible();
+  await expect(messages.getByText('Containing item', { exact: true })).toBeVisible();
 });
 
 test('Back from an open file viewer closes it and restores the Files list URL', async ({ page, baseURL }) => {
@@ -235,7 +266,7 @@ test('real PDF renders in-app and Escape closes with shortcut isolation and exac
   await expect(preview.locator('.pdf-text')).toContainText('Fixture preview text');
   await expect(page.locator('iframe, embed, object')).toHaveCount(0);
   await page.keyboard.press('f');
-  await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => {
     (window as unknown as { pdfEscapePrevented?: boolean }).pdfEscapePrevented = false;
     window.addEventListener('keydown', (event) => {
@@ -276,3 +307,15 @@ function tinyPDF(text: string): Buffer {
   source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(source, 'ascii');
 }
+
+test('Files exposes visual search after setup supplies a consented active generation', async ({ page, baseURL }) => {
+  let generation = { state: 'building', consented: true };
+  await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { current: 0, generation } }));
+  await prepare(page, baseURL, file('example.txt', 'text/plain', 'text'), Buffer.from('Synthetic preview'));
+  await expect(page.getByRole('grid', { name: 'Files results' })).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Visual search' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  generation = { state: 'active', consented: true };
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'Visual search' })).toBeVisible();
+});

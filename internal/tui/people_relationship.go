@@ -22,20 +22,32 @@ type peopleRelationshipLoadedMsg struct {
 }
 
 func (m Model) peopleRelationshipTimezone() string {
-	location := m.peopleState.location
-	if location == nil {
-		location = time.Local
-	}
-	return location.String()
+	name, _ := m.peopleRelationshipZone()
+	return name
 }
 
-func (m *Model) initializePeopleRelationshipYears(contact *query.PersonSummary) {
+// Opaque local labels cannot identify a zone in the daemon's analytics engine.
+// An omitted timezone uses the daemon's UTC default, including year bounds.
+func (m Model) peopleRelationshipZone() (string, *time.Location) {
 	location := m.peopleState.location
 	if location == nil {
 		location = time.Local
-		m.peopleState.location = location
 	}
-	currentYear := time.Now().In(location).Year()
+	name := location.String()
+	if name == "Local" {
+		name = m.localTimezone
+	}
+	if name != "" && name != "Local" {
+		if loaded, err := time.LoadLocation(name); err == nil {
+			return name, loaded
+		}
+	}
+	return "", time.UTC
+}
+
+func (m *Model) initializePeopleRelationshipYears(contact *query.PersonSummary, now time.Time) {
+	_, location := m.peopleRelationshipZone()
+	currentYear := now.In(location).Year()
 	firstYear := currentYear
 	if contact != nil && !contact.FirstAt.IsZero() {
 		firstYear = contact.FirstAt.In(location).Year()
@@ -71,7 +83,13 @@ func (m *Model) beginPeopleRelationshipLoad() tea.Cmd {
 		return nil
 	}
 	m.peopleState.relationshipGeneration++
-	m.initializePeopleRelationshipYears(m.peopleState.contact)
+	if m.peopleState.contact.ActivityCount == 0 {
+		m.peopleState.relationshipCalendar = nil
+		m.peopleState.relationshipLoading = false
+		m.peopleState.relationshipErr = nil
+		return nil
+	}
+	m.initializePeopleRelationshipYears(m.peopleState.contact, time.Now())
 	if cached := m.cachedPeopleRelationshipCalendar(); cached != nil {
 		m.peopleState.relationshipCalendar = cached
 		m.peopleState.relationshipLoading = false
@@ -171,7 +189,7 @@ func (m Model) handlePeopleRelationshipLoaded(msg peopleRelationshipLoadedMsg) (
 	key := peopleRelationshipCacheKey{
 		canonicalID:      response.CanonicalID,
 		year:             response.Year,
-		timezone:         response.Timezone,
+		timezone:         msg.timezone,
 		cacheRevision:    response.CacheRevision,
 		identityRevision: response.IdentityRevision,
 	}
@@ -190,12 +208,10 @@ func (m Model) changePeopleRelationshipYear(delta int) (Model, tea.Cmd) {
 	if delta == 0 || m.peopleState.contact == nil {
 		return m, nil
 	}
-	m.initializePeopleRelationshipYears(m.peopleState.contact)
-	location := m.peopleState.location
-	if location == nil {
-		location = time.Local
-	}
-	currentYear := time.Now().In(location).Year()
+	now := time.Now()
+	m.initializePeopleRelationshipYears(m.peopleState.contact, now)
+	_, location := m.peopleRelationshipZone()
+	currentYear := now.In(location).Year()
 	nextYear := m.peopleState.relationshipYear + delta
 	if nextYear < m.peopleState.relationshipFirstYear || nextYear > currentYear {
 		return m, nil

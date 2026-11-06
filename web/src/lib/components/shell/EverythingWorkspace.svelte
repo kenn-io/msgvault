@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { tasksSettingsDestination } from './navigation';
+  import { Button, MEDIA, PageHeader } from '@kenn-io/kit-ui';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
@@ -29,19 +31,19 @@
   import { groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, createAllMatchingSelection, predicateFingerprint } from '../../explore/selection';
   import type { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import ColumnsMenu from '../explore/ColumnsMenu.svelte';
+  import { readerPosition } from '../../explore/reader-position.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
+  import { splitHandleSize } from '../layout/split-handle';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
-  import MeetingPanel from '../meetings/MeetingPanel.svelte';
-  import PageHeader from './PageHeader.svelte';
+  import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import {
     exploreMeetingScope,
     filtersToMeetingTranscripts,
@@ -51,8 +53,14 @@
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
+  const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
+    meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
+    scope?: import('../../explore/models').ExploreFilter;
+    conversationStart?: string;
+    conversationEnd?: string;
+    resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
     loader: ExploreLoader;
@@ -66,7 +74,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
-    onReviewDeletion: (mode: 'explicit' | 'all_matching') => void;
+    onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -81,9 +89,15 @@
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
+    onStatusChange?: () => void;
   }
 
   let {
+    meetingContext = undefined,
+    scope = undefined,
+    conversationStart = undefined,
+    conversationEnd = undefined,
+    resultsWidth = $bindable(0),
     client,
     exploreState,
     loader,
@@ -112,7 +126,25 @@
     changeConversationAnchor,
     onOpenMeeting = undefined,
     onSaveView,
+    onStatusChange = () => undefined,
   }: Props = $props();
+
+  const compact = new MediaQuery(MEDIA.compact);
+  const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
+  let resultsSplit: HTMLDivElement | undefined = $state();
+  let previousSolo: boolean | undefined;
+  $effect(() => {
+    const currentSolo = solo;
+    const changed = previousSolo !== undefined && previousSolo !== currentSolo;
+    previousSolo = currentSolo;
+    if (!changed || !untrack(() => readingTargetKey)) return;
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body &&
+        (focused.checkVisibility?.({ visibilityProperty: true }) ?? !resultsSplit?.querySelector('[data-pane="primary"]')?.contains(focused))) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[data-reader-dismiss]')?.focus();
+    });
+  });
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
@@ -154,27 +186,8 @@
     return `${count.toLocaleString()} ${count === 1 ? one : many}`;
   });
 
-  function storedPreviewPosition(): 'below' | 'right' {
-    try {
-      return localStorage.getItem('msgvault.reading-pane.position') === 'right' ? 'right' : 'below';
-    } catch {
-      return 'below';
-    }
-  }
-
-  let previewPosition = $state(storedPreviewPosition());
-  let resultsWidth = $state(0);
   const canPreviewRight = $derived(resultsWidth >= 960);
-  const previewRight = $derived(canPreviewRight && previewPosition === 'right');
-
-  function setPreviewPosition(value: string): void {
-    previewPosition = value === 'right' ? 'right' : 'below';
-    try {
-      localStorage.setItem('msgvault.reading-pane.position', previewPosition);
-    } catch {
-      // Keep the control usable when browser storage is unavailable.
-    }
-  }
+  const previewRight = $derived(canPreviewRight && readerPosition.value === 'right');
 
   // coverage, coveragePollAttempts/coveragePollKey, visibleLexicalRowKeys,
   // lexicalCountCache/canonicalQueryHashes, and readingGroupDetail/
@@ -402,7 +415,7 @@
     const loading = loader.loading;
     const generation = loader.resultGeneration;
     const resultFingerprint = loader.resultFingerprint;
-    const isMeetingView = exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
+    const isMeetingView = !meetingContext && exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
     untrack(() => {
       if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
       if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
@@ -611,6 +624,8 @@
         detail: cause instanceof Error ? cause.message : 'The semantic index action failed.',
         actions: ['retry'],
       };
+    } finally {
+      onStatusChange();
     }
   }
 
@@ -633,12 +648,14 @@
   });
 </script>
 
-<main class="everything-workspace" aria-label="Everything">
-  <PageHeader title="Everything">
+<svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
+  {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
-  </PageHeader>
+  </PageHeader>{/if}
 
   <ContextBar
+    messages
+    lockedFilter={scope}
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -684,22 +701,6 @@
         scrollAnchor: null,
       })}
   >
-    {#snippet extra()}
-      {#if exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0}
-        <ColumnsMenu
-          columns={exploreState.current.columns}
-          onchange={(columns) => exploreState.replaceTransient({ columns })}
-        />
-      {/if}
-      {#if canPreviewRight}
-        <SegmentedControl
-          ariaLabel="Preview position"
-          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-          value={previewPosition}
-          onchange={setPreviewPosition}
-        />
-      {/if}
-    {/snippet}
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
@@ -729,9 +730,10 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
-  {#if meetingScope}
+  {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
+  {#if meetingContext?.scope || meetingScope}
     <div class="meeting-overview">
-      <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={(meetingContext?.scope ?? meetingScope)!} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}
@@ -740,6 +742,9 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
+    class:results-split--solo={solo}
+    style:min-height={scope && readingTargetKey && !previewRight && !solo ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
     <SplitPane
@@ -747,8 +752,8 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
-      minSecondary={previewRight ? 400 : 160}
+      minPrimary={previewRight ? 360 : stackedListMin}
+      minSecondary={previewRight ? 400 : stackedReaderMin}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
@@ -820,7 +825,7 @@
             {:else}
               <EverythingTable
                 rows={loader.rows}
-                {selection}
+                selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}
                 columnWidths={exploreState.current.columnWidths}
                 focusedKey={exploreState.current.activeRow}
@@ -846,7 +851,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            <SelectionBar
+            {#if !scope}<SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
@@ -858,6 +863,7 @@
               {onReviewDeletion}
               onClear={focusGrid}
             />
+            {/if}
           {/if}
         </div>
       {/snippet}
@@ -873,10 +879,13 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            back={solo}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitWorkspace('settings')}
-            onOpenRelationship={openRelationship}
+            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+            onOpenPerson={openRelationship}
+            {conversationStart}
+            {conversationEnd}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />
@@ -885,7 +894,7 @@
     </SplitPane>
   </div>
 
-</main>
+</svelte:element>
 
 <style>
   .everything-workspace {
@@ -936,11 +945,29 @@
   }
 
   .results-split {
+    contain: size;
     display: flex;
     min-width: 0;
     min-height: 200px;
     flex: 1;
     overflow: hidden;
+  }
+
+  .results-split--solo :global([data-split-pane]) { position: relative; }
+  .results-split--solo :global([data-pane='primary']) {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+  }
+  .results-split--solo :global(.handle-reset) { display: none; }
+  .results-split.results-split--solo :global([data-pane='secondary']) {
+    flex-grow: 1;
+    flex-shrink: 1;
+    border: 0;
+  }
+  .results-split--solo :global(.reading-pane) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
 
   .results-primary {

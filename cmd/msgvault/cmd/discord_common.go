@@ -22,6 +22,7 @@ const sourceTypeDiscord = "discord"
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps
 	openStore            func() (*store.Store, func(), error)
+	openReadOnlyStore    func() (*store.Store, func(), error)
 	tokenManager         func() *discord.TokenManager
 	apiBaseURL           func() string
 	providerConfig       func() config.DiscordConfig
@@ -44,6 +45,9 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 	}
 	return discordCommandDeps{
 		bind: defaultDiscordCommandDepsForContext,
+		openReadOnlyStore: func() (*store.Store, func(), error) {
+			return openReadOnlyStoreForInvocation(ctx, state)
+		},
 		openStore: func() (*store.Store, func(), error) {
 			if state == nil || currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
@@ -98,7 +102,11 @@ func matchesDiscordSourceAliasOrDisplayName(source *store.Source, selector strin
 }
 
 func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, error) {
-	sources, err := st.ListSources(sourceTypeDiscord)
+	return resolveDiscordSourcesContext(context.Background(), st, selector)
+}
+
+func resolveDiscordSourcesContext(ctx context.Context, st *store.Store, selector string) ([]*store.Source, error) {
+	sources, err := st.ListSourcesContext(ctx, sourceTypeDiscord)
 	if err != nil {
 		return nil, fmt.Errorf("list Discord sources: %w", err)
 	}
@@ -256,7 +264,7 @@ func readDiscordBotToken(in io.Reader) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive("Discord bot token:", output)
+		return readPasswordInteractive("Discord bot token:", output, false)
 	case passwordPipe:
 		return readPasswordFromPipe(os.Stdin)
 	case passwordNoPrompt:

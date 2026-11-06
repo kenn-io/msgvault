@@ -152,6 +152,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 
 		ID:                m.ID,
 		IsFromMe:          boolValue(m.IsFromMe),
+		SenderAuth:        senderAuthFromGenerated(m.SenderAuth),
 		Calendar:          calendarProjectionFromGenerated(m.Calendar),
 		SourceID:          int64Value(m.SourceID),
 		SourceMessageID:   stringValue(m.SourceMessageID),
@@ -173,8 +174,12 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		HiddenTextPresent: m.HiddenTextPresent,
 		SizeEstimate:      m.SizeBytes,
 		Body:              m.Body,
+		BodyText:          m.Body,
 		BodyHTML:          stringValue(m.BodyHTML),
 		Attachments:       apiAttachmentsFromGenerated(m.Attachments),
+	}
+	if m.BodyText != nil {
+		msg.BodyText = *m.BodyText
 	}
 	return msg
 }

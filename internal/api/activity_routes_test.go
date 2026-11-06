@@ -317,7 +317,8 @@ func TestActivityHTTPIndependentPagingPreviewAndNoteOnlyTargets(t *testing.T) {
 }
 
 type failingActivityStore struct {
-	*store.Store
+	MessageStore
+	ActivityStore
 
 	err error
 }
@@ -342,7 +343,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 	const sensitive = "driver failed for private@example.com id=991"
 	failing := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
-		&failingActivityStore{Store: f.store, err: errors.New(sensitive)},
+		&failingActivityStore{MessageStore: f.store, ActivityStore: f.store, err: errors.New(sensitive)},
 		nil, testLogger())
 	response = activityRequest(t, failing, http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
@@ -352,7 +353,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 
 	canceled := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
-		&failingActivityStore{Store: f.store, err: context.Canceled},
+		&failingActivityStore{MessageStore: f.store, ActivityStore: f.store, err: context.Canceled},
 		nil, testLogger())
 	response = activityRequest(t, canceled, http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)

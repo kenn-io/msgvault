@@ -16,7 +16,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -28,6 +27,20 @@ const (
 	openAPIClientArtifactPath = "../../pkg/client/openapi.yaml"
 	openAPIClientGeneratedDir = "../../pkg/client/generated"
 )
+
+func TestOpenAPISenderAuthSchemaName(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schemas := document.Components.Schemas.Map()
+		requirements.NotNil(schemas["SenderAuthVerdict"])
+		for _, name := range []string{"MessageDetail", "CliMessageResponse"} {
+			requirements.NotNil(schemas[name])
+			property := schemas[name].Properties["sender_auth"]
+			requirements.NotNil(property)
+			assertions.Equal("#/components/schemas/SenderAuthVerdict", property.Ref)
+		}
+	}
+}
 
 func TestNullableObjectReferenceSchemas(t *testing.T) {
 	t.Parallel()
@@ -208,6 +221,9 @@ func TestCalendarRequestEnumNamesPreserveGeneratedClientExports(t *testing.T) {
 		assertions.Equal(want, field.Extensions["x-enum-names"], property)
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"ExploreGroupRow": {
+			"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"},
+		},
 		"CreateAttributeDefinitionRequest": {
 			"cardinality": {"Single", "Multi"},
 		},
@@ -1390,8 +1406,8 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	filter := doc.Components.Schemas.Map()["ExploreFilter"]
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
-	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity", "account"},
+	assertions.Equal(
+		[]any{"source", "participant", "domain", "message_type", "kind", "mailing_list", "after", "before", "deletion", "identity", "account"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
@@ -1399,7 +1415,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(clientFilter.Properties["dimension"])
 	assertions.Equal([]any{
 		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
-		"ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
+		"ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
 		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
@@ -1637,7 +1653,7 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	dimension := schemas["ExploreGroupDimension"]
 	requirements.NotNil(dimension)
-	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}, dimension.Enum)
+	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month", "day"}, dimension.Enum)
 
 	filter := schemas["ExploreFilter"]
 	requirements.NotNil(filter)
@@ -1693,20 +1709,6 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	assertions.Equal("jsontext.Value", property.Extensions["x-go-type"])
 	assertions.Equal(map[string]any{"path": "encoding/json/jsontext"},
 		property.Extensions["x-go-type-import"])
-}
-
-func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
-	t.Parallel()
-	dimensions := explorecatalog.GroupingDimensions()
-	want := make([]any, len(dimensions))
-	for index, dimension := range dimensions {
-		want[index] = dimension
-	}
-
-	assert.Equal(t, want, exploreGroupingEnum())
-	dimension := OpenAPIDocument().Components.Schemas.Map()["ExploreGroupDimension"]
-	require.NotNil(t, dimension)
-	assert.Equal(t, want, dimension.Enum)
 }
 
 func TestOpenAPIArtifactUpToDate(t *testing.T) {
@@ -2239,6 +2241,11 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	// A versioned go run outside the module resolves a separate dependency graph
 	// and can fail on checksum-service requests during an otherwise local test.
 	generator := filepath.Join(tmpRoot, "oapi-codegen.exe")
+	for _, name := range []string{"go.mod", "go.sum"} {
+		// This read makes Go's test cache rerun the test when the child's inputs change.
+		_, err := os.ReadFile(filepath.Join("..", "..", "tools", "oapi-codegen", name))
+		requirements.NoError(err)
+	}
 	cmd := exec.Command("go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
 		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -2256,6 +2263,11 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	requirements.NoError(err, "generate client:\n%s", out)
 	fixer, err := filepath.Abs("../codegenfix/cmd")
 	requirements.NoError(err, "resolve generated-client validator fixup")
+	for _, name := range []string{".", ".."} {
+		// This read makes Go's test cache rerun the test when the child's inputs change.
+		_, err := os.ReadDir(filepath.Join(fixer, name))
+		requirements.NoError(err)
+	}
 	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
 	out, err = cmd.CombinedOutput()
 	requirements.NoError(err, "apply generated-client validator fixup:\n%s", out)

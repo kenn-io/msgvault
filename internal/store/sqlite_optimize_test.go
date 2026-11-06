@@ -64,7 +64,7 @@ func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
 	t.Cleanup(func() { _ = blocker.Close() })
 
 	buf := captureSlog(t)
-	s.optimizeSQLiteBestEffort(context.Background(), "cancellation proof")
+	s.optimizeSQLiteBestEffort(context.Background(), "cancellation proof", false)
 
 	records := plannerMaintenanceRecords(t, buf)
 	require.Len(records, 1)
@@ -162,7 +162,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	require.Error(actualErr)
 
 	buf := captureSlog(t)
-	s.optimizeSQLiteBestEffort(t.Context(), "closed database")
+	s.optimizeSQLiteBestEffort(t.Context(), "closed database", false)
 
 	records := plannerMaintenanceRecords(t, buf)
 	require.Len(records, 1)
@@ -290,15 +290,16 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
 
-	seedLiveMessages(t, s, 100)
+	seedLiveMessages(t, s, 3003)
 	assert.Zero(messagePlannerStatisticCount(t, s),
 		"message statistics must be absent before the maintenance boundary")
 
 	syncID, err := s.StartSync(1, "full")
 	require.NoError(err)
 	require.NoError(s.CompleteSyncAndUpdateSourceCursor(syncID, 1, "cursor-1"))
-	assert.Positive(messagePlannerStatisticCount(t, s),
-		"successful sync must analyze populated message indexes")
+	var stat string
+	require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&stat))
+	assert.Equal("3003 3003", stat)
 }
 
 func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
@@ -666,5 +667,90 @@ func TestSQLiteContentionErrorsLogAtDebug(t *testing.T) {
 		records := plannerMaintenanceRecords(t, buf)
 		require.Len(t, records, 1)
 		assert.Equal(t, "DEBUG", records[0]["level"], "%v is expected contention", err)
+	}
+}
+
+func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
+	for _, failAnalysis := range []bool{false, true} {
+		t.Run(fmt.Sprintf("analysis_error=%t", failAnalysis), func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+			require.NoError(err)
+			defer func() { _ = s.Close() }()
+			s.db.SetMaxOpenConns(2)
+			s.db.SetMaxIdleConns(2)
+			require.NoError(s.InitSchema())
+			seedLiveMessages(t, s, 12_000)
+			_, err = s.db.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES
+				(2, 'gmail', 'second@example.com'), (3, 'gmail', 'third@example.com');
+				UPDATE messages SET source_id = (id % 3) + 1,
+				 sent_at = datetime('2015-01-01', '+' || id || ' hours');
+				PRAGMA analysis_limit=1000; ANALYZE messages`)
+			require.NoError(err)
+			var sampled string
+			require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&sampled))
+			assert.NotEqual("12000 4000", sampled)
+
+			plan := func(conn *sql.Conn) string {
+				var id, parent, unused int
+				var detail string
+				require.NoError(conn.QueryRowContext(t.Context(), `EXPLAIN QUERY PLAN SELECT id FROM messages
+					WHERE source_id=1 AND sent_at>='2015-05-01' AND sent_at<'2015-05-08'`).Scan(&id, &parent, &unused, &detail))
+				return detail
+			}
+			if failAnalysis {
+				// Model old statistics that make the source index look selective.
+				_, err = s.db.Exec(`UPDATE sqlite_stat1 SET stat='12000 1' WHERE idx='idx_messages_source'`)
+				require.NoError(err)
+				var held []*sql.Conn
+				for range 2 {
+					conn, err := s.db.Conn(t.Context())
+					require.NoError(err)
+					held = append(held, conn)
+					t.Cleanup(func() { _ = conn.Close() })
+					_, err = conn.ExecContext(t.Context(), "ANALYZE sqlite_schema")
+					require.NoError(err)
+					require.NoError(conn.Raw(func(raw any) error {
+						c, ok := raw.(*sqlite3.SQLiteConn)
+						require.True(ok)
+						c.RegisterAuthorizer(func(action int, table, _, _ string) int {
+							if action == sqlite3.SQLITE_ANALYZE && table == "messages" {
+								return sqlite3.SQLITE_DENY
+							}
+							return sqlite3.SQLITE_OK
+						})
+						return nil
+					}))
+				}
+				// A child has committed exact statistics while serving connections
+				// still hold the old values. The full scan will be denied.
+				_, err = held[0].ExecContext(t.Context(), `UPDATE sqlite_stat1 SET stat='12000 4000' WHERE idx='idx_messages_source'`)
+				require.NoError(err)
+				for _, conn := range held {
+					require.Contains(plan(conn), "idx_messages_source",
+						"each connection must retain a stale plan after exact statistics are committed")
+					require.NoError(conn.Close())
+				}
+			}
+			report, err := s.RunDailyMaintenance(t.Context())
+			require.NoError(err)
+			if failAnalysis {
+				require.Error(report.OptimizeErr)
+			} else {
+				require.NoError(report.OptimizeErr)
+				var exact string
+				require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&exact))
+				assert.Equal("12000 4000", exact)
+			}
+			if failAnalysis {
+				for range 2 {
+					conn, err := s.db.Conn(t.Context())
+					require.NoError(err)
+					defer func() { _ = conn.Close() }()
+					assert.Contains(plan(conn), "idx_messages_sent_at",
+						"each connection must reload statistics despite the analysis error")
+				}
+			}
+		})
 	}
 }

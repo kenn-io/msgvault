@@ -2709,6 +2709,7 @@ type CliMessageResponse struct {
 	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
+	SenderAuth           *SenderAuthVerdict     `json:"sender_auth,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
@@ -2784,6 +2785,13 @@ func (c CliMessageResponse) Validate() error {
 	if c.ReceivedAt != nil {
 		if err := typesValidator.Var(c.ReceivedAt, "required"); err != nil {
 			errors = errors.Append("ReceivedAt", err)
+		}
+	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
@@ -3124,6 +3132,15 @@ func (c ContextPassage) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ConversationParticipant struct {
+	Display       string `json:"display" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+}
+
+func (c ConversationParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type ConversationResponse struct {
@@ -3578,6 +3595,7 @@ func (d DeletionManifestDetail) Validate() error {
 }
 
 type DeletionManifestSummary struct {
+	Account      *string   `json:"account,omitzero"`
 	CreatedAt    time.Time `json:"created_at" validate:"required"`
 	CreatedBy    string    `json:"created_by" validate:"required"`
 	Description  string    `json:"description" validate:"required"`
@@ -3920,6 +3938,7 @@ type DocumentIndexStatus struct {
 	RetryOwners                  int64                       `json:"retry_owners"`
 	StagingOwners                int64                       `json:"staging_owners"`
 	StoredPlaintextChunks        int64                       `json:"stored_plaintext_chunks"`
+	StoredPlaintextRanges        int64                       `json:"stored_plaintext_ranges"`
 	SuccessfulAttempts           int64                       `json:"successful_attempts"`
 	TerminalOwners               int64                       `json:"terminal_owners"`
 	UnknownRoleOccurrences       int64                       `json:"unknown_role_occurrences"`
@@ -4810,6 +4829,7 @@ type EntryRow struct {
 	ParticipantIds             []int64      `json:"participant_ids,omitempty"`
 	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
 	Preview                    string       `json:"preview" validate:"required"`
+	SenderLabel                *string      `json:"sender_label,omitzero"`
 	SourceID                   int64        `json:"source_id"`
 	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
 	SourceType                 string       `json:"source_type" validate:"required"`
@@ -5067,15 +5087,36 @@ func (e ExploreFilter) Validate() error {
 }
 
 type ExploreGroupRow struct {
-	Count          int64     `json:"count"`
-	EstimatedBytes int64     `json:"estimated_bytes"`
-	Key            string    `json:"key" validate:"required"`
-	Label          string    `json:"label" validate:"required"`
-	LatestAt       time.Time `json:"latest_at" validate:"required"`
+	Count          int64                 `json:"count"`
+	EstimatedBytes int64                 `json:"estimated_bytes"`
+	Key            string                `json:"key" validate:"required"`
+	Label          string                `json:"label" validate:"required"`
+	LatestAt       time.Time             `json:"latest_at" validate:"required"`
+	Level          *ExploreGroupRowLevel `json:"level,omitempty"`
 }
 
 func (e ExploreGroupRow) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if err := typesValidator.Var(e.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	if err := typesValidator.Var(e.LatestAt, "required"); err != nil {
+		errors = errors.Append("LatestAt", err)
+	}
+	if e.Level != nil {
+		if v, ok := any(e.Level).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Level", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ExploreGroupSort struct {
@@ -5102,9 +5143,11 @@ func (e ExploreGroupSort) Validate() error {
 }
 
 type ExploreGroupsHTTPRequest struct {
-	Cursor       *string                               `json:"cursor,omitzero"`
-	Filters      []ExploreFilter                       `json:"filters,omitempty"`
-	GroupKey     *string                               `json:"group_key,omitzero"`
+	Cursor   *string         `json:"cursor,omitzero"`
+	Filters  []ExploreFilter `json:"filters,omitempty"`
+	GroupKey *string         `json:"group_key,omitzero"`
+
+	// Grouping Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
 	Grouping     []ExploreGroupDimension               `json:"grouping" validate:"required,min=1,max=1"`
 	Limit        *int64                                `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
 	Presentation *ExploreGroupsHTTPRequestPresentation `json:"presentation,omitempty"`
@@ -5114,7 +5157,13 @@ type ExploreGroupsHTTPRequest struct {
 
 	// SearchMode Search mode; pipe OR is full_text only
 	SearchMode *ExploreGroupsHTTPRequestSearchMode `json:"search_mode,omitempty"`
-	Sort       []ExploreGroupSort                  `json:"sort,omitempty"`
+
+	// SentOnly Count sent messages only, excluding drafts and unsent items
+	SentOnly *bool              `json:"sent_only,omitempty"`
+	Sort     []ExploreGroupSort `json:"sort,omitempty"`
+
+	// Timezone IANA timezone for day grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (e ExploreGroupsHTTPRequest) Validate() error {
@@ -5768,6 +5817,7 @@ type FileSearchRow struct {
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                  `json:"participant_labels,omitempty"`
 	SearchExplain      *FileSearchExplain        `json:"search_explain,omitempty"`
+	SenderLabel        *string                   `json:"sender_label,omitzero"`
 	SizeBytes          int64                     `json:"size_bytes"`
 	SourceID           int64                     `json:"source_id"`
 	SourceIdentifier   string                    `json:"source_identifier" validate:"required"`
@@ -7291,6 +7341,118 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type LoopCounterparty struct {
+	Address       string `json:"address"`
+	DisplayName   string `json:"display_name"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (l LoopCounterparty) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LoopDecisionResponse struct {
+	AnchorMessageID int64                     `json:"anchor_message_id"`
+	SnoozedUntil    *time.Time                `json:"snoozed_until,omitempty"`
+	State           LoopDecisionResponseState `json:"state" validate:"required"`
+}
+
+func (l LoopDecisionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopItem struct {
+	// AnchorMessageID The message that started the wait. Done and snooze use it as the loop ID.
+	AnchorMessageID int64            `json:"anchor_message_id"`
+	Channel         LoopItemChannel  `json:"channel" validate:"required"`
+	ConversationID  int64            `json:"conversation_id"`
+	Counterparty    LoopCounterparty `json:"counterparty"`
+
+	// Kind reply_owed waits on you; awaiting_reply waits on them
+	Kind           LoopItemKind `json:"kind" validate:"required"`
+	LastActivityAt time.Time    `json:"last_activity_at" validate:"required"`
+	OwedSinceAt    time.Time    `json:"owed_since_at" validate:"required"`
+
+	// QuestionMessageIds The questions this loop covers, oldest first. Pass them to done or snooze so a question that appeared later stays open.
+	QuestionMessageIds []int64 `json:"question_message_ids" validate:"required"`
+	SourceID           int64   `json:"source_id"`
+
+	// Summary The email subject, or the chat message text
+	Summary string `json:"summary" validate:"required"`
+}
+
+func (l LoopItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Channel).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Channel", err)
+		}
+	}
+	if v, ok := any(l.Counterparty).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Counterparty", err)
+		}
+	}
+	if v, ok := any(l.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(l.LastActivityAt, "required"); err != nil {
+		errors = errors.Append("LastActivityAt", err)
+	}
+	if err := typesValidator.Var(l.OwedSinceAt, "required"); err != nil {
+		errors = errors.Append("OwedSinceAt", err)
+	}
+	if err := typesValidator.Var(l.QuestionMessageIds, "required"); err != nil {
+		errors = errors.Append("QuestionMessageIds", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopListResponse struct {
+	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
+	CoverageIncomplete bool       `json:"coverage_incomplete"`
+	Items              []LoopItem `json:"items" validate:"required"`
+
+	// SkippedUnparseable Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
+	SkippedUnparseable int64 `json:"skipped_unparseable"`
+
+	// Truncated True when more loops are open than limit returned
+	Truncated bool `json:"truncated"`
+}
+
+func (l LoopListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range l.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MCPCapabilities struct {
 	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
 	Version int64                `json:"version"`
@@ -7961,36 +8123,46 @@ type MergeRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments    []AttachmentInfo    `json:"attachments" validate:"required"`
-	Bcc            []string            `json:"bcc,omitempty"`
-	Body           string              `json:"body" validate:"required"`
-	BodyHTML       *string             `json:"body_html,omitzero"`
-	BodyOmitted    *bool               `json:"body_omitted,omitempty"`
+	Attachments []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc         []string         `json:"bcc,omitempty"`
+	Body        string           `json:"body" validate:"required"`
+	BodyHTML    *string          `json:"body_html,omitzero"`
+	BodyOmitted *bool            `json:"body_omitted,omitempty"`
+
+	// BodyText Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback.
+	BodyText       *string             `json:"body_text,omitzero"`
 	Calendar       *CalendarProjection `json:"calendar,omitempty"`
 	Cc             []string            `json:"cc,omitempty"`
 	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string  `json:"conversation_title,omitzero"`
-	DeletedAt         *string  `json:"deleted_at,omitzero"`
-	From              string   `json:"from" validate:"required"`
-	FromEmail         *string  `json:"from_email,omitzero"`
-	FromName          *string  `json:"from_name,omitzero"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	ID                int64    `json:"id"`
-	IsFromMe          *bool    `json:"is_from_me,omitempty"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	ConversationTitle *string `json:"conversation_title,omitzero"`
+	DeletedAt         *string `json:"deleted_at,omitzero"`
+	From              string  `json:"from" validate:"required"`
+	FromEmail         *string `json:"from_email,omitzero"`
+	FromName          *string `json:"from_name,omitzero"`
+
+	// FromParticipantID Sender participant ID, populated for conversation windows.
+	FromParticipantID *int64             `json:"from_participant_id,omitempty"`
+	FromPhone         *string            `json:"from_phone,omitzero"`
+	HasAttachments    bool               `json:"has_attachments"`
+	HiddenTextPresent bool               `json:"hidden_text_present"`
+	ID                int64              `json:"id"`
+	IsFromMe          *bool              `json:"is_from_me,omitempty"`
+	Labels            []string           `json:"labels" validate:"required"`
+	MessageType       *string            `json:"message_type,omitzero"`
+	RelatedMessageID  *int64             `json:"related_message_id,omitempty"`
+	SenderAuth        *SenderAuthVerdict `json:"sender_auth,omitempty"`
+	SentAt            string             `json:"sent_at" validate:"required"`
+	SizeBytes         int64              `json:"size_bytes"`
+	Snippet           string             `json:"snippet" validate:"required"`
+	SourceID          *int64             `json:"source_id,omitempty"`
+	SourceMessageID   *string            `json:"source_message_id,omitzero"`
+	Subject           string             `json:"subject" validate:"required"`
+	To                []string           `json:"to" validate:"required"`
+
+	// ToParticipants Recipient participants, populated for conversation windows.
+	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -8021,6 +8193,13 @@ func (m MessageDetail) Validate() error {
 	if err := typesValidator.Var(m.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
 	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
 	}
@@ -8032,6 +8211,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.To, "required"); err != nil {
 		errors = errors.Append("To", err)
+	}
+	for i, item := range m.ToParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ToParticipants[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -12041,6 +12227,7 @@ type PersonFileSearchRow struct {
 	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
 	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
 	SearchExplain      *FileSearchExplain              `json:"search_explain,omitempty"`
+	SenderLabel        *string                         `json:"sender_label,omitzero"`
 	SizeBytes          int64                           `json:"size_bytes"`
 	SourceID           int64                           `json:"source_id"`
 	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`
@@ -13454,10 +13641,10 @@ type PersonSummary struct {
 	DisplayLabel                   string             `json:"display_label" validate:"required"`
 	DisplayName                    *string            `json:"display_name,omitzero"`
 	FileCount                      int64              `json:"file_count"`
-	FirstAt                        time.Time          `json:"first_at" validate:"required"`
+	FirstAt                        *time.Time         `json:"first_at,omitempty"`
 	ID                             int64              `json:"id"`
 	Identifiers                    []PersonIdentifier `json:"identifiers" validate:"required"`
-	LastAt                         time.Time          `json:"last_at" validate:"required"`
+	LastAt                         *time.Time         `json:"last_at,omitempty"`
 	MeetingCount                   int64              `json:"meeting_count"`
 	PartialLabel                   bool               `json:"partial_label"`
 	PeakRelationshipTemperature    int64              `json:"peak_relationship_temperature"`
@@ -13481,9 +13668,6 @@ func (p PersonSummary) Validate() error {
 	if err := typesValidator.Var(p.DisplayLabel, "required"); err != nil {
 		errors = errors.Append("DisplayLabel", err)
 	}
-	if err := typesValidator.Var(p.FirstAt, "required"); err != nil {
-		errors = errors.Append("FirstAt", err)
-	}
 	if err := typesValidator.Var(p.Identifiers, "required"); err != nil {
 		errors = errors.Append("Identifiers", err)
 	}
@@ -13493,9 +13677,6 @@ func (p PersonSummary) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Identifiers[%d]", i), err)
 			}
 		}
-	}
-	if err := typesValidator.Var(p.LastAt, "required"); err != nil {
-		errors = errors.Append("LastAt", err)
 	}
 	if p.Profile != nil {
 		if v, ok := any(p.Profile).(runtime.Validator); ok {
@@ -14916,6 +15097,15 @@ func (s Selector) Validate() error {
 	return errors
 }
 
+type SenderAuthVerdict struct {
+	AuthservID *string `json:"authserv_id,omitzero"`
+	Dkim       *string `json:"dkim,omitzero"`
+	Dmarc      *string `json:"dmarc,omitzero"`
+	Domain     *string `json:"domain,omitzero"`
+	Spf        *string `json:"spf,omitzero"`
+	Verified   bool    `json:"verified"`
+}
+
 type SenderCount struct {
 	Count  int64  `json:"count"`
 	Sender string `json:"sender" validate:"required"`
@@ -15356,6 +15546,14 @@ func (s SimilarSearchResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SnoozeLoopRequest struct {
+	Until time.Time `json:"until" validate:"required"`
+}
+
+func (s SnoozeLoopRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type Source struct {

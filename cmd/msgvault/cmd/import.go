@@ -172,8 +172,8 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	fmt.Println("Import complete!")
 	fmt.Printf("  Duration:       %s\n", summary.Duration.Round(time.Second))
 	fmt.Printf("  Chats:          %d\n", summary.ChatsProcessed)
-	fmt.Printf("  Messages:       %d processed, %d added, %d skipped\n",
-		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesSkipped)
+	fmt.Printf("  Messages:       %d processed, %d added, %d updated, %d skipped\n",
+		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesUpdated, summary.MessagesSkipped)
 	fmt.Printf("  Participants:   %d\n", summary.Participants)
 	fmt.Printf("  Reactions:      %d\n", summary.ReactionsAdded)
 	fmt.Printf("  Attachments:    %d found", summary.AttachmentsFound)

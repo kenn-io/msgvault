@@ -296,6 +296,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	var analyticsInit *daemonAnalyticsInitHandle
 	var vectorInit *vectorInitHandle
+	var mcpInitDone <-chan struct{}
 	resourceCleanupSafe := true
 	defer func() {
 		if !resourceCleanupSafe {
@@ -488,6 +489,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
 		} else {
 			logger.Info("scheduled synctech-sms source", "source", source.Name, "schedule", source.Schedule)
+		}
+	}
+
+	for _, source := range cfg.WhatsAppApple {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("whatsapp apple source is enabled without a schedule", "source", source.Name)
+		}
+	}
+	for _, source := range cfg.ScheduledWhatsAppAppleSources() {
+		jobName, _ := api.SchedulerJobNameForSource("whatsapp", source.Phone)
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runScheduledWhatsAppApple(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule whatsapp apple source", "source", source.Name, "error", err)
+		}
+	}
+	if cfg.IMessage.Enabled {
+		if cfg.IMessage.Schedule == "" {
+			logger.Warn("imessage is enabled without a schedule")
+		} else {
+			jobName, _ := api.SchedulerJobNameForSource(sourceTypeAppleMessages, localValue)
+			if err := sched.AddJob(scheduler.Job{
+				Name:     jobName,
+				Schedule: cfg.IMessage.Schedule,
+				Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+					return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+						return runScheduledIMessage(ctx, s, cfg.IMessage)
+					})
+				}),
+			}); err != nil {
+				logger.Error("failed to schedule imessage", "error", err)
+			}
 		}
 	}
 
@@ -888,6 +927,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start the schedulers
 	sched.Start()
+	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
 
 	// Create adapters for the API interfaces
@@ -1047,6 +1087,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
+		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1103,7 +1144,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	// Stop the in-process capability probes before draining the API and
+	// releasing resources they may still be reading.
+	var mcpInitErr error
+	if mcpInitDone != nil {
+		select {
+		case <-mcpInitDone:
+		case <-shutdownCtx.Done():
+			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
+		}
+	}
+	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -1745,12 +1796,13 @@ func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
 	// Keep DuckDB's bundled SQLite library away from the live database;
 	// detail queries use the daemon's shared go-sqlite3 connection.
 	return query.DuckDBOptions{
-		DisableSQLiteScanner: true,
-		TempDirectory:        tempDirectory,
-		OwnTempDirectory:     true,
-		MemoryLimit:          c.Analytics.QueryMemoryLimit,
-		Threads:              c.Analytics.QueryThreads,
-		MaxTempDirectorySize: c.Analytics.QueryTempLimit,
+		DisableSQLiteScanner:        true,
+		LiveSQLWhenCacheUnavailable: c.Analytics.Engine != config.AnalyticsEngineDuckDB,
+		TempDirectory:               tempDirectory,
+		OwnTempDirectory:            true,
+		MemoryLimit:                 c.Analytics.QueryMemoryLimit,
+		Threads:                     c.Analytics.QueryThreads,
+		MaxTempDirectorySize:        c.Analytics.QueryTempLimit,
 	}, nil
 }
 
@@ -2216,6 +2268,10 @@ func (a *storeAPIAdapter) GetFileMetadataBatch(ctx context.Context, ids []int64)
 	return a.store.GetFileMetadataBatch(ctx, ids)
 }
 
+func (a *storeAPIAdapter) MessageHeaderBlockContext(ctx context.Context, id int64) ([]byte, error) {
+	return a.store.MessageHeaderBlockContext(ctx, id)
+}
+
 func (a *storeAPIAdapter) GetArchivedMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -2324,7 +2380,9 @@ func (a *storeAPIAdapter) RunCLISync(
 	emit func(api.CLISyncEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLISyncOperationWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return a.runChild(ctx, args, nil, "", emit)
+	})
 }
 
 func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
@@ -2452,7 +2510,7 @@ func (a *storeAPIAdapter) RunCLIVerify(
 	emit func(api.CLIVerifyEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return runDaemonCLISubprocessStream(ctx, cliVerifySubprocessArgs(req), func(stream, data string) error {
+	return a.runChild(ctx, cliVerifySubprocessArgs(req), nil, "", func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
@@ -2480,7 +2538,7 @@ func (a *storeAPIAdapter) RunCLIRepairEncoding(
 	emit func(api.CLIRepairEncodingEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return runDaemonCLISubprocessStream(ctx, []string{"repair-encoding"}, func(stream, data string) error {
+	return a.runChild(ctx, []string{"repair-encoding"}, nil, "", func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
@@ -2494,7 +2552,9 @@ func (a *storeAPIAdapter) RunCLIRepairMessage(
 	emit func(api.CLIRepairMessageEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLIRepairMessageWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+	return a.runCLIRepairMessageWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return a.runChild(ctx, args, nil, "", emit)
+	})
 }
 
 func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
@@ -2549,7 +2609,12 @@ func (a *storeAPIAdapter) RunCLICommand(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLICommandWithRunner(ctx, req, emit, runDaemonCLISubprocessStreamWithEnv)
+	return a.runCLICommandWithRunner(ctx, req, emit, a.runChild)
+}
+
+func (a *storeAPIAdapter) runChild(ctx context.Context, args []string, env map[string]string, cwd string, emit func(string, string) error) error {
+	defer a.store.ReloadSQLitePlannerStatistics(ctx)
+	return runDaemonCLISubprocessStreamWithEnv(ctx, args, env, cwd, emit)
 }
 
 type cliCommandSubprocessRunner func(

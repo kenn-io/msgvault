@@ -19,6 +19,7 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
+	"golang.org/x/time/rate"
 )
 
 // Option is a functional option for Client.
@@ -169,6 +170,7 @@ type Client struct {
 	listProgress                func(done, total int, mailbox string, found, unchanged int)
 	connectRetryInitialInterval time.Duration
 	connectRetryNotify          backoff.Notify
+	commandLimiter              *rate.Limiter
 	tlsConfig                   *tls.Config
 }
 
@@ -337,6 +339,9 @@ func (c *Client) connect(ctx context.Context) error {
 		}
 		saslClient := NewXOAuth2Client(c.config.Username, token)
 		if err := waitAuthenticationContext(ctx, conn, func() error {
+			if err := c.waitCommand(ctx); err != nil {
+				return err
+			}
 			return conn.Authenticate(saslClient)
 		}); err != nil {
 			_ = conn.Close()
@@ -344,6 +349,9 @@ func (c *Client) connect(ctx context.Context) error {
 		}
 	default:
 		if err := waitAuthenticationContext(ctx, conn, func() error {
+			if err := c.waitCommand(ctx); err != nil {
+				return err
+			}
 			return conn.Login(c.config.Username, c.password).Wait()
 		}); err != nil {
 			_ = conn.Close()
@@ -589,11 +597,11 @@ func (c *Client) invalidateConnLocked(conn *imapclient.Client) {
 }
 
 // selectMailbox selects a mailbox if not already selected. Caller must hold mu.
-func (c *Client) selectMailbox(mailbox string) error {
+func (c *Client) selectMailbox(ctx context.Context, mailbox string) error {
 	if c.selectedMailbox == mailbox {
 		return nil
 	}
-	data, err := c.conn.Select(mailbox, nil).Wait()
+	data, err := c.selectCommand(ctx, mailbox, nil)
 	if err != nil {
 		return fmt.Errorf("SELECT %q: %w", mailbox, err)
 	}
@@ -616,12 +624,12 @@ func (c *Client) listOptionsLocked() *imap.ListOptions {
 // listMailboxesLocked returns all selectable mailboxes, caching the result.
 // Also detects special-use attributes (\Trash, \All) for later use.
 // Caller must hold mu.
-func (c *Client) listMailboxesLocked() ([]string, error) {
+func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 	if c.mailboxCache != nil {
 		return c.mailboxCache, nil
 	}
 
-	items, err := c.conn.List("", "*", c.listOptionsLocked()).Collect()
+	items, err := c.listCommand(ctx, c.listOptionsLocked())
 	if err != nil {
 		return nil, fmt.Errorf("LIST: %w", err)
 	}
@@ -924,7 +932,7 @@ func (c *Client) planMailboxScan(
 func (c *Client) enumerateMailbox(
 	ctx context.Context, mailbox string, minUID imap.UID,
 ) ([]imap.UID, error) {
-	if err := c.selectMailbox(mailbox); err != nil {
+	if err := c.selectMailbox(ctx, mailbox); err != nil {
 		if isNetworkError(err) {
 			c.logger.Warn("network error selecting mailbox, reconnecting",
 				"mailbox", mailbox, "error", err)
@@ -933,7 +941,7 @@ func (c *Client) enumerateMailbox(
 					"reconnect failed listing mailbox %q: %w",
 					mailbox, reconErr)
 			}
-			if err := c.selectMailbox(mailbox); err != nil {
+			if err := c.selectMailbox(ctx, mailbox); err != nil {
 				return nil, err
 			}
 		} else {
@@ -949,10 +957,7 @@ func (c *Client) enumerateMailbox(
 	}
 
 	criteria := enumerateMailboxSearchCriteria(c.since, c.before, minUID)
-	searchData, err := c.conn.UIDSearch(
-		criteria,
-		nil,
-	).Wait()
+	searchData, err := c.searchCommand(ctx, criteria)
 	if err != nil {
 		if isNetworkError(err) {
 			c.logger.Warn("network error during UID SEARCH, reconnecting",
@@ -962,13 +967,10 @@ func (c *Client) enumerateMailbox(
 					"reconnect failed searching mailbox %q: %w",
 					mailbox, reconErr)
 			}
-			if selErr := c.selectMailbox(mailbox); selErr != nil {
+			if selErr := c.selectMailbox(ctx, mailbox); selErr != nil {
 				return nil, selErr
 			}
-			searchData, err = c.conn.UIDSearch(
-				criteria,
-				nil,
-			).Wait()
+			searchData, err = c.searchCommand(ctx, criteria)
 			if err != nil {
 				return nil, fmt.Errorf("UID SEARCH after reconnect in mailbox %q: %w", mailbox, err)
 			}
@@ -1004,7 +1006,7 @@ func (c *Client) fetchMailboxMessageIDs(
 		return nil, nil, nil, nil
 	}
 
-	if err := c.selectMailbox(mailbox); err != nil {
+	if err := c.selectMailbox(ctx, mailbox); err != nil {
 		if !isNetworkError(err) {
 			return nil, nil, nil, err
 		}
@@ -1015,7 +1017,7 @@ func (c *Client) fetchMailboxMessageIDs(
 				"reconnect failed building label map for %q: %w",
 				mailbox, reconErr)
 		}
-		if err := c.selectMailbox(mailbox); err != nil {
+		if err := c.selectMailbox(ctx, mailbox); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -1062,7 +1064,7 @@ func (c *Client) fetchMailboxMessageIDs(
 		}
 		seenAgain := c.recordMessageIDResults(mailbox, result, &unidentified, recheckMsgs)
 		withheld := uidsNotIn(omitted, seenAgain)
-		present, err := c.confirmOmittedPresent(mailbox, withheld)
+		present, err := c.confirmOmittedPresent(ctx, mailbox, withheld)
 		if err != nil {
 			// The search proved nothing, so the map cannot claim to describe
 			// every message in the mailbox.
@@ -1225,7 +1227,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	var allMailboxes, listMailboxes []string
 	var isGmailAllMail bool
 	buildMailboxPlan := func() error {
-		mailboxes, listErr := c.listMailboxesLocked()
+		mailboxes, listErr := c.listMailboxesLocked(ctx)
 		if listErr != nil {
 			return listErr
 		}
@@ -1699,10 +1701,10 @@ type MailboxInfo struct {
 	NumMessages int64 // -1 = count unavailable
 }
 
-// listMailboxesLockedFromConn returns all selectable mailbox names
+// listMailboxNames returns all selectable mailbox names
 // for an already-connected IMAP client. It skips NoSelect mailboxes.
-func listMailboxesLockedFromConn(conn *imapclient.Client) ([]string, error) {
-	items, err := conn.List("", "*", nil).Collect()
+func (c *Client) listMailboxNames(ctx context.Context) ([]string, error) {
+	items, err := c.listCommand(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("LIST: %w", err)
 	}
@@ -1739,7 +1741,7 @@ func parseCompositeID(id string) (mailbox string, uid imap.UID, err error) {
 func (c *Client) GetProfile(ctx context.Context) (*gmailapi.Profile, error) {
 	var profile gmailapi.Profile
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
-		statusData, err := conn.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
+		statusData, err := c.statusCommand(ctx, "INBOX", &imap.StatusOptions{NumMessages: true})
 		if err != nil {
 			return fmt.Errorf("STATUS INBOX: %w", err)
 		}
@@ -1764,7 +1766,7 @@ func (c *Client) GetProfile(ctx context.Context) (*gmailapi.Profile, error) {
 func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 	var labels []*gmailapi.Label
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
-		items, err := conn.List("", "*", c.listOptionsLocked()).Collect()
+		items, err := c.listCommand(ctx, c.listOptionsLocked())
 		if err != nil {
 			return fmt.Errorf("LIST: %w", err)
 		}
@@ -1791,7 +1793,7 @@ func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 func (c *Client) ListMailboxes(ctx context.Context) ([]MailboxInfo, error) {
 	var info []MailboxInfo
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
-		names, err := listMailboxesLockedFromConn(conn)
+		names, err := c.listMailboxNames(ctx)
 		if err != nil {
 			return err
 		}
@@ -1802,7 +1804,7 @@ func (c *Client) ListMailboxes(ctx context.Context) ([]MailboxInfo, error) {
 			// can be replaced with a single batch STATUS once the
 			// library adds a multi-mailbox API or a newer version is
 			// adopted. See: github.com/emersion/go-imap/issues
-			status, err := conn.Status(mb, &imap.StatusOptions{NumMessages: true}).Wait()
+			status, err := c.statusCommand(ctx, mb, &imap.StatusOptions{NumMessages: true})
 			if err != nil {
 				info = append(info, MailboxInfo{Mailbox: mb, NumMessages: -1})
 				continue
@@ -1906,12 +1908,12 @@ func (c *Client) TrashMessage(ctx context.Context, messageID string) error {
 		return err
 	}
 	return c.withConn(ctx, func(conn *imapclient.Client) error {
-		if err := c.selectMailbox(mailbox); err != nil {
+		if err := c.selectMailbox(ctx, mailbox); err != nil {
 			return err
 		}
 		// Populate trashMailbox via LIST if not yet discovered.
 		if c.trashMailbox == "" {
-			if _, err := c.listMailboxesLocked(); err != nil {
+			if _, err := c.listMailboxesLocked(ctx); err != nil {
 				c.logger.Warn("failed to discover trash mailbox, will use default", "error", err)
 			}
 		}
@@ -1943,7 +1945,7 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 				"permanent delete requires UID EXPUNGE " +
 				"(use trash instead)")
 		}
-		if err := c.selectMailbox(mailbox); err != nil {
+		if err := c.selectMailbox(ctx, mailbox); err != nil {
 			return err
 		}
 		var uidSet imap.UIDSet

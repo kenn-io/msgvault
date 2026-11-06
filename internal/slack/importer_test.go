@@ -1997,7 +1997,7 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
 	// A swept thread grows a 30-reply tail. A limited sweep must not fetch
@@ -2018,23 +2018,29 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	_, err = imp.Import(context.Background(), limited)
 	require.NoError(err)
 	// Count just the tail replies present after one limited run.
-	tailCount := func() int {
-		n := 0
-		for _, ts := range tail {
-			var c int
-			require.NoError(st.DB().QueryRow(st.Rebind(
-				`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+ts).Scan(&c))
-			n += c
-		}
-		return n
+	tailIDs := make([]string, len(tail))
+	for i, ts := range tail {
+		tailIDs[i] = "C09:" + ts
 	}
-	assert.LessOrEqual(tailCount(), 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
+	tailCount := func() int {
+		archived, err := st.ArchivedSourceMessageIDs(sum.SourceID, tailIDs)
+		require.NoError(err)
+		return len(archived)
+	}
+	count := tailCount()
+	assert.LessOrEqual(count, 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
 
-	for range 15 {
+	runs := 0
+	for ; runs < 15 && count < 30; runs++ {
 		_, err = imp.Import(context.Background(), limited)
 		require.NoError(err)
+		count = tailCount()
 	}
-	assert.Equal(30, tailCount(), "repeated limited runs must drain the whole tail")
+	require.Equal(30, count, "the tail must drain within 15 further limited runs")
+	t.Logf("tail drained in %d limited runs after the first", runs)
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	assert.Equal(30, tailCount(), "a further limited import keeps the tail complete")
 	var total, distinct int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))

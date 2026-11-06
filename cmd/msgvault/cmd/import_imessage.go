@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,18 +14,24 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
 var (
-	importImessageDBPath   string
-	importImessageBefore   string
-	importImessageAfter    string
-	importImessageLimit    int
-	importImessageMe       string
-	importImessageContacts string
+	importImessageDBPath        string
+	importImessageBefore        string
+	importImessageAfter         string
+	importImessageLimit         int
+	importImessageMe            string
+	importImessageContacts      string
+	importImessageMessagesRoot  string
+	importImessageNoAttachments bool
+
+	importImessageMaxMediaMB int64
 )
 
 var importImessageCmd = &cobra.Command{
@@ -35,6 +42,11 @@ var importImessageCmd = &cobra.Command{
 Reads messages from ~/Library/Messages/chat.db and stores them in the
 msgvault archive. This is a read-only operation that does not modify
 the iMessage database.
+
+Available local attachments are copied with their messages. Missing or
+offloaded files remain unavailable; this command does not fetch iCloud media.
+Use --messages-root to select a copied Messages folder; only its
+Attachments and StickerCache folders are read.
 
 Requires Full Disk Access permission in System Settings > Privacy & Security.
 
@@ -53,7 +65,30 @@ Examples:
   msgvault import-imessage --limit 100
   msgvault import-imessage --db-path /path/to/chat.db
   msgvault import-imessage --contacts ~/contacts.vcf`,
-	RunE: runImportImessage,
+	PreRunE: validateImessageFlags,
+	RunE:    runImportImessage,
+}
+
+// validateImessageFlags rejects a bad --max-media-mb before the store opens.
+func validateImessageFlags(cmd *cobra.Command, _ []string) error {
+	if importImessageMaxMediaMB < 0 {
+		return usageErr(cmd, errors.New("--max-media-mb must be non-negative"))
+	}
+	if importImessageMaxMediaMB > math.MaxInt64>>20 {
+		return usageErr(cmd, errors.New("--max-media-mb is too large"))
+	}
+	return nil
+}
+
+// imessageMediaPolicy is the media policy for Messages, shared by import and
+// purge. It applies the [imessage] config limits and lets a positive
+// --max-media-mb override the size cap (import passes 0 for no override).
+func imessageMediaPolicy(overrideMB int64, cfg *config.Config) attachmentpolicy.Policy {
+	policy := cfg.IMessage.MediaPolicy()
+	if overrideMB > 0 {
+		policy.MaxBytes = overrideMB << 20
+	}
+	return policy
 }
 
 func runImportImessage(cmd *cobra.Command, args []string) error {
@@ -71,18 +106,26 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	chatDBPath, err := resolveChatDBPath()
+	chatDBPath, err := resolveChatDBPath(state.cfg.IMessage.DBPath)
 	if err != nil {
 		return err
 	}
 
-	clientOpts, err := buildImessageOpts(state.logger)
+	clientOpts, err := buildImessageOpts(
+		state.logger, state.cfg.AttachmentsDir(), importImessageMessagesRoot,
+		importImessageNoAttachments,
+		imessageMediaPolicy(importImessageMaxMediaMB, state.cfg),
+	)
 	if err != nil {
 		return err
 	}
-	if importImessageMe != "" {
+	me := importImessageMe
+	if me == "" {
+		me = state.cfg.IMessage.Me
+	}
+	if me != "" {
 		clientOpts = append(
-			clientOpts, imessage.WithOwnerHandle(importImessageMe),
+			clientOpts, imessage.WithOwnerHandle(me),
 		)
 	}
 
@@ -123,12 +166,21 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := client.Import(ctx, s, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
 			return finishImessageImport(s, state, summary)
+		}
+		if errors.Is(err, imessage.ErrAttachmentImport) {
+			printImessageSummary(summary, startTime)
+			finishErr := finishImessageImport(s, state, summary)
+			importErr := fmt.Errorf("import failed: %w", err)
+			if finishErr != nil {
+				return errors.Join(importErr, fmt.Errorf("finish iMessage import: %w", finishErr))
+			}
+			return importErr
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -144,7 +196,6 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
 	mutated := false
 
 	if importImessageContacts != "" {
@@ -157,6 +208,7 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 		mutated = true
 	}
 
+	cfg := state.cfg
 	dbPath := cfg.DatabaseDSN()
 	if !store.IsPostgresURL(dbPath) && (mutated || (summary != nil && summary.DatesCleared > 0)) {
 		// Title/display_name updates aren't visible to the message-id-keyed
@@ -259,22 +311,25 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	return phoneMatches > 0 || emailMatches > 0
 }
 
-func resolveChatDBPath() (string, error) {
-	if importImessageDBPath != "" {
-		if _, err := os.Stat(importImessageDBPath); os.IsNotExist(err) {
+func resolveChatDBPath(configPath string) (string, error) {
+	path := importImessageDBPath
+	if path == "" {
+		path = configPath
+	}
+	if path != "" {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
 			return "", fmt.Errorf(
 				"iMessage database not found at %s",
-				importImessageDBPath,
+				path,
 			)
 		}
-		return importImessageDBPath, nil
+		return path, nil
 	}
 
-	home, err := os.UserHomeDir()
+	path, err := defaultChatDBPath()
 	if err != nil {
-		return "", fmt.Errorf("get home directory: %w", err)
+		return "", err
 	}
-	path := filepath.Join(home, "Library", "Messages", "chat.db")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return "", fmt.Errorf(
 			"iMessage database not found at %s\n\n"+
@@ -285,9 +340,80 @@ func resolveChatDBPath() (string, error) {
 	return path, nil
 }
 
-func buildImessageOpts(logger *slog.Logger) ([]imessage.ClientOption, error) {
-	var opts []imessage.ClientOption
-	opts = append(opts, imessage.WithImessageLogger(logger))
+func defaultChatDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+	return filepath.Join(home, "Library", "Messages", "chat.db"), nil
+}
+
+// importImessageRecorded preserves partial progress even when an import fails.
+func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, "imessage_import")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	record := func(sum imessage.ImportSummary) error {
+		return scoped.UpdateSyncCheckpoint(syncID, imessageCheckpoint(sum))
+	}
+	defer func() {
+		if summary != nil {
+			if err := record(*summary); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("record sync progress: %w", err))
+			}
+		}
+		if retErr != nil && !attachmentImportOnly(retErr) {
+			if summary != nil {
+				retErr = errors.Join(retErr, scoped.FailSyncWithCheckpoint(syncID, retErr.Error(), imessageCheckpoint(*summary)))
+			} else {
+				retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
+			}
+			return
+		}
+		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, sourceID, ""); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("complete sync: %w", err))
+		}
+	}()
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
+		_ = record(sum)
+	})
+}
+
+// attachmentImportOnly excludes cancellation and archive failures joined with the warning.
+func attachmentImportOnly(err error) bool {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if !attachmentImportOnly(child) {
+				return false
+			}
+		}
+		return len(joined.Unwrap()) > 0
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return attachmentImportOnly(wrapped)
+	}
+	return errors.Is(err, imessage.ErrAttachmentImport)
+}
+
+func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
+		MessagesAdded:     int64(sum.MessagesAdded),
+		MessagesUpdated:   int64(sum.MessagesUpdated),
+		ErrorsCount:       int64(sum.Skipped + sum.AttachmentFailures),
+	}
+}
+
+func buildImessageOpts(logger *slog.Logger, attachmentsDir, messagesRoot string, noAttachments bool, policy attachmentpolicy.Policy) ([]imessage.ClientOption, error) {
+	if noAttachments {
+		attachmentsDir, messagesRoot = "", ""
+	}
+	opts := []imessage.ClientOption{
+		imessage.WithImessageLogger(logger),
+		imessage.WithAttachments(attachmentsDir, messagesRoot, policy),
+	}
 
 	if importImessageAfter != "" {
 		t, err := time.ParseInLocation(
@@ -345,11 +471,20 @@ func printImessageSummary(
 	fmt.Println()
 	fmt.Println("iMessage import complete!")
 	fmt.Printf("  Duration:         %s\n", elapsed.Round(time.Second))
-	fmt.Printf("  Messages:         %d imported\n", summary.MessagesImported)
+	fmt.Printf("  Messages:         %d imported, %d added, %d updated\n", summary.MessagesImported, summary.MessagesAdded, summary.MessagesUpdated)
 	fmt.Printf("  Conversations:    %d\n", summary.ConversationsImported)
 	fmt.Printf("  Participants:     %d resolved\n", summary.ParticipantsResolved)
 	if summary.Skipped > 0 {
 		fmt.Printf("  Skipped:          %d\n", summary.Skipped)
+	}
+	if summary.AttachmentFailures > 0 {
+		fmt.Printf("  Attachment errors: %d messages\n", summary.AttachmentFailures)
+	}
+	if summary.AttachmentsUnavailable > 0 {
+		fmt.Printf("  Attachments unavailable: %d (%s)\n", summary.AttachmentsUnavailable, unavailableAttachmentHint())
+	}
+	if summary.AttachmentsSkipped > 0 {
+		fmt.Printf("  Attachments skipped: %d (media policy or path outside the Messages folder%s)\n", summary.AttachmentsSkipped, messagesRootHint())
 	}
 	if summary.DatesCleared > 0 {
 		fmt.Printf("  Dates cleared:    %d\n", summary.DatesCleared)
@@ -360,26 +495,31 @@ func printImessageSummary(
 	}
 }
 
+// unavailableAttachmentHint names the usual causes of unreadable attachment files.
+func unavailableAttachmentHint() string {
+	return "file missing or unreadable; check Full Disk Access" + messagesRootHint()
+}
+
+// messagesRootHint points at --messages-root when a custom database is read without one.
+func messagesRootHint() string {
+	if importImessageDBPath != "" && importImessageMessagesRoot == "" {
+		return ", or pass --messages-root for a copied Messages folder"
+	}
+	return ""
+}
+
 // resolveImessageSource finds or creates the apple_messages source.
 // Among non-"local" sources, prefers the one with the highest ID
 // (most recently created), which is more likely in active use.
 func resolveImessageSource(s *store.Store) (*store.Source, error) {
-	sources, err := s.ListSources("apple_messages")
-	if err == nil && len(sources) > 0 {
-		var best *store.Source
-		for _, src := range sources {
-			if src.Identifier != localValue {
-				if best == nil || src.ID > best.ID {
-					best = src
-				}
-			}
-		}
-		if best != nil {
-			return best, nil
-		}
-		return sources[0], nil
+	sources, err := s.ListSources(sourceTypeAppleMessages)
+	if err != nil {
+		return nil, err
 	}
-	return s.GetOrCreateSource("apple_messages", localValue)
+	if src := store.SelectImessageSource(sources); src != nil {
+		return src, nil
+	}
+	return s.GetOrCreateSource(sourceTypeAppleMessages, localValue)
 }
 
 func init() {
@@ -406,6 +546,18 @@ func init() {
 	importImessageCmd.Flags().StringVar(
 		&importImessageContacts, "contacts", "",
 		"path to .vcf file used to backfill participant display names by phone/email",
+	)
+	importImessageCmd.Flags().StringVar(
+		&importImessageMessagesRoot, "messages-root", "",
+		"Messages folder to read attachments from (default ~/Library/Messages); rebase copied Mac paths here",
+	)
+	importImessageCmd.Flags().BoolVar(
+		&importImessageNoAttachments, "no-attachments", false,
+		"Do not store attachments to disk (messages and attachment metadata are still imported)",
+	)
+	importImessageCmd.Flags().Int64Var(
+		&importImessageMaxMediaMB, "max-media-mb", 0,
+		"maximum attachment size in MiB (0 = configured/default limit)",
 	)
 	rootCmd.AddCommand(importImessageCmd)
 }

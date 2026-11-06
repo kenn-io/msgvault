@@ -13,6 +13,7 @@ export const SavedViewFilterField = {
   mailing_list: "mailing_list",
   account: "account",
   message_type: "message_type",
+  kind: "kind",
   after: "after",
   before: "before",
   deletion: "deletion",

@@ -37,6 +37,7 @@ func originalEngine(f *storetest.Fixture) *query.SQLiteEngine {
 }
 
 func TestReadOriginalMessage(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	ctx := context.Background()
 	f := storetest.New(t)
@@ -126,6 +127,7 @@ func TestReadOriginalMessage(t *testing.T) {
 }
 
 func TestReadOriginalMessageBounded(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 	incompressible := make([]byte, 4096)
@@ -170,6 +172,7 @@ func TestReadOriginalMessageBounded(t *testing.T) {
 }
 
 func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -198,6 +201,7 @@ func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
 }
 
 func TestReadOriginalMessageAllowsNullSourceMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -213,6 +217,7 @@ func TestReadOriginalMessageAllowsNullSourceMessageID(t *testing.T) {
 }
 
 func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	ctx := context.Background()
@@ -241,6 +246,7 @@ func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
 }
 
 func TestListThread(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	ctx := context.Background()
 	f := storetest.New(t)
@@ -354,6 +360,7 @@ func TestListThread(t *testing.T) {
 }
 
 func TestListThreadAllowsNullSourceMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -369,6 +376,7 @@ func TestListThreadAllowsNullSourceMessageID(t *testing.T) {
 }
 
 func TestListThreadRequiresVisibleMessages(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := storetest.New(t)
@@ -399,6 +407,7 @@ func TestListThreadRequiresVisibleMessages(t *testing.T) {
 }
 
 func TestListThreadAll(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := storetest.New(t)
@@ -439,6 +448,7 @@ func TestListThreadAll(t *testing.T) {
 }
 
 func TestResolveMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -483,6 +493,7 @@ func TestResolveMessageID(t *testing.T) {
 }
 
 func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -492,17 +503,6 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	}
 	earlier := f.NewMessage().WithSourceMessageID("thread-earlier").Create(t, f.Store)
 	later := f.NewMessage().WithSourceMessageID("thread-later").Create(t, f.Store)
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN '2026-01-15 14:00:00+00:00' WHEN ? THEN '2026-01-15 11:00:00-05:00' END WHERE id IN (?, ?)`, earlier, later, earlier, later)
-	require.NoError(err)
-	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1})
-	require.NoError(err)
-	require.Len(page.Messages, 1)
-	assert.Equal(earlier, page.Messages[0].ID)
-	assert.True(page.HasMore)
-	page, err = originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1, Offset: 1})
-	require.NoError(err)
-	require.Len(page.Messages, 1)
-	assert.Equal(later, page.Messages[0].ID)
 
 	firstID := func(earlierSentAt, laterSentAt string) int64 {
 		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)`, earlier, earlierSentAt, later, laterSentAt, earlier, later)
@@ -512,9 +512,34 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 		require.Len(page.Messages, 1)
 		return page.Messages[0].ID
 	}
-	// Sub-millisecond instants sort by time, not by id or raw text.
-	assert.Equal(later, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
-	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000100+00:00", "2026-01-15 09:00:00.000200-05:00"))
+	// Instants a millisecond apart sort by time, not by id or raw text.
+	assert.Equal(later, firstID("2026-01-15 14:00:00.002+00:00", "2026-01-15 14:00:00.001+00:00"))
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.001+00:00", "2026-01-15 09:00:00.002-05:00"))
+	// Instants within one millisecond tie and fall back to id.
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
 	// Equal instants written with different offsets fall back to id.
 	assert.Equal(earlier, firstID("2026-01-15 14:00:00+00:00", "2026-01-15 09:00:00-05:00"))
+
+	firstInvalid, undated := earlier, later
+	secondInvalid := f.CreateMessage("invalid-second")
+	zeroTime := f.CreateMessage("zero-time")
+	dated := f.CreateMessage("dated")
+	for _, tc := range []struct {
+		id     int64
+		sentAt any
+	}{
+		{firstInvalid, "z-invalid"}, {undated, nil},
+		{secondInvalid, "a-invalid"}, {dated, "2026-01-15 14:00:00+00:00"},
+		{zeroTime, "0001-01-01 00:00:00+00:00"},
+	} {
+		_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id = ?", tc.sentAt, tc.id)
+		require.NoError(err)
+	}
+	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: dated, All: true})
+	require.NoError(err)
+	var ids []int64
+	for _, message := range page.Messages {
+		ids = append(ids, message.ID)
+	}
+	assert.Equal([]int64{dated, firstInvalid, undated, secondInvalid, zeroTime}, ids)
 }

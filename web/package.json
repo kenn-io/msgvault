@@ -12,22 +12,22 @@
     "check:generated": "bun scripts/generate-api-client.mjs --check",
     "generate": "bun scripts/generate-api-client.mjs",
     "test": "vitest run",
-    "test:browser": "playwright test",
-    "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
+    "test:browser": "playwright test --project=browser --project=virtualizer",
+    "test:e2e": "playwright test --project=e2e"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/a6bfaffcfb05da95b90600c95daf7272cfaf0196.tar.gz",
+    "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/07b00d6fb560623726a059495184b9a30fb83964.tar.gz",
     "@lucide/svelte": "1.26.0",
     "@tanstack/svelte-virtual": "3.13.32",
     "@videojs/html": "10.1.0",
-    "dompurify": "3.4.13",
+    "dompurify": "3.4.17",
     "marked": "18.0.7",
     "pdfjs-dist": "5.4.296",
     "shiki": "4.3.1"
   },
   "devDependencies": {
-    "@orval/core": "8.26.0",
     "@axe-core/playwright": "4.10.2",
+    "@orval/core": "8.26.0",
     "@playwright/test": "1.64.1",
     "@sveltejs/vite-plugin-svelte": "7.1.2",
     "@testing-library/svelte": "5.4.2",
@@ -41,7 +41,7 @@
     "svelte": "5.56.1",
     "svelte-check": "4.6.0",
     "typescript": "5.9.3",
-    "vite": "8.1.3",
+    "vite": "8.1.6",
     "vitest": "4.1.11"
   }
 }

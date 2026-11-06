@@ -1,3 +1,4 @@
+import { MEDIA } from '@kenn-io/kit-ui';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -32,11 +33,28 @@ function row(index: number, overrides: Partial<EntryRow> = {}): EntryRow {
 }
 
 describe('EverythingTable', () => {
+  it.each([
+    { label: 'message sender', kind: 'message' as const, sender: 'Zoe Sender', expected: 'Zoe Sender' },
+    { label: 'message roster without a sender', kind: 'message' as const, sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
+  ])('shows the $label on a phone', async ({ kind, sender, expected }) => {
+    const originalMatchMedia = window.matchMedia;
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...originalMatchMedia(query), matches: query === MEDIA.compact }));
+    try {
+      const rendered = render(EverythingTable, {
+        rows: [row(1, { kind, participant_labels: ['Alice Recipient', 'Zoe Sender'], ...(sender ? { sender_label: sender } : {}) })],
+        selection: new ExploreSelectionState()
+      });
+      await waitFor(() => expect(rendered.container.querySelector('.phone-sender')?.textContent).toBe(expected));
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it('owns headers, virtual rows, and named states in one focusable grid', () => {
     const { rerender } = render(EverythingTable, {
       rows: [row(1)], selection: new ExploreSelectionState()
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Kind' }))).toBe(true);
     expect(grid.contains(screen.getByRole('row', { name: /Synthetic subject 1/ }))).toBe(true);
@@ -47,7 +65,7 @@ describe('EverythingTable', () => {
   });
 
   it('waits for computed row geometry before virtualizing and becomes ready reactively', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     const rendered = render(EverythingTable, {
       rows: [row(1)],
@@ -57,7 +75,7 @@ describe('EverythingTable', () => {
     expect(screen.getByText('Preparing table layout…')).toBeDefined();
     expect(rendered.container.querySelector('.virtual-spacer')).toBeNull();
 
-    document.documentElement.style.setProperty('--row-height', '41px');
+    document.documentElement.style.setProperty('--table-row-height', '41px');
     document.documentElement.dataset.density = 'comfortable';
 
     await waitFor(() => {
@@ -95,7 +113,6 @@ describe('EverythingTable', () => {
 
     const rendered = screen.getByRole('row', { name: /Email item/ });
     expect((rendered as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
     expect(screen.getByRole('columnheader', { name: 'Kind' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'People / source' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'Attachments' }).textContent).toBe('⌕');
@@ -163,7 +180,7 @@ describe('EverythingTable', () => {
       rows: [row(1), row(2), row(3)],
       selection: new ExploreSelectionState()
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     grid.focus();
 
     await fireEvent.keyDown(grid, { key: 'j' });
@@ -178,7 +195,7 @@ describe('EverythingTable', () => {
     const selection = new ExploreSelectionState();
     const onActiveKey = vi.fn();
     render(EverythingTable, { rows: [row(1), row(2), row(3)], selection, onActiveKey });
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
 
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Synthetic subject 2' }));
     expect(selection.isSelected('message:2')).toBe(true);
@@ -198,7 +215,7 @@ describe('EverythingTable', () => {
       hasMore: true,
       onLoadMore
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     grid.focus();
 
     await fireEvent.keyDown(grid, { key: 'j' });
@@ -217,7 +234,7 @@ describe('EverythingTable', () => {
       rows: Array.from({ length: 20 }, (_, index) => row(index + 1)),
       selection
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     grid.focus();
 
     await fireEvent.keyDown(grid, { key: 'a' });
@@ -233,7 +250,7 @@ describe('EverythingTable', () => {
     const selection = new ExploreSelectionState();
     const rows = Array.from({ length: 100 }, (_, index) => row(index + 1));
     const rendered = render(EverythingTable, { rows, selection });
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'j' });
     expect(grid.getAttribute('aria-activedescendant')).toContain('message-3a-2');
@@ -265,7 +282,7 @@ describe('EverythingTable', () => {
     await rendered.rerender({ rows: [row(10), row(11)], selection, focusedKey: 'message:2', onActiveKey });
 
     await waitFor(() => expect(onActiveKey).toHaveBeenCalledWith('message:10'));
-    expect(screen.getByRole('grid', { name: 'Everything results' }).getAttribute('aria-activedescendant'))
+    expect(screen.getByRole('grid', { name: 'Messages results' }).getAttribute('aria-activedescendant'))
       .toContain('message-3a-10');
   });
 
@@ -281,7 +298,7 @@ describe('EverythingTable', () => {
     });
 
     expect(onActiveKey).not.toHaveBeenCalled();
-    expect(screen.getByRole('grid', { name: 'Everything results' }).getAttribute('aria-activedescendant')).toBeNull();
+    expect(screen.getByRole('grid', { name: 'Messages results' }).getAttribute('aria-activedescendant')).toBeNull();
 
     await rendered.rerender({
       rows: [row(1), row(2), row(5000)],
@@ -290,7 +307,7 @@ describe('EverythingTable', () => {
       restoring: false,
       onActiveKey
     });
-    await waitFor(() => expect(screen.getByRole('grid', { name: 'Everything results' })
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Messages results' })
       .getAttribute('aria-activedescendant')).toContain('message-3a-5000'));
     expect(onActiveKey).not.toHaveBeenCalled();
   });
@@ -302,7 +319,7 @@ describe('EverythingTable', () => {
       focusedKey: 'message:3',
       scrollAnchor: { key: 'message:2', offset: 7 }
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await Promise.resolve();
 
     expect(grid.getAttribute('aria-activedescendant')).toContain('message-3a-3');
@@ -320,7 +337,7 @@ describe('EverythingTable', () => {
       focusedKey: 'message:150',
       scrollAnchor: { key: 'message:140', offset: 5 }
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await waitFor(() => expect(grid.scrollTop).toBe(139 * 36 + 5));
 
     grid.scrollTop = 0;
@@ -344,7 +361,7 @@ describe('EverythingTable', () => {
       scrollAnchor: { key: 'message:1', offset: 0 },
       onScrollAnchor
     });
-    const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
+    const grid = screen.getByRole('grid', { name: 'Messages results' }) as HTMLDivElement;
     await Promise.resolve();
     Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 36, writable: true });
     await fireEvent.scroll(grid);
@@ -356,7 +373,7 @@ describe('EverythingTable', () => {
     const selection = new ExploreSelectionState();
     const onOpen = vi.fn();
     render(EverythingTable, { rows: [row(1), row(2), row(3)], selection, onOpen });
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     grid.focus();
 
     await fireEvent.keyDown(grid, { key: ' ' });
@@ -379,13 +396,14 @@ describe('EverythingTable', () => {
     const { rerender } = render(EverythingTable, { rows: [], selection, loading: true, onRetry });
     const skeleton = screen.getAllByTestId('everything-skeleton')[0]!;
     expect(skeleton.style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
-    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(grid.getAttribute('aria-busy')).toBe('true');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();
-    expect(skeleton.style.gridTemplateColumns).toBe(
-      screen.getByRole('row', { name: /Kind/ }).style.gridTemplateColumns
-    );
+    const skeletonTemplate = skeleton.style.getPropertyValue('--row-template').trim();
+    const headerTemplate = screen.getByRole('row', { name: /Kind/ }).style.getPropertyValue('--row-template').trim();
+    expect(skeletonTemplate).not.toBe('');
+    expect(headerTemplate).not.toBe('');
+    expect(skeletonTemplate).toBe(headerTemplate);
     expect(skeleton.children).toHaveLength(7);
 
     void rerender({ rows: [], selection, loading: false });
@@ -473,6 +491,6 @@ describe('EverythingTable', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('The query could not be completed.');
     expect(screen.queryByText('No items match this view')).toBeNull();
-    expect(screen.getByRole('grid', { name: 'Everything results' }).getAttribute('aria-rowcount')).toBeNull();
+    expect(screen.getByRole('grid', { name: 'Messages results' }).getAttribute('aria-rowcount')).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ import (
 )
 
 // Bump the version when parsing the same retained MIME produces different text.
-const emailVersion = "email-v1"
+const emailVersion = "email-v2"
 
 // emailRetrySlots caps exact failed-row markers; later failures widen one
 // overflow range, so retry state is at most emailRetrySlots+2 ledger rows.
@@ -256,6 +256,9 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 func parseArchivedEmail(item *store.ArchivedRawMessage) (*mime.Message, error) {
 	if item.RawDecodeError != nil {
 		return nil, item.RawDecodeError
+	}
+	if len(item.RawData) == 0 {
+		return nil, fmt.Errorf("empty raw MIME for message %d", item.MessageID)
 	}
 	return mime.Parse(item.RawData)
 }

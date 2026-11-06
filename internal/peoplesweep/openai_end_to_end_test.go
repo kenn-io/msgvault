@@ -60,9 +60,19 @@ func (s *openAISweepServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	call := s.calls
 	s.calls++
+	var response openAISweepResponse
+	if s.responseFor == nil {
+		response = s.responses[min(call, len(s.responses)-1)]
+	}
 	s.mu.Unlock()
 
 	raw, err := io.ReadAll(r.Body)
+	if response.Wait {
+		// Cancellation can interrupt the upload before a complete body arrives.
+		<-r.Context().Done()
+		return
+	}
+
 	assert.NoError(s.t, err)
 	assert.Equal(s.t, http.MethodPost, r.Method)
 	assert.Equal(s.t, "/compatible/custom/chat/completions", r.URL.Path)
@@ -101,22 +111,12 @@ func (s *openAISweepServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		assert.JSONEq(s.t, string(peoplesweep.ExtractionJSONSchema()),
 			string(request.ResponseFormat.JSONSchema.Schema))
 	}
-	var response openAISweepResponse
 	if s.responseFor != nil {
 		response, err = s.responseFor(raw, call)
 		assert.NoError(s.t, err)
 		if err != nil {
 			response = openAISweepResponse{Status: http.StatusInternalServerError}
 		}
-	} else {
-		s.mu.Lock()
-		response = s.responses[min(call, len(s.responses)-1)]
-		s.mu.Unlock()
-	}
-
-	if response.Wait {
-		<-r.Context().Done()
-		return
 	}
 	for key, value := range response.Headers {
 		w.Header().Set(key, value)
@@ -714,13 +714,6 @@ func TestOpenAIChatSweepFailureNeverAdvancesCursor(t *testing.T) {
 			server := httptest.NewTLSServer(provider)
 			defer server.Close()
 			fixture := newOpenAISweepFixture(t, server, provider, 1, test.configure)
-			if test.response.Wait {
-				// The timeout may expire before the handler can inspect the
-				// database. This case checks the persisted failure and cursor
-				// below; the other cases verify the live wire reservation.
-				provider.store = nil
-			}
-
 			_, err := runOpenAISweep(t, fixture)
 			require.Error(err)
 			attempt := openAISweepAttempt(t, fixture)

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { KbdBadge, Modal, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, formatShortcutKeys, KbdBadge, Modal, SearchInput } from '@kenn-io/kit-ui';
 
   import type { AppCommand } from '../../commands/registry';
 
-  let { commands, onclose }: { commands: AppCommand[]; onclose: () => void } = $props();
+  let { commands, onclose, onOpenCommands }: { commands: AppCommand[]; onclose: () => void; onOpenCommands: (query: string) => void } = $props();
   let query = $state('');
-  const shortcuts = $derived(commands.filter((command) => command.keys.length > 0));
+  const shortcuts = $derived(commands.filter((command) => command.keys.length > 0 && command.id !== 'open-command-palette'));
+  const palette = $derived(commands.find(({ id }) => id === 'open-command-palette'));
   const filtered = $derived.by(() => {
     const needle = query.trim().toLowerCase();
     return needle
@@ -13,67 +14,120 @@
       : shortcuts;
   });
   const sections = $derived([...new Set(filtered.map(({ section }) => section))]);
+  const tracks = $derived([
+    sections.filter((section) => section === 'Navigate'),
+    sections.filter((section) => section !== 'Navigate')
+  ]);
 </script>
 
-<Modal title="Keyboard shortcuts" ariaLabel="Keyboard shortcuts" width="min(680px, calc(100vw - 32px))" {onclose}>
-  <div class="keyboard-help-search">
-    <SearchInput
-      value={query}
-      ariaLabel="Search keyboard shortcuts"
-      placeholder="Search shortcuts"
-      block
-      autofocus
-      oninput={(value) => { query = value; }}
-    />
-  </div>
-  <div class="keyboard-help-list" aria-live="polite">
-    {#if filtered.length === 0}
-      <p>No matching shortcuts.</p>
-    {/if}
-    {#each sections as section (section)}
-      <section aria-labelledby={`shortcut-${section.toLowerCase()}`}>
-        <h2 id={`shortcut-${section.toLowerCase()}`}>{section}</h2>
-        <dl>
-          {#each filtered.filter((command) => command.section === section) as command (command.id)}
-            <div>
-              <dt>{command.label}</dt>
-              <dd>
-                {#if command.combos.length === 1 && command.keys.length > 1}
-                  <KbdBadge keys={[...command.keys]} />
-                {:else}
-                  {#each command.keys as key, index (key)}
-                    {#if index > 0}<span aria-hidden="true">or</span>{/if}
-                    <KbdBadge keys={[key]} />
+<div class="keyboard-help">
+  <Modal title="Keyboard shortcuts" ariaLabel="Keyboard shortcuts" width="var(--keyboard-help-width)" maxWidth="calc(100vw - 32px)" maxHeight="76svh" closable {onclose}>
+    <div class="keyboard-help-search">
+      <SearchInput
+        value={query}
+        ariaLabel="Search keyboard shortcuts"
+        placeholder="Search shortcuts"
+        block
+        autofocus
+        oninput={(value) => { query = value; }}
+      />
+    </div>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable shortcut lists need keyboard access.) -->
+    <div class="keyboard-help-list" role="region" aria-label="Keyboard shortcut list" tabindex="0" aria-live="polite">
+      {#if filtered.length === 0}
+        <EmptyState title={`No shortcuts match "${query.trim()}"`}>
+          <Button label="Search commands instead" onclick={() => onOpenCommands(query)} />
+        </EmptyState>
+      {:else}
+        {#each tracks as track, index (index)}
+          <div class="keyboard-help-track">
+            {#each track as section (section)}
+              <section aria-labelledby={`shortcut-${section.toLowerCase()}`}>
+                <h2 id={`shortcut-${section.toLowerCase()}`}>{section}</h2>
+                <dl>
+                  {#each filtered.filter((command) => command.section === section) as command (command.id)}
+                    <div>
+                      <dt>
+                        {command.label}
+                        {#if command.destructive}<span class="review-note">opens review first</span>{/if}
+                      </dt>
+                      <dd>
+                        {#each command.keys as combo, index (combo)}
+                          {#if index > 0}<span aria-hidden="true">or</span>{/if}
+                          <KbdBadge keys={formatShortcutKeys(combo)} />
+                        {/each}
+                      </dd>
+                    </div>
                   {/each}
-                {/if}
-                {#if command.destructive}<span class="review-note">opens review</span>{/if}
-              </dd>
-            </div>
-          {/each}
-        </dl>
-      </section>
-    {/each}
-  </div>
-</Modal>
+                </dl>
+              </section>
+            {/each}
+          </div>
+        {/each}
+      {/if}
+    </div>
+    {#snippet footer()}
+      <Button label="Open command palette ·" class="keyboard-help-commands" onclick={() => onOpenCommands('')}>
+        {#snippet trailing()}{#each palette?.keys ?? [] as combo (combo)}<KbdBadge keys={formatShortcutKeys(combo)} />{/each}{/snippet}
+      </Button>
+    {/snippet}
+  </Modal>
+</div>
 
 <style>
+  .keyboard-help {
+    --keyboard-help-width: 680px;
+  }
+
+  .keyboard-help :global(.kit-modal-overlay) {
+    align-items: flex-start;
+    padding-top: 12svh;
+  }
+
   .keyboard-help-search {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    padding-bottom: var(--space-4);
-    background: var(--bg-surface);
+    padding-bottom: 16px;
+    flex-shrink: 0;
+  }
+
+  .keyboard-help :global(.kit-modal-body) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .keyboard-help-list {
-    display: grid;
-    gap: var(--space-5);
+    position: relative;
+    height: min(520px, calc(76svh - 160px));
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .keyboard-help-track:empty {
+    display: none;
+  }
+
+  .keyboard-help-list > :global(.kit-empty-state) {
+    position: absolute;
+    top: 33.333%;
+    transform: translateY(-50%);
+    box-sizing: border-box;
+  }
+
+  .keyboard-help-list :global(.kit-empty-state__title) {
+    overflow-wrap: anywhere;
+  }
+
+  .keyboard-help-track:not(:empty) + .keyboard-help-track,
+  section + section {
+    margin-top: 16px;
   }
 
   h2 {
     margin: 0 0 var(--space-2);
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold, 600);
   }
 
   dl {
@@ -83,11 +137,14 @@
 
   dl div {
     display: grid;
-    min-height: var(--row-height);
+    min-height: 32px;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-4);
-    border-top: 1px solid var(--border-muted);
+  }
+
+  dl div:has(.review-note) + div {
+    margin-top: var(--space-5);
   }
 
   dt {
@@ -105,6 +162,50 @@
   }
 
   .review-note {
-    color: var(--status-destructive-ink);
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .keyboard-help :global(.kit-modal-footer) {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+  }
+
+  .keyboard-help :global(.keyboard-help-commands) {
+    min-height: 0;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .keyboard-help :global(.keyboard-help-commands:hover) {
+    color: var(--accent-primary);
+    background: transparent;
+    text-decoration: underline;
+  }
+
+  /* kit-ui-check-ignore: two shortcut columns need room for labels and review notes. */
+  @media (min-width: 1200px) {
+    .keyboard-help {
+      --keyboard-help-width: 880px;
+    }
+
+    .keyboard-help-list {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      column-gap: 32px;
+      align-content: start;
+    }
+
+    .keyboard-help-list > .keyboard-help-track + .keyboard-help-track {
+      margin-top: 0;
+    }
+
+    .keyboard-help-list > :global(.kit-empty-state) {
+      grid-column: 1 / -1;
+    }
   }
 </style>

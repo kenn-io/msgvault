@@ -125,26 +125,39 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 		}
 	})
 
-	b.Run("broad_chat_search_projection", func(b *testing.B) {
-		require.Equal(b, 10_000, MaxExploreCandidateMessageIDs, "the benchmark must track the fixed production transfer contract")
-		candidateIDs := make([]int64, MaxExploreCandidateMessageIDs)
-		for index := range candidateIDs {
-			candidateIDs[index] = int64(index + 1)
-		}
-		require.Len(b, candidateIDs, MaxExploreCandidateMessageIDs)
-		_, leaksArchiveSizedIDs := reflect.TypeFor[EntryRow]().FieldByName("MatchedMessageIDs")
-		require.False(b, leaksArchiveSizedIDs)
+	for _, tc := range []struct {
+		name string
+		mode SearchMode
+	}{
+		{"broad_chat_search_projection", SearchFullText},
+		{"broad_chat_semantic_search_projection", SearchSemantic},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			require.Equal(b, 10_000, MaxExploreCandidateMessageIDs, "the benchmark must track the fixed production transfer contract")
+			candidateIDs := make([]int64, MaxExploreCandidateMessageIDs)
+			for index := range candidateIDs {
+				candidateIDs[index] = int64(index + 1)
+			}
+			require.Len(b, candidateIDs, MaxExploreCandidateMessageIDs)
+			_, leaksArchiveSizedIDs := reflect.TypeFor[EntryRow]().FieldByName("MatchedMessageIDs")
+			require.False(b, leaksArchiveSizedIDs)
+			search := SearchSpec{Mode: tc.mode, Query: "synthetic", CandidateMessageIDs: candidateIDs}
+			if tc.mode == SearchSemantic {
+				search.VectorGeneration = new(int64(1))
+			} else {
+				search.LexicalIndexRevision = fmt.Sprintf("benchmark:%d", MaxExploreCandidateMessageIDs)
+			}
 
-		for b.Loop() {
-			result, err := engine.Explore(ctx, ExploreRequest{
-				Search: SearchSpec{Mode: SearchFullText, Query: "synthetic", CandidateMessageIDs: candidateIDs,
-					LexicalIndexRevision: fmt.Sprintf("benchmark:%d", MaxExploreCandidateMessageIDs)},
-				Page: PageSpec{Limit: 50},
-			})
-			require.NoError(b, err)
-			require.LessOrEqual(b, len(result.Rows), 50)
-		}
-	})
+			for b.Loop() {
+				result, err := engine.Explore(ctx, ExploreRequest{
+					Search: search,
+					Page:   PageSpec{Limit: 50},
+				})
+				require.NoError(b, err)
+				require.LessOrEqual(b, len(result.Rows), 50)
+			}
+		})
+	}
 }
 
 // benchmarkWithMinimumMemory times run, then reports its min-memory-MB.

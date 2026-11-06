@@ -25,6 +25,7 @@ Search and read:
   list-domains  List top sender domains by message count
   list-labels   List all labels with message counts
   list-senders  List top senders by message count
+  loops         List conversations waiting on a reply
   media         Search transcripts and mirrored document text
   meetings      Read archived meeting context, actions, and metrics
   query         Run a SQL query against the analytics cache
@@ -121,6 +122,7 @@ Import local exports:
   import-pst          Import a PST (Outlook) archive into msgvault
   import-slackdump    Import a Slackdump export
   import-synctech-sms Import SMS Backup & Restore exports
+  import-telegram     Import a Telegram export
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):

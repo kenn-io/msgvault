@@ -7,11 +7,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // Native DuckDB tables exercise the production sqlite_scan SQL reader without
 // requiring extension downloads. Their text/blob types match scanned SQLite.
 func TestBoundedDuckDBMessageDetails(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "DuckDB fixtures run on DuckDB only")
+	t.Parallel()
 	requirements := require.New(t)
 
 	db, err := sql.Open("duckdb", "")

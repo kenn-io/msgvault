@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package dbtest provides shared database test helpers for seeding and querying
 // test databases. It is designed to be importable from any test package without
 // circular dependency issues (it does not import internal/query).
@@ -8,8 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -25,24 +30,108 @@ type TestDB struct {
 	nextConversationSeq int64
 }
 
+// ExplainQueryPlan returns SQLite's plan for a statement and its bound arguments.
+func ExplainQueryPlan(tb testing.TB, db *sql.DB, statement string, args ...any) string {
+	tb.Helper()
+	must := require.New(tb)
+	rows, err := db.QueryContext(tb.Context(), "EXPLAIN QUERY PLAN "+statement, args...)
+	must.NoError(err)
+	defer func() { must.NoError(rows.Close()) }()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		must.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		plan.WriteString(detail + "\n")
+	}
+	must.NoError(rows.Err())
+	return plan.String()
+}
+
+// Templates live for the test binary's lifetime. Their single connection also
+// serializes backups, while every test gets a private, growable copy.
+// testutil's sqliteTemplateBytes in internal/testutil/sqlite_template.go
+// snapshots a file built by store.InitSchema with FTS and archive metadata.
+// dbtest needs a separate template for raw schema.sql with messages_fts dropped,
+// copied into memory.
+var schemaTemplates sync.Map
+
+type schemaTemplate struct {
+	once sync.Once
+	db   *sql.DB
+	err  error
+}
+
+func buildSchemaTemplate(schemaPath string) (*sql.DB, error) {
+	schema, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return nil, fmt.Errorf("read schema.sql: %w", err)
+	}
+	db, err := sql.Open(sqliteutil.DriverName(), ":memory:")
+	if err != nil {
+		return nil, fmt.Errorf("open template: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(string(schema)); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create template schema: %w", err)
+	}
+	if _, err := db.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("drop template FTS: %w", err)
+	}
+	return db, nil
+}
+
 // NewTestDB creates an in-memory SQLite database with the production schema loaded.
 // schemaPath is the path to schema.sql (e.g. "../store/schema.sql" from the caller's package).
 // The FTS table is dropped so tests start without it by default.
 func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
 	tb.Helper()
 
+	value, _ := schemaTemplates.LoadOrStore(schemaPath, &schemaTemplate{})
+	template, ok := value.(*schemaTemplate)
+	require.True(tb, ok, "schema template type")
+	template.once.Do(func() {
+		template.db, template.err = buildSchemaTemplate(schemaPath)
+	})
+	require.NoError(tb, template.err, "build schema template")
+
 	db, err := sql.Open(sqliteutil.DriverName(), ":memory:")
 	require.NoError(tb, err, "open db")
+	// Every connection to ":memory:" is a separate empty database, so keep
+	// concurrent reads on the one connection that holds the schema.
+	db.SetMaxOpenConns(1)
 	tb.Cleanup(func() { _ = db.Close() })
 
-	schema, err := os.ReadFile(schemaPath)
-	require.NoError(tb, err, "read schema.sql")
-
-	_, err = db.Exec(string(schema))
-	require.NoError(tb, err, "create schema")
-
-	// Drop FTS table so non-FTS tests start clean.
-	_, _ = db.Exec(`DROP TABLE IF EXISTS messages_fts`)
+	source, err := template.db.Conn(tb.Context())
+	require.NoError(tb, err, "template connection")
+	defer func() { _ = source.Close() }()
+	destination, err := db.Conn(tb.Context())
+	require.NoError(tb, err, "clone connection")
+	defer func() { _ = destination.Close() }()
+	err = source.Raw(func(rawSource any) error {
+		src, ok := rawSource.(*sqlite3.SQLiteConn)
+		if !ok {
+			return errors.New("template connection is not SQLite")
+		}
+		return destination.Raw(func(rawDestination any) error {
+			dst, ok := rawDestination.(*sqlite3.SQLiteConn)
+			if !ok {
+				return errors.New("clone connection is not SQLite")
+			}
+			backup, err := dst.Backup("main", src, "main")
+			if err != nil {
+				return fmt.Errorf("start schema backup: %w", err)
+			}
+			done, err := backup.Step(-1)
+			if err == nil && !done {
+				err = errors.New("schema backup incomplete")
+			}
+			return errors.Join(err, backup.Finish())
+		})
+	})
+	require.NoError(tb, err, "copy schema template")
 
 	return &TestDB{
 		DB:                db,

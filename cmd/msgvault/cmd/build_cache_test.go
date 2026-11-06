@@ -65,7 +65,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
 	result, err := buildCacheLocked(
-		dbURI, filepath.Join(tmpDir, "analytics"), true, false, acquirePublishLock,
+		dbURI, filepath.Join(tmpDir, "analytics"), true, false,
 	)
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
@@ -1197,6 +1197,59 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	require.NoError(db.QueryRow("SELECT COUNT(DISTINCT attachment_id) FROM read_parquet('" +
 		filepath.Join(analyticsDir, "attachments", "*.parquet") + "')").Scan(&attachmentIDs))
 	assert.Equal(int64(3), attachmentIDs, "durable attachment IDs")
+}
+
+func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T) {
+	require := require.New(t)
+	oldGOOS := cacheSnapshotGOOS
+	cacheSnapshotGOOS = "linux"
+	t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(duck.Close()) }()
+	requireSQLiteScanner(t, duck)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	incDir, fullDir := filepath.Join(tmp, "incremental"), filepath.Join(tmp, "full")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, 'alice@example.com');
+		INSERT INTO attachments (message_id, filename, size) VALUES (1, 'old.txt', 42)`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, incDir, true)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO messages
+		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at)
+		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', '2024-04-01 10:00:00.25', NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
+		(7, 1, 'delta-in', 101, 2, '2024-04-02 10:00:00', '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES
+		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
+		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
+		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
+		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123)`)
+	require.NoError(err)
+	// The messages export selects size_estimate, so the scanner must decode
+	// this old row unless SQLite bounds the read to the new slice.
+	_, err = db.Exec(`UPDATE messages SET size_estimate = 'unreadable' WHERE id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, fullDir, true)
+	require.ErrorContains(err, "export messages:", "a full messages scan must trip over the old row")
+	_, err = db.Exec(`UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
+		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
+		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, incDir, false)
+	require.NoError(err, "incremental exports must read only the new slice")
+	_, err = db.Exec(`UPDATE messages SET size_estimate = 1000 WHERE id = 1;
+		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
+		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
+		UPDATE attachments SET size = 42 WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, fullDir, true)
+	require.NoError(err)
+	assertCacheExportParity(t, tmp, incDir, fullDir, []string{"messages", "message_recipients", "message_labels", "attachments"})
 }
 
 // TestBuildCache_IncrementalExport tests that incremental exports only add new messages.
@@ -4768,7 +4821,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, acquirePublishLock, false)
+						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

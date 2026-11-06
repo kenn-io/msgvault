@@ -414,6 +414,83 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	assert.NotContains(output, "left in place")
 }
 
+func TestPurgeExcludedMediaAppliesIMessageParticipantLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members int
+		limit   int
+		purged  bool
+	}{
+		{"over the limit", 21, config.DefaultMediaMaxParticipants, true},
+		{"at the limit", 20, config.DefaultMediaMaxParticipants, false},
+		{"within a raised configured limit", 21, 30, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			cfg := &config.Config{
+				Data:     config.DataConfig{DataDir: t.TempDir()},
+				IMessage: config.IMessageConfig{MediaMaxParticipants: tc.limit},
+			}
+			source, err := st.GetOrCreateSource(sourceTypeAppleMessages, "local")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, "any;+;group", "group_chat", "Group")
+			require.NoError(err)
+			require.NoError(st.SetConversationMemberCount(conversationID, tc.members))
+			messageID, err := st.UpsertMessage(&store.Message{
+				SourceID: source.ID, ConversationID: conversationID,
+				SourceMessageID: "1", MessageType: "imessage",
+			})
+			require.NoError(err)
+			hash := strings.Repeat("ab", 32)
+			path := hash[:2] + "/" + hash
+			require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+				SourceAttachmentID: "imessage:1", SourcePartKey: "imessage:1",
+				StoragePath: path, ContentHash: hash, Size: 100,
+				Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+				State: attachmentpolicy.StateStored,
+			}))
+			fullPath := filepath.Join(cfg.AttachmentsDir(), filepath.FromSlash(path))
+			require.NoError(os.MkdirAll(filepath.Dir(fullPath), 0o755))
+			require.NoError(os.WriteFile(fullPath, []byte("attachment"), 0o600))
+			deps := purgeExcludedMediaDeps{
+				openStore:  func() (*store.Store, func(), error) { return st, func() {}, nil },
+				config:     func() *config.Config { return cfg },
+				removeFile: os.Remove,
+			}
+			run := func(arg string) string {
+				cmd := newPurgeExcludedMediaLocalCmd(deps)
+				var output bytes.Buffer
+				cmd.SetOut(&output)
+				cmd.SetErr(&output)
+				cmd.SetArgs([]string{arg})
+				require.NoError(cmd.Execute())
+				return output.String()
+			}
+
+			dryRun := run("--dry-run")
+			run("--yes")
+			var state, reason sql.NullString
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?`), messageID,
+			).Scan(&state, &reason))
+			if tc.purged {
+				assert.Contains(dryRun, "Would exclude 1 stored attachment occurrence(s)")
+				assert.Contains(dryRun, "participant_threshold: 1")
+				assert.Equal(string(attachmentpolicy.StateSkipped), state.String)
+				assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason.String)
+				assert.NoFileExists(fullPath)
+				return
+			}
+			assert.Contains(dryRun, "Would exclude 0 stored attachment occurrence(s)")
+			assert.NotContains(dryRun, "left in place", "an archived roster is resolved")
+			assert.Equal(string(attachmentpolicy.StateStored), state.String)
+			assert.FileExists(fullPath)
+		})
+	}
+}
+
 func TestChatwootPurgeResolvesAccountPolicyAndSharedMeetings(t *testing.T) {
 	for _, state := range []attachmentpolicy.DownloadState{attachmentpolicy.StateStored, attachmentpolicy.StateFailed, attachmentpolicy.StatePending, attachmentpolicy.StateSkipped} {
 		t.Run(string(state), func(t *testing.T) {

@@ -235,6 +235,14 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 
+	// A source that predates matrix_encrypted_events copies placeholders the
+	// empty destination never registered.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied Matrix placeholder migration: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()
@@ -919,6 +927,20 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
 		}
 	}
+	// Matrix recovery state, so the subset can still decrypt its placeholders.
+	for _, matrix := range []struct{ table, where string }{
+		{"matrix_encrypted_events", `message_id IN (SELECT id FROM selected_messages)`},
+		{"matrix_pending_edits", `target_message_id IN (SELECT id FROM selected_messages)`},
+		{"matrix_megolm_claims", `conversation_id IN (SELECT id FROM conversations)`},
+	} {
+		if present, err := sourceTableExists(tx, matrix.table); err != nil {
+			return nil, fmt.Errorf("check %s: %w", matrix.table, err)
+		} else if present {
+			if _, err := copyByName(tx, matrix.table, matrix.where); err != nil {
+				return nil, fmt.Errorf("copy %s: %w", matrix.table, err)
+			}
+		}
+	}
 
 	if _, err := copyByName(tx, "attachments",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
@@ -983,6 +1005,13 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
 	}
 	result.Labels += preservedLabels
+	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.

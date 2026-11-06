@@ -11,23 +11,10 @@ import (
 )
 
 func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("archive@example.test", "gmail")
-	exact := b.AddParticipant("exact@example.test", "example.test", "Alice")
-	prefix := b.AddParticipant("prefix@example.test", "example.test", "Alice Example")
-	substring := b.AddParticipant("substring@example.test", "example.test", "Malice Stone")
-	b.AddParticipantIdentifier(exact, "slack", "alice", "@alice", true)
-	when := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
-	for index, participantID := range []int64{exact, prefix, substring} {
-		message := b.AddMessage(MessageOpt{
-			SourceID: source, ConversationID: int64(100 + index),
-			Subject: "completion fixture", SentAt: when.Add(time.Duration(index) * time.Minute),
-		})
-		b.AddFrom(message, participantID, "")
-	}
-	engine := b.BuildEngine()
+	engine, exact, prefix, substring, when := newPeopleRankingFixture(t)
 
 	response, err := engine.CompletePeople(context.Background(), PeopleCompletionRequest{
 		Query: "alice", Limit: 8,
@@ -49,7 +36,44 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	assert.NotEmpty(response.CacheRevision)
 }
 
+func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		primary string
+		alias   string
+	}{
+		{name: "mixed case first", primary: "Alice", alias: "ALICE"},
+		{name: "uppercase first", primary: "ALICE", alias: "Alice"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("archive@example.test", "gmail")
+			primary := b.AddParticipant("primary@example.test", "example.test", test.primary)
+			alias := b.AddParticipant("alias@example.test", "example.test", test.alias)
+			b.LinkCluster(primary, alias)
+			message := b.AddMessage(MessageOpt{
+				SourceID: source, SentAt: time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC),
+			})
+			b.AddFrom(message, primary, test.primary)
+			b.AddTo(message, alias, test.alias)
+			engine := b.BuildEngine()
+
+			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "alice", Limit: 8})
+			require.NoError(err)
+			require.Len(response.Rows, 1)
+			assert.Equal(primary, response.Rows[0].ParticipantID)
+			assert.Equal(PeopleCompletionName, response.Rows[0].Kind)
+			assert.Equal("observed", response.Rows[0].Source)
+			assert.Equal("Alice", response.Rows[0].Value)
+		})
+	}
+}
+
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "sms")
 	primary := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
@@ -75,6 +99,7 @@ func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 }
 
 func TestPeopleCompletionMatchesAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "slack")
 	participantID := b.AddParticipant("alice@example.test", "example.test", "Alice")
@@ -98,6 +123,7 @@ func TestPeopleCompletionMatchesAtPrefixedUsername(t *testing.T) {
 }
 
 func TestPeopleCompletionValidatesQueryAndLimit(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 
 	tests := []PeopleCompletionRequest{
@@ -113,6 +139,7 @@ func TestPeopleCompletionValidatesQueryAndLimit(t *testing.T) {
 }
 
 func TestPeopleCompletionUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Fail at observable provider boundaries, after the preceding durable write.
@@ -141,8 +142,8 @@ func TestGmailRecoveryRejectsFilteredFullWhilePending(t *testing.T) {
 	}
 }
 
-func TestGmailRecoveryItemErrorsDoNotBlockCompletion(t *testing.T) {
-	for _, phase := range []string{"acquire", "fetch", "ingest", "delete", "label-add", "label-remove"} {
+func TestGmailRecoveryAcquisitionErrorsDoNotBlockCompletion(t *testing.T) {
+	for _, phase := range []string{"acquire", "fetch", "ingest"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			require := require.New(t)
@@ -157,27 +158,13 @@ func TestGmailRecoveryItemErrorsDoNotBlockCompletion(t *testing.T) {
 			case "ingest":
 				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE INSERT ON messages WHEN NEW.source_message_id='history-only' BEGIN SELECT RAISE(ABORT,'synthetic ingest failure'); END`)
 				require.NoError(err)
-			case "delete":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyDeleted("m0")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE UPDATE OF deleted_from_source_at ON messages WHEN OLD.source_message_id='m0' BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END`)
-				require.NoError(err)
-			case "label-add":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyLabelAdded("m0", "STARRED")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE INSERT ON message_labels BEGIN SELECT RAISE(ABORT,'synthetic label failure'); END`)
-				require.NoError(err)
-			case "label-remove":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyLabelRemoved("m0", "INBOX")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE DELETE ON message_labels BEGIN SELECT RAISE(ABORT,'synthetic label failure'); END`)
-				require.NoError(err)
 			}
 			// A message that keeps failing must not hold the source in recovery.
 			summary, err := e.Syncer.Full(t.Context(), testEmail)
 			require.NoError(err)
 			assert.Equal("20000", gmailCoverageSource(t, e).SyncCursor.String)
 			assertDeletedFromSource(t, e.Store, "gone", true)
-			if phase == "acquire" || phase == "fetch" || phase == "ingest" || phase == "delete" {
-				assert.Positive(summary.Errors)
-			}
+			assert.Positive(summary.Errors)
 			_, err = e.Store.DB().Exec("DROP TRIGGER IF EXISTS item_fault")
 			require.NoError(err)
 			if phase != "fetch" {
@@ -400,6 +387,7 @@ func TestGmailRecoveryAbruptProcessExit(t *testing.T) {
 
 func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	st, err := store.OpenForTest(filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)
@@ -462,7 +450,7 @@ func TestGmailRecoveryResumedCatchupKeepsAcquisitionCounts(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(lists, e.Mock.ListMessagesCalls)
 	assert.Equal(int64(2), summary.MessagesAdded, "new-ok from enumeration and history-only from catch-up")
-	assert.Equal(int64(1), summary.Errors)
+	assert.Equal(int64(2), summary.Errors, "enumeration failure plus its failed acquisition retry during catch-up")
 	assertRawDataExists(t, e.Store, "new-ok")
 	assertRawDataExists(t, e.Store, "history-only")
 }

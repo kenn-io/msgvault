@@ -362,7 +362,7 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 	const identifier = "private-timeout@example.test"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  &identityResolveErrorStore{Store: st, err: context.DeadlineExceeded},
+		Store:  &identityResolveErrorStore{MessageStore: st, MessageIdentityStore: st, err: context.DeadlineExceeded},
 		Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
 	})
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{
@@ -380,7 +380,8 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 }
 
 type identityResolveErrorStore struct {
-	*store.Store
+	MessageStore
+	MessageIdentityStore
 
 	err error
 }
@@ -1344,6 +1345,30 @@ func TestExploreContextRepeatedDomainFilterIsConjunctive(t *testing.T) {
 	assert.Equal([][]string{{"b.example"}}, ctx.AdditionalDomainGroups, "later occurrences append conjunctive groups")
 }
 
+func TestExploreKindFilter(t *testing.T) {
+	srv := newTestServerWithEngine(t, newExploreSemanticChatDuckDBFixture(t))
+	for _, tc := range []struct {
+		kind string
+		want query.EntryKind
+	}{
+		{"conversation", query.EntryConversation},
+		{"email", query.EntryEmail},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			require := require.New(t)
+			response := postExploreJSON(t, srv, "/api/v1/explore",
+				fmt.Sprintf(`{"filters":[{"dimension":"kind","values":[%q]}]}`, tc.kind))
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var body ExploreHTTPResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			require.Len(body.Rows, 1)
+			assert.Equal(t, tc.want, body.Rows[0].Kind)
+		})
+	}
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"kind","values":["unknown"]}]}`)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+}
+
 // TestExploreContextRejectsRepeatedSingleValuedFilters pins that dimensions
 // with no conjunctive meaning (source, message_type, after, before,
 // deletion) still reject a repeat, unlike participant/domain.
@@ -1792,7 +1817,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(t, err, "write %s", table.dir)
 	}
-	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir)
+	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir, identityCacheFixtureOptions{})
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(t, err)
 	state, err := json.Marshal(query.CacheSyncState{

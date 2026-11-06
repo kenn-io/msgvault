@@ -1,7 +1,9 @@
+import { disabledTaskLookup } from '../../src/lib/components/tasks/fixtures.test-support';
+import { row } from '../archive-layout';
 import { expect, test } from '@playwright/test';
 
 for (const messageType of ['email', 'whatsapp']) {
-  test(`direct ${messageType} link opens its message without Explore pagination`, async ({ page }) => {
+  test(`direct ${messageType} link displays its message in the reader`, async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 900 });
     const message = {
       id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
@@ -9,7 +11,6 @@ for (const messageType of ['email', 'whatsapp']) {
       to: ['reader@example.com'], sent_at: '2020-01-01T12:00:00Z', snippet: 'Old message',
       labels: [], has_attachments: false, size_bytes: 20, body: 'The requested old message', attachments: [],
     };
-    const archiveRequests: string[] = [];
     await page.route('**/api/session', (route) => route.fulfill({ json: {
       auth_mode: 'loopback', https: false, plain_http_warning: false,
     } }));
@@ -18,7 +19,20 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/settings') return route.fulfill({ json: { settings: [], pending_restart: false } });
       if (url.pathname === '/api/v1/telemetry/events') return route.fulfill({ status: 202, json: { status: 'disabled' } });
       if (url.pathname === '/api/v1/integrations/kata/status') return route.fulfill({ json: { state: 'disabled', project: '' } });
-      archiveRequests.push(url.pathname);
+      if (url.pathname === '/api/v1/integrations/tasks/status') return route.fulfill({ json: { state: 'disabled', message: 'Tasks disabled.' } });
+      if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: disabledTaskLookup(42001, 71) });
+      if (url.pathname === '/api/v1/explore') {
+        return route.fulfill({ json: {
+          rows: Array.from({ length: 100 }, (_, index) => ({
+            ...row,
+            key: `message:${index + 1}`, title: `Recent message ${index + 1}`,
+            preview: 'Recent excerpt', occurred_at: '2026-01-01T12:00:00Z', source_id: 3,
+            participant_labels: [], participant_ids: [],
+            attachment_count: 0, attachment_size: 0, has_attachments: false,
+          })),
+          total_count: 100000, next_cursor: 'page:2', cache_revision: 'links', search_provenance: {},
+        } });
+      }
       if (url.pathname === '/api/v1/messages/42001') return route.fulfill({ json: message });
       if (url.pathname === '/api/v1/conversations/71') {
         expect(url.searchParams.get('anchor')).toBe('42001');
@@ -27,9 +41,8 @@ for (const messageType of ['email', 'whatsapp']) {
       return route.fulfill({ status: 404, json: { message: 'Unexpected archive request' } });
     });
     await page.goto('/messages/42001');
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(messageType === 'email' ? message.subject : 'Team chat');
+    await expect(page.getByRole('complementary', { name: `Reading pane: ${messageType === 'email' ? message.subject : 'Team chat'}` })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Message 42001' })).toContainText('The requested old message');
-    expect(archiveRequests).toEqual(['/api/v1/messages/42001', '/api/v1/conversations/71']);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: `test-results/artifacts/direct-${messageType}.png` });
   });

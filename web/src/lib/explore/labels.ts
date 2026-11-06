@@ -86,8 +86,6 @@ const KNOWN_MIME: Record<string, string> = {
 
 // Keys are `${action}:${reason}`, matching the unavailable_actions the preflight endpoint returns.
 const REASONS: Record<string, string> = {
-  'open_in_source:trusted_source_link_unavailable':
-    'Your sources don’t provide links to open these items.',
   'export:browser_export_requires_single_message': 'Export works for one message at a time.',
   'export:selection_has_no_exportable_raw_message':
     'The selection has no original message to export.',
@@ -178,9 +176,9 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 
 // Mirrors identityindex.TextMessageTypes plus its chat/text fallbacks
 // (internal/identityindex/schema.go).
-const CHAT_MESSAGE_TYPES = new Set([
+export const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
-  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot'
+  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram'
 ]);
 
 // The server-assigned kind wins; the message type covers rows and archive messages without one.
@@ -197,7 +195,7 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
   if (normalized === 'calendar' || normalized === 'calendar_event') {
     return kindPresentation('□', 'Calendar event');
   }
-  if (normalized === 'meeting' || normalized === 'meeting_transcript') {
+  if (normalized === 'meeting' || normalized === 'meeting_transcript' || normalized === 'meeting_note' || normalized === 'meeting_minutes') {
     return kindPresentation('◫', 'Meeting item');
   }
   return kindPresentation('◇', 'Archive item');

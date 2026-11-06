@@ -4,14 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -21,14 +26,20 @@ const defaultPageSize = 500
 // Client reads from macOS's iMessage chat.db and imports messages
 // directly into the msgvault store.
 type Client struct {
-	db             *sql.DB
-	afterDate      time.Time // only import messages after this date
-	beforeDate     time.Time // only import messages before this date
-	limit          int       // max total messages to import (0 = unlimited)
-	useNanoseconds bool      // whether chat.db uses nanosecond timestamps
-	ownerHandle    string    // phone/email of device owner (from --me flag)
-	logger         *slog.Logger
-	pageSize       int
+	db                *sql.DB
+	afterDate         time.Time // only import messages after this date
+	beforeDate        time.Time // only import messages before this date
+	limit             int       // max total messages to import (0 = unlimited)
+	useNanoseconds    bool      // whether chat.db uses nanosecond timestamps
+	ownerHandle       string    // phone/email of device owner (from --me flag)
+	logger            *slog.Logger
+	pageSize          int
+	attachmentsDir    string
+	messagesRoot      string
+	rebaseAttachments bool
+	mediaPolicy       attachmentpolicy.Policy
+	attachmentQuery   string
+	participantCounts map[int64]int
 }
 
 // ClientOption configures a Client.
@@ -87,6 +98,31 @@ func NewClient(dbPath string, opts ...ClientOption) (*Client, error) {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+	if err := c.mediaPolicy.Validate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if c.mediaPolicy.MaxBytes == 0 {
+		c.mediaPolicy.MaxBytes = attachmentpolicy.DefaultChatMaxBytes
+	}
+	if c.attachmentsDir != "" && c.rebaseAttachments {
+		info, err := os.Stat(c.messagesRoot)
+		if err == nil && !info.IsDir() {
+			err = errors.New("not a directory")
+		}
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("messages root %q: %w", c.messagesRoot, err)
+		}
+	}
+	if c.messagesRoot == "" && c.attachmentsDir != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		c.messagesRoot = filepath.Join(home, "Library", "Messages")
 	}
 
 	if err := c.detectTimestampFormat(); err != nil {
@@ -150,7 +186,15 @@ func (c *Client) Import(
 	s *store.Store,
 	sourceID int64,
 ) (*ImportSummary, error) {
+	return c.ImportWithProgress(ctx, s, sourceID, nil)
+}
+
+// ImportWithProgress reports cumulative progress after each page.
+func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceID int64, onProgress func(ImportSummary)) (*ImportSummary, error) {
 	summary := &ImportSummary{}
+	if err := c.prepareAttachments(ctx); err != nil {
+		return summary, fmt.Errorf("read attachment schema: %w", err)
+	}
 
 	// Pre-create iMessage and SMS labels
 	imessageLabelID, err := s.EnsureLabel(
@@ -185,11 +229,10 @@ func (c *Client) Import(
 		pidMap, err := s.EnsureParticipantsBatch(
 			[]mime.Address{{Email: "me@imessage.local", Name: "Me"}},
 		)
-		if err == nil {
-			if id, ok := pidMap["me@imessage.local"]; ok {
-				ownerPID = id
-			}
+		if err != nil {
+			return nil, fmt.Errorf("resolve default owner: %w", err)
 		}
+		ownerPID = pidMap["me@imessage.local"]
 	}
 
 	// Track resolved participants to avoid repeated DB calls
@@ -198,6 +241,13 @@ func (c *Client) Import(
 	convCache := map[string]int64{}  // chatGUID -> conversationID
 	imported := 0
 	lastROWID := int64(0)
+	// Recompute conversation counts after scanning or a fatal message import error.
+	finalize := func(err error) error {
+		if statsErr := s.RecomputeConversationStats(sourceID); statsErr != nil {
+			return errors.Join(err, fmt.Errorf("recompute stats: %w", statsErr))
+		}
+		return err
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -208,15 +258,36 @@ func (c *Client) Import(
 			break
 		}
 
-		rows, pageCount, err := c.fetchPage(ctx, lastROWID)
+		rows, err := c.fetchPage(ctx, lastROWID)
 		if err != nil {
 			return summary, fmt.Errorf("fetch page: %w", err)
 		}
-		if pageCount == 0 {
+		if len(rows) == 0 {
 			break
 		}
 
+		messageIDs := make([]string, 0, len(rows))
 		for _, msg := range rows {
+			messageIDs = append(messageIDs, strconv.FormatInt(msg.ROWID, 10))
+		}
+		stored, err := s.StoredMessagesContext(ctx, sourceID, "imessage_json", messageIDs)
+		if err != nil {
+			return summary, fmt.Errorf("load stored messages: %w", err)
+		}
+		storedIDs := make([]int64, 0, len(stored))
+		for _, message := range stored {
+			storedIDs = append(storedIDs, message.ID)
+		}
+		labels, err := s.MessageLabelIDsBatchContext(ctx, storedIDs)
+		if err != nil {
+			return summary, err
+		}
+
+		for i, msg := range rows {
+			// Keep the highest-numbered chat even when a message spans pages.
+			if i > 0 && msg.ROWID == rows[i-1].ROWID {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return summary, err
 			}
@@ -224,12 +295,28 @@ func (c *Client) Import(
 				break
 			}
 
+			lastROWID = msg.ROWID
 			if err := c.importMessage(
-				ctx, s, sourceID, &msg,
+				ctx, s, sourceID, &msg, stored, labels,
 				imessageLabelID, smsLabelID,
 				phoneCache, emailCache, convCache,
 				ownerPID, summary,
 			); err != nil {
+				if fatal := fatalImportError(ctx, err); fatal != nil {
+					return summary, finalize(fatal)
+				}
+				if errors.Is(err, ErrAttachmentImport) {
+					// Keep scanning later messages and report the count once the scan ends.
+					// importMessage has already persisted this message row.
+					imported++
+					// The first failure explains the run; the count covers the rest.
+					level := slog.LevelDebug
+					if summary.AttachmentFailures == 1 {
+						level = slog.LevelWarn
+					}
+					c.logger.Log(ctx, level, "failed to import message attachments", "rowid", msg.ROWID, "error", err)
+					continue
+				}
 				c.logger.Warn(
 					"failed to import message",
 					"rowid", msg.ROWID,
@@ -240,26 +327,36 @@ func (c *Client) Import(
 			}
 
 			imported++
-			lastROWID = msg.ROWID
 		}
 
-		if pageCount < c.pageSize {
-			break
+		if onProgress != nil {
+			onProgress(*summary)
 		}
 	}
 
-	if err := s.RecomputeConversationStats(sourceID); err != nil {
-		return summary, fmt.Errorf("recompute stats: %w", err)
+	var scanErr error
+	if summary.AttachmentFailures > 0 {
+		scanErr = fmt.Errorf("%d messages had attachment errors: %w", summary.AttachmentFailures, ErrAttachmentImport)
 	}
+	return summary, finalize(scanErr)
+}
 
-	return summary, nil
+// fatalImportError returns the error that ends the run: cancellation or a failed archive write.
+func fatalImportError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, errAttachmentStore) {
+		return err
+	}
+	return nil
 }
 
 // fetchPage queries the next batch of messages from chat.db.
 func (c *Client) fetchPage(
 	ctx context.Context,
 	afterROWID int64,
-) ([]messageRow, int, error) {
+) ([]messageRow, error) {
 	sqlQuery := `
 		SELECT
 			m.ROWID, m.guid, m.text, m.attributedBody,
@@ -292,12 +389,12 @@ func (c *Client) fetchPage(
 			pageSize = remaining
 		}
 	}
-	sqlQuery += " ORDER BY m.ROWID ASC LIMIT ?"
+	sqlQuery += ` ORDER BY m.ROWID ASC, cmj.chat_id DESC LIMIT ?`
 	args = append(args, pageSize)
 
 	dbRows, err := c.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("query messages: %w", err)
+		return nil, fmt.Errorf("query messages: %w", err)
 	}
 	defer func() { _ = dbRows.Close() }()
 
@@ -312,15 +409,15 @@ func (c *Client) fetchPage(
 			&msg.ChatROWID, &msg.ChatGUID, &msg.ChatDisplayName,
 			&msg.ChatIdentifier,
 		); err != nil {
-			return nil, 0, fmt.Errorf("scan message: %w", err)
+			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		result = append(result, msg)
 	}
 	if err := dbRows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate messages: %w", err)
+		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
 
-	return result, len(result), nil
+	return result, nil
 }
 
 // importMessage processes a single chat.db message row and writes it
@@ -330,6 +427,8 @@ func (c *Client) importMessage(
 	s *store.Store,
 	sourceID int64,
 	msg *messageRow,
+	stored map[string]store.StoredMessage,
+	storedLabels map[int64][]int64,
 	imessageLabelID, smsLabelID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
@@ -365,7 +464,10 @@ func (c *Client) importMessage(
 		pid, err := c.resolveParticipant(
 			s, *msg.HandleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return fmt.Errorf("resolve message sender: %w", err)
+		}
+		if pid > 0 {
 			senderID = sql.NullInt64{Int64: pid, Valid: true}
 			_ = s.EnsureConversationParticipant(convID, pid, "member")
 		}
@@ -379,10 +481,13 @@ func (c *Client) importMessage(
 
 	// Extract body text
 	body := ""
+	bodyDecodeFailed := false
 	if msg.Text != nil {
 		body = *msg.Text
 	} else if len(msg.AttributedBody) > 0 {
-		body = extractAttributedBodyText(msg.AttributedBody)
+		var decoded bool
+		body, decoded = extractAttributedBodyTextWithStatus(msg.AttributedBody)
+		bodyDecodeFailed = !decoded
 	}
 
 	msgDate := appleTimestampToTime(msg.Date)
@@ -391,21 +496,16 @@ func (c *Client) importMessage(
 		sentAt = sql.NullTime{Time: msgDate, Valid: true}
 	}
 	sourceMessageID := strconv.FormatInt(msg.ROWID, 10)
-	clearsExistingDate := false
-	if msgDate.IsZero() {
-		err := s.DB().QueryRow(s.Rebind(`
-			SELECT EXISTS (
-				SELECT 1 FROM messages
-				WHERE source_id = ? AND source_message_id = ?
-				  AND (sent_at IS NOT NULL OR internal_date IS NOT NULL)
-			)`), sourceID, sourceMessageID).Scan(&clearsExistingDate)
-		if err != nil {
-			return fmt.Errorf("check existing message date: %w", err)
+	if bodyDecodeFailed {
+		if existing, exists := stored[sourceMessageID]; exists {
+			body, err = s.GetMessageBodyText(existing.ID)
+			if err != nil {
+				return fmt.Errorf("read archived body after attributed body decode failure: %w", err)
+			}
 		}
+		c.logger.Warn("failed to decode attributed body; preserving archived text")
 	}
-
-	// Upsert the message
-	msgID, err := s.UpsertMessage(&store.Message{
+	message := &store.Message{
 		SourceID:        sourceID,
 		SourceMessageID: sourceMessageID,
 		ConversationID:  convID,
@@ -418,114 +518,105 @@ func (c *Client) importMessage(
 			String: snippet(body, 100),
 			Valid:  body != "",
 		},
-		SizeEstimate:   int64(len(body)),
-		HasAttachments: msg.HasAttachments != 0,
-	})
+		SizeEstimate:            int64(len(body)),
+		HasAttachments:          msg.HasAttachments != 0,
+		PreserveAttachmentStats: true,
+	}
+	raw, err := marshalMessageRaw(msg, body)
 	if err != nil {
-		return fmt.Errorf("upsert message: %w", err)
+		return err
 	}
-	if clearsExistingDate {
-		summary.DatesCleared++
+	recipients, err := c.messageRecipients(s, msg, senderID, ownerPID, phoneCache, emailCache, summary)
+	if err != nil {
+		return fmt.Errorf("resolve message recipients: %w", err)
 	}
-
-	// Store body text directly (no MIME)
-	if body != "" {
-		if err := s.UpsertMessageBody(
-			msgID,
-			sql.NullString{String: body, Valid: true},
-			sql.NullString{},
-		); err != nil {
-			return fmt.Errorf("upsert body: %w", err)
-		}
-	}
-
-	// Write message_recipients rows
-	if err := c.writeMessageRecipients(
-		s, msgID, msg, senderID, ownerPID,
-		phoneCache, emailCache, summary,
-	); err != nil {
-		return fmt.Errorf("write message recipients: %w", err)
-	}
-
-	// Store raw data as JSON for completeness
-	if err := c.writeMessageRaw(s, msgID, msg, body); err != nil {
-		return fmt.Errorf("write message raw: %w", err)
-	}
-
-	// Label: iMessage or SMS
+	existing, exists := stored[sourceMessageID]
 	labelID := imessageLabelID
 	if msgType == "sms" {
 		labelID = smsLabelID
 	}
-	if err := s.LinkMessageLabel(msgID, labelID); err != nil {
-		return fmt.Errorf("link label: %w", err)
+	labels := storedLabels[existing.ID]
+	if exists && existing.Matches(message, raw) && slices.Contains(labels, labelID) {
+		storedBody, err := s.GetMessageBodyTextContext(ctx, existing.ID)
+		if err != nil {
+			return fmt.Errorf("compare message body: %w", err)
+		}
+		matches, err := s.MessageRecipientsMatchContext(ctx, existing.ID, recipients)
+		if err != nil {
+			return fmt.Errorf("compare message recipients: %w", err)
+		}
+		if matches && storedBody == body {
+			if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
+				c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
+			}
+			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true, true)
+		}
 	}
-
-	// Warn about attachments
-	if msg.HasAttachments != 0 {
-		c.logger.Debug(
-			"message has attachments (extraction not yet implemented)",
-			"rowid", msg.ROWID,
-		)
+	if !slices.Contains(labels, labelID) {
+		labels = append(labels, labelID)
 	}
+	msgID, err := s.PersistMessageContext(ctx, &store.MessagePersistData{
+		Message: message, BodyText: sql.NullString{String: body, Valid: true},
+		RawMIME: raw, RawFormat: "imessage_json", Recipients: recipients,
+		LabelIDs: labels,
+	})
+	if err != nil {
+		return fmt.Errorf("persist message: %w", err)
+	}
+	if err := s.IndexStoredMessageContext(ctx, msgID); err != nil {
+		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
+	}
+	if exists {
+		summary.MessagesUpdated++
+		if msgDate.IsZero() && (existing.SentAt.Valid || existing.InternalDate.Valid) {
+			summary.DatesCleared++
+		}
+	} else {
+		summary.MessagesAdded++
+	}
+	return c.finishMessageAttachments(ctx, s, msgID, msg, summary, exists, false)
+}
 
+func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, msgID int64, msg *messageRow, summary *ImportSummary, existing, countUpdate bool) error {
 	summary.MessagesImported++
+	changed, err := c.importAttachments(ctx, s, msgID, msg, summary, existing)
+	if countUpdate && changed {
+		summary.MessagesUpdated++
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		summary.AttachmentFailures++
+		return fmt.Errorf("%w: %w", ErrAttachmentImport, err)
+	}
+
 	return nil
 }
 
-// writeMessageRecipients creates from/to rows in message_recipients.
-// For is_from_me: from=owner, to=other chat participants.
-// For !is_from_me: from=sender handle, to=owner.
-func (c *Client) writeMessageRecipients(
+// messageRecipients builds the from/to snapshots for this import.
+func (c *Client) messageRecipients(
 	s *store.Store,
-	msgID int64,
 	msg *messageRow,
 	senderID sql.NullInt64,
 	ownerPID int64,
-	phoneCache map[string]int64,
-	emailCache map[string]int64,
+	phoneCache, emailCache map[string]int64,
 	summary *ImportSummary,
-) error {
-	if msg.IsFromMe != 0 {
-		// Sender is the device owner
-		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{ownerPID}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// Recipients are the other chat participants
-		toPIDs := c.getChatParticipantIDs(
-			s, msg, phoneCache, emailCache, summary,
-		)
-		if len(toPIDs) > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", toPIDs, nil,
-			); err != nil {
-				return err
-			}
-		}
-	} else {
-		// Sender is the external handle
-		if senderID.Valid {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from",
-				[]int64{senderID.Int64}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// Recipient is the device owner
-		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", []int64{ownerPID}, nil,
-			); err != nil {
-				return err
-			}
-		}
+) ([]store.RecipientSet, error) {
+	sets := []store.RecipientSet{{Type: "from"}, {Type: "to"}}
+	if senderID.Valid {
+		sets[0].ParticipantIDs = []int64{senderID.Int64}
 	}
-	return nil
+	if msg.IsFromMe != 0 {
+		pids, err := c.getChatParticipantIDs(s, msg, phoneCache, emailCache, summary)
+		if err != nil {
+			return nil, err
+		}
+		sets[1].ParticipantIDs = pids
+	} else if ownerPID > 0 {
+		sets[1].ParticipantIDs = []int64{ownerPID}
+	}
+	return sets, nil
 }
 
 // getChatParticipantIDs returns participant IDs for the chat members
@@ -536,7 +627,7 @@ func (c *Client) getChatParticipantIDs(
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
 	summary *ImportSummary,
-) []int64 {
+) ([]int64, error) {
 	if msg.ChatROWID == nil {
 		// No chat info; fall back to handle if available
 		if msg.HandleID != nil {
@@ -544,11 +635,14 @@ func (c *Client) getChatParticipantIDs(
 				s, *msg.HandleID,
 				phoneCache, emailCache, summary,
 			)
-			if err == nil && pid > 0 {
-				return []int64{pid}
+			if err != nil {
+				return nil, err
+			}
+			if pid > 0 {
+				return []int64{pid}, nil
 			}
 		}
-		return nil
+		return nil, nil
 	}
 
 	rows, err := c.db.Query(`
@@ -558,7 +652,7 @@ func (c *Client) getChatParticipantIDs(
 		WHERE chj.chat_id = ?
 	`, *msg.ChatROWID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -566,28 +660,26 @@ func (c *Client) getChatParticipantIDs(
 	for rows.Next() {
 		var handleID string
 		if err := rows.Scan(&handleID); err != nil {
-			continue
+			return nil, err
 		}
 		pid, err := c.resolveParticipant(
 			s, handleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return nil, err
+		}
+		if pid > 0 {
 			pids = append(pids, pid)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		c.logger.Warn("iterate chat participants", "error", err)
+		return nil, err
 	}
-	return pids
+	return pids, nil
 }
 
-// writeMessageRaw serializes the message data as JSON and stores it.
-func (c *Client) writeMessageRaw(
-	s *store.Store,
-	msgID int64,
-	msg *messageRow,
-	body string,
-) error {
+// marshalMessageRaw serializes the source message for comparison and storage.
+func marshalMessageRaw(msg *messageRow, body string) ([]byte, error) {
 	raw := map[string]any{
 		"rowid":           msg.ROWID,
 		"guid":            msg.GUID,
@@ -613,9 +705,9 @@ func (c *Client) writeMessageRaw(
 	}
 	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
-		return fmt.Errorf("marshal raw JSON: %w", err)
+		return nil, fmt.Errorf("marshal raw JSON: %w", err)
 	}
-	return s.UpsertMessageRawWithFormat(msgID, rawJSON, "imessage_json")
+	return rawJSON, nil
 }
 
 // ensureConversation gets or creates a conversation for the chat,
@@ -665,6 +757,12 @@ func (c *Client) ensureConversation(
 	)
 	if err != nil {
 		return 0, false, err
+	}
+	// Purge trusts the stored roster size, so refresh it for every chat the run sees.
+	if msg.ChatROWID != nil {
+		if _, err := c.chatParticipantCount(ctx, s, convID, *msg.ChatROWID); err != nil {
+			return 0, false, err
+		}
 	}
 	convCache[chatGUID] = convID
 

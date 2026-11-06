@@ -33,6 +33,7 @@ type peopleAPIEngine struct {
 	person               *query.PersonSummary
 	personClusterMembers []int64
 	domain               *query.DomainSummary
+	groupRequest         query.ExploreGroupRequest
 	timeline             query.ExploreRequest
 	timelineResult       *query.ExploreResponse
 	peopleErr            error
@@ -87,7 +88,8 @@ func (e *peopleAPIEngine) ExploreCoverage(context.Context, query.ExploreCoverage
 	return &query.ExploreCoverageResult{}, e.peopleErr
 }
 
-func (e *peopleAPIEngine) ExploreGroups(context.Context, query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
+func (e *peopleAPIEngine) ExploreGroups(_ context.Context, request query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
+	e.groupRequest = request
 	return &query.ExploreGroupResponse{}, e.peopleErr
 }
 
@@ -523,6 +525,7 @@ func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	timeline(primary)
+	assertions.True(engine.timeline.PersonInteractionsOnly)
 	assertions.ElementsMatch([]int64{primary, secondary}, engine.timeline.Context.ParticipantIDs,
 		"a linked participant's timeline must scope to every cluster member so alias-owned activity is included")
 
@@ -606,4 +609,25 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	var body ErrorResponse
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 	assert.Equal(t, "participant_not_found", body.Error)
+}
+
+func TestParticipantDetailReturnsDraftOnlyPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	engine, _ := newExploreDuckDBFixtureWithClusters(
+		t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
+		identityCacheFixtureOptions{unsentMessages: "(SELECT 3::BIGINT AS message_id)"},
+	)
+	server := newTestServerWithEngine(t, engine)
+
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/2", nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var person map[string]any
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &person))
+	assert.Equal("Bob", person["display_label"])
+	assert.InDelta(0, person["activity_count"], 0)
+	assert.NotContains(person, "first_at")
+	assert.NotContains(person, "last_at")
 }

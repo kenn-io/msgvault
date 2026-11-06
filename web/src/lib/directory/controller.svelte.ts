@@ -4,10 +4,8 @@ import {
   getPersonProfile as generatedGetPersonProfile,
   getPersonStructuredProfile as generatedGetPersonStructuredProfile,
   listDirectoryPeople as generatedListDirectoryPeople,
-  listPersonActivityDays as generatedListPersonActivityDays,
   listPersonAttributes as generatedListPersonAttributes,
 } from '../api/generated/api/api';
-import { searchPersonFiles as generatedSearchPersonFiles } from '../api/generated/exploration/exploration';
 import type { APIClient } from '../api/client';
 import type {
   DirectoryPerson,
@@ -65,6 +63,7 @@ export class DirectoryController {
   promotionResult = $state<DirectoryPromotionResult | null>(null);
   private readonly client: APIClient;
   private readonly commit: DirectoryCommit;
+  private readonly onWrite: () => void;
   private pageAbort: AbortController | undefined;
   private detailAbort: AbortController | undefined;
   private promotionAbort: AbortController | undefined;
@@ -72,15 +71,16 @@ export class DirectoryController {
   private detailGeneration = 0;
   private promotionGeneration = 0;
   private seenCursors = new Set<string>();
-  constructor(client: APIClient, commit: DirectoryCommit = () => undefined) {
+  constructor(client: APIClient, commit: DirectoryCommit = () => undefined, onWrite: () => void = () => undefined) {
     this.client = client;
     this.commit = commit;
+    this.onWrite = onWrite;
   }
   /**
    * Applies Directory URL state. History restoration always starts a new page
    * one request because no cursor or accumulated rows belong to a URL entry.
    */
-  applyURLState(state: DirectoryURLState, historyRestoration = false): void {
+  applyURLState(state: DirectoryURLState, historyRestoration = false, loadSelection = true): void {
     const filtersChanged =
       this.query !== state.directoryQuery ||
       this.contactState !== state.directoryContactState ||
@@ -94,7 +94,7 @@ export class DirectoryController {
     // The initial restoration can equal the controller's empty defaults; it
     // still needs page one, just like a back/forward restoration does.
     if (filtersChanged || this.pageGeneration === 0 || historyRestoration) void this.loadFirstPage();
-    if (this.selectedPersonID !== state.directoryPersonID) {
+    if (loadSelection && this.selectedPersonID !== state.directoryPersonID) {
       void this.loadSelection(state.directoryPersonID, false);
     }
   }
@@ -205,9 +205,6 @@ export class DirectoryController {
       if (generation === this.pageGeneration) this.loadingMore = false;
     }
   }
-  async selectPerson(personID: number | null): Promise<void> {
-    await this.loadSelection(personID, true);
-  }
   /** Bulk deletion can empty the loaded page or remove the next-page cursor
    * anchor, so reload page one instead of only dropping rows. */
   async removeDeletedPeople(personIDs: readonly number[]): Promise<void> {
@@ -215,9 +212,13 @@ export class DirectoryController {
     for (const personID of personIDs) this.removeDeletedPerson(personID);
     await this.reloadFirstPage();
   }
+  /** Identity changes rebind the selected profile; refresh it in place so History keeps its receipt. */
+  async refreshSelectedPerson(): Promise<void> {
+    await Promise.all([this.profile?.reload(false), this.entity?.load(), this.entity?.refreshNetwork()]);
+  }
   /** Re-read server-owned Directory projections after a committed split. */
   async reconcilePersonSplit(_context: PersonSplitCommittedContext): Promise<void> {
-    await this.reloadFirstPage();
+    await Promise.all([this.reloadFirstPage(), this.refreshSelectedPerson()]);
     const failure = this.pageError ?? this.error;
     if (failure) throw new Error(failure);
   }
@@ -239,11 +240,12 @@ export class DirectoryController {
       if (!this.isCurrentPromotion(generation, controller)) return stalePromotionResult();
       if (response.data && (response.response.status === 200 || response.response.status === 201)) {
         const personID = response.data.id;
-        await Promise.all([this.selectPerson(personID), this.loadFirstPage()]);
+        await this.loadFirstPage();
         if (!this.isCurrentPromotion(generation, controller)) return stalePromotionResult();
-        const result = { ok: true, personID } satisfies DirectoryPromotionResult;
-        this.promotionResult = result;
-        return result;
+        this.commit({ directoryPersonID: personID }, 'push');
+        this.promotionResult = { ok: true, personID };
+        this.onWrite();
+        return this.promotionResult;
       }
       const code = errorCode(response.error);
       const message = errorMessage(response.error, response.response.status);
@@ -331,30 +333,18 @@ export class DirectoryController {
       signal,
     });
   }
-  private async loadSelection(personID: number | null, shouldCommit: boolean): Promise<void> {
-    this.detailAbort?.abort();
-    ++this.detailGeneration;
+  async loadSelection(personID: number | null, shouldCommit = false): Promise<void> {
+    this.resetForPromotion();
     if (personID === null) {
-      this.profile?.destroy();
-      this.profile = null;
-      this.entity?.destroy();
-      this.entity = null;
-      this.selectedPersonID = null;
-      this.detail = null;
-      this.detailLoading = false;
       if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
       return;
     }
     const controller = new AbortController();
-    this.profile?.destroy();
-    this.profile = null;
-    this.entity?.destroy();
     // Employments, relationships and the network belong to the entity
     // controller; the read bundle never duplicates those requests.
     this.entity = new DirectoryEntityController(this.client, personID, {
-      onDirectoryChange: () => this.refreshLoadedPagesAfterSummaryWrite(personID, {}),
+      onDirectoryChange: async () => { await this.refreshLoadedPagesAfterSummaryWrite(personID, {}); this.onWrite(); },
     });
-    void this.entity.load();
     this.detailAbort = controller;
     const generation = this.detailGeneration;
     this.selectedPersonID = personID;
@@ -363,55 +353,19 @@ export class DirectoryController {
     if (shouldCommit) this.commit({ directoryPersonID: personID }, 'push');
     const requestOptions = { ...this.client, signal: controller.signal };
     try {
-      const [person, structuredProfile, attributes, contactState, activity, files] = await Promise.all([
+      const [person, structuredProfile, attributes, contactState] = await Promise.all([
         settleSection(generatedGetPersonProfile({ id: personID }, requestOptions)),
         settleSection(generatedGetPersonStructuredProfile({ id: personID }, requestOptions)),
-        settleSection(
-          generatedListPersonAttributes(
-            { id: personID },
-            { history: true },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
+        settleSection(generatedListPersonAttributes({ id: personID }, { history: true }, requestOptions)),
         settleSection(generatedGetPersonContactState({ id: personID }, requestOptions)),
-        settleSection(
-          generatedListPersonActivityDays(
-            { id: personID },
-            { limit: 1 },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
-        settleSection(
-          generatedSearchPersonFiles(
-            { id: personID },
-            {
-              predicate: {
-                filters: [],
-                grouping: [],
-                presentation: 'files',
-                sort: [{ field: 'occurred_at', direction: 'desc' }],
-                limit: 1,
-              },
-              sort: { field: 'occurred_at', direction: 'desc' },
-              limit: 1,
-            },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
       ]);
       if (controller.signal.aborted || generation !== this.detailGeneration) return;
       if (!person.data && person.response?.status === 404) {
         this.entity?.destroy();
         this.entity = null;
-        this.selectedPersonID = null;
-        this.detail = null;
-        this.commit({ directoryPersonID: null }, 'push');
+        this.selectedPersonID = shouldCommit ? null : personID;
+        this.detail = shouldCommit ? null : { etags: {}, errors: { person: 'Person not found.' } };
+        if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
         return;
       }
       const bundle: DirectoryReadBundle = { etags: {}, errors: {} };
@@ -419,8 +373,6 @@ export class DirectoryController {
       applySection(bundle, 'structuredProfile', structuredProfile);
       applySection(bundle, 'attributes', attributes);
       applySection(bundle, 'contactState', contactState);
-      applySection(bundle, 'activity', activity);
-      applySection(bundle, 'files', files);
       this.detail = bundle;
       let profileController: DirectoryProfileController;
       profileController = new DirectoryProfileController(this.client, personID, bundle, {
@@ -461,6 +413,8 @@ export class DirectoryController {
     overlay: DirectorySummaryOverlay,
     refreshDirectory = false,
   ): Promise<void> {
+    this.onWrite();
+    if (overlay.displayName !== undefined && this.entity?.personID === personID) await this.entity.refreshNetwork();
     const { update } = overlay;
     const filteredCategoryChanged = update?.categories !== undefined && this.category.trim() !== '';
     if (refreshDirectory || filteredCategoryChanged) {
@@ -474,6 +428,7 @@ export class DirectoryController {
     );
   }
   private removeDeletedPerson(personID: number): void {
+    this.onWrite();
     this.rows = this.rows.filter((row) => row.id !== personID);
     if (this.selectedPersonID !== personID) return;
     this.detailAbort?.abort();

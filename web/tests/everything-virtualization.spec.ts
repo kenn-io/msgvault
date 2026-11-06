@@ -1,4 +1,11 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
 
 function syntheticRow(index: number) {
   return {
@@ -103,7 +110,7 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
     }));
   });
   for (const { token, ratio } of mutedContrast) expect(ratio, token).toBeGreaterThanOrEqual(4.5);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeVisible();
   await expect.poll(async () => grid.locator('[role="row"]').count()).toBeGreaterThan(1);
   expect(await grid.locator('[role="row"]').count()).toBeLessThan(80);
@@ -171,7 +178,7 @@ test('committed searches survive transient typing across real back and forward t
 
   const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
   await page.goto(`/?feature=preview&explore=${explore}`);
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await search.fill('alpha');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(search).toHaveValue('alpha');
@@ -212,7 +219,7 @@ test('End stops safely when a cursor repeats without progress', async ({ page })
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('End');
@@ -263,7 +270,7 @@ test('deep durable focus and scroll restore through real back and reload with 50
   const url = `/?feature=preview&explore=${encodeURIComponent(JSON.stringify(state))}`;
 
   await page.goto(url);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-5500/);
   await expect(grid.getByText('Synthetic subject 5500')).toBeVisible();
   expect(requests).toHaveLength(11);

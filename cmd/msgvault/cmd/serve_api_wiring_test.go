@@ -21,9 +21,42 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+type wiringTaskOperations struct {
+	api.TaskLinkOperations
+
+	identities []tasklinks.MessageIdentity
+}
+
+func (o *wiringTaskOperations) Lookup(_ context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult {
+	o.identities = append(o.identities, identity)
+	return tasklinks.LookupResult{State: tasklinks.StateReady, Complete: true, Tasks: []tasklinks.TaskSummary{}}
+}
+
+func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("task-wiring-email")
+	ops := &wiringTaskOperations{}
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store},
+		Logger: slog.New(slog.DiscardHandler), TaskLinkOperations: ops,
+	})
+	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.Len(ops.identities, 1)
+	uid, err := f.Store.ArchiveUID()
+	requirements.NoError(err)
+	identity := ops.identities[0]
+	assertions.Equal(uid, identity.ArchiveUID)
+}
 
 func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 	t.Helper()

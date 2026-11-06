@@ -2,34 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
-
-function employment(id: number, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, person_id: 7, organization_id: 21, source: 'user', is_current: true, is_primary: false,
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
-
-function organization(revision: number) {
-  return {
-    id: 21, revision, name: 'Synthetic Org', kind: 'company',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
-
-function organizationProfile(revision: number) {
-  return {
-    organization: organization(revision), names: [], contact_points: [], addresses: [], categories: [], identifiers: [], media: []
-  };
-}
+import { requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
 
 function relationship(id: number, revision = 1) {
   return {
@@ -82,6 +55,84 @@ function deferredResponse() {
 }
 
 describe('DirectoryEntityController', () => {
+  it('creates an organization from Settings without reading a person employment collection', async () => {
+    const requests: Request[] = [];
+    const onDirectoryChange = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = requestOf(input); requests.push(request);
+      if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return Response.json(organization(22), { status: 201, headers: { ETag: '"organization-22-r1"' } });
+      return Response.json({ message: 'Person not found.' }, { status: 404 });
+    });
+    const controller = new DirectoryEntityController(client, 0, { onDirectoryChange });
+    try {
+      expect(await controller.createOrganization({ name: 'Synthetic Org', kind: 'company' })).toMatchObject({ ok: true });
+      expect(requests.map(request => `${request.method} ${pathOf(request)}`)).toEqual(['POST /api/v1/organizations']);
+      expect(onDirectoryChange).toHaveBeenCalledOnce();
+    } finally { controller.destroy(); }
+  });
+
+  it('keeps the renamed employer after a deferred Details lookup completes', async () => {
+    const oldLookup = deferredResponse();
+    let organizationReads = 0;
+    let renamed = false;
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11), employment(12, 1, { organization_id: 22 })] });
+      if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: organization(22, 1, 'Second employer') }, { headers: { ETag: '"organization-22-r1"' } });
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
+        if (++organizationReads === 1) return oldLookup.promise;
+        return Response.json(organizationProfile(renamed ? 2 : 1, renamed ? 'Renamed employer' : 'Synthetic Org'), { headers: { ETag: renamed ? '"organization-21-r2"' : '"organization-21-r1"' } });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
+        renamed = true;
+        return Response.json(organization(21, 2, 'Renamed employer'), { headers: { ETag: '"organization-21-r2"' } });
+      }
+      return defaultResponse(request);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    const prepare = vi.spyOn(controller, 'prepareOrganizationMutation');
+    const opening = controller.load();
+    try {
+      await vi.waitFor(() => expect(organizationReads).toBe(1));
+      expect(await controller.updateOrganization(21, { name: 'Renamed employer' })).toMatchObject({ ok: true });
+      oldLookup.resolve(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+      await opening;
+      await Promise.allSettled([prepare.mock.results[0]!.value]);
+      expect(controller.organizationRecords.get(21)?.organization.name).toBe('Renamed employer');
+      expect(controller.organizationRecords.get(22)?.organization.name).toBe('Second employer');
+    } finally {
+      oldLookup.resolve(Response.json(organizationProfile()));
+      await opening;
+      await Promise.allSettled([prepare.mock.results[0]!.value]);
+      controller.destroy();
+    }
+  });
+
+  it.each(['connection', 'work'])('refreshes an open Network after a %s write with the selected graph controls', async (kind) => {
+    let changed = false;
+    const reads: URL[] = [];
+    const client = createAPIClient(async input => {
+      const request = requestOf(input); const path = pathOf(request);
+      if (path.endsWith('/network')) {
+        reads.push(new URL(request.url));
+        return Response.json({ ...network(7, 3), nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: changed ? 'Updated projection' : 'Original projection', hop: 0 }] });
+      }
+      if (request.method !== 'GET') {
+        changed = true;
+        return Response.json(kind === 'connection' ? relationship(42) : employment(12));
+      }
+      return defaultResponse(request);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    await controller.loadNetwork(3, true);
+    const result = kind === 'connection' ? await controller.createRelationship({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' }) : await controller.createEmployment({ person_id: 7, organization_id: 21, source: 'user' });
+    expect(result.ok).toBe(true);
+    expect(controller.network?.nodes[0]?.label).toBe('Updated projection');
+    expect(reads.map(url => url.search)).toEqual(['?depth=3&include_ended=true', '?depth=3&include_ended=true']);
+    controller.destroy();
+  });
+
   it('loads generated collections without the network and without treating collection ETags as entity ETags', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -190,7 +241,7 @@ describe('DirectoryEntityController', () => {
       }
       if (pathOf(request) === '/api/v1/organizations/21' && request.method === 'PATCH') {
         patchRequest = request;
-        return new Response(JSON.stringify(organization(3)), { headers: { ETag: '"organization-21-r3"' } });
+        return new Response(JSON.stringify(organization(21, 3)), { headers: { ETag: '"organization-21-r3"' } });
       }
       return defaultResponse(request);
     }));
@@ -318,6 +369,7 @@ describe('DirectoryEntityController', () => {
     let postCount = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
+      if (resource === 'organizations' && request.method === 'GET' && pathOf(request) === path) return defaultResponse(request);
       if (pathOf(request) !== path || request.method !== 'POST') throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
       postCount += 1;
       return Response.json({ error: 'unavailable', message: 'commit result unavailable' }, { status: 503 });
@@ -328,6 +380,10 @@ describe('DirectoryEntityController', () => {
     expect(controller.createBlocked[resource]).toBe(true);
     await expect(create(controller)).resolves.toMatchObject({ ok: false, kind: 'blocked' });
     expect(postCount).toBe(1);
+    if (resource === 'organizations') {
+      await controller.refreshOrganizations();
+      expect(controller.createBlocked.organizations).toBe(false);
+    }
   });
 
   it('reconciles sibling primary flags and projection from the selected-person collection after making primary', async () => {
@@ -576,7 +632,7 @@ describe('DirectoryEntityController', () => {
     expect(controller.createBlocked.employments).toBe(true);
   });
 
-  it('keeps the include-ended relationship mode when a successful create reconciles the collection', async () => {
+  it('keeps the include-ended relationship mode through create reconciliation and explicit refresh', async () => {
     const includeEndedValues: string[] = [];
     let collectionReads = 0;
     const created = relationship(42, 1);
@@ -610,7 +666,8 @@ describe('DirectoryEntityController', () => {
       relationship_type_slug: 'knows'
     })).resolves.toMatchObject({ ok: true });
 
-    expect(includeEndedValues).toEqual(['true', 'true']);
+    await controller.refreshRelationships();
+    expect(includeEndedValues).toEqual(['true', 'true', 'true']);
     expect(controller.relationships).toEqual([createdView]);
     expect(controller.relationshipRecords.get(42)).toEqual(created);
     expect(controller.relationshipETags.get(42)).toBe('"relationship-42-r1"');
@@ -639,36 +696,6 @@ describe('DirectoryEntityController', () => {
 
     expect(controller.relationshipRecords.get(42)).toEqual(created);
     expect(controller.errors.relationships).toBe('relationship refresh failed');
-  });
-
-  it('refreshes directional relationship labels after a relationship type edit', async () => {
-    const updatedType = { ...relationshipType(), revision: 2, forward_label: 'collaborates with' };
-    const refreshedView = {
-      counterpart_person_id: 8,
-      counterpart_display_name: 'Synthetic Peer',
-      counterpart_label: 'collaborates with',
-      counterpart_vcard_uid: 'person-8',
-      direction: 'outgoing',
-      relationship: { ...relationship(41, 2), forward_label: 'collaborates with' }
-    };
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/relationship-types/31' && request.method === 'GET') {
-        return new Response(JSON.stringify(relationshipType()), { headers: { ETag: '"relationship-type-31-r1"' } });
-      }
-      if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
-        return new Response(JSON.stringify(updatedType), { headers: { ETag: '"relationship-type-31-r2"' } });
-      }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [refreshedView] });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-
-    await expect(controller.updateRelationshipType(31, { forward_label: 'collaborates with' })).resolves.toMatchObject({ ok: true });
-
-    expect(controller.relationshipTypes).toEqual([updatedType]);
-    expect(controller.relationships).toEqual([refreshedView]);
   });
 
   it.each([

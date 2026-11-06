@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { Button, IconButton, TextInput } from '@kenn-io/kit-ui';
+  import X from '@lucide/svelte/icons/x';
+  import { onDestroy, untrack } from 'svelte';
+  import DetailRow from '../people/DetailRow.svelte';
   import {
     createPersonAgendaItem,
     getKataIntegrationStatus,
@@ -11,10 +15,12 @@
   interface Props {
     client: APIClient;
     personID: number;
+    refreshKey?: string;
+    onSetUp?: () => void;
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, refreshKey, onSetUp, onAnnounce = () => undefined }: Props = $props();
   let items = $state<AgendaItem[]>([]);
   let loading = $state(true);
   let mutating = $state(false);
@@ -29,12 +35,9 @@
   let controller: AbortController | null = null;
   let retryRequestID = '';
   let retryFingerprint = '';
-
-  const groups = $derived.by(() => {
-    const grouped = new Map<string, AgendaItem[]>();
-    for (const item of items) grouped.set(item.list, [...(grouped.get(item.list) ?? []), item]);
-    return [...grouped.entries()];
-  });
+  let selectedPersonID: number | undefined;
+  let selectedClient: APIClient | undefined;
+  let loadedRefreshKey: string | undefined;
 
   const mutationReady = $derived(integrationState === 'ready');
   const stateMessage = $derived.by(() => {
@@ -46,32 +49,40 @@
   });
 
   $effect(() => {
-    const selectedPersonID = personID;
-    void client;
-    // Selection changed: the prior person's visible state must not survive
-    // into the transition. Clear it synchronously so no Unlink or Add can
-    // pair old data with the new selection while the fresh status and list
-    // resolve; load() restores each piece only for the current generation.
-    items = [];
-    error = '';
-    integrationState = 'loading';
-    integrationMessage = '';
-    truncated = false;
-    retryRequestID = '';
-    retryFingerprint = '';
-    // Mutation requests carry no abort signal, so one may still be in flight
-    // when the selection changes. Invalidate its ownership of the mutating
-    // flag and release this person's controls immediately instead of leaving
-    // them disabled until a request that may never settle returns; the stale
-    // completion handler no longer matches the token, so it can neither clear
-    // a newer mutation's state nor unlock mid-flight.
-    mutationToken++;
-    mutating = false;
-    void load(selectedPersonID);
-    return () => controller?.abort();
+    const nextPersonID = personID;
+    const nextClient = client;
+    const nextRefreshKey = refreshKey;
+    const pending = mutating;
+    untrack(() => {
+      const selectionChanged = selectedPersonID !== nextPersonID || selectedClient !== nextClient;
+      if (selectionChanged) {
+        selectedPersonID = nextPersonID;
+        selectedClient = nextClient;
+        retryRequestID = '';
+        retryFingerprint = '';
+        // Release the new person's controls while the prior person's write
+        // settles. Its token can no longer change this selection's state.
+        mutationToken++;
+        mutating = false;
+      }
+      // Same-person revisions keep write ownership and retry protection.
+      // Revisit a deferred revision when the pending write releases the form.
+      if (selectionChanged || (nextRefreshKey !== loadedRefreshKey && !pending)) {
+        items = [];
+        error = '';
+        integrationState = 'loading';
+        integrationMessage = '';
+        truncated = false;
+        void load(nextPersonID);
+      }
+    });
   });
 
+  onDestroy(() => controller?.abort());
+
   async function load(selectedPersonID = personID): Promise<void> {
+    // A successful write's reload also covers revisions deferred during it.
+    loadedRefreshKey = refreshKey;
     const current = ++generation;
     controller?.abort();
     controller = new AbortController();
@@ -198,63 +209,39 @@
 </script>
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
-  <div class="heading">
-    <div>
-      <h3 id={`person-${personID}-agenda-heading`}>Agenda</h3>
-      <p>Open tasks linked to this person. Edit and complete them in Kata.</p>
-    </div>
-    {#if loading}<span role="status">Loading…</span>{/if}
-  </div>
-
-  {#if error}<p class="notice" role="status">{error}</p>{/if}
-
-  {#if stateMessage}<p class="notice" role="status">{stateMessage}</p>{/if}
-
-  {#if !loading && !error && !stateMessage && items.length === 0}
-    <p class="notice">No linked Kata items.</p>
-  {/if}
-
-  {#if truncated}<p class="notice" role="status">More open tasks are linked to this person. View the full list in Kata.</p>{/if}
-
-  {#each groups as [list, listItems]}
-    <div class="list">
-      <h4>{label(list)}</h4>
-      <ul>
-        {#each listItems as item (item.uid)}
-          <li>
-            <span>
-              <strong>{item.title}</strong>
-              {#if item.state !== 'open'}<small>{label(item.state)}</small>{/if}
-              {#if item.status !== item.state}<small>{label(item.status)}</small>{/if}
-              {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">Open in Kata</a>{/if}
-            </span>
-            <button type="button" disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)} aria-label={`Unlink ${item.title}`}>Unlink</button>
-          </li>
-        {/each}
-      </ul>
-    </div>
+  <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
+  {#if error}<p class="notice" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
+  {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
+  {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
+  {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
+  {#each items as item (item.uid)}
+    <DetailRow>
+      {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}
+      {#if item.list !== 'agenda'}<small>{item.list}</small>{/if}
+      {#if item.state !== 'open'}<small>{label(item.state)}</small>{/if}
+      {#if item.status !== item.state}<small>{label(item.status)}</small>{/if}
+      {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
+    </DetailRow>
   {/each}
-
   {#if mutationReady}
     <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
-      <label>New agenda item <input bind:value={title} disabled={mutating} /></label>
-      <label>List <input bind:value={listName} disabled={mutating} /></label>
-      <button type="submit" disabled={mutating || !title.trim()}>Add item</button>
+      <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task" block disabled={mutating} />
+      <TextInput bind:value={listName} ariaLabel="List" placeholder="agenda" disabled={mutating} />
+      <Button type="submit" label="Add item" disabled={mutating || !title.trim()} />
     </form>
   {/if}
+
 </section>
 
 <style>
-  .person-agenda { display: grid; gap: var(--space-3); }
-  .heading, li, form { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  h3, h4, p, ul { margin: 0; }
-  h4 { font-size: var(--font-size-sm); color: var(--text-secondary); }
-  ul { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
-  li { padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  li span { display: flex; align-items: baseline; gap: var(--space-2); }
-  small { color: var(--text-muted); }
+  .person-agenda { display: grid; gap: var(--space-2); min-width: 0; }
+  .heading { min-height: var(--control-h); }
+  .heading, form { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); }
+  h3, p { margin: 0; }
+  h3 { font-size: var(--font-size-md); }
   form { flex-wrap: wrap; justify-content: flex-start; }
-  label { display: grid; gap: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  input { min-width: 12rem; }
-  .notice { color: var(--text-secondary); }
+  form :global(.kit-text-input) { min-width: 0; flex: 1; }
+  small { margin-left: var(--space-2); color: var(--text-muted); }
+  a { color: var(--link-ink); }
+  .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

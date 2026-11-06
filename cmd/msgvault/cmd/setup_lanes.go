@@ -381,7 +381,7 @@ func buildLaneReport(cfg *config.Config, env setupEnvironment) laneReport {
 }
 
 func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
-	lane := laneStatus{Lane: laneTextSearch, Label: "Text search (messages, chats, meetings)"}
+	lane := laneStatus{Lane: laneTextSearch, Label: "Search by meaning (messages, chats, meetings)"}
 	embeddings := cfg.Vector.Embeddings
 	if cfg.Vector.Enabled {
 		lane.State = laneStateOn
@@ -411,7 +411,8 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Reason = "an embedding key is present but the lane is not configured"
 		lane.Next = []string{"msgvault setup providers"}
 	default:
-		lane.Reason = "run `msgvault setup providers` to enable text search"
+		lane.Reason = "keyword search works; set up search by meaning for semantic matches"
+		lane.Next = []string{"msgvault setup providers --local-embeddings"}
 	}
 	return lane
 }
@@ -424,10 +425,10 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
-		lane.Reason = "one curated document per person rides the text-search generation"
+		lane.Reason = "one curated document per person is embedded for search by meaning"
 		if text := textSearchLane(cfg, env); text.State != laneStateOn {
 			lane.State = laneStatePending
-			lane.Reason += "; text search is not ready: " + text.Reason
+			lane.Reason += "; search by meaning is not ready: " + text.Reason
 		}
 		if lane.Consent != consentActive {
 			lane.State = laneStatePending
@@ -438,7 +439,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Reason = "set [vector.people] enabled = true with explicit retention and training postures"
 	default:
 		lane.State = laneStateOff
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	}
 	return lane
 }
@@ -575,10 +576,10 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
-		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
+		lane.Reason = "document chunks and search query text are sent to the provider for search by meaning under separate consents"
 		if text := textSearchLane(cfg, env); text.State != laneStateOn {
 			lane.State = laneStatePending
-			lane.Reason += "; text search is not ready: " + text.Reason
+			lane.Reason += "; search by meaning is not ready: " + text.Reason
 		}
 		lane.ConsentPurposes = map[string]string{
 			"document_embedding": env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding }),
@@ -596,7 +597,7 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		}
 	case documents.Enabled && !cfg.Vector.Enabled:
 		lane.State = laneStateOff
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	case documents.Enabled:
 		lane.State = laneStateOff
 		lane.Reason = "set [attachments.documents.index.embeddings] enabled = true"
@@ -689,6 +690,7 @@ func mediaPolicyLane(cfg *config.Config) laneStatus {
 		"slack " + mediaPolicySummary(cfg.Slack.MediaPolicy("")),
 		"discord " + mediaPolicySummary(cfg.Discord.MediaPolicy("")),
 		"teams " + mediaPolicySummary(cfg.Teams.MediaPolicy("")),
+		"imessage " + mediaPolicySummary(cfg.IMessage.MediaPolicy()),
 	}
 	lane.Reason = strings.Join(summaries, "; ")
 	return lane

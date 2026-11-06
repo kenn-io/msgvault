@@ -10,7 +10,145 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newPeopleRankingFixture(t *testing.T) (engine *DuckDBEngine, exact, prefix, substring int64, when time.Time) {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "gmail")
+	exact = b.AddParticipant("exact@example.test", "example.test", "Alice")
+	prefix = b.AddParticipant("prefix@example.test", "example.test", "Alice Example")
+	substring = b.AddParticipant("substring@example.test", "example.test", "Malice Stone")
+	b.AddParticipantIdentifier(exact, "slack", "alice", "@alice", true)
+	when = time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+	for index, participantID := range []int64{exact, prefix, substring} {
+		message := b.AddMessage(MessageOpt{
+			SourceID: source, ConversationID: int64(100 + index),
+			Subject: "people ranking fixture", SentAt: when.Add(time.Duration(index) * time.Minute),
+		})
+		b.AddFrom(message, participantID, "")
+	}
+	return b.BuildEngine(), exact, prefix, substring, when
+}
+
+func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
+	t.Parallel()
+	engine, exact, prefix, substring, _ := newPeopleRankingFixture(t)
+	for _, test := range []struct {
+		query string
+		want  []int64
+	}{
+		{query: "  ALICE  ", want: []int64{exact, prefix, substring}},
+		{query: "Alice Example", want: []int64{prefix}},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+				Query: test.query, Page: PageSpec{Limit: 25},
+			})
+			require.NoError(t, err)
+			got := make([]int64, 0, len(response.Rows))
+			for _, row := range response.Rows {
+				got = append(got, row.ID)
+			}
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, int64(len(test.want)), response.TotalCount)
+		})
+	}
+}
+
+func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "gmail")
+	var participants []int64
+	// Vary recency so equal text matches have a visible order.
+	for index, person := range []struct {
+		email    string
+		username string
+	}{
+		{email: "exact@example.test", username: "alice"},
+		{email: "prefix@example.test", username: "alice.example"},
+		{email: "substring@example.test", username: "malice"},
+	} {
+		participant := b.AddParticipant(person.email, "example.test", "")
+		participants = append(participants, participant)
+		b.AddParticipantIdentifier(participant, "slack", person.username, "@"+person.username, false)
+		message := b.AddMessage(MessageOpt{
+			SourceID: source, SentAt: time.Date(2026, 8, 22, 9, index, 0, 0, time.UTC),
+		})
+		b.AddFrom(message, participant, "")
+	}
+	engine := b.BuildEngine()
+	assert := assert.New(t)
+	want := []int64{participants[0], participants[1]}
+	response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+		Query: "@alice", Page: PageSpec{Limit: 25},
+	})
+	require.NoError(t, err)
+	got := make([]int64, 0, len(response.Rows))
+	for _, row := range response.Rows {
+		got = append(got, row.ID)
+	}
+	assert.Equal(want, got)
+	assert.NotContains(got, participants[2], "@alice excludes @malice")
+	assert.Equal(int64(len(want)), response.TotalCount)
+}
+
+func TestRoomPersonEligibilityAndExploreRosterGroups(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "beeper")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+	otherRoom := b.AddParticipant("room@floor.resource.calendar.google.com", "floor.resource.calendar.google.com", "Room 5B")
+	b.LinkCluster(room, otherRoom)
+	unlinkedRoom := b.AddParticipant("unlinked@resource.calendar.google.com", "resource.calendar.google.com", "Unlinked Room")
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201, MessageType: "chat", ConversationType: "group_chat"})
+	b.AddFrom(message, alice, "Alice")
+	for _, id := range []int64{room, otherRoom, unlinkedRoom} {
+		b.AddConversationParticipant(201, id)
+	}
+	engine := b.BuildEngine()
+	for _, dimension := range []string{"participant", "domain"} {
+		groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Page: PageSpec{Limit: 25}})
+		requirements.NoError(err)
+		requirements.Len(groups.Rows, 1, dimension)
+		assertions.Equal(int64(1), groups.Rows[0].Count)
+		if dimension == "domain" {
+			assertions.Equal("example.com", groups.Rows[0].Key)
+		}
+	}
+	for _, tc := range []struct {
+		id      int64
+		members []int64
+	}{{room, []int64{room, otherRoom}}, {unlinkedRoom, nil}} {
+		detail, err := engine.GetPerson(t.Context(), tc.id, Context{}, tc.members)
+		requirements.NoError(err)
+		assertions.Nil(detail)
+	}
+}
+
+func TestLinkedRoomActivityStaysWithPerson(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
+	b.LinkCluster(room, alice)
+	humanMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 301})
+	b.AddTo(humanMessage, alice, "Alice")
+	roomMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 302})
+	b.AddTo(roomMessage, room, "Room")
+	engine := b.BuildEngine()
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Page: PageSpec{Limit: 10}})
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assertions.Equal(alice, people.Rows[0].ID)
+	assertions.Equal("Alice", people.Rows[0].DisplayLabel)
+	assertions.Equal(int64(2), people.Rows[0].ActivityCount)
+}
+
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -61,6 +199,7 @@ func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t 
 // list. An entry naming several members counts once, and unlinked
 // participants are unaffected.
 func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, _, alicePrimary, aliceAlias, bob, start := linkedPeopleFixture(t)
@@ -106,6 +245,7 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 }
 
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, source, alicePrimary, aliceAlias, _, start := linkedPeopleFixture(t)
@@ -151,7 +291,39 @@ func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	assertions.Empty(matching.Rows)
 }
 
+func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "gmail")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	primary := b.AddParticipant("draft@example.org", "example.org", "Draft recipient")
+	alias := b.AddParticipant("alias@example.org", "example.org", "Draft alias")
+	b.AddParticipantIdentifier(primary, "email", "draft@example.org", "draft@example.org", true)
+	b.AddParticipantIdentifier(alias, "email", "alias@example.org", "alias@example.org", true)
+	b.LinkCluster(primary, alias)
+	draft := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true, SentAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(draft, owner, "Owner")
+	b.AddTo(draft, primary, "Draft recipient")
+	b.AddTo(draft, alias, "Draft alias")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+	engine := b.BuildEngine()
+
+	detail, err := engine.GetPerson(t.Context(), alias, Context{}, []int64{primary, alias})
+	require.NoError(err)
+	require.NotNil(detail)
+	assert.Equal(alias, detail.ID)
+	assert.Zero(detail.ActivityCount)
+	assert.Zero(detail.FileCount)
+	assert.True(detail.FirstAt.IsZero())
+	assert.True(detail.LastAt.IsZero())
+	assert.Len(detail.Identifiers, 2)
+}
+
 func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -160,6 +332,7 @@ func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
 	b.AddOwnerParticipant(source, owner)
 	member := b.AddParticipant("member@example.net", "example.net", "Member")
 	draftRecipient := b.AddParticipant("draft@example.org", "example.org", "Draft recipient")
+	b.AddParticipantIdentifier(draftRecipient, "email", "draft@example.org", "draft@example.org", true)
 	b.AddConversationParticipant(710, owner)
 	b.AddConversationParticipant(710, member)
 	start := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -174,7 +347,20 @@ func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
 
 	detail, err := engine.GetPerson(t.Context(), draftRecipient, Context{}, nil)
 	require.NoError(err)
-	assert.Nil(detail, "an unsent recipient outside the roster has no sent relationship")
+	require.NotNil(detail)
+	assert.Equal("Draft recipient", detail.DisplayLabel)
+	assert.Zero(detail.ActivityCount)
+	assert.True(detail.FirstAt.IsZero())
+	assert.True(detail.LastAt.IsZero())
+	assert.NotEmpty(detail.Identifiers)
+
+	detail, err = engine.GetPerson(t.Context(), 9999, Context{}, nil)
+	require.NoError(err)
+	assert.Nil(detail)
+	detail, err = engine.GetPerson(t.Context(), draftRecipient, Context{SourceIDs: []int64{source}}, nil)
+	require.NoError(err)
+	assert.Nil(detail)
+
 	summary, err := engine.GetPersonSummary(t.Context(), draftRecipient, ExploreRequest{Context: Context{SourceIDs: []int64{source}}}, nil)
 	require.NoError(err)
 	assert.Empty(summary.Rows)
@@ -210,6 +396,7 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 }
 
 func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
+	t.Parallel()
 	b, source, primary, alias, _, start := linkedPeopleFixture(t)
 	draft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Unsent", SentAt: start.Add(3 * time.Hour)})
 	b.AddFrom(draft, primary, "Alice Example")
@@ -257,6 +444,7 @@ func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
 }
 
 func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -275,6 +463,7 @@ func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
 }
 
 func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -311,6 +500,7 @@ func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *test
 // People and Relationships views — while unlinked participants still count
 // individually and per-entry metrics stay per-entry.
 func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -341,6 +531,7 @@ func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
 // on ANOTHER domain still counts on this domain, because membership is the
 // participant's own address — canonical resolution must never drop it.
 func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -368,6 +559,7 @@ func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
 }
 
 func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -398,6 +590,7 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 }
 
 func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -425,6 +618,7 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 }
 
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -496,6 +690,7 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 // with no named member the requested row's identifier fallback is unchanged;
 // an unlinked participant is unaffected.
 func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -545,6 +740,7 @@ func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
 }
 
 func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -590,6 +786,7 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 // Without cluster member IDs the summary stays scoped to the requested
 // participant alone, matching pre-cluster-aware behavior.
 func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -636,6 +833,7 @@ func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.
 }
 
 func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	engine := NewTestDataBuilder(t).BuildEngine()
 	_, err := engine.SearchPeople(context.Background(), PersonSearchRequest{Page: PageSpec{Limit: 501}})
@@ -645,6 +843,7 @@ func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {
 }
 
 func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -688,6 +887,7 @@ func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 }
 
 func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -716,6 +916,7 @@ func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 // canonical ID and by its alias ID must agree and both include alias-owned
 // entries, matching Explore/Files.
 func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -759,6 +960,7 @@ func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T)
 // not appear in the count — opening a domain from the list must never change
 // its displayed person count.
 func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -796,6 +998,7 @@ func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
 // member. Filtering by the counterpart's canonical ID and by its alias ID
 // must agree and both include alias-owned entries, matching Explore/Files.
 func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -832,12 +1035,13 @@ func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
 		"filtering by the alias ID must agree with the canonical ID")
 }
 
-func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.T) {
+func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	hotID := b.AddParticipant("hot@example.test", "example.test", "Alex Hot")
-	coldID := b.AddParticipant("cold@example.test", "example.test", "Alex Cold")
+	hotID := b.AddParticipant("hot@example.test", "example.test", "Alex A Hot")
+	coldID := b.AddParticipant("cold@example.test", "example.test", "Alex Z Cold")
 	b.AddOwnerParticipant(sourceID, ownerID)
 	for index := range 4 {
 		messageID := b.AddMessage(MessageOpt{
@@ -845,20 +1049,17 @@ func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.
 			SentAt: time.Date(2026, time.January, 1+index, 12, 0, 0, 0, time.UTC),
 		})
 		b.AddFrom(messageID, ownerID, "Owner")
-		b.AddTo(messageID, hotID, "Alex Hot")
+		b.AddTo(messageID, hotID, "Alex A Hot")
 	}
-	newerColdMessage := b.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "email", IsFromMe: true,
-		SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
-	})
-	b.AddFrom(newerColdMessage, ownerID, "Owner")
-	b.AddTo(newerColdMessage, coldID, "Alex Cold")
+	for range 5 {
+		newerColdMessage := b.AddMessage(MessageOpt{
+			SourceID: sourceID, MessageType: "email", IsFromMe: true,
+			SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
+		})
+		b.AddFrom(newerColdMessage, ownerID, "Owner")
+		b.AddTo(newerColdMessage, coldID, "Alex Z Cold")
+	}
 	engine := b.BuildEngine()
-	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-		CanonicalID: hotID, Year: 2026, Timezone: "UTC",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 100, calendar.Current.Temperature)
 
 	for _, test := range []struct {
 		name    string
@@ -869,24 +1070,34 @@ func TestSearchPeopleUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.
 		{name: "logical filter", context: Context{MessageTypes: []string{"email"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
-				Explore: ExploreRequest{Context: test.context}, Query: "alex",
-				Sort: SortSpec{Field: "display_label", Direction: "asc"},
-				Page: PageSpec{Limit: 25},
-			})
-			require.NoError(err)
-			require.Len(response.Rows, 2)
-			assert.Equal(hotID, response.Rows[0].ID,
-				"temperature breaks equal-quality matches before newer activity")
-			assert.Equal(100, response.Rows[0].CurrentRelationshipTemperature)
-			assert.Equal(coldID, response.Rows[1].ID)
+			for _, order := range []struct {
+				name  string
+				sort  SortSpec
+				first int64
+			}{
+				{name: "default relevance", sort: SortSpec{}, first: hotID},
+				{name: "most recent", sort: SortSpec{Field: "latest_at", Direction: "desc"}, first: coldID},
+			} {
+				t.Run(order.name, func(t *testing.T) {
+					response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+						Explore: ExploreRequest{Context: test.context}, Query: "alex",
+						Sort: order.sort, Page: PageSpec{Limit: 1},
+					})
+					require.NoError(t, err)
+					require.Len(t, response.Rows, 1)
+					assert.Equal(t, int64(2), response.TotalCount)
+					assert.Equal(t, order.first, response.Rows[0].ID, "sort applies before the first page is selected")
+					if order.name == "default relevance" {
+						assert.Equal(t, 100, response.Rows[0].CurrentRelationshipTemperature)
+					}
+				})
+			}
 		})
 	}
 }
 
 func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

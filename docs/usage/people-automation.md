@@ -19,7 +19,9 @@ Two other features have separate controls:
 ## Choose people to maintain
 
 Create a [saved profile](/docs/usage/people/#promote-a-durable-person), then turn
-tracking on for that person. Both commands accept several person IDs:
+tracking on for that person. In the Web UI, choose **More actions → Keep this profile updated** from their People page.
+
+With the CLI, both commands accept several person IDs:
 
 ```bash
 msgvault person track 7

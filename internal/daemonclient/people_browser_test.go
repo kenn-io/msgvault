@@ -83,6 +83,8 @@ func TestPeopleBrowserSearchForwardsCursorAndMapsPerson(t *testing.T) {
 	assert.Equal("cache-7", page.CacheRevision)
 	assert.Equal(int64(11), page.Rows[0].ID)
 	assert.Equal("Alice Example", page.Rows[0].DisplayLabel)
+	assert.Equal(time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), page.Rows[0].FirstAt)
+	assert.Equal(time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC), page.Rows[0].LastAt)
 	assert.Equal(int64(3), page.Rows[0].MeetingCount)
 	assert.Equal(62, page.Rows[0].CurrentRelationshipTemperature)
 	assert.Equal(97, page.Rows[0].PeakRelationshipTemperature)
@@ -284,6 +286,8 @@ func TestPeopleBrowserGetContactPreservesIdentityContext(t *testing.T) {
 	contact, err := engine.GetContact(t.Context(), 11)
 	require.NoError(err)
 	require.NotNil(contact)
+	assert.True(contact.FirstAt.IsZero())
+	assert.True(contact.LastAt.IsZero())
 	assert.Equal([]query.PersonIdentifier{{
 		Type: "beeper", Value: "beeper:example-id", IsPrimary: true, Provenance: "archive", ParticipantID: 14,
 		ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account",
@@ -771,7 +775,7 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 					"id":80,"key":"file:80","entry_key":"message:88","message_id":88,"conversation_id":44,
 					"occurred_at":"2026-08-20T12:30:00Z","source_id":6,"source_type":"meeting","source_identifier":"Recorder",
 					"containing_title":"Weekly sync","filename":"notes.pdf","mime_type":"application/pdf","mime_family":"pdf",
-					"size_bytes":2048,"participant_ids":[11],"participant_labels":["Alice"],"participant_domains":[],
+					"size_bytes":2048,"sender_label":"File Sender","participant_ids":[11],"participant_labels":["Alice"],"participant_domains":[],
 					"content_state":"local_content","content_available":true,
 					"person_provenance":{"participant_ids":[11],"roles":["from"],"directions":["from_person"]}
 				}],
@@ -802,6 +806,7 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 	require.NoError(err)
 	require.Len(files.Rows, 1)
 	assert.Equal("notes.pdf", files.Rows[0].Filename)
+	assert.Equal("File Sender", files.Rows[0].SenderLabel)
 	assert.Equal(query.FileMIMEPDF, files.Rows[0].MIMEFamily)
 	assert.Equal("files-next", files.NextCursor)
 

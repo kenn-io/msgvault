@@ -121,6 +121,9 @@ type Dialect interface {
 	DateComparison(column, operator string) string
 	DateOrderExpression(column string) string
 
+	// SourceTimelineColumn returns the source expression for date-sorted listings.
+	SourceTimelineColumn() string
+
 	// messageBodyContextBackend selects the backend-native highlighter used to
 	// extract exact context for body-index hits.
 	messageBodyContextBackend() messageBodyContextBackend
@@ -128,6 +131,8 @@ type Dialect interface {
 
 // SQLiteQueryDialect implements Dialect for SQLite.
 type SQLiteQueryDialect struct{}
+
+func (SQLiteQueryDialect) SourceTimelineColumn() string { return "coalesce(m.source_id, m.source_id)" }
 
 func (SQLiteQueryDialect) Rebind(query string) string { return query }
 
@@ -155,7 +160,7 @@ func (SQLiteQueryDialect) TimeTruncExpression(column string, granularity string)
 		return fmt.Sprintf("strftime('%%Y', %s)", column)
 	case timeGranularityMonth:
 		return fmt.Sprintf("strftime('%%Y-%%m', %s)", column)
-	case "day":
+	case timeGranularityDay:
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
 	default:
 		return fmt.Sprintf("strftime('%%Y-%%m', %s)", column)
@@ -224,6 +229,8 @@ func (SQLiteQueryDialect) SanitizeFTSQuery(query string) string {
 // PostgreSQLQueryDialect implements Dialect for PostgreSQL.
 type PostgreSQLQueryDialect struct{}
 
+func (PostgreSQLQueryDialect) SourceTimelineColumn() string { return "m.source_id" }
+
 // Rebind converts ? placeholders to $1, $2, ... for PostgreSQL.
 // Delegates to sqldialect so store.PostgreSQLDialect.Rebind stays in
 // lockstep — divergence here would route the same query to two
@@ -256,7 +263,7 @@ func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity str
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY')", column)
 	case timeGranularityMonth:
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM')", column)
-	case "day":
+	case timeGranularityDay:
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD')", column)
 	default:
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM')", column)
@@ -362,6 +369,7 @@ func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {
-	return sqliteutil.TimestampKeyFunction + "(" + column + ")"
+	// Keep zero times undated, as the timestamp key does.
+	return "NULLIF(julianday(" + column + "), " + sqliteutil.ZeroTimeJulianDay + ")"
 }
 func (PostgreSQLQueryDialect) DateOrderExpression(column string) string { return column }

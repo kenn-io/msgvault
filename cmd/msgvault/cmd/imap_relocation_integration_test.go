@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -123,6 +124,33 @@ func (f relocationFixture) assertSent(t *testing.T, otherMemberships ...string) 
 	_, total, err = f.st.SearchMessagesQuery(&search.Query{TextTerms: []string{f.draft.Body}}, 0, 10)
 	require.NoError(err)
 	assert.Zero(total)
+}
+
+func TestIMAPRelocationHistoricalNULIdentity(t *testing.T) {
+	testutil.SkipIfPostgres(t, "historical NUL identity keys cannot exist in PostgreSQL TEXT")
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newRelocationFixture(t)
+	const historicalID = "historical\x00id@example.org"
+	// Retain the pre-policy key and MIME, with a saved surviving Sent copy.
+	f.draft.MessageID = historicalID
+	f.sent.MessageID = historicalID
+	_, err := f.st.DB().Exec(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, historicalID, f.id)
+	require.NoError(err)
+	require.NoError(f.st.UpsertMessageRaw(f.id, []byte(scriptedRFC7162RawMessage(f.draft))))
+	f.final.Mailboxes[1].Messages[0] = f.sent
+	f.server.setSnapshot(f.final)
+	client, err := f.sync(t)
+	require.NoError(err)
+	require.NoError(client.Close())
+	f.assertSent(t)
+	var storedID sql.NullString
+	require.NoError(f.st.DB().QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = ?`, f.id).Scan(&storedID))
+	assert.False(storedID.Valid, "validated historical evidence is omitted from the new identity projection")
+	known, err := f.st.GetIMAPKnownUIDs(f.source.ID)
+	require.NoError(err)
+	assert.Empty(known["Drafts"])
+	assert.Equal([]uint32{1}, known["Sent"])
 }
 
 func TestIMAPRelocationAfterOverlapVANISHED(t *testing.T) {

@@ -255,6 +255,8 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	nativeMCP nativeMCPHandlers
+
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -266,6 +268,7 @@ type Server struct {
 	statsSnapshotWait       time.Duration
 	vectorStatsTimeout      time.Duration
 
+	senderAuthPins         map[int64][]string
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
@@ -643,6 +646,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                    opts.Config,
+		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
@@ -753,6 +757,7 @@ func (s *Server) setupRouter() http.Handler {
 	apiV1 := s.setupAPIV1Group(api)
 	s.registerHumaRoutes(api, apiV1)
 	s.registerPprofHandlers(mux)
+	s.mountNativeMCP(mux)
 
 	// Registered API, debug, OpenAPI, and docs routes retain priority over the
 	// root handler. The root serves exact embedded assets and safe navigation;
@@ -974,10 +979,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	server := s.server
 	s.serverMu.RUnlock()
 	if server == nil {
+		s.closeNativeMCP()
 		return importJobsErr
 	}
 	s.logger.Info("shutting down API server")
-	return errors.Join(importJobsErr, server.Shutdown(ctx))
+	drainErr := server.Shutdown(ctx)
+	if drainErr == nil {
+		s.closeNativeMCP()
+	}
+	return errors.Join(importJobsErr, drainErr)
 }
 
 // Router returns the HTTP router for testing.
@@ -1180,7 +1190,7 @@ func serveWithProtectiveRequestDeadline(
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost &&
-			(r.URL.Path == meetingImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
+			(isNativeMCPPath(r.URL.Path) || r.URL.Path == meetingImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
 			s.apiRequestAuthorized(r) {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return

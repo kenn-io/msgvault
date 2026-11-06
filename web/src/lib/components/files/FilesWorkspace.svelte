@@ -40,15 +40,19 @@
   import {
     Button,
     Checkbox,
-    FilterDropdown,
+    MEDIA,
     SearchInput,
     SegmentedControl,
     Toggle,
     Tooltip,
     virtualSlice,
   } from '@kenn-io/kit-ui';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
+  import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import { sourceMailbox, sourceTypeLabel } from '../../sources/labels';
   import { analyticalAuthority } from '../../explore/authority';
   import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
@@ -66,6 +70,9 @@
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
   import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { visualReadiness } from '../../search/visual-ready.svelte';
+  import RowKind from '../explore/RowKind.svelte';
+  import FileFilters from './FileFilters.svelte';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
 
@@ -113,6 +120,7 @@
     expectedAuthority?: string;
     embedded?: boolean;
     showHeader?: boolean;
+    toolbar?: Snippet<[Snippet, () => void, boolean]>;
     fileCount?: number | null;
     fileCountLoading?: boolean;
     sort: FileSearchSort;
@@ -131,6 +139,7 @@
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
     onPersonDirectionsChange?: (directions: PersonFileDirection[]) => void;
     onRestorationComplete?: (epoch: number) => void;
+    onConfigureVisualSearch?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
@@ -142,6 +151,7 @@
     expectedAuthority = undefined,
     embedded = false,
     showHeader = true,
+    toolbar = undefined,
     fileCount = $bindable(null),
     fileCountLoading = $bindable(false),
     sort,
@@ -160,10 +170,13 @@
     onPersonPresentationChange = undefined,
     onPersonDirectionsChange = undefined,
     onRestorationComplete = undefined,
+    onConfigureVisualSearch = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
-  const geometry = new RowGeometry();
+  const visual = visualReadiness();
+  const compact = new MediaQuery(MEDIA.compact);
+  const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
   let rows = $state<WorkspaceFileRow[]>([]);
@@ -214,6 +227,8 @@
   let visualImageBase64 = $state('');
   let visualImageName = $state('');
   let visualImageRevision = $state(0);
+  let visualImageSelection = 0;
+  let visualImageInput = $state<HTMLInputElement>();
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -232,25 +247,21 @@
     const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
     return selected.length > 0 ? selected : visibleMIMEFamilies;
   });
-  const selectedTypeCount = $derived(mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family)).length);
-  const typeSections = $derived([
-    {
-      items: visibleMIMEFamilies.map((family) => {
-        const included = effectiveMIMEFamilies.includes(family);
-        return {
-          // The kit derives the description element id from item.id, so keep it unique on the page.
-          id: `file-type-${family}`,
-          label: FILE_FAMILY_LABELS[family],
-          active: included,
-          // Without a type filter every type is shown, so no item is "not included".
-          description: selectedTypeCount === 0 ? undefined : included ? 'Included' : 'Not included',
-          disabled: personScoped && included && effectiveMIMEFamilies.length === 1,
-          closeOnSelect: false,
-          onSelect: () => toggleMIME(family),
-        };
-      }),
-    },
-  ]);
+  const columnCount = $derived(8 + (personScoped ? 1 : 0));
+  // Flexible columns shrink to ellipsis; below MIN_TABLE_WIDTH the grid scrolls sideways instead.
+  const columns = $derived(
+    [
+      '112px',
+      'minmax(0, 1.5fr)',
+      'minmax(0, 1fr)',
+      '82px',
+      ...(personScoped ? ['minmax(0, 1.2fr)'] : []),
+      'minmax(0, 1fr)',
+      'minmax(0, 1fr)',
+      'minmax(0, 1.3fr)',
+      '120px',
+    ].join(' '),
+  );
   const mediaRows = $derived(rows as PersonFileSearchRow[]);
   $effect(() => {
     personPresentation = providedPersonPresentation;
@@ -369,8 +380,7 @@
     previousRowHeight = nextHeight;
     if (!grid || nextHeight === undefined || previousHeight === undefined || previousHeight === nextHeight) return;
     const element = grid;
-    const rebased =
-      activeIndex >= 0 ? activeIndex * nextHeight : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(element, nextHeight, expectedScrollHeight, rebased));
   });
@@ -651,13 +661,6 @@
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
   }
-  function toggleMIME(family: FileMIMEFamily): void {
-    const selected = personScoped ? effectiveMIMEFamilies : mimeFamilies;
-    if (selected.includes(family) && personScoped && selected.length === 1) return;
-    onMIMEFamiliesChange?.(
-      selected.includes(family) ? selected.filter((value) => value !== family) : [...selected, family],
-    );
-  }
   function togglePersonDirection(direction: PersonFileDirection): void {
     if (personDirections.includes(direction)) {
       if (personDirections.length === 1) return;
@@ -703,8 +706,8 @@
     if (grid && top < grid.scrollTop) grid.scrollTop = top;
     else if (grid && top + height > grid.scrollTop + visibleHeight) grid.scrollTop = top + height - visibleHeight;
   }
-  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement): number {
-    return tableViewportHeight(element.clientHeight, header.offsetHeight || 34, window.innerHeight);
+  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement | undefined): number {
+    return tableViewportHeight(element.clientHeight, header?.offsetHeight || 34, window.innerHeight);
   }
   function applyDensityRebase(
     element: HTMLDivElement,
@@ -760,6 +763,7 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    const selection = ++visualImageSelection;
     if (file.size > 20 * 1024 * 1024) {
       error = 'Visual query images must be 20 MiB or smaller.';
       rejectedImages += 1;
@@ -772,6 +776,7 @@
       reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
+    if (selection !== visualImageSelection) return;
     submitted = true;
     visualQuery = visualQueryDraft = '';
     visualImageName = file.name;
@@ -785,7 +790,26 @@
     visualImageName = '';
     visualImageRevision += 1;
   }
+  function clearVisualSearch(): void {
+    clearTimeout(visualQueryDebounce);
+    visualQuery = visualQueryDraft = '';
+    visualImageSelection += 1;
+    removeVisualImage();
+    if (visualImageInput) visualImageInput.value = '';
+  }
 </script>
+
+{#snippet sortHeader(field: FileSearchSort['field'], label: string)}
+  <!-- kit-ui-check-ignore: the virtualized div grid owns focus and deep restoration; kit TableHeaderCell renders a <th> and needs kit Table. -->
+  <span class={`header--${field}`} role="columnheader" aria-sort={sort.field === field ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+    <button type="button" aria-label={`Sort by ${label.toLowerCase()}`} onclick={() => chooseSort(field)}>
+      {label}
+      {#if sort.field === field}
+        {#if sort.direction === 'asc'}<ArrowUpIcon size="12" aria-hidden="true" />{:else}<ArrowDownIcon size="12" aria-hidden="true" />{/if}
+      {/if}
+    </button>
+  </span>
+{/snippet}
 
 <svelte:element
   this={embedded ? (showHeader ? 'section' : 'div') : 'main'}
@@ -803,6 +827,7 @@
     </header>
   {/if}
 
+  {#snippet controls()}
   <div class="file-controls" aria-label="File filters">
     {#if personScoped}
       <SegmentedControl
@@ -829,22 +854,7 @@
         />
       </div>
     {/if}
-    <label>
-      Filename
-      <SearchInput
-        value={filenameQuery}
-        ariaLabel="Filter filename"
-        placeholder="Filter filename"
-        oninput={(value) => onFilenameQueryChange?.(value)}
-      />
-    </label>
-    <FilterDropdown
-      label="Type"
-      detail={selectedTypeCount === 0 ? 'All types' : undefined}
-      badgeCount={selectedTypeCount}
-      sections={typeSections}
-    />
-    <Toggle bind:checked={hostedVisualSearch} label="Visual search" />
+    {#if visual?.ready}<Toggle bind:checked={hostedVisualSearch} label="Visual search" />{:else if onConfigureVisualSearch}<span>Visual search · <Button size="sm" label="Set up" onclick={onConfigureVisualSearch} /></span>{/if}
     {#if hostedVisualSearch}
       <label>
         Visual query
@@ -860,6 +870,7 @@
         Query image
         <input
           type="file"
+          bind:this={visualImageInput}
           accept="image/jpeg,image/png,image/webp"
           onchange={(event) => void chooseVisualImage(event)}
         />
@@ -871,6 +882,18 @@
       <span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
     {/if}
   </div>
+  {/snippet}
+  {#if toolbar}
+    {@render toolbar(controls, clearVisualSearch, hostedVisualSearch && Boolean(visualQuery.trim() || visualImageBase64))}
+  {:else}
+    <div class="embedded-controls">
+      <div class="embedded-filters">
+        <FileFilters {filenameQuery} mimeFamilies={personScoped ? effectiveMIMEFamilies : mimeFamilies} available={visibleMIMEFamilies} keepOne={personScoped} onFilenameQueryChange={(value) => onFilenameQueryChange?.(value)} onMIMEFamiliesChange={(value) => onMIMEFamiliesChange?.(value)} />
+      </div>
+      {@render controls()}
+    </div>
+  {/if}
+
 
   {#if personScoped && personPresentation === 'media'}
     <PersonMediaGallery
@@ -895,7 +918,7 @@
         role="grid"
         aria-label="Files results"
         aria-rowcount={accessibilityRowCount}
-        aria-colcount={personScoped ? 9 : 8}
+        aria-colcount={columnCount}
         aria-busy={loading ||
           loadingMore ||
           pendingRestoration !== undefined ||
@@ -905,35 +928,27 @@
         onkeydown={handleKeydown}
         onscroll={handleScroll}
       >
-        <div class="table-header" class:person-columns={personScoped} bind:this={headerElement} role="row">
-          <span role="columnheader"
-            ><button type="button" aria-label="Sort by date" onclick={() => chooseSort('occurred_at')}>Date</button
-            ></span
-          >
-          <span role="columnheader"
-            ><button type="button" aria-label="Sort by filename" onclick={() => chooseSort('filename')}>Filename</button
-            ></span
-          >
-          <span role="columnheader">Type</span>
-          <span role="columnheader"
-            ><button type="button" aria-label="Sort by size" onclick={() => chooseSort('size')}>Size</button></span
-          >
-          {#if personScoped}<span role="columnheader">Relationship</span>{/if}
-          <span role="columnheader">People / domain</span>
-          <span role="columnheader">Source</span>
-          <span role="columnheader">Containing item</span>
-          <span role="columnheader">Availability</span>
+        <div class="table-header" style:--row-template={columns} bind:this={headerElement} role="row">
+          {@render sortHeader('occurred_at', 'Date')}
+          {@render sortHeader('filename', 'Filename')}
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Type</span>
+          {@render sortHeader('size', 'Size')}
+          {#if personScoped}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Direction</span>{/if}
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>People</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Source</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Message</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Availability</span>
         </div>
         <div class="table-body" role="rowgroup">
           {#if unavailable?.readiness === 'building'}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice" role="status">Preparing analytical cache…</div>
               </div>
             </div>
           {:else if unavailable}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice" role="alert">
                   <strong>Analytical cache unavailable</strong><span>{unavailable.message}</span>
                 </div>
@@ -941,7 +956,7 @@
             </div>
           {:else if error && rows.length === 0}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice" role="alert">
                   <span>{error}</span>
                   <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
@@ -950,19 +965,19 @@
             </div>
           {:else if loading && rows.length === 0}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice" role="status">Loading files…</div>
               </div>
             </div>
           {:else if rows.length === 0}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice">No files match this view.</div>
               </div>
             </div>
           {:else if !slice || rowHeight === undefined}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="notice" role="status">Preparing files layout…</div>
               </div>
             </div>
@@ -976,7 +991,7 @@
                   <div
                     id={rowID(row)}
                     class="data-row"
-                    class:person-columns={personScoped}
+                    style:--row-template={columns}
                     class:data-row--active={index === activeIndex}
                     role="row"
                     aria-rowindex={index + 2}
@@ -991,23 +1006,32 @@
                       }
                     }}
                   >
-                    <span role="gridcell"
+                    <span class="file-kind" aria-hidden="true"><RowKind kind="file" messageType="" /></span>
+                    <span class="cell--date" role="gridcell" aria-colindex={1}
                       ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
                     >
                     <span
+                      class="cell--name"
                       role="gridcell"
+                      aria-colindex={2}
                       title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
                     >
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
-                    <span role="gridcell" title={row.mime_type || row.mime_family}
+                    <span class="cell--type" role="gridcell" aria-colindex={3} title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span
                     >
-                    <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
-                    {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
-                    <span role="gridcell">{people(row)}</span>
-                    <span role="gridcell">{row.source_identifier}</span>
-                    <span role="gridcell">
+                    <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
+                    {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
+                    <span class="cell--people" role="gridcell" aria-colindex={personScoped ? 6 : 5}>
+                      {#if compact.current}
+                        <span class="phone-sender">{row.sender_label || people(row)}</span>
+                      {:else}
+                        <span class="desktop-people">{people(row)}</span>
+                      {/if}
+                    </span>
+                    <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span class="cell--message" role="gridcell" aria-colindex={personScoped ? 8 : 7}>
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}
                         <button
@@ -1020,7 +1044,7 @@
                         {row.containing_title || row.entry_key}
                       {/if}
                     </span>
-                    <span role="gridcell">{availability(row)}</span>
+                    <span class="cell--availability" class:local-content={row.content_state === 'local_content'} role="gridcell" aria-colindex={personScoped ? 9 : 8}>{availability(row)}</span>
                   </div>
                 {/each}
               </div>
@@ -1031,7 +1055,7 @@
                cursor) stays visible next to the rows already loaded; Reload
                restarts the listing from page one. -->
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="page-error" role="alert">
                   <span>{error}</span>
                   <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
@@ -1041,7 +1065,7 @@
           {/if}
           {#if pageError}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="page-error" role="alert">
                   <span>{pageError}</span>
                   <Button
@@ -1055,19 +1079,19 @@
             </div>
           {/if}
           {#if loadingMore}<div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="progress" role="status">Loading more…</div>
               </div>
             </div>{/if}
           {#if pendingViewerState === 'pending'}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="progress" role="status">Opening file…</div>
               </div>
             </div>
           {:else if pendingViewerState === 'missing'}
             <div role="row">
-              <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
+              <div role="gridcell" aria-colspan={columnCount}>
                 <div class="page-error" role="alert">
                   <span>The selected file is not in the current results.</span>
                 </div>
@@ -1106,6 +1130,7 @@
   }
   .workspace-header {
     display: flex;
+    flex: none;
     align-items: baseline;
     justify-content: space-between;
   }
@@ -1143,40 +1168,38 @@
   }
   .files-table {
     display: flex;
-    min-height: 0;
-    flex: 1;
+    min-height: 102px;
+    flex: 1 0 102px;
     flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
   }
-  .table-header,
-  .data-row {
+  .embedded-controls {
     display: grid;
-    grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(
-        130px,
-        1fr
-      ) minmax(160px, 1.3fr) 105px;
-    align-items: center;
+    min-height: 0;
+    flex: 0 1 auto;
+    gap: var(--space-4);
+    overflow: auto;
   }
-  .table-header.person-columns,
-  .data-row.person-columns {
-    grid-template-columns: 112px minmax(150px, 1.5fr) minmax(110px, 1fr) 82px minmax(150px, 1.2fr) minmax(
-        130px,
-        1.1fr
-      ) minmax(120px, 1fr) minmax(150px, 1.2fr) 105px;
-  }
+  .embedded-filters { display: flex; flex-wrap: wrap; gap: var(--section-gap); }
   .files-grid {
     display: flex;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     overflow: auto;
+    overflow-anchor: none;
     outline: none;
   }
-  .files-grid:focus-visible {
-    box-shadow: inset 0 0 0 2px var(--accent-blue);
+  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
+  .table-header,
+  .data-row {
+    display: grid;
+    align-items: center;
+    min-width: 840px;
+    grid-template-columns: var(--row-template);
   }
   .table-header {
     position: sticky;
@@ -1200,6 +1223,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .data-row .desktop-people { padding: 0; }
   .table-header button {
     width: 100%;
     height: var(--table-header-height);
@@ -1244,7 +1268,7 @@
     inset: 0 0 auto;
   }
   .data-row {
-    height: var(--row-height);
+    height: var(--table-short-row-height);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
@@ -1276,5 +1300,29 @@
     padding: var(--space-2);
     background: var(--bg-inset);
     text-align: center;
+  }
+  .file-kind { display: none; }
+  @media (max-width: 640px) {
+    .table-header, .data-row { min-width: 0; }
+    .table-header { display: flex; gap: var(--space-2); padding: 0 var(--pane-pad-x); }
+    .table-header > span { padding: 0; }
+    .table-header button { width: auto; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+    .data-row {
+      grid-template-columns: 22px auto auto minmax(0, 1fr) auto;
+      grid-template-areas: 'icon name name name avail' 'date date size people people';
+      align-content: center;
+      gap: var(--space-1) 0;
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .data-row span { padding: 0; }
+    .data-row .file-kind { display: block; grid-area: icon; color: var(--artifact-ink); }
+    .file-kind :global(.row-kind__label) { display: none; }
+    .cell--name { grid-area: name; color: var(--text-primary); font-size: var(--font-size-sm); }
+    .cell--date { grid-area: date; }
+    .cell--size { grid-area: size; }
+    .cell--people { grid-area: people; }
+    .cell--size::before, .cell--people::before { content: ' · '; white-space: pre; }
+    .data-row .cell--availability { grid-area: avail; color: var(--text-muted); text-align: right; }
+    .cell--type, .cell--direction, .cell--source, .cell--message, .local-content { display: none; }
   }
 </style>

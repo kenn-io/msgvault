@@ -435,14 +435,22 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 	return nil
 }
 
+func hasNormalizedRelationshipActivity(analyticsDir string) (bool, error) {
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	if err != nil {
+		return false, fmt.Errorf("find relationship activity: %w", err)
+	}
+	return len(activityFiles) > 0, nil
+}
+
 // The normalized relationship view is used by internal query paths even when
 // legacy analytical views are disabled.
 func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDir string) error {
-	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
 	if err != nil {
-		return fmt.Errorf("find relationship activity: %w", err)
+		return err
 	}
-	if len(activityFiles) > 0 {
+	if hasActivity {
 		parquet := func(dataset string, hive bool) string {
 			glob := filepath.Join(analyticsDir, dataset, "*.parquet")
 			options := ""
@@ -466,25 +474,56 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 	return nil
 }
 
-// refreshUnsentMessageIDs loads the entry-level exclusion set once per
-// committed cache publication. Querying sparse facts avoids roster expansion;
-// retaining only unsent IDs avoids a Parquet scan on every people search.
-func refreshUnsentMessageIDs(ctx context.Context, db *sql.DB, analyticsDir string) error {
+// refreshRelationshipQuerySets loads unsent and owner event message IDs and owner canonicals once
+// per committed cache publication, avoiding sparse-fact scans on each request.
+func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir string) error {
 	if analyticsDir == "" {
 		return nil
+	}
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
+	if err != nil {
+		return err
 	}
 	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin unsent message ID refresh: %w", err)
+		return fmt.Errorf("begin relationship query set refresh: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_unsent_messages AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND unsent")
 	if err != nil {
 		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
 	}
+	ownerSQL := "SELECT NULL::BIGINT AS canonical_id WHERE false"
+	// Match the expanded view: unpartitioned caches have no normalized activity.
+	if hasActivity {
+		canon := "(" + identityindex.CanonicalParticipantsSQL(
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),
+		) + ")"
+		owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))
+		// Source-native is_from_me messages can identify an owner absent from owner_participants.
+		ownerSQL = fmt.Sprintf(`
+  %s
+  UNION
+  SELECT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+  WHERE canonical_id IS NOT NULL AND is_owner`,
+			identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path))
+	}
+	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS "+ownerSQL)
+	if err != nil {
+		return errors.Join(fmt.Errorf("load relationship owner canonicals: %w", err), tx.Rollback())
+	}
+	eventSQL := "SELECT NULL::BIGINT AS message_id WHERE false"
+	if hasActivity {
+		// Sparse activity marks is_owner only on direct rows with a confirmed owner canonical or the is_from_me owner sender, so roster expansion adds no owner-attended events.
+		eventSQL = "SELECT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND is_owner"
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_event_messages AS "+eventSQL); err != nil {
+		return errors.Join(fmt.Errorf("load owner event message IDs: %w", err), tx.Rollback())
+	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit unsent message ID refresh: %w", err)
+		return fmt.Errorf("commit relationship query set refresh: %w", err)
 	}
 	return nil
 }
@@ -690,31 +729,7 @@ SELECT
     ) AS labels,
     m.deleted_from_source_at
 FROM messages m
-LEFT JOIN (
-    SELECT
-        mr.message_id,
-        FIRST(p.email_address) AS from_email,
-        FIRST(
-            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
-        ) AS from_name,
-        FIRST(p.domain) AS from_domain,
-        FIRST(COALESCE(p.phone_number, '')) AS from_phone
-    FROM message_recipients mr
-    JOIN participants p ON p.id = mr.participant_id
-    WHERE mr.recipient_type = 'from'
-    GROUP BY mr.message_id
-) ms ON ms.message_id = m.id
-LEFT JOIN (
-    SELECT
-        msg.id AS message_id,
-        COALESCE(p.email_address, '') AS from_email,
-        COALESCE(p.display_name, '') AS from_name,
-        COALESCE(p.domain, '') AS from_domain,
-        COALESCE(p.phone_number, '') AS from_phone
-    FROM messages msg
-    JOIN participants p ON p.id = msg.sender_id
-    WHERE msg.sender_id IS NOT NULL
-) ds ON ds.message_id = m.id AND ms.message_id IS NULL
+` + sqlMessageSenderJoins + `
 LEFT JOIN (
     SELECT
         ml.message_id,
@@ -809,3 +824,49 @@ LEFT JOIN message_recipients mr ON mr.message_id = m.id
 LEFT JOIN participants p ON p.id = mr.participant_id
 GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 `
+
+// sqlMessageSenderJoins resolves a message's From recipient before its direct
+// sender. Separate fragments let page queries bound each input before aggregation.
+const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
+
+const sqlMessageSenderJoinsStart = `LEFT JOIN (
+    SELECT
+        mr.message_id,
+        FIRST(p.email_address) AS from_email,
+        FIRST(
+            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
+        ) AS from_name,
+        FIRST(p.domain) AS from_domain,
+        FIRST(COALESCE(p.phone_number, '')) AS from_phone
+    FROM message_recipients mr
+    JOIN participants p ON p.id = mr.participant_id
+    WHERE mr.recipient_type = 'from'`
+
+const sqlMessageSenderJoinsMiddle = `
+    GROUP BY mr.message_id
+) ms ON ms.message_id = m.id
+LEFT JOIN (
+    SELECT
+        msg.id AS message_id,
+        COALESCE(p.email_address, '') AS from_email,
+        COALESCE(p.display_name, '') AS from_name,
+        COALESCE(p.domain, '') AS from_domain,
+        COALESCE(p.phone_number, '') AS from_phone
+    FROM messages msg
+    JOIN participants p ON p.id = msg.sender_id
+    WHERE msg.sender_id IS NOT NULL`
+
+const sqlMessageSenderJoinsEnd = `
+) ds ON ds.message_id = m.id AND ms.message_id IS NULL`
+
+// sqlPageSenderLabels reuses v_messages' sender relation with bounded inputs.
+// Only the page label falls back from an unnamed direct sender to its identifier.
+func sqlPageSenderLabels(messageIDs string) string {
+	return `SELECT m.id AS sender_message_id,
+		COALESCE(NULLIF(TRIM(COALESCE(ms.from_name, ds.from_name)), ''),
+			NULLIF(COALESCE(ms.from_phone, ds.from_phone), ''), ms.from_email, ds.from_email, '') AS sender_label
+	FROM messages m
+	` + sqlMessageSenderJoinsStart + " AND mr.message_id IN (" + messageIDs + ")" +
+		sqlMessageSenderJoinsMiddle + " AND msg.id IN (" + messageIDs + ")" + sqlMessageSenderJoinsEnd + `
+	WHERE m.id IN (` + messageIDs + `)`
+}

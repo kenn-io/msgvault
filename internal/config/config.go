@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
@@ -413,6 +414,16 @@ func (c CardDAVConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 	return origin, addresses, nil
 }
 
+// WhatsAppAppleSource schedules imports from a native macOS WhatsApp store.
+type WhatsAppAppleSource struct {
+	Name        string `toml:"name"`
+	Enabled     bool   `toml:"enabled"`
+	Path        string `toml:"path"`
+	Phone       string `toml:"phone"`
+	DisplayName string `toml:"display_name"`
+	Schedule    string `toml:"schedule"`
+}
+
 type SynctechSMSConfig struct {
 	Sources []SynctechSMSSource `toml:"sources"`
 }
@@ -489,18 +500,18 @@ type BackupConfig struct {
 
 const (
 	// DefaultChatMaxMediaBytes is the per-attachment size cap for Beeper,
-	// Slack, and Teams when max_media_mb is unset. The importers fall back to
-	// the same attachmentpolicy constant, so the effective default is one
-	// number wherever the policy is resolved.
+	// Inline, Slack, Teams, and iMessage when max_media_mb is unset. The
+	// importers fall back to the same attachmentpolicy constant, so the
+	// effective default is one number wherever the policy is resolved.
 	DefaultChatMaxMediaBytes       int64         = attachmentpolicy.DefaultChatMaxBytes
 	DefaultDiscordMaxMediaBytes    int64         = 50 << 20
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
 
 	// DefaultMediaMaxParticipants is the participant cap applied to Beeper,
-	// Slack, Discord, and Teams media collection when a config file omits
-	// media_max_participants. Media from rooms above this size is skipped
-	// with a typed participant_threshold marker; direct chats and small
-	// groups keep theirs. NewDefaultConfig pre-fills the four provider
+	// Inline, Slack, Discord, Teams, and iMessage media collection when a
+	// config file omits media_max_participants. Media from rooms above this
+	// size is skipped with a typed participant_threshold marker; direct chats
+	// and small groups keep theirs. NewDefaultConfig pre-fills the six provider
 	// fields so a file that omits the key inherits the cap, while an explicit
 	// media_max_participants = 0 still means "no cap" because TOML decoding
 	// overwrites the pre-filled value with the operator's zero.
@@ -562,7 +573,27 @@ func (b *BackupConfig) Validate() error {
 	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
 }
 
+// SenderAuthConfig pins receiver identities for each archive source.
+type SenderAuthConfig struct {
+	Sources []SenderAuthSource `toml:"sources"`
+}
+
+type SenderAuthSource struct {
+	SourceID           int64    `toml:"source_id"`
+	TrustedAuthservIDs []string `toml:"trusted_authserv_ids"`
+}
+
+// Pins returns a snapshot that callers can retain across config edits.
+func (c SenderAuthConfig) Pins() map[int64][]string {
+	pins := make(map[int64][]string, len(c.Sources))
+	for _, source := range c.Sources {
+		pins[source.SourceID] = append([]string(nil), source.TrustedAuthservIDs...)
+	}
+	return pins
+}
+
 type Config struct {
+	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -581,6 +612,7 @@ type Config struct {
 	CardDAV            CardDAVConfig                   `toml:"carddav"`
 	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
 	Accounts           []AccountSchedule               `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
@@ -603,6 +635,7 @@ type Config struct {
 	Activity           ActivityConfig                  `toml:"activity"`
 	People             PeopleConfig                    `toml:"people"`
 	Teams              TeamsConfig                     `toml:"teams"`
+	IMessage           IMessageConfig                  `toml:"imessage"`
 	Deletion           DeletionConfig                  `toml:"deletion"`
 	IMAP               IMAPConfig                      `toml:"imap"`
 	Gmail              GmailConfig                     `toml:"gmail"`
@@ -855,6 +888,8 @@ func (c *MicrosoftConfig) EffectiveTenantID() string {
 // SyncConfig holds sync-related configuration.
 type SyncConfig struct {
 	RateLimitQPS int `toml:"rate_limit_qps"`
+	// IMAPMaxCommandsPerMinute paces each client's sync reads; zero disables pacing.
+	IMAPMaxCommandsPerMinute int `toml:"imap_max_commands_per_minute"`
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
@@ -873,8 +908,11 @@ type SyncConfig struct {
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
-// Validate rejects blank saved IMAP folder names.
+// Validate rejects invalid sync limits and blank saved IMAP folder names.
 func (s *SyncConfig) Validate() error {
+	if s.IMAPMaxCommandsPerMinute < 0 {
+		return errors.New("sync.imap_max_commands_per_minute must be non-negative")
+	}
 	for identifier, folders := range s.IMAPSkipFolders {
 		for _, folder := range folders {
 			if strings.TrimSpace(folder) == "" {
@@ -944,11 +982,12 @@ func NewDefaultConfig() *Config {
 		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
-		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Beeper:   BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Slack:    SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Inline:   InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -1159,6 +1198,16 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
+	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
+	for i := range cfg.WhatsAppApple {
+		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
+		if !cfg.WhatsAppApple[i].Enabled {
+			continue
+		}
+		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
+		}
+	}
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for i := range cfg.Muesli {
 		cfg.Muesli[i].DBPath = expandPath(cfg.Muesli[i].DBPath)
@@ -1180,6 +1229,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
+		cfg.IMessage.DBPath = resolveRelative(cfg.IMessage.DBPath, cfg.HomeDir)
+		for i := range cfg.WhatsAppApple {
+			cfg.WhatsAppApple[i].Path = resolveRelative(cfg.WhatsAppApple[i].Path, cfg.HomeDir)
+		}
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for i := range cfg.Muesli {
 			cfg.Muesli[i].DBPath = resolveRelative(cfg.Muesli[i].DBPath, cfg.HomeDir)
@@ -1290,6 +1343,9 @@ type draftSelector struct {
 
 func (c *Config) validateDraftSources(content []byte) error {
 	var raw struct {
+		SenderAuth struct {
+			Sources []draftSelector `toml:"sources"`
+		} `toml:"sender_auth"`
 		IMAP struct {
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"imap"`
@@ -1309,8 +1365,22 @@ func (c *Config) validateDraftSources(content []byte) error {
 		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
 		return err
 	}
-	return validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
-		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
+	if err := validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
+		return err
+	}
+	return validateDraftSelectors("sender_auth.sources", c.SenderAuth.Sources, raw.SenderAuth.Sources,
+		func(s SenderAuthSource) int64 { return s.SourceID }, func(s SenderAuthSource) error {
+			if len(s.TrustedAuthservIDs) == 0 {
+				return errors.New("trusted_authserv_ids must contain at least one ID")
+			}
+			for _, id := range s.TrustedAuthservIDs {
+				if id == "" || strings.ContainsFunc(id, unicode.IsSpace) {
+					return errors.New("trusted_authserv_ids must be nonblank and contain no whitespace")
+				}
+			}
+			return nil
+		})
 }
 
 func validateDraftSelectors[T any](section string, entries []T, raw []draftSelector, sourceID func(T) int64, check func(T) error) error {
@@ -1785,6 +1855,17 @@ type TeamsConfig struct {
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
+// IMessageConfig configures scheduled imports and media limits for Messages.
+// MediaMaxParticipants distinguishes omitted values from explicit zero.
+type IMessageConfig struct {
+	Enabled              bool   `toml:"enabled"`
+	Schedule             string `toml:"schedule"`
+	DBPath               string `toml:"db_path"`
+	Me                   string `toml:"me"`
+	MediaMaxParticipants int    `toml:"media_max_participants"`
+	MaxMediaMB           int    `toml:"max_media_mb"`
+}
+
 // MediaEnabled reports whether file download is on (default true).
 func (s SlackConfig) MediaEnabled() bool {
 	return s.Media == nil || *s.Media
@@ -1859,6 +1940,12 @@ func (t TeamsConfig) MediaPolicy(email string) attachmentpolicy.Policy {
 		t.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
 }
 
+// MediaPolicy resolves the [imessage] media limits.
+func (i IMessageConfig) MediaPolicy() attachmentpolicy.Policy {
+	return resolveMediaPolicy(nil, "", i.MediaMaxParticipants,
+		i.MaxMediaMB, DefaultChatMaxMediaBytes, MediaAccountConfig{}, false)
+}
+
 func resolveMediaPolicy(
 	providerMedia *bool,
 	scope string,
@@ -1914,22 +2001,30 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
+		{name: "imessage", policy: c.IMessage.MediaPolicy(), providerMaxMB: c.IMessage.MaxMediaMB},
 	}
 	for _, provider := range providers {
-		if provider.providerMaxMB < 0 {
-			return fmt.Errorf("invalid [%s] max_media_mb %d: must be zero or positive", provider.name, provider.providerMaxMB)
+		if !validMaxMediaMB(provider.providerMaxMB) {
+			return fmt.Errorf("invalid [%s] max_media_mb %d: must be between 0 and %d", provider.name, provider.providerMaxMB, maxMediaMBLimit)
 		}
 		if err := provider.policy.Validate(); err != nil {
 			return fmt.Errorf("invalid [%s] attachment policy: %w", provider.name, err)
 		}
 		for account, maxMediaMB := range provider.accountMaxMedia {
-			if maxMediaMB < 0 {
-				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be zero or positive",
-					provider.name, account, maxMediaMB)
+			if !validMaxMediaMB(maxMediaMB) {
+				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be between 0 and %d",
+					provider.name, account, maxMediaMB, maxMediaMBLimit)
 			}
 		}
 	}
 	return nil
+}
+
+// maxMediaMBLimit is the largest max_media_mb whose byte count fits in an int64.
+const maxMediaMBLimit = math.MaxInt64 >> 20
+
+func validMaxMediaMB(mb int) bool {
+	return mb >= 0 && int64(mb) <= maxMediaMBLimit
 }
 
 func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {
@@ -2581,6 +2676,17 @@ func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {
 func (c *Config) ScheduledSynctechSMSSources() []SynctechSMSSource {
 	var out []SynctechSMSSource
 	for _, src := range c.SynctechSMS.Sources {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// ScheduledWhatsAppAppleSources returns enabled stores with a cron schedule.
+func (c *Config) ScheduledWhatsAppAppleSources() []WhatsAppAppleSource {
+	var out []WhatsAppAppleSource
+	for _, src := range c.WhatsAppApple {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

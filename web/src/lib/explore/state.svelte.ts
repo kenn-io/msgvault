@@ -16,9 +16,7 @@ import type {
   PersonFileDirection,
   ExploreURLState,
   ExploreWorkspace,
-  DirectoryReviewKind,
   IdentityReviewState,
-  RelationshipReviewState,
   RelationshipFacet,
   OperationKind,
   OperationLane,
@@ -29,10 +27,11 @@ import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceV
 import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
-import { hasValidSearchAuthority, predicateFingerprint } from './selection';
+import { canonicalFingerprint, hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
+import { relationshipHistoryState } from '../relationships/reader-history';
 import {
   normalizeSettingsNavigationAuthority,
   settingsNavigationTarget,
@@ -55,6 +54,7 @@ const FILTER_DIMENSIONS = new Set([
   'domain',
   'mailing_list',
   'message_type',
+  'kind',
   'after',
   'before',
   'deletion'
@@ -77,9 +77,8 @@ const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'directoryLastContactBefore',
   'directorySort',
   'directoryPersonID',
-  'reviewKind',
+  'peopleDuplicates',
   'identityState',
-  'relationshipReviewState',
   'query',
   'searchMode',
   'filters',
@@ -145,9 +144,19 @@ const OPERATION_FILTER_FIELDS = [
   'operationStartedBefore'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 
+const OPERATION_HISTORY_FIELDS: ReadonlySet<keyof ExploreURLState> = new Set([
+  ...OPERATION_FILTER_FIELDS, 'operationHistory', 'operationRunID', 'operationStatus'
+]);
+
+export function navigationFingerprint(state: ExploreURLState): string {
+  return canonicalFingerprint(Object.fromEntries(
+    Object.entries(state).filter(([key]) => !OPERATION_HISTORY_FIELDS.has(key))
+  ));
+}
+
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
-  workspace: 'relationships',
+  workspace: 'everything',
   directoryQuery: '',
   directoryContactState: '',
   directoryCategory: '',
@@ -157,9 +166,8 @@ export const defaultExploreURLState: ExploreURLState = {
   directoryLastContactBefore: '',
   directorySort: 'name',
   directoryPersonID: null,
-  reviewKind: 'identity',
+  peopleDuplicates: false,
   identityState: 'candidate',
-  relationshipReviewState: 'pending',
   query: '',
   searchMode: 'full_text',
   filters: [],
@@ -179,6 +187,9 @@ export const defaultExploreURLState: ExploreURLState = {
   relationshipTarget: null,
   relationshipShowAll: false,
   relationshipFiles: false,
+  relationshipSaved: false,
+  relationshipSort: 'closest',
+  operationHistory: false,
   operationLane: '',
   operationKind: '',
   operationState: '',
@@ -199,7 +210,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go' | 'back'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -409,13 +420,13 @@ function normalize(value: unknown): ExploreURLState {
       ? value.presentation
       : defaultExploreURLState.presentation;
   const legacyFacet: RelationshipFacet | undefined =
-    value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
-  const workspace = value.workspace === 'everything' || value.workspace === 'directory' || value.workspace === 'directory_review' || value.workspace === 'settings' ||
+    value.workspace === 'people' || value.workspace === 'directory' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
+  const workspace = value.workspace === 'everything' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
-    value.workspace === 'saved_views' || value.workspace === 'sources' ||
-    value.workspace === 'deletions' || value.workspace === 'operations'
+    value.workspace === 'sources' ||
+    value.workspace === 'deletions'
     ? value.workspace
-    : 'relationships';
+    : legacyFacet || value.workspace === 'directory' || value.workspace === 'directory_review' ? 'relationships' : value.workspace === 'operations' ? 'settings' : 'everything';
   const filesView = workspace === 'files' || (workspace === 'everything' && presentation === 'files');
   const normalizedWorkspace = filesView ? 'files' : workspace;
   const normalizedPresentation = filesView
@@ -431,17 +442,10 @@ function normalize(value: unknown): ExploreURLState {
   const relationshipTarget = legacyFacet
     ? legacyRelationshipTarget(analysisTarget, legacyFacet)
     : relationshipTargetValue(value.relationshipTarget);
-  const reviewKind: DirectoryReviewKind = value.reviewKind === 'fact' || value.reviewKind === 'relationship'
-    ? value.reviewKind
-    : 'identity';
   const identityState: IdentityReviewState =
     value.identityState === 'conflict' || value.identityState === 'accepted' || value.identityState === 'rejected'
       ? value.identityState
       : 'candidate';
-  const relationshipReviewState: RelationshipReviewState =
-    value.relationshipReviewState === 'accepted' || value.relationshipReviewState === 'rejected'
-      ? value.relationshipReviewState
-      : 'pending';
   const settingsAuthority = normalizeSettingsNavigationAuthority(value.settingsAuthority);
   const operationLane = typeof value.operationLane === 'string' &&
     OPERATION_LANES.has(value.operationLane as OperationLane)
@@ -459,6 +463,10 @@ function normalize(value: unknown): ExploreURLState {
     OPERATION_STATES.has(value.operationState as OperationState)
     ? value.operationState as OperationState
     : '';
+  const operationStatus = typeof value.operationStatus === 'string' &&
+      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
+      ? value.operationStatus as OperationStatusAuthority
+      : '';
   let operationStartedFrom = operationDateBound(value.operationStartedFrom);
   let operationStartedBefore = operationDateBound(value.operationStartedBefore);
   if (operationStartedFrom !== '' && operationStartedBefore !== '' &&
@@ -484,9 +492,8 @@ function normalize(value: unknown): ExploreURLState {
     directoryLastContactBefore: directoryDay(value.directoryLastContactBefore),
     directorySort: value.directorySort === 'last_contact_desc' || value.directorySort === 'last_contact_asc' ? value.directorySort : 'name',
     directoryPersonID: directoryPersonID(value.directoryPersonID),
-    reviewKind,
     identityState,
-    relationshipReviewState,
+    peopleDuplicates: value.peopleDuplicates === true || value.workspace === 'directory_review' && value.reviewKind !== 'fact' && value.reviewKind !== 'relationship',
     query: typeof value.query === 'string' ? value.query : '',
     searchMode,
     filters: filters(value.filters),
@@ -500,7 +507,7 @@ function normalize(value: unknown): ExploreURLState {
     fileMIMEFamilies: value.schemaVersion === 2 ? fileMIMEFamilies(value.fileMIMEFamilies) : [],
     personFilePresentation: value.personFilePresentation === 'media' ? 'media' : 'files',
     personFileDirections: personFileDirections(value.personFileDirections),
-    identityQuery: typeof value.identityQuery === 'string' ? value.identityQuery : '',
+    identityQuery: value.workspace === 'directory' && typeof value.directoryQuery === 'string' ? value.directoryQuery : typeof value.identityQuery === 'string' ? value.identityQuery : '',
     identitySort: isRecord(value.identitySort) &&
       (value.identitySort.field === 'activity_count' || value.identitySort.field === 'latest_at' || value.identitySort.field === 'display_label') &&
       (value.identitySort.direction === 'asc' || value.identitySort.direction === 'desc')
@@ -512,18 +519,19 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
+    relationshipSaved: value.relationshipSaved === true || value.workspace === 'directory',
+    relationshipSort: value.workspace === 'directory' ? value.directorySort === 'last_contact_asc' ? 'last_contact_asc' : value.directorySort === 'last_contact_desc' ? 'recent' : 'name' : value.relationshipSort === 'name' || value.relationshipSort === 'recent' || value.relationshipSort === 'last_contact_asc' ? value.relationshipSort : 'closest',
+    operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
+      !!(operationRunID(value.operationRunID) || operationStatus || operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore)),
     operationLane,
     operationKind,
     operationState,
     operationStartedFrom,
     operationStartedBefore,
     operationRunID: operationRunID(value.operationRunID),
-    operationStatus: typeof value.operationStatus === 'string' &&
-      OPERATION_STATUS_AUTHORITIES.has(value.operationStatus as OperationStatusAuthority)
-      ? value.operationStatus as OperationStatusAuthority
-      : '',
+    operationStatus,
     settingsAuthority,
-    settingsCategory: settingsCategory(value.settingsCategory, settingsAuthority),
+    settingsCategory: settingsCategory(value.workspace === 'operations' ? 'overview' : value.settingsCategory, settingsAuthority),
     columns: columns(value.columns),
     columnWidths: widths(value.columnWidths),
     activeRow:
@@ -543,18 +551,17 @@ function normalize(value: unknown): ExploreURLState {
 // Fields that only describe one workspace stay out of the link when another
 // workspace is shared; browser history still carries them for Back/Forward.
 const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<ExploreWorkspace>>> = {
-  directoryQuery: ['directory'],
-  directoryContactState: ['directory'],
-  directoryCategory: ['directory'],
-  directoryOrganization: ['directory'],
-  directoryPrimaryChannel: ['directory'],
-  directoryLastContactAfter: ['directory'],
-  directoryLastContactBefore: ['directory'],
-  directorySort: ['directory'],
-  directoryPersonID: ['directory', 'directory_review'],
-  reviewKind: ['directory_review'],
-  identityState: ['directory_review'],
-  relationshipReviewState: ['directory_review'],
+  directoryQuery: ['relationships'],
+  directoryContactState: ['relationships'],
+  directoryCategory: ['relationships'],
+  directoryOrganization: ['relationships'],
+  directoryPrimaryChannel: ['relationships'],
+  directoryLastContactAfter: ['relationships'],
+  directoryLastContactBefore: ['relationships'],
+  directorySort: ['relationships'],
+  directoryPersonID: ['relationships'],
+  peopleDuplicates: ['relationships'],
+  identityState: ['relationships'],
   fileSort: ['files'],
   fileFilenameQuery: ['files'],
   fileMIMEFamilies: ['files'],
@@ -568,13 +575,8 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   relationshipTarget: ['relationships'],
   relationshipShowAll: ['relationships'],
   relationshipFiles: ['relationships'],
-  operationLane: ['operations'],
-  operationKind: ['operations'],
-  operationState: ['operations'],
-  operationStartedFrom: ['operations'],
-  operationStartedBefore: ['operations'],
-  operationRunID: ['operations'],
-  operationStatus: ['operations'],
+  relationshipSaved: ['relationships'],
+  relationshipSort: ['relationships'],
   settingsAuthority: ['settings'],
   settingsCategory: ['settings']
 };
@@ -634,6 +636,7 @@ export class ExploreState {
   // Drops a held leave whenever another navigation or history move commits.
   cancelHeldLeave?: () => void;
   private readonly browser: ExploreWindow;
+  private readonly detached: boolean;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
@@ -645,10 +648,26 @@ export class ExploreState {
   private readonly handlePopState = (): void => {
     if (this.restoringHeldLeave) {
       this.restoringHeldLeave = false;
+      if (this.current.operationHistory) this.clearOperationHistory();
       return;
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
+    if ((this.current.operationHistory || next.operationHistory) && (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
+        OPERATION_HISTORY_FIELDS.has(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
+      this.current.operationHistory = next.operationHistory;
+      this.current.operationLane = next.operationLane;
+      this.current.operationKind = next.operationKind;
+      this.current.operationState = next.operationState;
+      this.current.operationStartedFrom = next.operationStartedFrom;
+      this.current.operationStartedBefore = next.operationStartedBefore;
+      this.current.operationRunID = next.operationRunID;
+      this.current.operationStatus = next.operationStatus;
+      this.historyIndex = nextIndex;
+      this.committed = normalize(this.current);
+      this.cancelHeldLeave?.();
+      return;
+    }
     const commit = () => this.commitPopped(next, nextIndex);
     if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();
@@ -659,7 +678,9 @@ export class ExploreState {
   private holdPop(delta: number, commit: () => void): boolean {
     if (delta === 0) {
       this.pendingHeldLeaveRestore = () => this.pushCommitted();
-      return this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      const held = this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+      if (held && this.current.operationHistory) this.clearOperationHistory(false);
+      return held;
     }
     if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
     this.restoringHeldLeave = true;
@@ -686,11 +707,19 @@ export class ExploreState {
   }
 
   constructor(
-    browser: ExploreWindow = window,
+    browser: ExploreWindow | null = window,
     preferenceStorage: SearchModeStorage | null = browser === globalThis.window
       ? availableSearchModeStorage()
       : null
   ) {
+    this.detached = browser === null;
+    if (browser === null) {
+      this.browser = window;
+      this.preferenceStorage = null;
+      this.historyIndex = 0;
+      this.committed = normalize(this.current);
+      return;
+    }
     this.browser = browser;
     this.preferenceStorage = preferenceStorage;
     this.historyIndex = browser.history.state?.exploreIndex ?? 0;
@@ -791,7 +820,7 @@ export class ExploreState {
       // yes, ranked people and cluster timeline no). Entering the hub drops
       // the carried query — visibly, in the URL state — so every surface
       // consistently reflects no text filter.
-      ...(workspace === 'relationships' ? { query: '' } : {}),
+      ...(workspace === 'relationships' ? { query: '', peopleDuplicates: false } : {}),
       analysisTarget: null,
       selectedIdentifier: null,
       activeRow: null,
@@ -818,6 +847,42 @@ export class ExploreState {
       operationStatus: '',
       settingsAuthority: ''
     }, 'push');
+  }
+
+  openOperationHistory(state: Partial<ExploreURLState>): void {
+    const opening = !this.current.operationHistory;
+    if (opening) {
+      this.committed = normalize(this.current);
+      this.pendingSearchPriorFocus = undefined;
+    }
+    this.navigate({ ...state, operationHistory: true }, 'push');
+    if (opening) this.browser.history.replaceState({ ...this.browser.history.state, operationHistoryDepth: 1 }, '');
+  }
+
+  closeOperationHistory(): void {
+    const depth = this.operationHistoryDepth();
+    if (depth) this.browser.history.go(-depth);
+    else this.clearOperationHistory();
+  }
+
+  // A held departure keeps Settings current but must not leave Past runs over its confirmation.
+  // Replace in place: history.go would fire popstate and re-enter the held departure.
+  private clearHeldOperationHistory(patch: Partial<ExploreURLState>): void {
+    if (patch.operationHistory === false && this.current.operationHistory) this.clearOperationHistory();
+  }
+
+  private clearOperationHistory(replaceURL = true): void {
+    const patch: Partial<ExploreURLState> = { operationHistory: false, operationLane: '', operationKind: '',
+      operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };
+    Object.assign(this.current, patch);
+    this.committed = normalize(this.current);
+    if (replaceURL) {
+      // Closing the overlay preserves the Settings leave choice already being held.
+      this.pendingSearchPriorFocus = undefined;
+      const search = serializeExploreURLState(this.current, this.browser.location.search);
+      const { pathname, hash } = this.browser.location;
+      this.browser.history.replaceState(historyEntry(search, this.current, this.historyIndex), '', `${pathname}${search}${hash}`);
+    }
   }
 
   commitNavigation(patch: Partial<ExploreURLState>): void {
@@ -872,7 +937,7 @@ export class ExploreState {
   }
 
   destroy(): void {
-    this.browser.removeEventListener('popstate', this.handlePopState);
+    if (!this.detached) this.browser.removeEventListener('popstate', this.handlePopState);
   }
 
   private readURLState(): ExploreURLState {
@@ -889,32 +954,37 @@ export class ExploreState {
     return parsed;
   }
 
+  holdNavigation(patch: Partial<ExploreURLState>, leave: () => void): boolean {
+    this.pendingHeldLeaveRestore?.();
+    this.cancelHeldLeave?.();
+    const held = this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+      (this.holdLeave?.(leave) ?? false);
+    if (held) this.clearHeldOperationHistory(patch);
+    return held;
+  }
+
   private navigate(
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
-    this.pendingHeldLeaveRestore?.();
-    this.cancelHeldLeave?.();
-    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.navigate(patch, mode))) return;
+    if (this.holdNavigation(patch, () => this.navigate(patch, mode))) return;
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
       patch.workspace !== 'files' && !('presentation' in patch)) {
       effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
     }
-    if (mode === 'push' && OPERATION_FILTER_FIELDS.some((key) =>
+    if (!('operationRunID' in patch) && OPERATION_FILTER_FIELDS.some((key) =>
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
       effectivePatch = { ...effectivePatch, operationRunID: null };
     }
-    if (
-      mode === 'push' ||
-      Object.keys(effectivePatch).some((key) => RESTORATION_INVALIDATING_FIELDS.has(key as keyof ExploreURLState))
-    ) {
+    const patchKeys = Object.keys(effectivePatch);
+    if (patchKeys.some((key) => !OPERATION_HISTORY_FIELDS.has(key) &&
+      (mode === 'push' || RESTORATION_INVALIDATING_FIELDS.has(key)))) {
       this.pendingRestorationEpoch = undefined;
     }
-    const baseSearch = this.browser.location.search;
-    if (mode === 'push') {
+    const baseSearch = this.detached ? '' : this.browser.location.search;
+    if (mode === 'push' && !this.detached) {
       const priorFocus = this.pendingSearchPriorFocus;
       const transient = Object.fromEntries(
         TRANSIENT_HISTORY_FIELDS
@@ -924,12 +994,11 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry), ...this.relationshipReaderHistoryState(priorEntry) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
     // invalidate consumers that only read the canonical server predicate.
-    const patchKeys = Object.keys(effectivePatch);
     const keysToApply = OPERATION_FILTER_FIELDS.some((key) => key in effectivePatch)
       ? [...new Set([...patchKeys, ...OPERATION_FILTER_FIELDS, 'operationRunID'])]
       : patchKeys;
@@ -940,15 +1009,33 @@ export class ExploreState {
     for (const key of keysToApply) {
       if (key in next) this.current[key] = next[key];
     }
+    if (this.detached) {
+      this.committed = normalize(this.current);
+      return;
+    }
     const search = serializeExploreURLState(this.current, baseSearch);
     const url = `${this.browser.location.pathname}${search}${this.browser.location.hash}`;
     if (mode === 'push') this.historyIndex += 1;
     const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
-      this.browser.history.pushState(history, '', url);
+      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1), ...this.relationshipReaderHistoryState(next) }, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow) }, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current), ...this.relationshipReaderHistoryState(this.current) }, '', url);
+  }
+
+  private relationshipReaderHistoryState(state: ExploreURLState): Record<string, unknown> | null {
+    return relationshipHistoryState(this.browser.history.state, state.workspace, state.relationshipTarget);
+  }
+
+  private operationHistoryDepth(): number {
+    const depth = this.browser.history.state?.operationHistoryDepth;
+    return Number.isSafeInteger(depth) && depth > 0 ? depth : 0;
+  }
+
+  private operationHistoryState(state: ExploreURLState, step = 0): { operationHistoryDepth: number } | null {
+    const depth = this.operationHistoryDepth();
+    return state.operationHistory && depth ? { operationHistoryDepth: depth + step } : null;
   }
 
   private archiveHistoryState(selectedRow: string | null): { [ARCHIVE_MEETING_HISTORY_KEY]: ArchiveMeetingHistory } | null {

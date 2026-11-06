@@ -17,6 +17,10 @@ import { trimAttributeText } from '../directory/attribute-text';
 export type CanonicalState = SavedViewStateEnvelope;
 export const CURRENT_SCHEMA_VERSION = 2;
 
+export function supportsSavedViewSchema(version: number): boolean {
+  return version >= 1 && version <= CURRENT_SCHEMA_VERSION;
+}
+
 // Saved views written before the v2 filter names still use these fields.
 const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
   source_id: 'source',

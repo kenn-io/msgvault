@@ -1,9 +1,12 @@
+//go:build cgo
+
 package dbtest
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,4 +140,22 @@ func TestAddMessage_MissingConversation(t *testing.T) {
 	require.True(t, caught, "expected fatal for missing conversation")
 	require.NotEmpty(t, ft.fatalMsg, "expected fatal for missing conversation")
 	t.Logf("got expected fatal: %s", ft.fatalMsg)
+}
+
+func TestNewTestDBClonesAreIndependent(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	first := NewTestDB(t, schemaPath)
+	second := NewTestDB(t, schemaPath)
+	_, err := first.DB.Exec(`INSERT INTO sources (source_type, identifier, display_name) VALUES (?, ?, ?)`, "gmail", "source@example.com", "Source")
+	require.NoError(err)
+	var count int
+	require.NoError(first.DB.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&count))
+	assert.Equal(1, count)
+	third := NewTestDB(t, schemaPath)
+	for _, clone := range []*TestDB{second, third} {
+		require.NoError(clone.DB.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&count))
+		assert.Zero(count)
+	}
 }
