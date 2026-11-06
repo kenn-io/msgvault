@@ -1399,7 +1399,7 @@ func (s *Store) FailSyncWithCheckpointContext(ctx context.Context, syncID int64,
 func (s *Store) InterruptSyncWithCheckpoint(ctx context.Context, syncID int64, syncErr error, cp *Checkpoint) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if jobctx.YieldedToWaiter(ctx) && jobctx.ErrorAfterYield(ctx, syncErr) == nil && cp != nil && cp.ErrorsCount == 0 {
+	if syncErr != nil && jobctx.ErrorAfterYield(ctx, syncErr) == nil && cp != nil && cp.ErrorsCount == 0 {
 		return s.finishSyncWithCheckpoint(cleanupCtx, syncID, SyncStatusCancelled, "", cp)
 	}
 	return s.FailSyncWithCheckpointContext(cleanupCtx, syncID, syncErr.Error(), cp)

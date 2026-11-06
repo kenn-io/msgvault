@@ -207,14 +207,13 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 			settleCtx, cancelSettle := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			resultErr = errors.Join(resultErr, settle(settleCtx))
 			cancelSettle()
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			resultErr = errors.Join(resultErr, saveCheckpoint(cleanup))
-			message := "LINE processing interrupted"
-			if resultErr != nil {
-				message = resultErr.Error()
+			checkpoint.MessagesAdded = pass.messagesAdded
+			checkpoint.MessagesUpdated = pass.messagesUpdated
+			syncErr := resultErr
+			if syncErr == nil {
+				syncErr = errors.New("LINE processing interrupted")
 			}
-			resultErr = errors.Join(resultErr, p.store.FailSyncContext(cleanup, runID, message))
+			resultErr = errors.Join(resultErr, p.store.InterruptSyncWithCheckpoint(ctx, runID, syncErr, checkpoint))
 		}
 	}()
 	pass.botID, err = p.store.ValidateLineSourceBindingContext(ctx, p.sourceID, p.channelID)
