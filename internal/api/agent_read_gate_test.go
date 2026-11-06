@@ -909,8 +909,15 @@ func (s *agentPackingStream) OpenStream(ctx context.Context, hash string) (io.Re
 
 func testAgentPackingSnapshot(t *testing.T) {
 	for _, route := range []string{"content", "cli", "cid"} {
-		for _, transition := range []string{"pack before open", "pack during retry", "repack before open", "repack during retry", "cancel"} {
-			t.Run(route+"/"+transition, func(t *testing.T) {
+		for _, tc := range []struct{ transition, caller string }{
+			{"pack before open", "reveal"},
+			{"pack during retry", "masked"},
+			{"repack before open", "owner"},
+			{"repack during retry", "masked"},
+			{"cancel", "masked"},
+		} {
+			t.Run(route+"/"+tc.transition, func(t *testing.T) {
+				transition := tc.transition
 				requirements := require.New(t)
 				assertions := assert.New(t)
 				st := testutil.NewTestStore(t)
@@ -954,12 +961,15 @@ func testAgentPackingSnapshot(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), readPackingValueKey{}, "request value"), 10*time.Second)
 				defer cancel()
 				migrate := func(readCtx context.Context) {
-					if route == "cid" {
-						requirements.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone)
+					assertions.Same(st.DB(), store.ReadDBContext(readCtx, st.DB()), "placement uses a connection outside the authorization snapshot")
+					if tc.caller == "owner" && route != "cid" {
+						assertions.Zero(st.DB().Stats().InUse, "owner placement holds no authorization connection")
+					} else if route == "cid" {
+						assertions.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone) //nolint:testifylint // Snapshot lifetime is under test.
 						assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
 					} else {
 						// Downloads retain the snapshot until the byte sniff and parent classification.
-						requirements.NoError(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)))
+						assertions.NoError(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int))) //nolint:testifylint // Snapshot lifetime is under test.
 					}
 					assertions.Equal("request value", readCtx.Value(readPackingValueKey{}))
 					_, deadline := readCtx.Deadline()
@@ -986,7 +996,11 @@ func testAgentPackingSnapshot(t *testing.T) {
 				}
 				srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), BlobStore: stream, Logger: testLogger()})
 				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+				permissions := []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}
+				if tc.caller == "reveal" {
+					permissions = append(permissions, agentgrant.PermissionVerificationRead)
+				}
+				_, token, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 				requirements.NoError(err)
 				path := "/api/v1/attachments/" + hash + "/content"
 				if route == "cli" {
@@ -996,7 +1010,11 @@ func testAgentPackingSnapshot(t *testing.T) {
 					path = fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid)
 				}
 				req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
-				req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				if tc.caller == "owner" {
+					req.Header.Set("X-Api-Key", "owner")
+				} else {
+					req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				}
 				response := httptest.NewRecorder()
 				if route == "cid" {
 					snapshot, release, err := st.BeginReadSnapshotContext(ctx)
@@ -1023,8 +1041,12 @@ func testAgentPackingSnapshot(t *testing.T) {
 					}
 					assertions.Equal(expectedCalls, resolver.calls)
 				}
-				// Cancellation can return the snapshot connection asynchronously.
-				assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
+				if transition == "cancel" {
+					// Cancellation can return the snapshot connection asynchronously.
+					assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
+				} else {
+					assertions.Zero(st.DB().Stats().InUse)
+				}
 			})
 		}
 	}

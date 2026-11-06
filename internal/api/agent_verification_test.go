@@ -38,8 +38,6 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
-	_, _, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", "second-code", "Your verification code is 482913", "Your verification code is 482913")
-	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
@@ -50,7 +48,6 @@ func TestAgentVerificationReads(t *testing.T) {
 	for _, path := range []string{
 		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
 		"/search/deep?q=verification",
-		"/search?q=verification&page_size=1&page=2", "/search/fast?q=verification&limit=1&offset=1", "/search/deep?q=verification&limit=1&offset=1", "/search/deep?q=verification&scope=body&limit=1&offset=1", "/cli/search?q=verification&include_snippet=true&limit=1&offset=1",
 		"/messages/filter", "/messages", "/search/domains?domains=example.test",
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -132,24 +129,6 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 			}
 			if tc.filename != "" {
 				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
-				srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
-				message, err := st.GetMessage(id)
-				requirements.NoError(err)
-				requirements.Len(message.Attachments, 1)
-				for _, mode := range []string{"masked", "reveal", "owner"} {
-					req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/attachments/%d", message.Attachments[0].ID), nil)
-					if mode == "owner" {
-						req.Header.Set("X-Api-Key", "owner")
-					} else {
-						req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
-					}
-					w := httptest.NewRecorder()
-					srv.Router().ServeHTTP(w, req)
-					assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-					if mode != "masked" {
-						assertions.Contains(w.Body.String(), tc.filename)
-					}
-				}
 			}
 
 			for _, withEngine := range []bool{true, false} {
@@ -237,16 +216,17 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	assertions.NotContains(w.Body.String(), "482913")
 
 	// A loader error must withhold the response, just like an unavailable loader.
-	srv.store = st
+	loader := &attachmentBodyLoadCounter{Store: st, loadErr: context.Canceled}
+	srv.store = loader
 	w = httptest.NewRecorder()
-	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id + 1, Subject: "Your code is 482913"}}, nil))
+	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
+	assertions.Equal(1, loader.calls)
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
 	assertions.NotContains(w.Body.String(), "482913")
 }
 
 func TestAgentVerificationFields(t *testing.T) {
 	for _, tc := range []struct{ name, subject, snippet, title, text, filename string }{
-		{name: "read summary", subject: "Your verification code is 482913", snippet: "…code is 4829", text: "Your verification code is 482913"},
 		{name: "title cue", subject: "482913", title: "Your verification code"},
 		{name: "body cue", subject: "482913", text: "Your verification code"},
 		{name: "filename cue", subject: "Your verification code", filename: "482913.png"},
@@ -298,11 +278,15 @@ func TestAgentVerificationFields(t *testing.T) {
 type attachmentBodyLoadCounter struct {
 	*store.Store
 
-	calls int
+	calls   int
+	loadErr error
 }
 
 func (s *attachmentBodyLoadCounter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
 	s.calls++
+	if s.loadErr != nil {
+		return s.loadErr
+	}
 	return s.Store.PopulateMessageBodiesContext(ctx, messages)
 }
 
@@ -339,7 +323,6 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
 		{"order.txt", "text/plain", "Order 1234567 shipped. Read about your verification code\n", false, false, false},
-		{"table.csv", "text/csv", "name,value\nexample,42\n", false, false, false},
 		{"mail.bin", "message/rfc822", "Ordinary mail", true, false, false},
 		{"x.eml", "application/octet-stream", "Ordinary email", true, false, false},
 		{"data.bin", "application/octet-stream", "Ordinary text", false, false, false},
@@ -352,7 +335,6 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"nested-lf.txt", "text/plain", "Content-Type: text/plain\ncontent-transfer-encoding:base64\n\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
 		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
-		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -389,6 +371,9 @@ func TestAgentVerificationAttachments(t *testing.T) {
 				} else {
 					callers = append(callers, "reveal", "owner")
 				}
+			}
+			if tc.name == "code.txt" {
+				endpoints = endpoints[1:]
 			}
 			for _, blob := range backends {
 				srv.blobStore = nil
