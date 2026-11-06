@@ -171,7 +171,7 @@ func (s *Store) UpdateChatDraftContext(
 ) (ChatDraft, error) {
 	var draft ChatDraft
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision, false); err != nil {
+		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -190,13 +190,18 @@ func (s *Store) UpdateChatDraftContext(
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
 func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision, true); err != nil {
-			return err
-		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
-		return chatDraftWriteResult(ctx, tx, draftID, result, err)
+		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE line_reply_attempts SET body='',quote_token='',source_conversation_id=''
+			WHERE draft_id=? AND state IN (?,?)`, draftID, LineReplyProviderRejected, LineReplyRemoteUnknownExpired)
+		if err != nil {
+			return fmt.Errorf("clear deleted LINE draft payload: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -242,7 +247,7 @@ func loadChatDraft(ctx context.Context, q contextRowQuerier, draftID string) (Ch
 
 // Hold the draft row in its own statement before reading a LINE attempt. This
 // prevents a mutation that waited for admission from using an older snapshot.
-func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, revision int64, deleting bool) error {
+func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, revision int64) error {
 	if err := lockChatDraftTx(ctx, tx, id); err != nil {
 		return err
 	}
@@ -253,7 +258,7 @@ func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, rev
 	if draft.Revision != revision {
 		return ErrChatDraftRevisionConflict
 	}
-	if draft.SourceType != lineSourceType || deleting {
+	if draft.SourceType != lineSourceType {
 		return nil
 	}
 	var state string

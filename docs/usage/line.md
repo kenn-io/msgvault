@@ -216,8 +216,13 @@ have reached LINE. Editing stays refused once admitted. Repeat
 the saved attempt or return its receipt. Provider retries still require
 sending to be enabled and credentials to be available.
 
-An admitted attempt keeps one persisted UUID and immutable text, recipient, and
-quote token. Explicit retries reuse that UUID. LINE remembers retry keys for
+Deleting a rejected draft or one whose retry window expired without acceptance
+also clears the attempt's text, quote token, and conversation key. Attempts that
+can still send or recover keep their frozen content.
+
+An admitted attempt keeps one persisted UUID. Its text, recipient, and quote
+token stay frozen while it can still send or recover. Explicit retries reuse
+that UUID. LINE remembers retry keys for
 24 hours; msgvault stops provider retries 23 hours after the first push request and waits
 at least 30 seconds between attempts, honoring longer rate-limit or service
 retry delays. There are no background sends. See

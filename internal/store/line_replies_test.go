@@ -476,13 +476,22 @@ func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
 				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
 				require.ErrorIs(err, store.ErrChatDraftFrozen)
 				require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+				unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Equal(attempt, unchanged, "stale deletion must preserve the payload")
 				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 			}
 			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 			require.ErrorIs(err, store.ErrChatDraftNotFound)
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
-			assert.Equal(attempt, receipt)
+			wantReceipt := attempt
+			if state == store.LineReplyProviderRejected || state == store.LineReplyRemoteUnknownExpired {
+				wantReceipt.Body = ""
+				wantReceipt.QuoteToken = ""
+				wantReceipt.SourceConversationID = ""
+			}
+			assert.Equal(wantReceipt, receipt)
 			switch state {
 			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent:
 				target, err := st.GetOrCreateSource("line", "2000000002")
