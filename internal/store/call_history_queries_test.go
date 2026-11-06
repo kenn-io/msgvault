@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,49 +248,66 @@ func TestCallQueriesRejectInvalidBounds(t *testing.T) {
 }
 
 func TestCallsReadImportedPhoneCalls(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	remote, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "synctech_sms")
-	require.NoError(err)
+	requirements.NoError(err)
 	person, _, err := f.Store.CreatePersonFromParticipant(remote)
-	require.NoError(err)
+	requirements.NoError(err)
 	owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "synctech_sms")
-	require.NoError(err)
+	requirements.NoError(err)
 	_, _, err = f.Store.CreatePersonFromParticipant(owner)
-	require.NoError(err)
+	requirements.NoError(err)
 	for i, seconds := range []int{600, 0} {
 		message := f.NewMessage().WithSentAt(time.Date(2026, 10, 2-i, 12, 0, 0, 0, time.UTC)).Build()
 		message.MessageType = store.MessageTypeSynctechCall
 		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{remote}, nil))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, nil))
-		require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(seconds)))
+		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{remote}, nil))
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, nil))
+		requirements.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(seconds)))
 	}
 
 	summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	require.NoError(err)
-	if assert.Len(summary, 1) {
-		assert.Equal(person.ID, summary[0].PersonID)
-		assert.Equal(1, summary[0].Answered)
-		assert.Equal(1, summary[0].Unknown)
+	requirements.NoError(err)
+	if assertions.Len(summary, 1) {
+		assertions.Equal(person.ID, summary[0].PersonID)
+		assertions.Equal(1, summary[0].Answered)
+		assertions.Equal(1, summary[0].Unknown)
 	}
 	items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	require.NoError(err)
-	require.Len(items, 2)
-	assert.Equal("incoming", items[0].Direction)
-	assert.Equal("answered", items[0].Outcome)
-	assert.Equal([]callhistory.Participant{{ID: remote, Participation: "joined"}}, items[0].Participants)
-	assert.Equal("unknown", items[1].Outcome)
-	assert.Equal([]callhistory.Participant{{ID: remote, Participation: "unknown"}}, items[1].Participants)
+	requirements.NoError(err)
+	requirements.Len(items, 2)
+	assertions.Equal("incoming", items[0].Direction)
+	assertions.Equal("answered", items[0].Outcome)
+	assertions.Equal([]callhistory.Participant{{ID: remote, Participation: "joined"}}, items[0].Participants)
+	assertions.Equal("unknown", items[1].Outcome)
+	assertions.Equal([]callhistory.Participant{{ID: remote, Participation: "unknown"}}, items[1].Participants)
 
 	page, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 1})
-	require.NoError(err)
-	require.Len(page, 1)
-	assert.Equal(items[0].MessageID, page[0].MessageID)
+	requirements.NoError(err)
+	requirements.Len(page, 1)
+	assertions.Equal(items[0].MessageID, page[0].MessageID)
 	next, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, AfterID: page[0].MessageID, Limit: 1})
-	require.NoError(err)
-	require.Len(next, 1)
-	assert.Equal(items[1].MessageID, next[0].MessageID)
+	requirements.NoError(err)
+	requirements.Len(next, 1)
+	assertions.Equal(items[1].MessageID, next[0].MessageID)
+
+	t.Run("constant query count", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		logs := captureAttachmentQueryLogs(t)
+		for _, limit := range []int{1, 2} {
+			logs.Reset()
+			page, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{Limit: limit})
+			require.NoError(err)
+			require.Len(page, limit)
+			for i := range page {
+				assert.Equal(items[i].MessageID, page[i].MessageID)
+				assert.Equal(items[i].Participants, page[i].Participants)
+			}
+			assert.Equal(2, strings.Count(logs.String(), `"kind":"query"`), "listing calls and participants must use two queries regardless of page size")
+		}
+	})
 }
