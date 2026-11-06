@@ -165,21 +165,20 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 		starts = append(starts, original.Instant)
 	}
 	for _, row := range copies {
-		switch {
-		case row.Event.Kind == meetingExceptionKind && row.Event.Start != nil:
-			starts = append(starts, *row.Event.Start)
-		case target.Identity.OccurrenceKey != "":
-			copied, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}, budget)
-			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				continue
-			}
-			if err != nil {
-				return nil, nil, err
-			}
-			starts = append(starts, copied.Start)
-			if copied.Row.MessageID != row.MessageID {
-				resolvedRows = append(resolvedRows, copied.Row)
-			}
+		ref := OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}
+		if row.Event.Kind == meetingExceptionKind {
+			ref.Key = ""
+		}
+		copied, err := resolveMeetingOccurrence(ctx, r, ref, budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		starts = append(starts, copied.Start)
+		if copied.Row.MessageID != row.MessageID {
+			resolvedRows = append(resolvedRows, copied.Row)
 		}
 	}
 	return starts, resolvedRows, nil

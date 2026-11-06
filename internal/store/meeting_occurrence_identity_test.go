@@ -189,3 +189,17 @@ func TestMeetingRecordIncludesSupersededOrphanDecision(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, []int64{note}, record.MessageIDs)
 }
+
+func TestMeetingRecordSparseAllDayCopyUsesCalendarZone(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+	_, master := calendarFixture(t, st, "master", raw)
+	copyData, _ := calendarFixture(t, st, "copy", strings.Replace(raw, `"iCalUID":"weekly@example.org",`, "", 1), "copy@example.com")
+	calendarFixture(t, st, "exception", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","status":"cancelled","originalStartTime":{"date":"2027-03-14"}}`, "copy@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(copyData.Message.SourceID, `{"calendar_id":"copy@example.com","time_zone":"Asia/Tokyo"}`))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-13T15:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314"})
+	require.NoError(err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
