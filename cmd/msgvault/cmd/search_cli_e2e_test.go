@@ -74,7 +74,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		{MessageID: ids[2], Vector: []float32{1, 0, 0, 0}},
 	}))
 	require.NoError(backend.ActivateGeneration(t.Context(), gen, true))
-	engine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 100, SubjectBoost: 1})
+	engine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 10, SubjectBoost: 1})
 	cfg := &config.Config{HomeDir: root}
 	cfg.Data.DataDir = root
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))}, Engine: query.NewSQLiteEngine(st.DB()), Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})

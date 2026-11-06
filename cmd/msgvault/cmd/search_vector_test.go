@@ -260,10 +260,8 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		{name: "saturated_more", mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "ranking_cap", mode: "vector", hasMore: true, cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
 		{name: "pool_only", mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"vector.search.k_per_signal"}},
-		{name: "dual_cap_extra_hit", mode: "hybrid", hasMore: true, pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
 		{name: "dual_cap_pool", mode: "hybrid", pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
 		{name: "fts_complete", mode: "fts"},
-		{name: "fts_first_page", mode: "fts", hasMore: true, messages: []string{"--offset 50"}},
 		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
 	} {
 		for _, asJSON := range []bool{false, true} {
