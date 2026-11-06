@@ -762,9 +762,7 @@ func (r *run) writeMessage(
 	for _, member := range members {
 		pid, ok, _ := r.participant(ctx, member)
 		if !ok {
-			// Preserve archived recipients when the backup's set is incomplete.
-			to.ParticipantIDs = nil
-			break
+			continue
 		}
 		if !seen[pid] {
 			seen[pid] = true

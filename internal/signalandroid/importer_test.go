@@ -184,6 +184,10 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 func TestImportDirectChatRecipients(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir,
+		`INSERT INTO recipient (_id, pni) VALUES (7, '0f0f0f0f-0000-4000-8000-000000000007')`,
+		`INSERT INTO group_membership (group_id, recipient_id) SELECT group_id, 7 FROM group_membership WHERE recipient_id = 2`,
+	)
 	st := testutil.NewTestStore(t)
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
