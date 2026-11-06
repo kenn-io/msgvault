@@ -70,6 +70,24 @@ func TestSenderNameHints(t *testing.T) {
 	}
 }
 
+func TestSenderNameHintDottedPartial(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("mary.jones@example.org"), DisplayName: new("Mary Jo")})
+	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
+	q := search.Parse("from:mary.jo")
+	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "", MessageFilter{IncludeHints: true}, ViewNoStats, 10, 0)
+	requirements.NoError(err)
+	assertions.Empty(result.Messages)
+	requirements.Len(result.Hints, 1)
+	assertions.Equal(`from: matches addresses; senders matching "mary.jo": try from:mary.jones@example.org (1 message)`, result.Hints[0].Message)
+	assertions.Equal("from:mary.jones@example.org", result.Hints[0].RetryWith.Query)
+	retry, err := env.Engine.Search(env.Ctx, search.Parse(result.Hints[0].RetryWith.Query), 10, 0)
+	requirements.NoError(err)
+	requirements.Len(retry, 1)
+	assertions.Equal(id, retry[0].ID)
+}
+
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)

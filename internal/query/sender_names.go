@@ -55,7 +55,8 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		metadataContainsExpression(e.dialect, "p.display_name"), metadataContainsExpression(e.dialect, "p.email_address"),
 		metadataContainsExpression(e.dialect, "mr.display_name"), join, strings.Join(conditions, " AND "),
 		metadataContainsExpression(e.dialect, recipientNameExpr("mr_hint", "p_hint")), metadataContainsExpression(e.dialect, "p_hint.email_address"))
-	pattern := "%" + escapeSQLiteLike(q.FromAddrs[0]) + "%"
+	senderText := strings.TrimPrefix(q.FromAddrs[0], "@")
+	pattern := "%" + escapeSQLiteLike(senderText) + "%"
 	args = append([]any{pattern, pattern, pattern}, args...)
 	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
@@ -84,7 +85,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		return senderHintFailure(err)
 	}
 	retry := search.Format(&scoped)
-	message := fmt.Sprintf("from: matches addresses; senders matching %q: %s", q.FromAddrs[0], labels[0])
+	message := fmt.Sprintf("from: matches addresses; senders matching %q: %s", senderText, labels[0])
 	if len(labels) > 1 {
 		message += "; other matching senders: " + strings.Join(labels[1:], ", ")
 	}
