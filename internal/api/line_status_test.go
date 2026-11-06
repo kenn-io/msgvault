@@ -29,7 +29,7 @@ func TestLineSourceStatusReportsDurableInboxAndActiveReceiver(t *testing.T) {
 	bad := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(`{}`))
 	receiver.Receive(httptest.NewRecorder(), bad, nil)
 	received := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	must.NoError(st.EnqueueLineEventsContext(context.Background(), source.ID, source.Identifier, lineTestBot, []store.LineWebhookEvent{
+	must.NoError(st.EnqueueLineEventsContext(context.Background(), source.ID, source.Identifier, []store.LineWebhookEvent{
 		{WebhookEventID: "pending", EventType: "message", TargetMessageID: "1", EventTimestamp: 1, RawJSON: `{"type":"message","timestamp":1,"webhookEventId":"pending","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`, ReceivedAt: received},
 		{WebhookEventID: "failed", EventType: "message", TargetMessageID: "2", EventTimestamp: 2, RawJSON: `{"type":"message","timestamp":2,"webhookEventId":"failed","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"synthetic"}}`, ReceivedAt: received},
 	}))

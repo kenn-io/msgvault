@@ -29,8 +29,8 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	must.NoError(st.SetLineBotContext(ctx, other.ID, otherBotID))
 	at := time.Now().UTC().Truncate(time.Second)
 	event := store.LineWebhookEvent{WebhookEventID: "event-1", EventType: "message", TargetMessageID: "1", EventTimestamp: 10, RawJSON: `{"type":"message"}`, ReceivedAt: at}
-	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, []store.LineWebhookEvent{event, event}))
-	must.NoError(st.EnqueueLineEventsContext(ctx, other.ID, "2000000002", otherBotID, []store.LineWebhookEvent{event}))
+	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", []store.LineWebhookEvent{event, event}))
+	must.NoError(st.EnqueueLineEventsContext(ctx, other.ID, "2000000002", []store.LineWebhookEvent{event}))
 	rows, err := st.DueLineEventsContext(ctx, src.ID, at.Add(time.Second), 100)
 	must.NoError(err)
 	must.Len(rows, 1)
@@ -42,9 +42,9 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	must.NotNil(status.LastReceivedAt)
 	checks.True(at.Equal(*status.LastReceivedAt))
 	event.ReceivedAt = at.Add(time.Hour)
-	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, []store.LineWebhookEvent{event}))
+	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", []store.LineWebhookEvent{event}))
 	event.WebhookEventID = "event-2"
-	must.NoError(st.EnqueueLineEventsContext(ctx, other.ID, "2000000002", otherBotID, []store.LineWebhookEvent{event}))
+	must.NoError(st.EnqueueLineEventsContext(ctx, other.ID, "2000000002", []store.LineWebhookEvent{event}))
 	status, err = st.LineInboxStatusContext(ctx, src.ID)
 	must.NoError(err)
 	must.NotNil(status.LastReceivedAt)
@@ -56,7 +56,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 			src, err := st.GetOrCreateSource("line", "2000000001")
 			require.NoError(err)
 			require.NoError(st.SetLineBotContext(t.Context(), src.ID, botID))
-			channel, bot := "2000000001", botID
+			channel := "2000000001"
 			switch guard {
 			case "stale channel":
 				channel = "2000000000"
@@ -66,7 +66,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: into.ID})
 				require.NoError(err)
 			}
-			require.Error(st.EnqueueLineEventsContext(t.Context(), src.ID, channel, bot, []store.LineWebhookEvent{event}))
+			require.Error(st.EnqueueLineEventsContext(t.Context(), src.ID, channel, []store.LineWebhookEvent{event}))
 			status, err := st.LineInboxStatusContext(t.Context(), src.ID)
 			require.NoError(err)
 			assert.Zero(t, status.Pending)
@@ -85,7 +85,7 @@ func TestLineInboxRetryDeadlineIgnoresCallerZone(t *testing.T) {
 	botID := "U00000000000000000000000000000001"
 	must.NoError(st.SetLineBotContext(ctx, src.ID, botID))
 	base := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, []store.LineWebhookEvent{{WebhookEventID: "retrying", EventType: "message", EventTimestamp: 10, RawJSON: `{"type":"message"}`, ReceivedAt: base}}))
+	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", []store.LineWebhookEvent{{WebhookEventID: "retrying", EventType: "message", EventTimestamp: 10, RawJSON: `{"type":"message"}`, ReceivedAt: base}}))
 	rows, err := st.DueLineEventsContext(ctx, src.ID, base, 10)
 	must.NoError(err)
 	must.Len(rows, 1)
@@ -118,7 +118,7 @@ func TestLineInboxDueAndStatus(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	old := now.Add(-31 * 24 * time.Hour)
 	events := []store.LineWebhookEvent{{WebhookEventID: "original", EventType: "message", TargetMessageID: "original-message", EventTimestamp: 20, RawJSON: `{"text":"synthetic"}`, ReceivedAt: old}, {WebhookEventID: "orphan", EventType: "unsend", TargetMessageID: "late", EventTimestamp: 10, RawJSON: `{"unsend":{"messageId":"late"}}`, ReceivedAt: old.Add(-time.Hour)}}
-	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, events))
+	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", events))
 	rows, err := st.DueLineEventsContext(ctx, src.ID, now, 10)
 	must.NoError(err)
 	must.Len(rows, 2)
@@ -367,7 +367,7 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 			must.NoError(err)
 			botID := "U00000000000000000000000000000001"
 			must.NoError(st.SetLineBotContext(t.Context(), source.ID, botID))
-			must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, "2000000000", botID, []store.LineWebhookEvent{{WebhookEventID: "accepted", EventType: "message", EventTimestamp: 123, RawJSON: `{"type":"message","timestamp":123,"webhookEventId":"accepted","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`}}))
+			must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, "2000000000", []store.LineWebhookEvent{{WebhookEventID: "accepted", EventType: "message", EventTimestamp: 123, RawJSON: `{"type":"message","timestamp":123,"webhookEventId":"accepted","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`}}))
 			rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
 			must.NoError(err)
 			must.Len(rows, 1)

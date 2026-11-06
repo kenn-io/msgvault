@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
@@ -33,6 +34,58 @@ func (f *inboxFixture) fileEvent() Event {
 	e := f.message("1", "", f.now.UnixMilli())
 	e.Message = &Message{ID: "1", Type: "file", FileName: "synthetic.bin"}
 	return e
+}
+
+func TestMediaSizeSearch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		kind  string
+		retry bool
+		size  int64
+	}{
+		{"image", "image", false, 15},
+		{"file", "file", false, 28},
+		{"retry", "file", true, 28},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			path := "/v2/bot/message/1/content"
+			if tc.retry {
+				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+			}
+			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+			e := f.fileEvent()
+			e.Message.Type = tc.kind
+			if tc.kind == "image" {
+				e.Message.FileName = ""
+			}
+			f.enqueue(t, e, time.Time{})
+			before, err := f.st.DerivedDataRevisionContext(t.Context())
+			must.NoError(err)
+			f.run(t)
+			if tc.retry {
+				_, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
+				must.NoError(err)
+				checks.Zero(total)
+				f.now = f.now.Add(time.Minute)
+				f.run(t)
+			}
+			after, err := f.st.DerivedDataRevisionContext(t.Context())
+			must.NoError(err)
+			checks.Greater(after, before, "stored media must refresh cached message facts")
+			messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
+			must.NoError(err)
+			checks.Equal(int64(1), total)
+			must.Len(messages, 1)
+			checks.Equal(f.archived(t, "1").id, messages[0].ID)
+			checks.Equal(tc.size, messages[0].SizeEstimate)
+			_, total, err = f.st.SearchMessagesQuery(search.Parse(fmt.Sprintf("larger:%d", tc.size)), 0, 10)
+			must.NoError(err)
+			checks.Zero(total)
+		})
+	}
 }
 
 func TestMediaTranscodingRetry(t *testing.T) {

@@ -6560,22 +6560,26 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, refs); err != nil {
 			return err
 		}
-		var body sql.NullString
-		err := tx.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read Teams message body for size estimate: %w", err)
-		}
-		_, err = tx.Exec(`
-			UPDATE messages SET size_estimate = ? + (
-				SELECT COALESCE(SUM(size), 0) FROM attachments
-				WHERE message_id = ? AND content_hash != ''
-			) WHERE id = ?
-		`, len(body.String), messageID, messageID)
-		if err != nil {
-			return fmt.Errorf("update Teams message size estimate: %w", err)
-		}
-		return nil
+		return recomputeMessageSizeEstimateWith(tx, messageID)
 	})
+}
+
+func recomputeMessageSizeEstimateWith(q querier, messageID int64) error {
+	var body sql.NullString
+	err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read message body for size estimate: %w", err)
+	}
+	_, err = q.Exec(`
+		UPDATE messages SET size_estimate = ? + (
+			SELECT COALESCE(SUM(size), 0) FROM attachments
+			WHERE message_id = ? AND content_hash != ''
+		) WHERE id = ?
+	`, len(body.String), messageID, messageID)
+	if err != nil {
+		return fmt.Errorf("update message size estimate: %w", err)
+	}
+	return nil
 }
 
 // MessageTeamsInlineAttachments returns Teams-managed inline media rows keyed

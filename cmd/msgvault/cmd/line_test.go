@@ -138,15 +138,13 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	must.NoError(loaded.Save())
 	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
 	must.NoError(err)
-	botID, err := st.LineBotUserIDContext(t.Context(), source.ID)
-	must.NoError(err)
 	events := make([]store.LineWebhookEvent, 501)
 	for i := range events {
 		id := fmt.Sprintf("message-%03d", i)
 		raw := fmt.Sprintf(`{"type":"message","webhookEventId":%q,"timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":%q,"type":"text","text":"synthetic"}}`, id, id)
 		events[i] = store.LineWebhookEvent{WebhookEventID: id, EventType: "message", TargetMessageID: id, EventTimestamp: 123, RawJSON: raw}
 	}
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, botID, events))
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, events))
 	output, err := executeLineCommand(t, loaded, addManualSyncCacheFlags(newSyncLineCmd()), "--channel-id", "2000000001", "--no-build-cache")
 	must.NoError(err)
 	checks.Contains(output, "Processing due LINE events; no history is fetched.")

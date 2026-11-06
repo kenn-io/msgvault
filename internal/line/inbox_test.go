@@ -80,9 +80,7 @@ func (f *inboxFixture) enqueue(t *testing.T, e Event, received time.Time) {
 	if received.IsZero() {
 		received = f.now
 	}
-	botID, err := f.st.LineBotUserIDContext(context.Background(), f.source.ID)
-	require.NoError(t, err)
-	require.NoError(t, f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, botID, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: target, EventTimestamp: e.Timestamp, RawJSON: string(clean), ReceivedAt: received}}))
+	require.NoError(t, f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: target, EventTimestamp: e.Timestamp, RawJSON: string(clean), ReceivedAt: received}}))
 }
 func (f *inboxFixture) message(id, text string, stamp int64) Event {
 	return Event{Type: "message", Timestamp: stamp, WebhookEventID: "event-" + id, Source: Source{Type: "group", GroupID: testGroup, UserID: testUser}, Message: &Message{Type: "text", ID: id, Text: text}}
@@ -1102,9 +1100,7 @@ func TestProcessorAnonymousIdentityIsChannelScoped(t *testing.T) {
 	f.run(t)
 	raw, err := json.Marshal(e)
 	must.NoError(err)
-	otherBotID, err := f.st.LineBotUserIDContext(context.Background(), other.ID)
-	must.NoError(err)
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), other.ID, other.Identifier, otherBotID, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: e.Message.ID, EventTimestamp: e.Timestamp, RawJSON: string(raw), ReceivedAt: f.now}}))
+	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), other.ID, other.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: e.Message.ID, EventTimestamp: e.Timestamp, RawJSON: string(raw), ReceivedAt: f.now}}))
 	must.NoError(NewProcessor(f.st, otherClient, other.ID, "2000000002", f.attachments, WithProcessorClock(func() time.Time { return f.now })).Process(context.Background()))
 	var a, b int64
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE source_id=?`), f.source.ID).Scan(&a))
@@ -1140,9 +1136,7 @@ func TestProcessorUnknownEventPayloadShapeIsIgnored(t *testing.T) {
 	f := newInboxFixture(t)
 	before := len(f.api.Requests())
 	raw := `{"type":"futureEvent","timestamp":1,"webhookEventId":"future-shape","source":23,"message":"opaque future payload"}`
-	botID, err := f.st.LineBotUserIDContext(context.Background(), f.source.ID)
-	must.NoError(err)
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, botID, []store.LineWebhookEvent{{WebhookEventID: "future-shape", EventType: "futureEvent", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
+	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-shape", EventType: "futureEvent", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
 	f.run(t)
 	var state string
 	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='future-shape'`).Scan(&state))
@@ -1156,9 +1150,7 @@ func TestProcessorUnknownMessagePayloadRetainsEvidence(t *testing.T) {
 
 	f := newInboxFixture(t)
 	raw := `{"type":"message","timestamp":1,"webhookEventId":"future-message","source":{"type":"group","groupId":"` + testGroup + `","userId":"` + testUser + `"},"message":{"id":"future-1","type":"future","text":{"new":"shape"},"fileSize":[1,2]}}`
-	botID, err := f.st.LineBotUserIDContext(context.Background(), f.source.ID)
-	must.NoError(err)
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, botID, []store.LineWebhookEvent{{WebhookEventID: "future-message", EventType: "message", TargetMessageID: "future-1", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
+	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-message", EventType: "message", TargetMessageID: "future-1", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
 	f.run(t)
 	body := f.archived(t, "future-1").body
 	checks.Equal("[LINE future]", body)

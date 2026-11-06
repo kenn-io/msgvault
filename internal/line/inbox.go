@@ -84,6 +84,7 @@ type Processor struct {
 	now                       func() time.Time
 	mediaPolicy               attachmentpolicy.Policy
 	groupNames                map[string]string
+	reconciledEvents          map[int64]struct{}
 	botID                     string
 	messagesAdded             int64
 	messagesUpdated           int64
@@ -163,6 +164,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	pass.store = p.store.ScopedToSync(p.sourceID, runID)
 	// Group names can change between passes; fetch each group's summary once per pass.
 	pass.groupNames = map[string]string{}
+	pass.reconciledEvents = map[int64]struct{}{}
 	checkpoint := &store.Checkpoint{}
 	saveCheckpoint := func(ctx context.Context) error {
 		// Committed writes must invalidate the cache even if later work fails.
@@ -227,6 +229,10 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		if err = ctx.Err(); err != nil {
 			return err
 		}
+		// A late original can settle a mutation earlier in this same batch.
+		if _, reconciled := pass.reconciledEvents[row.ID]; reconciled {
+			continue
+		}
 		var event Event
 		eventErr := json.Unmarshal([]byte(row.RawJSON), &event)
 		conversationKey := ""
@@ -249,13 +255,6 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		}
 		state := "processed"
 		if row.State == "retry" && p.now().Sub(row.ReceivedAt) >= retryHorizon {
-			currentState, stateErr := pass.store.LineEventStateContext(ctx, row.ID)
-			if stateErr != nil {
-				return stateErr
-			}
-			if currentState != "retry" {
-				continue
-			}
 			if err = pass.expireMedia(ctx, row.TargetMessageID); err != nil {
 				return err
 			}
@@ -387,6 +386,9 @@ func (p *Processor) apply(ctx context.Context, e Event) (string, error) {
 // reconcileMutations also considers failed orphans whose automatic retries
 // expired. The original is not complete until every retained mutation applies.
 func (p *Processor) reconcileMutations(ctx context.Context, messageID string) error {
+	if p.reconciledEvents == nil {
+		p.reconciledEvents = map[int64]struct{}{}
+	}
 	rows, err := p.store.LineMutationsContext(ctx, p.sourceID, messageID)
 	if err != nil {
 		return err
@@ -407,6 +409,7 @@ func (p *Processor) reconcileMutations(ctx context.Context, messageID string) er
 					return finishErr
 				}
 			}
+			p.reconciledEvents[row.ID] = struct{}{}
 			continue
 		}
 		if row.State != "processed" {
@@ -414,6 +417,7 @@ func (p *Processor) reconcileMutations(ctx context.Context, messageID string) er
 				return err
 			}
 		}
+		p.reconciledEvents[row.ID] = struct{}{}
 	}
 	return nil
 }

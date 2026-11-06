@@ -196,9 +196,7 @@ func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 	must.NoError(err)
 	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
 	must.NoError(err)
-	botID, err := st.LineBotUserIDContext(t.Context(), source.ID)
-	must.NoError(err)
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, botID, []store.LineWebhookEvent{{WebhookEventID: "startup-event", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future","webhookEventId":"startup-event","timestamp":123}`}}))
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "startup-event", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future","webhookEventId":"startup-event","timestamp":123}`}}))
 	prior := rebuildLineCacheAfterScheduledSync
 	t.Cleanup(func() { rebuildLineCacheAfterScheduledSync = prior })
 	refreshed := make(chan struct{}, 1)

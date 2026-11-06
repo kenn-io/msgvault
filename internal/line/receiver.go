@@ -164,7 +164,7 @@ func (r *Receiver) Receive(w http.ResponseWriter, request *http.Request, beginMu
 				}
 				defer done()
 			}
-			return r.store.EnqueueLineEventsContext(request.Context(), channel.config.SourceID, channel.config.ChannelID, channel.config.BotUserID, batch)
+			return r.store.EnqueueLineEventsContext(request.Context(), channel.config.SourceID, channel.config.ChannelID, batch)
 		}()
 		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)

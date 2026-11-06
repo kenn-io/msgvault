@@ -50,7 +50,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	save := func(state attachmentpolicy.DownloadState, reason attachmentpolicy.SkipReason) error {
 		write.State = state
 		write.SkipReason = reason
-		if err := p.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, false); err != nil {
+		if err := p.store.UpsertLineAttachmentContext(ctx, messageID, write); err != nil {
 			return err
 		}
 		jobctx.RecordProgress(ctx)
@@ -136,7 +136,7 @@ func (p *Processor) finishUnstoredMedia(ctx context.Context, messageID int64, st
 			continue
 		}
 		write := store.AttachmentWrite{Filename: ref.Filename, MIMEType: ref.MimeType, Size: int64(ref.Size), SourceAttachmentID: ref.SourceAttachmentID, SourcePartKey: ref.SourcePartKey, MediaType: ref.MediaType, DurationMS: ref.DurationMS, Metadata: ref.Metadata, Role: ref.Role, RoleSource: ref.RoleSource, State: state, SkipReason: reason}
-		if err = p.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, false); err != nil {
+		if err = p.store.UpsertLineAttachmentContext(ctx, messageID, write); err != nil {
 			return err
 		}
 		jobctx.RecordProgress(ctx)

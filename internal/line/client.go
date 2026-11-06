@@ -65,8 +65,7 @@ func WithBaseURLs(apiURL, dataURL string) ClientOption {
 func WithHTTPClient(client *http.Client) ClientOption {
 	return func(c *Client) {
 		if client != nil {
-			cloned := *client
-			c.http = &cloned
+			c.http = client
 		}
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 const lineSourceType = "line"
@@ -42,12 +44,12 @@ type LineInboxStatus struct {
 // The mounted receiver's channel identity is checked under the same
 // source lock as receipt so a stale receiver cannot target a reused source ID.
 // Event IDs deduplicate deliveries.
-func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, channelID, botUserID string, events []LineWebhookEvent) error {
+func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, channelID string, events []LineWebhookEvent) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	if channelID == "" || botUserID == "" {
-		return errors.New("LINE inbox requires a channel and bot identity")
+	if channelID == "" {
+		return errors.New("LINE inbox requires a channel identity")
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		// Receipt and retirement serialize on the source row. Recheck lifecycle
@@ -125,13 +127,6 @@ func (s *Store) DueLineEventsThroughContext(ctx context.Context, sourceID int64,
 		return nil, fmt.Errorf("load due LINE events: %w", err)
 	}
 	return scanLineEvents(rows)
-}
-
-// LineEventStateContext returns the durable processing state of one inbox event.
-func (s *Store) LineEventStateContext(ctx context.Context, id int64) (string, error) {
-	var state string
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT state FROM line_webhook_events WHERE id=?`), id).Scan(&state)
-	return state, err
 }
 
 // LineMutationsContext also returns expired orphan mutations: a late original
@@ -610,5 +605,33 @@ func (s *Store) UpdateLineParticipantNameContext(ctx context.Context, participan
 			return err
 		}
 		return s.invalidateParticipantPersonEnrichmentTx(ctx, tx, participantID)
+	})
+}
+
+// UpsertLineAttachmentContext records media and refreshes the message facts used
+// by search and analytics, including downloads completed by a later retry.
+func (s *Store) UpsertLineAttachmentContext(ctx context.Context, messageID int64, write AttachmentWrite) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if err := s.upsertAttachmentRecord(q, messageID, write); err != nil {
+			return err
+		}
+		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+			return err
+		}
+		if write.State == attachmentpolicy.StateStored {
+			if err := recomputeMessageSizeEstimateWith(q, messageID); err != nil {
+				return err
+			}
+			return s.bumpDerivedDataRevisionContext(ctx, tx)
+		}
+		return nil
 	})
 }

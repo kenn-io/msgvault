@@ -121,7 +121,7 @@ func TestLineEnqueueSerializesWithRetirement(t *testing.T) {
 	must.NoError(err)
 	done := make(chan error, 1)
 	go func() {
-		done <- st.EnqueueLineEventsContext(t.Context(), source.ID, "2000000000", botID, []LineWebhookEvent{{WebhookEventID: "during-retirement", EventType: "message", EventTimestamp: 123, RawJSON: `{"type":"message","timestamp":123,"webhookEventId":"during-retirement","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`}})
+		done <- st.EnqueueLineEventsContext(t.Context(), source.ID, "2000000000", []LineWebhookEvent{{WebhookEventID: "during-retirement", EventType: "message", EventTimestamp: 123, RawJSON: `{"type":"message","timestamp":123,"webhookEventId":"during-retirement","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`}})
 	}()
 	waitForPostgresBlocker(t, st.DB(), blockerPID)
 	_, err = blocker.ExecContext(t.Context(), `INSERT INTO source_settings(source_id,history_only,merged_into_source_id,retired_at) VALUES ($1,TRUE,$2,NOW())`, source.ID, into.ID)
