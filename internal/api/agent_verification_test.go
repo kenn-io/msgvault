@@ -444,7 +444,7 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 		if strings.HasPrefix(statement, "WITH") {
 			args[0] = total
 		}
-		_, err = st.DB().Exec(statement, args...)
+		_, err = st.DB().Exec(st.Rebind(statement), args...)
 		requirements.NoError(err)
 	}
 	_, err = st.DB().Exec(`UPDATE messages SET subject = 'Your verification code is 482913' WHERE id = (SELECT MAX(id) FROM messages)`)
