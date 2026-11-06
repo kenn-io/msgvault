@@ -18,6 +18,10 @@ export interface JobItem {
   target: JobTarget;
 }
 const firstLine = (message: string | null | undefined, fallback: string): string => message?.split(/\r?\n/)[0]?.trim() || fallback;
+const schedulerErrorDetail = (message: string | null | undefined, fallback: string): string => {
+  const detail = firstLine(message, fallback);
+  return detail === 'email acquisition failed; retry scheduled' ? 'Retry scheduled' : detail;
+};
 
 export function collectJobs(sources: readonly SourceStatus[], lanes: readonly OperationLaneStatus[]): JobItem[] {
   const items: JobItem[] = [];
@@ -34,7 +38,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
         const diagnostics = runFailed
           ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).find(Boolean)
           : '';
-        items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
+        items.push({ ...base, state: 'failed', detail: diagnostics || schedulerErrorDetail(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
       } else if (source.scheduler_queued || source.scheduler_pending) {
         items.push({ ...base, state: 'queued', detail: '' });
       }
