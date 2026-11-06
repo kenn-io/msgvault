@@ -434,21 +434,24 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `Esc` | Close the current layer or restore the prior context |
 | `/` | Focus search |
 | `Space` | Toggle selection of the focused row |
-| `Shift+Space` | Extend the selection to the focused row |
+| `⇧ Space` | Extend the selection to the focused row |
 | `A` | Select all visible rows |
 | `x` | Clear the selection |
-| `d` / `D` | Review the selected or all matching items for deletion |
+| `D` / `⇧ D` | Review the selected or all matching items for deletion |
 | `f` | Open Filters |
 | `g` | Open Group by |
 | `s` | Open Sort |
 | `r` | Show sort order; in Files, point to the Sort menu |
 | `?` | Open the searchable Keyboard shortcuts dialog |
-| `Cmd/Ctrl+K` | Open the command palette |
+| `Ctrl K`, `⌘ K` on Mac | Open the command palette |
 
 Select **Help** in the sidebar, or press `?`, to search this list
 in the app. Destructive keys open a review; they never execute deletion
 immediately. Shortcuts are suspended while typing and inside message/file
-content.
+content. `Ctrl K` or `Command K` on Mac still opens the command palette while
+typing in Help's search.
+
+The command palette lists Go to, Saved views, Actions, and Appearance. It remembers up to five recent commands across reloads. Choose **Group by…** to pick an available grouping, or search for a dimension directly. Type a query to find commands, search the archive from any workspace, or choose **Find person…** to filter People. Help's **Search commands instead** carries your query into the palette.
 
 ## Settings and restart behavior
 

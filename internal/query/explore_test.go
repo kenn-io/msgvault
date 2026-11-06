@@ -1380,11 +1380,10 @@ func entryKinds(rows []EntryRow) []EntryKind {
 	return kinds
 }
 
-// TestExploreCounterpartParticipantIDExcludesOwner verifies
-// counterpart_participant_id is the smallest NON-owner participant on the
-// entry, not simply participant_ids[0]: the owner is added first (so it has
-// the smallest raw ID) and would be picked by that naive heuristic.
-func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
+// TestExploreCounterpartParticipantIDExcludesOwnerAndRooms verifies
+// counterpart_participant_id is the smallest eligible non-owner participant.
+// The owner and room have lower IDs than either person and remain in the entry.
+func TestExploreCounterpartParticipantIDExcludesOwnerAndRooms(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1392,19 +1391,23 @@ func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
 	srcID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
 	b.AddOwnerParticipant(srcID, ownerID)
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
 	counterpartA := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	counterpartB := b.AddParticipant("bob@example.com", "example.com", "Bob")
 
 	msgID := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true})
 	b.AddFrom(msgID, ownerID, "Owner")
+	b.AddTo(msgID, room, "Room")
 	b.AddTo(msgID, counterpartA, "Alice")
 	b.AddTo(msgID, counterpartB, "Bob")
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
-	require.NoError(err)
-	require.Len(response.Rows, 1)
-	require.NotNil(response.Rows[0].CounterpartParticipantID)
-	assert.Equal(min(counterpartA, counterpartB), *response.Rows[0].CounterpartParticipantID)
+	fast, legacy := runExploreBothPaths(t, b.BuildEngine(), ExploreRequest{})
+	for _, response := range []*ExploreResponse{fast, legacy} {
+		require.Len(response.Rows, 1)
+		require.NotNil(response.Rows[0].CounterpartParticipantID)
+		assert.Equal(min(counterpartA, counterpartB), *response.Rows[0].CounterpartParticipantID)
+		assert.Contains(response.Rows[0].ParticipantIDs, room)
+	}
 }
 
 // TestExploreCounterpartParticipantIDNilWhenOwnerOnly verifies an entry whose

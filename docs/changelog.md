@@ -16,6 +16,8 @@ All notable changes to msgvault, grouped by release.
   `reopen` manage them, and the HTTP API has matching routes. Each request
   computes evidence for up to 1,000 uncached messages; repeated requests
   continue using retained evidence. They need HTTP API schema 3.44.0.
+- Keep Apple WhatsApp and iMessage archives current with daemon schedules,
+  run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 
 ## 0.23.0
 <small>2026-11-04</small>

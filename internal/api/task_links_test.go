@@ -196,7 +196,9 @@ func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
 }
 
 type cancelTaskArchiveIdentity struct {
-	*store.Store
+	MessageStore
+	CtxMessageStore
+	SourceStatusStore
 
 	cancel context.CancelFunc
 }
@@ -270,7 +272,7 @@ func TestTaskMessageIdentityUsesArchiveContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{Store: f.Store, cancel: cancel}, Logger: testLogger(), TaskLinkOperations: ops})
+	srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &cancelTaskArchiveIdentity{MessageStore: f.Store, CtxMessageStore: f.Store, SourceStatusStore: f.Store, cancel: cancel}, Logger: testLogger(), TaskLinkOperations: ops})
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
 	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
