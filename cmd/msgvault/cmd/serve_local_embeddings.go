@@ -215,6 +215,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
 	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
+		if errors.Is(err, config.ErrConfigConflict) {
+			return fmt.Errorf("%w during setup. Turn on again to retry with your latest settings", config.ErrConfigConflict)
+		}
 		return err
 	}
 	rebuildDocuments, err := c.localDocumentRebuildConsented(workCtx, &state)

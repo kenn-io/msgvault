@@ -720,7 +720,7 @@ func TestLocalEmbeddingsKeepsPublishedRuntimeAliveAfterSetup(t *testing.T) {
 }
 
 func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
-	for _, failure := range []string{"download", "config conflict"} {
+	for _, failure := range []string{"download", "config conflict", "provider conflict"} {
 		t.Run(failure, func(t *testing.T) {
 			require := require.New(t)
 			f := newLocalActivationFixture(t, "", "")
@@ -732,7 +732,11 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 				if failure == "download" {
 					return embedlocal.Installation{}, errors.New("connection interrupted")
 				}
-				expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
+				if failure == "provider conflict" {
+					expected = append(expected, []byte("\n[vector.embeddings]\nendpoint = \"https://embeddings.example.test/v1\"\nmodel = \"selected-model\"\ndimension = 4\n")...)
+				} else {
+					expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
+				}
 				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
 				return install(ctx, opts)
 			}
@@ -741,10 +745,31 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 				require.ErrorContains(err, "connection interrupted")
 			} else {
 				require.ErrorIs(err, config.ErrConfigConflict)
+				require.ErrorContains(err, "Turn on again to retry with your latest settings")
+				require.NotContains(err.Error(), "sha256-")
 			}
 			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			require.Equal(expected, actual)
+			if failure == "download" {
+				return
+			}
+			f.controller.install = install
+			err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+			if failure == "provider conflict" {
+				require.ErrorContains(err, "already uses a configured provider")
+				actual, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				require.Equal(expected, actual)
+				return
+			}
+			require.NoError(err)
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			loaded, err := f.cfg.ReloadConfigFile(snapshot)
+			require.NoError(err)
+			require.Equal("dark", loaded.Web.Theme)
+			require.True(loaded.Vector.Embeddings.LocalOnly)
 		})
 	}
 }
