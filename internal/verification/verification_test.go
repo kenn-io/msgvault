@@ -126,6 +126,12 @@ func TestIs(t *testing.T) {
 		{"German copula", Content{Text: "Ihr Bestätigungscode ist 482913"}, true},
 		{"Spanish copula", Content{Text: "Tu código de verificación es 482913"}, true},
 		{"Italian copula", Content{Text: "Il tuo codice di verifica è 482913"}, true},
+		{"Chinese copula", Content{Text: "您的验证码是482913"}, true},
+		{"Chinese wei", Content{Text: "您的验证码为482913"}, true},
+		{"traditional Chinese copula", Content{Text: "您的驗證碼是482913"}, true},
+		{"Japanese particle", Content{Text: "認証コードは482913です"}, true},
+		{"expired Chinese code", Content{Text: "验证码已过期"}, false},
+		{"Japanese code prose", Content{Text: "認証コードについて"}, false},
 		{"UUID", Content{Text: "Reset your password https://example.test/r/12345678-1234-4321-1234-123456789abc"}, true},
 		{"Firebase", Content{Text: "https://example.test/reset?oobCode=Qm9_xK3-abc1234567890"}, true},
 		{"Supabase", Content{Text: "https://example.test/login?token=0123456789abcdef0123456789abcdef0123456789abcdef01234567"}, true},
@@ -174,6 +180,20 @@ func TestIs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, Is(tc.content))
 		})
+	}
+}
+
+func TestIsLocalizedGaps(t *testing.T) {
+	for _, cue := range []string{
+		"Bestätigungscode", "Sicherheitscode", "code de vérification", "code de sécurité",
+		"código de verificación", "código de seguridad", "codice di verifica",
+		"Код подтверждения", "Код безопасности", "验证码", "驗證碼", "認証コード", "인증 코드",
+	} {
+		for _, gap := range []string{"：", ": ", " "} {
+			t.Run(cue+gap, func(t *testing.T) {
+				assert.True(t, Is(Content{Text: cue + gap + "482913"}))
+			})
+		}
 	}
 }
 
