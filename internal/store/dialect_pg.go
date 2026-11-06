@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
@@ -420,22 +419,6 @@ const maxFTSBodyChars = 600000
 // path keeps the char cap and relies on the row-by-row skip for any residual.
 const maxFTSBodyBytes = 700000
 
-// truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
-// without splitting a multibyte UTF-8 rune. If s already fits it is returned
-// unchanged.
-func truncateBytesRuneSafe(s string) string {
-	if len(s) <= maxFTSBodyBytes {
-		return s
-	}
-	// Walk back from maxFTSBodyBytes to the start of the rune that straddles
-	// the boundary so we never emit a partial rune.
-	cut := maxFTSBodyBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
-}
-
 // FTSUpsert updates the tsvector column on messages for a single message.
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
 // is no separate virtual table — the operation is an UPDATE, not an INSERT.
@@ -488,11 +471,11 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
 	return vector, []any{
 		doc.MessageID,
-		truncateBytesRuneSafe(doc.Subject),
-		truncateBytesRuneSafe(doc.Body),
-		truncateBytesRuneSafe(doc.FromAddr),
-		truncateBytesRuneSafe(doc.ToAddrs),
-		truncateBytesRuneSafe(doc.CcAddrs),
+		truncateBytesRuneSafe(doc.Subject, maxFTSBodyBytes),
+		truncateBytesRuneSafe(doc.Body, maxFTSBodyBytes),
+		truncateBytesRuneSafe(doc.FromAddr, maxFTSBodyBytes),
+		truncateBytesRuneSafe(doc.ToAddrs, maxFTSBodyBytes),
+		truncateBytesRuneSafe(doc.CcAddrs, maxFTSBodyBytes),
 	}
 }
 

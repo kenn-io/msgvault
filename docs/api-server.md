@@ -40,9 +40,8 @@ including suffixes and encoded-path variations, retain ordinary Host,
 authentication, same-origin, CSRF, and operation-gate protections. Server
 timeouts still apply. Signed webhook routes bypass the API IP rate limiter;
 the receiver applies its own signature checks and concurrency bounds.
-After authentication and validation, nonempty batches acquire the daemon's
-operation gate for the inbox commit. A gate that remains busy, including during
-a backup freeze, returns retryable `503`; processing wakes after gate release.
+After authentication and validation, nonempty batches check the daemon's backup
+freeze before the inbox commit. An active backup freeze returns retryable `503`.
 
 The body limit is 1 MiB. Across configured channels, at most 16 requests can
 read bodies or commit inbox events at once. Excess requests receive `503` before

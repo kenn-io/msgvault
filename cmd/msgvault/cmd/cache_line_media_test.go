@@ -88,7 +88,7 @@ func TestLineEnrichmentRetryRefreshesCachedResults(t *testing.T) {
 			engine, err := query.NewDuckDBEngine(analyticsDir, dbPath, st.DB())
 			must.NoError(err)
 			t.Cleanup(func() { must.NoError(engine.Close()) })
-			before, err := engine.Search(ctx, search.Parse("larger:13"), 10, 0)
+			before, err := engine.SearchFast(ctx, search.Parse("larger:13"), query.MessageFilter{}, 10, 0)
 			must.NoError(err)
 			if profileRetry {
 				must.Len(before, 1)
@@ -99,7 +99,7 @@ func TestLineEnrichmentRetryRefreshesCachedResults(t *testing.T) {
 			must.NoError(processor.Process(ctx))
 			_, err = buildCacheAuto(dbPath, analyticsDir)
 			must.NoError(err)
-			messages, err := engine.Search(ctx, search.Parse("larger:13"), 10, 0)
+			messages, err := engine.SearchFast(ctx, search.Parse("larger:13"), query.MessageFilter{}, 10, 0)
 			must.NoError(err)
 			must.Len(messages, 1)
 			checks.Equal(int64(28), messages[0].SizeEstimate)

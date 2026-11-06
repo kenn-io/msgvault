@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"slices"
 	"time"
-	"unicode/utf8"
 )
 
 const lineSourceType = "line"
@@ -145,13 +144,7 @@ func (s *Store) FinishLineEventContext(ctx context.Context, id int64, state, las
 	default:
 		return errors.New("invalid LINE event state")
 	}
-	if len(lastError) > 500 {
-		end := 500
-		for end > 0 && !utf8.RuneStart(lastError[end]) {
-			end--
-		}
-		lastError = lastError[:end]
-	}
+	lastError = truncateBytesRuneSafe(lastError, 500)
 	var nextAt any
 	if !next.IsZero() {
 		nextAt = next.UTC()
