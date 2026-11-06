@@ -931,6 +931,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
 
+	// Email listeners own separate read-only sessions; provider hints only
+	// enter the existing scheduled ingestion gate.
+	emailPush, err := startEmailPush(ctx, cfg, s, sched, state, getOAuthMgr, attachmentMaint)
+	if err != nil {
+		<-serveSchedulers{sched, mediaSched}.Stop().Done()
+		return fmt.Errorf("configure email push: %w", err)
+	}
+	defer emailPush.Stop()
+
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
 		// The write is already durable. Keep the refresh independent of the
@@ -1142,6 +1151,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Stop background work first: vector init honors ctx, so cancelling
 	// lets the operation-gate drain inside shutdownServeRuntime complete.
 	cancel()
+	emailPush.Stop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()

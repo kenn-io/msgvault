@@ -69,6 +69,10 @@ func TestRemoveAccountClearsPendingFollowup(t *testing.T) {
 	require.NoError(s.AddAccount(email, "0 2 * * *"))
 
 	s.mu.Lock()
+	registration := s.accounts[email]
+	pass := newAccountPass(false)
+	registration.active = pass
+	registration.pending = []*accountPass{newAccountPass(false)}
 	s.running[email] = true
 	s.pending[email] = true
 	s.mu.Unlock()
@@ -79,7 +83,7 @@ func TestRemoveAccountClearsPendingFollowup(t *testing.T) {
 	pending := s.pending[email]
 	s.mu.RUnlock()
 	assert.False(pending, "removing an account cancels its queued follow-up")
-	s.finishAccountRun(email)
+	s.finishAccountPass(email, registration, pass)
 	s.mu.RLock()
 	running := s.running[email]
 	s.mu.RUnlock()

@@ -1402,6 +1402,41 @@ schedule = "*/30 * * * *"
 enabled = true
 ```
 
+### `[email_push]`
+
+Opt selected IMAP sources into prompt INBOX catchup using a separate read-only
+IDLE connection. Push is off by default. Register and sync each mailbox normally,
+then use its numeric source ID from `msgvault list-accounts`:
+
+```toml
+[email_push]
+imap_source_ids = [17]
+
+[[accounts]]
+email = "imaps://owner@imap.example.com:993"
+schedule = "*/30 * * * *"
+enabled = true
+```
+
+Copy the source's exact ACCOUNT identifier into `accounts.email`. A display name
+or alias can still be used for ordinary scheduled sync, but push requires the
+canonical identifier to keep hints bound to the selected source. Each selected
+source must have exactly one enabled account schedule. Duplicate or nonpositive
+IDs, unsupported source types, and more than eight IMAP watchers are rejected.
+
+The listener uses the source's existing password or Microsoft OAuth credentials
+and TLS/STARTTLS policy. It examines INBOX read-only and uses EXISTS, FETCH and
+EXPUNGE only as hints for the existing full sync. It never changes flags, marks
+mail Seen, applies a deletion, or moves a sync cursor from a hint. Other folders
+and missed changes remain covered by polling; keep the enabled cron schedule.
+
+Startup and reconnect request catchup. Hints coalesce without replacing a queued
+manual or polling sync. Temporary connection failures retry with
+backoff; unsupported IDLE or an authentication/configuration failure stops the
+listener and logs polling fallback. Sources removed, retired, or replaced after
+startup cannot receive a pending push sync. Embeddings keep their existing
+asynchronous post-sync behavior. Restart the daemon after changing push settings.
+
 ### SyncTech SMS Sources
 
 Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sources]]` entries. These are created automatically by `msgvault add-synctech-sms-drive`, but can also be edited directly.

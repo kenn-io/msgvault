@@ -639,6 +639,7 @@ type Config struct {
 	Deletion           DeletionConfig                  `toml:"deletion"`
 	IMAP               IMAPConfig                      `toml:"imap"`
 	Gmail              GmailConfig                     `toml:"gmail"`
+	EmailPush          EmailPushConfig                 `toml:"email_push"`
 	Telemetry          TelemetryConfig                 `toml:"telemetry"`
 
 	// Computed paths (not from config file)
@@ -1296,6 +1297,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	_, _, err = cfg.CardDAV.TrustedDestination()
 	cfg.deferDaemonError(err)
 	cfg.deferDaemonError(cfg.validateCardDAVConnections())
+	cfg.deferDaemonError(cfg.EmailPush.Validate())
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
