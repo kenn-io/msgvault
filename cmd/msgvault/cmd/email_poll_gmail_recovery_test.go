@@ -126,7 +126,7 @@ func TestRapidEmailGmailPartialQuotaDebtReopensWithUnchangedHistory(t *testing.T
 	assert.Equal(before, requests.Load())
 	assert.Empty(completed)
 	require.NoError(st.Close())
-	st, err = store.OpenForTest(path)
+	st, err = store.OpenForTest(t.Context(), path)
 	require.NoError(err)
 	defer func() { _ = st.Close() }()
 	debt, err = st.ListUnresolvedSyncItemErrors(ctx, src.ID)

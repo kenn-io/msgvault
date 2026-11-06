@@ -211,7 +211,7 @@ func pollingIMAPSource(t *testing.T, st *store.Store, ic *imaplib.Config) *store
 	require.NoError(t, err)
 	blob, err := ic.ToJSON()
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(src.ID, blob))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, blob))
 	src, err = st.GetSourceByID(src.ID)
 	require.NoError(t, err)
 	return src
@@ -397,7 +397,7 @@ func TestRapidEmailIMAPPositiveLimitReleasesArchiveGateBeforeRetryFloor(t *testi
 		archiveStarted <- time.Now()
 		return nil
 	}).WithWorkTracker(labelWorkTracker(gate, "a scheduled sync")).WithAccountPreemptionPolicy(func(identifier string) bool {
-		return scheduledSyncPreemptible(st.Store, identifier, state.logger)
+		return scheduledSyncPreemptible(t.Context(), st.Store, identifier, state.logger)
 	})
 	defer func() {
 		start()
