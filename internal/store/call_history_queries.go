@@ -114,6 +114,8 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	if q.Before != nil {
 		where, args = append(where, "c.occurred_at < ?"), append(args, q.Before.UTC())
 	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(args, scopeArgs...)
 	args = append(args, limit)
 	out := []CallObservationView{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
@@ -122,7 +124,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 			c.owner_participation, c.occurred_at, c.duration_seconds
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			JOIN sources src ON src.id = m.source_id
-			WHERE `+strings.Join(where, " AND ")+` ORDER BY m.id LIMIT ?`, args...)
+			WHERE `+strings.Join(where, " AND ")+scope+` ORDER BY m.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}
@@ -271,7 +273,7 @@ func (s *Store) callActiveSQL(extra string) string {
 		direction = "CASE WHEN json_valid(m.metadata) THEN " + direction + " END"
 		duration = "CASE WHEN json_valid(m.metadata) THEN " + duration + " END"
 	}
-	return `SELECT c.message_id, c.kind, c.outcome, c.owner_participation,
+	return `SELECT c.message_id, c.outcome, c.owner_participation,
  c.occurred_at, CASE WHEN m.message_type = 'call_record' THEN ` + direction + ` ELSE c.direction END AS direction,
  CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds,
  ` + callIdentitySQL("c") + ` AS identity_key
@@ -281,7 +283,7 @@ func (s *Store) callActiveSQL(extra string) string {
 
 func callIdentityCTEs(active string) string {
 	return `active AS (` + active + `), identities AS (
- SELECT identity_key, occurred_at, kind, message_id, duration_seconds, outcome
+ SELECT identity_key, occurred_at, message_id, duration_seconds, outcome
  FROM active)`
 }
 
@@ -295,4 +297,3 @@ func callConfirmedSQL() string {
 	return `CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
  AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END`
 }
-

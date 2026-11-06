@@ -36,7 +36,6 @@ type CallParticipant struct {
 type LogicalCall struct {
 	IdentityKey     string
 	MessageID       int64
-	Kind            string
 	OccurredAt      time.Time
 	Outcome         string
 	DurationSeconds *float64
@@ -79,7 +78,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
  SELECT i.*, `+callCategorySQL("CASE WHEN EXISTS (SELECT 1 FROM active a WHERE a.identity_key = i.identity_key AND a.outcome = 'answered' AND a.owner_participation = 'joined') THEN 1 ELSE 0 END")+` AS category
  FROM identities i WHERE `+where+`
  ORDER BY i.occurred_at, i.identity_key LIMIT ?)
- SELECT i.identity_key, i.message_id, i.kind, i.occurred_at, i.category, i.duration_seconds,
+ SELECT i.identity_key, i.message_id, i.occurred_at, i.category, i.duration_seconds,
  p.participant_id, p.person_id, p.participation, `+callCategorySQL("p.confirmed")+` = 'answered'
  FROM selected i LEFT JOIN call_participants p ON p.identity_key = i.identity_key
  ORDER BY i.occurred_at, i.identity_key, p.participant_id`, args...)
@@ -94,7 +93,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 			var participantID, personID sql.NullInt64
 			var participation sql.NullString
 			var credited sql.NullBool
-			if err := rows.Scan(&c.IdentityKey, &c.MessageID, &c.Kind, &at, &c.Outcome, &duration, &participantID, &personID, &participation, &credited); err != nil {
+			if err := rows.Scan(&c.IdentityKey, &c.MessageID, &at, &c.Outcome, &duration, &participantID, &personID, &participation, &credited); err != nil {
 				return fmt.Errorf("scan logical call: %w", err)
 			}
 			c.OccurredAt = at.Time.UTC()

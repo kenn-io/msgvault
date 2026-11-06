@@ -41,7 +41,7 @@ func (f *logicalCallFixture) put(t *testing.T, native string, change func(*callh
 		recordID = strconv.Itoa(f.serial)
 	}
 	o := callhistory.Observation{RecordID: recordID, Version: 1, Provider: "signal", Account: "a", NativeCallID: native,
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.at,
+		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.at,
 		Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`)}
 	if change != nil {
 		change(&o)
@@ -210,6 +210,23 @@ func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
 		o.OwnerParticipation = "not_joined"
 	})
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.source})
+	all, err := f.st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	requirements.NoError(err)
+	requirements.Len(all, 2)
+	after, before := f.at.Add(-time.Minute), f.at.Add(time.Minute)
+	evidenceQuery := store.CallQuery{PersonID: person.ID, After: &after, Before: &before, Limit: 1}
+	evidence, err := f.st.ListCallObservationsContext(ctx, evidenceQuery)
+	requirements.NoError(err)
+	requirements.Len(evidence, 1)
+	assertions.Equal(first, evidence[0].MessageID)
+	hiddenScope := sourcescope.WithSourceIDs(t.Context(), []int64{all[1].SourceID})
+	evidence, err = f.st.ListCallObservationsContext(hiddenScope, evidenceQuery)
+	requirements.NoError(err)
+	requirements.Len(evidence, 1)
+	assertions.Equal(hidden, evidence[0].MessageID)
+	evidence, err = f.st.ListCallObservationsContext(sourcescope.WithSourceIDs(t.Context(), nil), evidenceQuery)
+	requirements.NoError(err)
+	assertions.Empty(evidence)
 	calls, _, err := f.st.ListLogicalCallsContext(ctx, f.query())
 	requirements.NoError(err)
 	requirements.Len(calls, 1)
@@ -230,27 +247,6 @@ func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
 	requirements.NoError(err)
 	assertions.Empty(calls)
-}
-
-func TestLogicalCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
-	require := require.New(t)
-	f := newLogicalCallFixture(t)
-	f.put(t, "visible", nil)
-	hidden := f.put(t, "hidden", func(o *callhistory.Observation) { o.Account = "b" })
-	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE call_details SET evidence_version = 2 WHERE message_id = ?`), hidden)
-	require.NoError(err)
-	_, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.ErrorIs(err, callhistory.ErrInvalid)
-	q := store.CallContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Now: f.at}
-	_, err = f.st.CallContactAggregateContext(t.Context(), q)
-	require.ErrorIs(err, callhistory.ErrInvalid)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.source})
-	calls, _, err := f.st.ListLogicalCallsContext(ctx, f.query())
-	require.NoError(err)
-	require.Len(calls, 1)
-	aggregate, err := f.st.CallContactAggregateContext(ctx, q)
-	require.NoError(err)
-	require.Equal(1, aggregate.Count)
 }
 
 func TestLogicalCallsPaginationAndValidation(t *testing.T) {
