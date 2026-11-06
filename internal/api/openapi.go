@@ -400,7 +400,8 @@ import (
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
-const APISchemaVersion = "3.45.0"
+// 3.46.0 adds archive calendar paging, detail, and source-scoped agent reads.
+const APISchemaVersion = "3.46.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

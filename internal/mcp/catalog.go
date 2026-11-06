@@ -40,6 +40,7 @@ const (
 )
 
 type catalogCapabilities struct {
+	calEvents       bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -131,6 +132,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
+		calEvents:       opts.CalEvents != nil,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -190,8 +192,11 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.DelegatedOnly && opts.Engine != nil {
 		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
-			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
-				definitions = append(definitions, definition)
+			for _, permission := range agentReadToolPermission(definition.name) {
+				if slices.Contains(opts.GrantPermissions, string(permission)) {
+					definitions = append(definitions, definition)
+					break
+				}
 			}
 		}
 	}
@@ -232,6 +237,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		listCalendarEventsDefinition(),
+		getCalendarEventDefinition(),
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
