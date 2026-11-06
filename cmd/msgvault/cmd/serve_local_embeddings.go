@@ -83,7 +83,7 @@ func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir st
 
 func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint, configuredServer string) bool {
 	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
-	return embeddingProviderName(endpoint) == "local" && (server == "http://127.0.0.1:11434" || server == "http://localhost:11434" || (configuredServer != "" && server == strings.TrimRight(configuredServer, "/")) || ollamaTextEndpoint(server, probeOllamaServer(ctx, server)) != "")
+	return embeddingProviderName(endpoint) == "local" && (server == "http://127.0.0.1:11434" || server == "http://localhost:11434" || (configuredServer != "" && server == strings.TrimRight(configuredServer, "/")) || len(probeOllamaServer(ctx, server).Models) > 0)
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {

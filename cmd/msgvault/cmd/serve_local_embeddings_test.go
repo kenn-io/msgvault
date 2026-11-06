@@ -125,7 +125,11 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 		if r.URL.Path == "/api/tags" {
 			models := []map[string]string{}
 			if f.ollamaTags {
-				models = append(models, map[string]string{"name": "nomic-embed-text:latest"})
+				ollamaModel := model
+				if ollamaModel == "" {
+					ollamaModel = "nomic-embed-text"
+				}
+				models = append(models, map[string]string{"name": ollamaModel + ":latest"})
 			}
 			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": models}))
 			return
@@ -271,22 +275,26 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 }
 
 func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "nomic-embed-text", "")
-	f.ollamaTags = true
-	content, err := os.ReadFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	content = []byte(strings.Replace(string(content), "server = "+strconv.Quote(f.cfg.Chat.Server), "server = \"https://chat.example.test\"", 1))
-	require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), content, 0o600))
-	f.cfg.Chat.Server = "https://chat.example.test"
-	f.start(t)
-	status, err := f.controller.Inspect(f.ctx)
-	require.NoError(err)
-	require.Equal("ollama", status.Provider)
-	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-	status, err = f.controller.Inspect(f.ctx)
-	require.NoError(err)
-	require.Equal("builtin", status.Provider)
+	for _, model := range []string{"nomic-embed-text", "different-model"} {
+		t.Run(model, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, model, "")
+			f.ollamaTags = true
+			content, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			content = []byte(strings.Replace(string(content), "server = "+strconv.Quote(f.cfg.Chat.Server), "server = \"https://chat.example.test\"", 1))
+			require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), content, 0o600))
+			f.cfg.Chat.Server = "https://chat.example.test"
+			f.start(t)
+			status, err := f.controller.Inspect(f.ctx)
+			require.NoError(err)
+			require.Equal("ollama", status.Provider)
+			require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			status, err = f.controller.Inspect(f.ctx)
+			require.NoError(err)
+			require.Equal("builtin", status.Provider)
+		})
+	}
 }
 
 func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
