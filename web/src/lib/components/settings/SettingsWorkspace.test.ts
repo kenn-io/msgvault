@@ -794,7 +794,7 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
   const { client, operationsController } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: recovered ? undefined : 'Message index build interrupted.' });
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'incomplete', actions: recovered ? [] : ['build_index'] });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
       configured: true, active: running ? { id: 'recovery-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } : undefined,

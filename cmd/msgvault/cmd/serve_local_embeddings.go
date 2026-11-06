@@ -47,7 +47,7 @@ func (e localEmbeddingsConflictError) Unwrap() error {
 type localEmbeddingsInterruptedError struct{ cause error }
 
 func (localEmbeddingsInterruptedError) Error() string {
-	return "Message index build interrupted. Use Build index to finish."
+	return "Message index build interrupted."
 }
 
 func (e localEmbeddingsInterruptedError) Unwrap() error {

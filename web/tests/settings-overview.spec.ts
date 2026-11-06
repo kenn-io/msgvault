@@ -48,7 +48,7 @@ for (const width of [1280, 390]) {
       } }));
       await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
         eligible_count: 10, embedded_count: 4, percentage: 40, cache_revision: 'cache-1',
-        status: 'incomplete', actions: ['build_index']
+        status: 'initializing', actions: ['build_index']
       } }));
       await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
       const row = page.locator('[data-feature="message_embedding"]');

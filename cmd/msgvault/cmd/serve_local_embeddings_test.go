@@ -727,7 +727,7 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	f.start(t)
 	f.runner.failBuild = true
 	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-	require.EqualError(err, "Message index build interrupted. Use Build index to finish.")
+	require.EqualError(err, "Message index build interrupted.")
 	assert.Equal(1, f.refreshes, "published MCP capabilities refresh even when the initial build fails")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
@@ -739,7 +739,7 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 func TestLocalEmbeddingsCanceledBuildWithoutChildOutput(t *testing.T) {
 	require := require.New(t)
 	err := localEmbeddingsCommandError(t.Context(), true, context.Canceled, "")
-	require.EqualError(err, "Message index build interrupted. Use Build index to finish.")
+	require.EqualError(err, "Message index build interrupted.")
 	require.ErrorIs(err, context.Canceled)
 }
 
