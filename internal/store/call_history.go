@@ -79,14 +79,13 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
-		(message_id, outcome, owner_participation, occurred_at, evidence_version)
-		VALUES (?, ?, ?, ?, ?)
+		(message_id, outcome, owner_participation, occurred_at)
+		VALUES (?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
 			outcome = excluded.outcome,
 			owner_participation = excluded.owner_participation,
-			occurred_at = excluded.occurred_at,
-			evidence_version = excluded.evidence_version`,
-		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Version)
+			occurred_at = excluded.occurred_at`,
+		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC())
 	if err != nil {
 		return fmt.Errorf("write call projection: %w", err)
 	}
