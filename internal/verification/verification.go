@@ -66,7 +66,7 @@ func Is(c Content) bool {
 				return '0' + r - '０'
 			}
 			return r
-		}, field)
+		}, strings.ReplaceAll(field, "\r\n", "\n"))
 	}
 	cueFields := make([]bool, len(fields))
 	codeFields := make([]bool, len(fields))
@@ -111,9 +111,6 @@ func Is(c Content) bool {
 				continue
 			}
 			value := compactCode.Replace(field[start:end])
-			if len(value) > 1 && strings.HasPrefix(field[start:end], value[:1]+"-") {
-				value = value[1:]
-			}
 			digits := 0
 			for _, r := range value {
 				if r >= '0' && r <= '9' {
@@ -150,7 +147,7 @@ func Is(c Content) bool {
 	for _, field := range fields {
 		field = html.UnescapeString(field)
 		for _, loc := range link.FindAllStringIndex(field, -1) {
-			if credentialLink(field[loc[0]:loc[1]], linkContext) {
+			if credentialLink(strings.TrimRight(field[loc[0]:loc[1]], ").,;:!?]}”’"), linkContext) {
 				return true
 			}
 		}
@@ -174,8 +171,7 @@ func nearCue(window string, before bool, cue *regexp.Regexp) bool {
 		}
 		gap, breaks := window[:loc[0]], 0
 		if before {
-			gap = strings.ReplaceAll(window[loc[1]:], "\r\n", "\n")
-			gap = strings.Replace(gap, ".\n", "\n", 1) // the cue line may end a sentence
+			gap = strings.Replace(window[loc[1]:], ".\n", "\n", 1) // the cue line may end a sentence
 			breaks = 4
 		}
 		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || before && introGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
