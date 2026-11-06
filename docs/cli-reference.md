@@ -3693,6 +3693,8 @@ msgvault kata create --idempotency-key KEY [--input FILE] [--json]
 msgvault kata link <ref> [--input FILE] [--json]
 msgvault kata issues --message ID [--attachment ID] [--json]
 msgvault kata context <ref> [--offset N] [--json]
+msgvault kata agreement show <ref> [--json]
+msgvault kata agreement record <ref> [--input FILE] [--json]
 ```
 
 `prepare`, `create`, and `link` each read one JSON request from `--input`, or
@@ -3706,6 +3708,17 @@ or one of its files, one `ref<TAB>status<TAB>title` line each. It checks the new
 shows each passage an issue cites, its state in the archive today, and the
 text around it, up to 10 passages at a time; `--offset` reads the next page. See
 [Kata issues](usage/kata-issues.md) for request shapes and limits.
+
+`agreement show` reads reviewed agreement history and the last accepted terms
+on an existing issue in the configured Kata project. `agreement record` reads
+one JSON event from `--input` or stdin. It requires `reviewed: true`, a stable
+event ID, current history length as `expected_events`, speaker role, and exact
+evidence already linked to this task. Requests and proposals do not establish
+new accepted terms. Acceptance must come from the role opposite the request
+or proposal author. A stale count or concurrent task edit fails; an exact
+retry of a recorded event returns `replayed: true`. Both commands require
+owner access and API schema 3.45.0 or newer. See
+[agreement review](usage/agreements.md) for actions, examples and limits.
 
 ---
 

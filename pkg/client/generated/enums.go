@@ -1162,6 +1162,78 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type InputAction string
+
+const (
+	InputActionAccept InputAction = "accept"
+	Propose           InputAction = "propose"
+	Replace           InputAction = "replace"
+	Request           InputAction = "request"
+)
+
+// Validate checks if the InputAction value is valid
+func (i InputAction) Validate() error {
+	switch i {
+	case InputActionAccept, Propose, Replace, Request:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid InputAction value, got: %v", i))
+	}
+}
+
+type InputActor string
+
+const (
+	Beneficiary InputActor = "beneficiary"
+	Obligor     InputActor = "obligor"
+)
+
+// Validate checks if the InputActor value is valid
+func (i InputActor) Validate() error {
+	switch i {
+	case Beneficiary, Obligor:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid InputActor value, got: %v", i))
+	}
+}
+
+type KataAgreementRecordRequestAction string
+
+const (
+	KataAgreementRecordRequestActionAccept  KataAgreementRecordRequestAction = "accept"
+	KataAgreementRecordRequestActionPropose KataAgreementRecordRequestAction = "propose"
+	KataAgreementRecordRequestActionReplace KataAgreementRecordRequestAction = "replace"
+	KataAgreementRecordRequestActionRequest KataAgreementRecordRequestAction = "request"
+)
+
+// Validate checks if the KataAgreementRecordRequestAction value is valid
+func (k KataAgreementRecordRequestAction) Validate() error {
+	switch k {
+	case KataAgreementRecordRequestActionAccept, KataAgreementRecordRequestActionPropose, KataAgreementRecordRequestActionReplace, KataAgreementRecordRequestActionRequest:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid KataAgreementRecordRequestAction value, got: %v", k))
+	}
+}
+
+type KataAgreementRecordRequestActor string
+
+const (
+	KataAgreementRecordRequestActorBeneficiary KataAgreementRecordRequestActor = "beneficiary"
+	KataAgreementRecordRequestActorObligor     KataAgreementRecordRequestActor = "obligor"
+)
+
+// Validate checks if the KataAgreementRecordRequestActor value is valid
+func (k KataAgreementRecordRequestActor) Validate() error {
+	switch k {
+	case KataAgreementRecordRequestActorBeneficiary, KataAgreementRecordRequestActorObligor:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid KataAgreementRecordRequestActor value, got: %v", k))
+	}
+}
+
 type LoopDecisionResponseState string
 
 const (

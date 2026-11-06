@@ -1821,6 +1821,38 @@ type CreateKataIssueErrorResponseJSON503 = ErrorResponse
 
 type CreateKataIssueErrorResponseJSONDefault = ErrorResponse
 
+type GetKataAgreementResponse = KataAgreementResponse
+
+type GetKataAgreementErrorResponse = ErrorResponse
+
+type GetKataAgreementErrorResponseJSON = ErrorResponse
+
+type GetKataAgreementErrorResponseJSON404 = ErrorResponse
+
+type GetKataAgreementErrorResponseJSON409 = ErrorResponse
+
+type GetKataAgreementErrorResponseJSON422 = ErrorResponse
+
+type GetKataAgreementErrorResponseJSON503 = ErrorResponse
+
+type GetKataAgreementErrorResponseJSONDefault = ErrorResponse
+
+type RecordKataAgreementResponse = KataAgreementResponse
+
+type RecordKataAgreementErrorResponse = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSON = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSON404 = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSON409 = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSON422 = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSON503 = ErrorResponse
+
+type RecordKataAgreementErrorResponseJSONDefault = ErrorResponse
+
 type GetKataIssueContextResponse = KataIssueContextResponse
 
 type GetKataIssueContextErrorResponse = ErrorResponse
@@ -5740,6 +5772,34 @@ type CreateKataIssueResp struct {
 	JSON428      *CreateKataIssueErrorResponseJSON428
 	JSON503      *CreateKataIssueErrorResponseJSON503
 	JSONDefault  *CreateKataIssueErrorResponseJSONDefault
+}
+
+type GetKataAgreementResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetKataAgreementResponse
+	JSON400      *GetKataAgreementErrorResponse
+	JSON401      *GetKataAgreementErrorResponseJSON
+	JSON404      *GetKataAgreementErrorResponseJSON404
+	JSON409      *GetKataAgreementErrorResponseJSON409
+	JSON422      *GetKataAgreementErrorResponseJSON422
+	JSON503      *GetKataAgreementErrorResponseJSON503
+	JSONDefault  *GetKataAgreementErrorResponseJSONDefault
+}
+
+type RecordKataAgreementResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RecordKataAgreementResponse
+	JSON400      *RecordKataAgreementErrorResponse
+	JSON401      *RecordKataAgreementErrorResponseJSON
+	JSON404      *RecordKataAgreementErrorResponseJSON404
+	JSON409      *RecordKataAgreementErrorResponseJSON409
+	JSON422      *RecordKataAgreementErrorResponseJSON422
+	JSON503      *RecordKataAgreementErrorResponseJSON503
+	JSONDefault  *RecordKataAgreementErrorResponseJSONDefault
 }
 
 type GetKataIssueContextResp struct {

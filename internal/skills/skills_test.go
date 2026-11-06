@@ -40,7 +40,7 @@ func TestRender_AllSkills(t *testing.T) {
 	require.NoError(err)
 
 	wantNames := []string{
-		"msgvault-analytics", "msgvault-attachments", "msgvault-search",
+		"msgvault-agreements", "msgvault-analytics", "msgvault-attachments", "msgvault-search",
 	}
 	var gotNames []string
 	for _, sk := range rendered {
@@ -62,7 +62,7 @@ func TestRender_AllSkills(t *testing.T) {
 			"no unrendered template actions")
 		assert.NotContains(sk.Content, "\r",
 			"rendered skills must use LF regardless of checkout line endings")
-		// every skill embeds the shared basics section
+		// Every skill carries its applicable command and content-trust conventions.
 		assert.Contains(sk.Content, "## msgvault conventions")
 		assert.Contains(sk.Content, "UNTRUSTED sender-controlled data",
 			"every skill must carry the untrusted-content warning")

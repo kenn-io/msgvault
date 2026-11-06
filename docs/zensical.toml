@@ -53,6 +53,7 @@ nav = [
     {"External Enrichment" = "usage/people-enrichment.md"},
     {"CardDAV Contacts" = "usage/people-carddav.md"},
     {"Kata Issues" = "usage/kata-issues.md"},
+    {"Agreement Review" = "usage/agreements.md"},
     {"Accounts and Collections" = "usage/multi-account.md"},
   ]},
   {"Maintain and Operate" = [

@@ -16,7 +16,7 @@ var skillsCmd = &cobra.Command{
 	Short: "Manage agent skills for coding assistants",
 	Long: `Manage msgvault agent skills (SKILL.md files, per the open
 agent-skills standard) that teach coding agents such as Claude Code
-and Codex the msgvault search, attachment, and analytics workflows.`,
+and Codex the msgvault search, attachment, analytics, and agreement workflows.`,
 }
 
 var skillsInstallCmd = &cobra.Command{

@@ -13,13 +13,15 @@ session.
 
 | Skill | Teaches |
 |---|---|
+| `msgvault-agreements` | Review requests, accepted terms and proposed replacements on an existing Kata task |
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
 
-All three cover read-only workflows only. They explicitly tell agents
-not to run archive-mutating commands (sync, import, dedup, deletion)
-without your direction.
+Search, attachments and analytics cover read-only workflows. The agreement
+skill includes explicit, reviewed writes to the configured Kata project; it
+does not extract commitments automatically. Skills require your direction
+before writes. See [agreement review](../usage/agreements.md) for the lifecycle.
 
 ## Install
 

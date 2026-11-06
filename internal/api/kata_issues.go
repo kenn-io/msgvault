@@ -91,6 +91,7 @@ type KataIssueResponse struct {
 }
 
 func (s *Server) registerKataIssueRoutes(api huma.API) {
+	s.registerKataAgreementRoutes(api)
 	prepare := rawAPIV1Operation("prepareKataEvidence", http.MethodPost, "/integrations/kata/evidence/prepare", "Prepare exact message and file evidence for a Kata issue")
 	prepare.RequestBody = jsonRequestBodyFor[KataEvidencePrepareRequest](api)
 	prepare.Responses = jsonResponsesFor[KataEvidencePrepareResponse](api)

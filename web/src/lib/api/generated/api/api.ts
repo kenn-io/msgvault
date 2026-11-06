@@ -167,6 +167,7 @@ import type {
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
   GetImportJobPathParameters,
+  GetKataAgreementPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
   GetMessageInlinePartParams,
@@ -216,6 +217,8 @@ import type {
   ImportJobRequest,
   ImportJobResponse,
   ImportMuesliRecordingParams,
+  KataAgreementRecordRequest,
+  KataAgreementResponse,
   KataEvidenceLinkRequest,
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
@@ -398,6 +401,7 @@ import type {
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
   QueryResult,
+  RecordKataAgreementPathParameters,
   RejectPersonBriefPathParameters,
   RejectPersonBriefRequest,
   RelationshipReviewsResponse,
@@ -2134,6 +2138,39 @@ export const createKataIssue = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: kataIssueCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read reviewed agreement history and last accepted terms on a Kata issue
+ */
+export const getKataAgreement = (
+  { ref }: GetKataAgreementPathParameters,
+  options?: SecondParameter<typeof orvalFetch<KataAgreementResponse>>,
+) => {
+  return orvalFetch<KataAgreementResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/agreement`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Record a reviewed agreement event without changing unaccepted terms
+ */
+export const recordKataAgreement = (
+  { ref }: RecordKataAgreementPathParameters,
+  kataAgreementRecordRequest: KataAgreementRecordRequest,
+  options?: SecondParameter<typeof orvalFetch<KataAgreementResponse>>,
+) => {
+  return orvalFetch<KataAgreementResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/agreement`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataAgreementRecordRequest,
     },
     options,
   );
