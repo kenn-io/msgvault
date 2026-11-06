@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
@@ -57,6 +59,41 @@ func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
 				{ParticipantID: phase.wantOtherRoom, Display: "Room 2 <room2@resource.calendar.google.com>"},
 				{ParticipantID: alice, Display: "Alice <alice@example.com>"},
 			}, row.ToParticipants)
+		})
+	}
+}
+
+func TestPopulateMessageBodiesBoundsVerificationFields(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			if backend == "postgres" {
+				if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+					t.Skip("PG-only: requires MSGVAULT_TEST_DB pointing at PostgreSQL")
+				}
+			} else {
+				t.Setenv("MSGVAULT_TEST_DB", "")
+			}
+			const bodyBytes = 10 << 20
+			st, conversationID, ids := seedBudgetConversation(t, []int{bodyBytes})
+			requirements.NoError(st.UpsertMessageBody(ids[0],
+				sql.NullString{String: strings.Repeat("a", bodyBytes), Valid: true},
+				sql.NullString{String: strings.Repeat("b", bodyBytes), Valid: true}))
+			messages := []store.APIMessage{{ID: ids[0]}}
+			requirements.NoError(st.PopulateMessageBodiesContext(t.Context(), messages))
+			assertions.Len(messages[0].BodyText, verification.MaxFieldBytes)
+			assertions.Len(messages[0].BodyHTML, verification.MaxFieldBytes)
+			assertions.Equal(messages[0].BodyText, messages[0].Body)
+			assertions.True(verification.Is(verification.Content{Text: messages[0].BodyText}))
+			assertions.True(verification.Is(verification.Content{HTML: messages[0].BodyHTML}))
+
+			window, err := st.GetConversationWindowContext(t.Context(), conversationID, ids[0], 0, 0, nil, nil)
+			requirements.NoError(err)
+			requirements.Len(window.Messages, 1)
+			assertions.Len(window.Messages[0].BodyText, bodyBytes)
+			assertions.Len(window.Messages[0].BodyHTML, bodyBytes)
+			t.Logf("retained body bytes: classification=%d unrestricted=%d", len(messages[0].BodyText)+len(messages[0].BodyHTML), len(window.Messages[0].BodyText)+len(window.Messages[0].BodyHTML))
 		})
 	}
 }

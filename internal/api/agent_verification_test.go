@@ -116,7 +116,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"filename", "Ordinary", "", "", "code-482913.png"},
 		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", ""},
 		{"ordinary", "Project update", "Project update", "<p>Project update</p>", ""},
-		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes) + " Your code is 482913", "", ""},
+		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
