@@ -454,15 +454,10 @@ func (s *Store) resolveEmailReplies(ctx context.Context, sourceID int64, ids []i
 	})
 }
 
-type emailReplyQuerier interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
-}
-
 // uniqueEmailReplyParent returns the one visible same-source email whose
 // Message-ID the unresolved child names, or zero when there is none, more
 // than one, or the child names itself. lock is appended to the child read.
-func (s *Store) uniqueEmailReplyParent(ctx context.Context, q emailReplyQuerier, sourceID, childID int64, lock string) (int64, error) {
+func (s *Store) uniqueEmailReplyParent(ctx context.Context, q storeQuerier, sourceID, childID int64, lock string) (int64, error) {
 	var metadata sql.NullString
 	var reply sql.NullInt64
 	err := q.QueryRowContext(ctx, `SELECT metadata, reply_to_message_id FROM messages
@@ -476,15 +471,7 @@ func (s *Store) uniqueEmailReplyParent(ctx context.Context, q emailReplyQuerier,
 	if reply.Valid || !metadata.Valid {
 		return 0, nil
 	}
-	// A damaged parent fact names no parent. Failing here would stop every
-	// later sync from linking the rest of the source.
-	var fields struct {
-		Parent string `json:"email_in_reply_to"`
-	}
-	if json.Unmarshal([]byte(metadata.String), &fields) != nil {
-		return 0, nil
-	}
-	parentRFCID := mime.NormalizeMessageID(fields.Parent)
+	parentRFCID := mime.NormalizeMessageID(storedEmailReplyParent(metadata.String))
 	if parentRFCID == "" {
 		return 0, nil
 	}
@@ -520,4 +507,17 @@ func (s *Store) uniqueEmailReplyParent(ctx context.Context, q emailReplyQuerier,
 		return 0, nil
 	}
 	return parents[0], nil
+}
+
+// storedEmailReplyParent reads the parent Message-ID fact from message
+// metadata. A damaged fact names no parent: failing instead would stop every
+// later sync from linking the rest of the source.
+func storedEmailReplyParent(metadata string) string {
+	var fields struct {
+		Parent string `json:"email_in_reply_to"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &fields); err != nil {
+		return ""
+	}
+	return fields.Parent
 }
