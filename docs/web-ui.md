@@ -180,7 +180,25 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-The same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. More than 4096 mirrored files excluding images, audio, and video are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Attachment failures show the API error message, with Retry for transient failures. "More may match" marks result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+### Attachment matches
+
+With [attachment mirroring](configuration.md#mirror-stored-attachments-to-docbank)
+enabled, the same search adds **Attachments**: text Docbank extracted from
+mirrored PDFs and documents.
+
+- **What it shows:** the message title and date, filename, and extracted
+  excerpt. Select a row to open the message that holds the file.
+- **Queries:** plain words, like recording search. Use `msgvault media search`
+  for queries with punctuation.
+- **Empty results:** an empty block without an error means no match in the
+  extracted text. Files still awaiting extraction may contain the words.
+- **Scope limit:** more than 4,096 mirrored files, not counting images, audio,
+  and video, returns `media_search_scope_limit`. Add a Person filter, or choose
+  a person with fewer attachments.
+- **Failures:** other errors show the API message, with **Retry** for
+  transient failures. "More may match" marks other result limits. Recording
+  failures appear beside attachment results, and both lists follow the same
+  Person filter.
 
 ## Read messages
 

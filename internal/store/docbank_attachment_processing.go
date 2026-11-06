@@ -31,7 +31,7 @@ func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, 
 }
 
 func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, n int) ([]DocbankAttachmentProcessing, error) {
-	visible := s.documentSearchVisible()
+	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
 	for _, unasked := range []bool{true, false} {
@@ -54,9 +54,12 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
  AND ` + processable + `
  ORDER BY p.next_action_at, p.content_hash LIMIT ?`
-			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()), limit)
+			args = append(args, fingerprint, s.timestampValue(time.Now().UTC()))
+			args = append(args, visibleArgs...)
+			args = append(args, limit)
 		} else {
 			limit = max(1, n/4)
+			args = append(args, visibleArgs...)
 			args = append(args, fingerprint, limit)
 		}
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
@@ -99,10 +102,11 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 }
 
 func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, profile string) (DocbankAttachmentProcessingSummary, error) {
-	visible := s.documentSearchVisible()
+	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
 	args := []any{"docbank-processing:" + dest + ":" + profile, dest}
+	args = append(args, visibleArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT
  COALESCE(p.outcome, ''), COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
