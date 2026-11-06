@@ -134,7 +134,7 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 
 			Version: 1, Provider: "signal", Account: account, NativeCallID: native,
 			Kind: "call", Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
-			OccurredAt: at, Precision: "instant",
+			OccurredAt: at,
 
 			Participants: []callhistory.Participant{{ID: peer, Participation: role}},
 			Raw:          []byte(`{}`),
@@ -183,7 +183,7 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 
 		Version: 1, Provider: "signal", Account: "a",
 		Kind: "call", Direction: "unknown", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: at, Precision: "instant",
+		OccurredAt: at,
 
 		Participants: []callhistory.Participant{{ID: a, Participation: "joined"}, {ID: b, Participation: "joined"}},
 		Raw:          []byte(`{}`),

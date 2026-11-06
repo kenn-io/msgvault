@@ -145,7 +145,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 					return fmt.Errorf("%w: unsupported call evidence version %d", callhistory.ErrInvalid, view.Version)
 				}
 			} else {
-				view.Version, view.Precision = 1, "instant"
+				view.Version = 1
 			}
 			view.Participants = []callhistory.Participant{}
 			out = append(out, view)

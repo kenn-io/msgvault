@@ -86,7 +86,7 @@ func FuzzCallStoreSequences(f *testing.F) {
 
 				Version: 1, Provider: fmt.Sprintf("network-%d", random.IntN(2)), Account: fmt.Sprintf("account-%d", random.IntN(2)),
 				NativeCallID: strconv.Itoa(index), Kind: "call", Direction: "unknown",
-				OccurredAt: time.Date(2026, 10, 1, index, 0, 0, 0, time.UTC), Precision: "instant",
+				OccurredAt: time.Date(2026, 10, 1, index, 0, 0, 0, time.UTC),
 
 				Raw: []byte(`{}`),
 			}

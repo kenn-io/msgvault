@@ -56,7 +56,6 @@ func TestSignalNativeStatuses(t *testing.T) {
 			if tc.mode == "Direct" && tc.status == "Accepted" {
 				assertions.Equal("incoming", got.Direction)
 				assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
-				assertions.Empty(got.Timezone, "epoch milliseconds do not identify the source zone")
 				assertions.JSONEq(raw, string(got.Raw))
 			}
 			if tc.peer == "" {
@@ -70,7 +69,7 @@ func TestSignalNativeStatuses(t *testing.T) {
 
 func TestNormalizedImportRejectsDifferentNativeCallID(t *testing.T) {
 	_, err := (ImportRequest{Format: "normalized", Account: "example",
-		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","precision":"instant","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
+		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
 }

@@ -16,11 +16,9 @@ export interface CallObservationView {
   outcome: string;
   owner_participation: string;
   participants: CallParticipant[];
-  precision: string;
   provider: string;
   record_id: string;
   source_id: number;
-  timezone?: string;
   version: number;
   [key: string]: unknown;
 }

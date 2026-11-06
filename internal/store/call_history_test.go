@@ -22,7 +22,7 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 	t.Helper()
 	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
 		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Raw: []byte(`{}`),
 	}
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func TestCallObservationReplacement(t *testing.T) {
 
 		Version: 1, Provider: "signal", Account: "example", NativeCallID: "native-1",
 		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
 
 		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}},
 		Raw:          []byte(`{"callId":"native-1","status":"Accepted"}`),
@@ -299,7 +299,7 @@ func TestCallObservationSubsetAndParticipantMerge(t *testing.T) {
 
 		Version: 1, Provider: "signal", Account: "example", Kind: "call",
 		Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
-		OccurredAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Precision: "instant",
+		OccurredAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 
 		Participants: []callhistory.Participant{{ID: old, Participation: "joined"}},
 		Raw:          []byte(`{"id":"record"}`),

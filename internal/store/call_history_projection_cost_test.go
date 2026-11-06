@@ -28,24 +28,3 @@ func TestCallSummaryReadsOnlyScalarEvidence(t *testing.T) {
 	assert.NotEmpty(logs.String(), "the summary query must be captured")
 	assert.NotContains(scalarReads.ReplaceAllString(logs.String(), ""), "metadata", "summary SQL must avoid fetching JSON evidence for decoding in Go")
 }
-
-func TestCallReclassificationClearsProjection(t *testing.T) {
-	require := require.New(t)
-	st := storetest.New(t).Store
-	o, sourceID := validCallObservation(t, st)
-	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(err)
-	var conversationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), id).Scan(&conversationID))
-	again, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: sourceID, ConversationID: conversationID,
-			SourceMessageID: o.RecordID, MessageType: "email",
-		},
-	})
-	require.NoError(err)
-	require.Equal(id, again)
-	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM call_details WHERE message_id = ?`), id).Scan(&count))
-	assert.Zero(t, count, "reclassifying a call must remove its stale projection")
-}

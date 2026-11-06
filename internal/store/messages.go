@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -1507,18 +1506,6 @@ func readBodylessMessageJournalState(q querier, msg *Message) (bodylessMessageJo
 	return prior, nil
 }
 
-// clearReclassifiedCallWith drops the scalar projection of a call that an
-// upsert rewrote as another type. Without a prior read it clears blindly.
-func clearReclassifiedCallWith(q querier, id int64, known bool, prior bodylessMessageJournalState, msg *Message) error {
-	if msg.MessageType == callhistory.MessageType || (known && prior.messageType.String != callhistory.MessageType) {
-		return nil
-	}
-	if _, err := q.Exec(`DELETE FROM call_details WHERE message_id = ?`, id); err != nil {
-		return fmt.Errorf("clear reclassified call projection: %w", err)
-	}
-	return nil
-}
-
 func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
@@ -1564,9 +1551,6 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		).Scan(&id); err != nil {
 			return 0, err
 		}
-	}
-	if err := clearReclassifiedCallWith(q, id, journalCandidate, prior, msg); err != nil {
-		return 0, err
 	}
 	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
 		if err := appendBodylessMessageChange(q, d, id, prior, msg); err != nil {

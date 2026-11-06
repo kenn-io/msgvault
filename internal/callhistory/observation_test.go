@@ -13,8 +13,8 @@ func exampleObservation() Observation {
 
 		Version: 1, Provider: "signal", Account: "example-account",
 		Kind: "call", Direction: "incoming", Outcome: "answered",
-		OwnerParticipation: "joined", Precision: "instant",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.FixedZone("", -7*3600)),
+		OwnerParticipation: "joined",
+		OccurredAt:         time.Date(2026, 10, 1, 9, 0, 0, 0, time.FixedZone("", -7*3600)),
 
 		Participants: []Participant{{ID: 1, Participation: "joined"}},
 		Raw:          []byte(`{"callId":"record-1","status":"Accepted"}`),
