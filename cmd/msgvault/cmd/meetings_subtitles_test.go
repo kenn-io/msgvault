@@ -26,7 +26,7 @@ func TestMeetingSubtitlesArchiveHTTPCLI(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
 	require.NoError(t, err)
-	raw := []byte(`{"summary_markdown":"Keep summary","transcript":[{"speaker":{"name":"A<&>"},"text":"Hello --> 世界","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04.250Z"},{"speaker":{"name":"B"},"text":"Next","start_time":"2026-01-01T10:00:03Z","end_time":"2026-01-01T10:00:05Z"}]}`)
+	raw := []byte(`{"summary_markdown":"Keep summary","transcript":[{"speaker":{"name":"R&D"},"text":"Hello --> 世界 & done","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04.250Z"},{"speaker":{"name":"B"},"text":"Next","start_time":"2026-01-01T10:00:03Z","end_time":"2026-01-01T10:00:05Z"}]}`)
 	metadata := []byte(`{"platform":"granola","retained":"synthetic"}`)
 	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Subtitle fixture", StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "granola_json", Metadata: metadata, Organizer: &meetingarchive.Person{Name: "Owner", Email: "subtitle@example.test"}}
 	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
@@ -44,9 +44,10 @@ func TestMeetingSubtitlesArchiveHTTPCLI(t *testing.T) {
 		stdout, stderr, err := executeMeetingsCommand(t, client, "subtitles", "--id", id, "--format", format)
 		require.NoError(t, err)
 		assert.Empty(t, stderr)
-		want := "1\n00:00:00,000 --> 00:00:02,250\nA&lt;&amp;&gt;: Hello --&gt; 世界\n\n2\n00:00:01,000 --> 00:00:03,000\nB: Next\n\n"
+		want := "1\n00:00:00,000 --> 00:00:02,250\nR&D: Hello --> 世界 & done\n\n2\n00:00:01,000 --> 00:00:03,000\nB: Next\n\n"
 		if format == "vtt" {
 			want = "WEBVTT\n\n" + strings.ReplaceAll(want, ",", ".")
+			want = strings.ReplaceAll(want, "R&D: Hello --> 世界 & done", "R&amp;D: Hello --&gt; 世界 &amp; done")
 		}
 		assert.Equal(t, want, stdout)
 		stdout, stderr, err = executeMeetingsCommand(t, client, "subtitles", "--id", id, "--format", format, "-o", output)
@@ -71,9 +72,10 @@ func TestMeetingSubtitlesArchiveHTTPCLI(t *testing.T) {
 	// Real archive responses refuse formatting errors, missing timing and size
 	// truncation without replacing an existing destination or emitting stdout.
 	for name, badRaw := range map[string][]byte{
-		"layout": []byte(strings.Replace(string(raw), "Hello --> 世界", `first\n\nsecond`, 1)),
-		"timing": []byte(strings.Replace(string(raw), `"end_time":"2026-01-01T10:00:04.250Z"`, `"end_time":null`, 1)),
-		"size":   []byte(strings.Replace(string(raw), "Hello --> 世界", strings.Repeat("large ", 200000), 1)),
+		"srt markup": []byte(strings.Replace(string(raw), "Hello --> 世界 & done", "literal <b>markup</b>", 1)),
+		"layout":     []byte(strings.Replace(string(raw), "Hello --> 世界 & done", `first\n\nsecond`, 1)),
+		"timing":     []byte(strings.Replace(string(raw), `"end_time":"2026-01-01T10:00:04.250Z"`, `"end_time":null`, 1)),
+		"size":       []byte(strings.Replace(string(raw), "Hello --> 世界 & done", strings.Repeat("large ", 200000), 1)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			snapshot.Raw = badRaw
@@ -81,7 +83,7 @@ func TestMeetingSubtitlesArchiveHTTPCLI(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(output, []byte("keep"), 0600))
 			stdout, _, err := executeMeetingsCommand(t, client, "subtitles", "--id", id, "-o", output)
-			require.ErrorContains(t, err, map[string]string{"layout": "format", "timing": "timing", "size": "size limit"}[name])
+			require.ErrorContains(t, err, map[string]string{"srt markup": "use --format vtt", "layout": "format", "timing": "timing", "size": "size limit"}[name])
 			assert.Empty(t, stdout)
 			saved, err := os.ReadFile(output)
 			require.NoError(t, err)

@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -64,19 +63,7 @@ func newMeetingSubtitlesCommand(deps meetingCommandDeps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if output == "" || output == "-" {
-				if _, err := io.WriteString(command.OutOrStdout(), content); err != nil {
-					return fmt.Errorf("write meeting subtitles: %w", err)
-				}
-				return nil
-			}
-			if _, err := writeAttachmentStreamToFile(output, strings.NewReader(content)); err != nil {
-				return fmt.Errorf("write meeting subtitles: %w", err)
-			}
-			if _, err := fmt.Fprintf(command.ErrOrStderr(), "Wrote meeting subtitles to %s\n", output); err != nil {
-				return fmt.Errorf("write meeting subtitles notice: %w", err)
-			}
-			return nil
+			return writeMeetingOutput(command, output, content, "meeting subtitles")
 		},
 	}
 	command.Flags().Int64SliceVar(&ids, "id", nil, "One meeting message ID from search (required)")

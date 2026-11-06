@@ -29,20 +29,6 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 	// An absolute start plus explicit offset fixes the common recording origin.
 	origin := 0.0
 	anchored := false
-	// A proven Hex mixed cue fixes the same origin for absolute cues, too.
-	if earliest != nil && entry.Meeting.SourceType == "hex" && entry.Meeting.OccurredAt != nil {
-		for _, segment := range transcript.Segments {
-			if strings.TrimSpace(segment.Text) != "" && segment.StartedAt == nil && segment.OffsetSeconds != nil && segment.EndedAt != nil {
-				var err error
-				origin, err = subtitleSeconds(*earliest, *entry.Meeting.OccurredAt)
-				if err != nil {
-					return "", err
-				}
-				anchored = true
-				break
-			}
-		}
-	}
 	for i, s := range transcript.Segments {
 		if strings.TrimSpace(s.Text) == "" || s.StartedAt == nil || s.OffsetSeconds == nil {
 			continue
@@ -109,7 +95,19 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		if s.Speaker != "" {
 			text = s.Speaker + ": " + text
 		}
-		text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+		if format == "vtt" {
+			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+		} else {
+			unsafe := strings.ContainsAny(text, "<{}\\")
+			for line := range strings.SplitSeq(text, "\n") {
+				line = strings.TrimSpace(line)
+				// SRT readers can start another cue at a timing line without a blank.
+				unsafe = unsafe || len(line) > 0 && line[0] >= '0' && line[0] <= '9' && strings.Contains(line, "-->")
+			}
+			if unsafe {
+				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve literal markup or timing/control syntax; use --format vtt", i+1)
+			}
+		}
 		cues = append(cues, cue{startMS, endMS, text})
 	}
 	if len(cues) == 0 {
@@ -137,7 +135,7 @@ func subtitleSeconds(start, end time.Time) (float64, error) {
 }
 
 func validSubtitleSeconds(seconds float64) bool {
-	return !math.IsNaN(seconds) && !math.IsInf(seconds, 0) && seconds >= 0 && math.Round(seconds*1000) < float64(math.MaxInt64)
+	return finite(seconds) && seconds >= 0 && math.Round(seconds*1000) < float64(math.MaxInt64)
 }
 
 func subtitleTimestamp(ms int64, separator string) string {

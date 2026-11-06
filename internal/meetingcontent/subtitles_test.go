@@ -14,7 +14,7 @@ import (
 func subtitleEntry() Entry {
 	start := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	end := start.Add(1500 * time.Millisecond)
-	return Entry{Content: Content{Transcript: Transcript{State: StateAvailable, Segments: []Segment{{StartedAt: &start, EndedAt: &end, Speaker: "A<&>", Text: "Hi --> 世界\r\nnext & <b>"}}}}}
+	return Entry{Content: Content{Transcript: Transcript{State: StateAvailable, Segments: []Segment{{StartedAt: &start, EndedAt: &end, Speaker: "R&D", Text: "Hi --> 世界\r\nnext & done"}}}}}
 }
 
 func TestRenderSubtitles(t *testing.T) {
@@ -29,7 +29,11 @@ func TestRenderSubtitles(t *testing.T) {
 			if format == "vtt" {
 				header, separator = "WEBVTT\n\n", "."
 			}
-			want := header + "1\n00:00:00" + separator + "000 --> 00:00:01" + separator + "500\nA&lt;&amp;&gt;: Hi --&gt; 世界\nnext &amp; &lt;b&gt;\n\n"
+			payload := "R&D: Hi --> 世界\nnext & done"
+			if format == "vtt" {
+				payload = "R&amp;D: Hi --&gt; 世界\nnext &amp; done"
+			}
+			want := header + "1\n00:00:00" + separator + "000 --> 00:00:01" + separator + "500\n" + payload + "\n\n"
 			assert.Equal(t, want, got)
 			after, err := json.Marshal(entry)
 			require.NoError(t, err)
@@ -112,12 +116,14 @@ func TestSubtitleRefusals(t *testing.T) {
 }
 
 // Unsafe cue layout must fail, while representable payloads cannot inject cue
-// separators, markup, or timing arrows. Seeds cover actual retained source text.
+// separators or markup. SRT preserves literal arrows; VTT escapes them.
 func FuzzSubtitlePayload(f *testing.F) {
 	for _, seed := range []string{"first\n\nsecond", "first\n \nsecond", "A\r\nB", "<v X>& -->", "世界", "\nleading", "trailing\n"} {
 		f.Add(seed, "Speaker")
 	}
 	f.Add("safe", "first\nsecond")
+	f.Add("R&D --> 世界", "R&D")
+	f.Add("first\n00:00:03,000 --> 00:00:04,000\ninjected", "")
 	f.Fuzz(func(t *testing.T, text, speaker string) {
 		if strings.TrimSpace(text) == "" {
 			return
@@ -132,26 +138,50 @@ func FuzzSubtitlePayload(f *testing.F) {
 		}
 		for _, format := range []string{"srt", "vtt"} {
 			got, err := RenderSubtitles(entry, format)
-			if unsafe {
+			payload := normalized
+			if speaker != "" {
+				payload = speaker + ": " + payload
+			}
+			srtUnsafe := strings.ContainsAny(payload, "<{}\\")
+			for line := range strings.SplitSeq(payload, "\n") {
+				line = strings.TrimSpace(line)
+				srtUnsafe = srtUnsafe || len(line) > 0 && line[0] >= '0' && line[0] <= '9' && strings.Contains(line, "-->")
+			}
+			if unsafe || format == "srt" && srtUnsafe {
 				require.Error(t, err)
 				assert.Empty(t, got)
 				continue
 			}
 			require.NoError(t, err)
-			assert.Equal(t, 1, strings.Count(got, " --> "))
-			assert.NotContains(t, got, "<")
+			if format == "vtt" {
+				assert.Equal(t, 1, strings.Count(got, " --> "))
+				assert.NotContains(t, got, "<")
+			} else {
+				assert.True(t, strings.HasSuffix(got, payload+"\n\n"))
+			}
 			assert.Equal(t, 1, strings.Count(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n\n"))
 		}
 	})
 }
 
-func TestSubtitleMixedAbsoluteOrigin(t *testing.T) {
-	entry := subtitleEntry()
-	origin := entry.Content.Transcript.Segments[0].StartedAt.Add(-2 * time.Second)
-	entry.Meeting.SourceType, entry.Meeting.OccurredAt = "hex", &origin
-	entry.Content.Transcript.Segments = append(entry.Content.Transcript.Segments, Segment{Text: "relative", OffsetSeconds: new(1.0), EndedAt: new(origin.Add(3 * time.Second))})
-	got, err := RenderSubtitles(entry, "srt")
-	require.NoError(t, err)
-	assert.Contains(t, got, "1\n00:00:01,000 --> 00:00:03,000\nrelative")
-	assert.Contains(t, got, "2\n00:00:02,000 --> 00:00:03,500")
+func TestSubtitleFormatRefusals(t *testing.T) {
+	for _, payload := range []string{"1 < 2 & 3 > 1", `C:\Temp\note.txt`, "literal <b>bold</b>", "A<&>", `literal {\b1}bold`, `literal \N text`, "first\n00:00:03,000 --> 00:00:04,000\ninjected"} {
+		for _, label := range []bool{false, true} {
+			if label && strings.ContainsAny(payload, "\r\n") {
+				continue
+			}
+			entry := subtitleEntry()
+			if label {
+				entry.Content.Transcript.Segments[0].Speaker = payload
+			} else {
+				entry.Content.Transcript.Segments[0].Text = payload
+			}
+			got, err := RenderSubtitles(entry, "srt")
+			require.ErrorContains(t, err, "use --format vtt")
+			assert.Empty(t, got)
+			got, err = RenderSubtitles(entry, "vtt")
+			require.NoError(t, err)
+			assert.NotContains(t, got, "<")
+		}
+	}
 }

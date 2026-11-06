@@ -95,7 +95,10 @@ Exports exactly one archived meeting through the daemon. `--id` must be a
 positive JavaScript-safe integer. The default format is `srt`; output defaults
 to stdout (`-o -` also selects stdout). A file is replaced atomically after
 successful rendering, with a notice on stderr. Both formats use visible speaker
-prefixes and escape text and labels.
+prefixes. WebVTT escapes text and labels. SRT preserves plain text, including
+ampersands and arrows, and refuses literal `<`, braces, and backslashes that
+players can interpret as markup or formatting controls. Lines starting with a
+number and containing `-->` also fail to prevent extra cues; use `--format vtt`.
 
 Complete retained timing and a complete context packet within 1 MiB are required.
 Unknown schemas, omitted or truncated evidence, unavailable timing, blank cue

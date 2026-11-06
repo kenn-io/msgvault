@@ -59,7 +59,12 @@ msgvault meetings subtitles --id 42 --format vtt -o meeting.vtt
 
 `--format` defaults to `srt`. Output goes to stdout unless `-o FILE` is
 specified; `-o -` also uses stdout. Both formats show available speakers as
-`Speaker: text`. Text and labels are escaped, and nonblank line breaks survive.
+`Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
+SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
+`<`, braces, and backslashes in text or labels because players can interpret
+them as markup or formatting controls. SRT also refuses lines that begin with a
+number and contain `-->`, which players can treat as another cue. Use
+`--format vtt` for those transcripts.
 Interior blank cue lines and multiline speaker labels cause an explicit error.
 The command validates and renders everything before replacing a file. Timing,
 formatting, and size errors leave an existing destination untouched.

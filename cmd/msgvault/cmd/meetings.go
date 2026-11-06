@@ -131,7 +131,7 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 			if result == nil {
 				return errors.New("meeting context response was empty")
 			}
-			return writeMeetingContext(command, output, result.Content)
+			return writeMeetingOutput(command, output, result.Content, "meeting context")
 		},
 	}
 	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "meeting message ID from search (repeatable, required, at most 100)")
@@ -142,18 +142,18 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 	return command
 }
 
-func writeMeetingContext(command *cobra.Command, output, content string) error {
+func writeMeetingOutput(command *cobra.Command, output, content, kind string) error {
 	if output == "" || output == "-" {
 		if _, err := io.WriteString(command.OutOrStdout(), content); err != nil {
-			return fmt.Errorf("write meeting context: %w", err)
+			return fmt.Errorf("write %s: %w", kind, err)
 		}
 		return nil
 	}
 	if _, err := writeAttachmentStreamToFile(output, strings.NewReader(content)); err != nil {
-		return fmt.Errorf("write meeting context: %w", err)
+		return fmt.Errorf("write %s: %w", kind, err)
 	}
-	if _, err := fmt.Fprintf(command.ErrOrStderr(), "Wrote meeting context to %s\n", output); err != nil {
-		return fmt.Errorf("write meeting context notice: %w", err)
+	if _, err := fmt.Fprintf(command.ErrOrStderr(), "Wrote %s to %s\n", kind, output); err != nil {
+		return fmt.Errorf("write %s notice: %w", kind, err)
 	}
 	return nil
 }
