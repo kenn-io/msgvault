@@ -1,7 +1,6 @@
 package timeline
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -42,8 +41,12 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 func (c *composer) personCandidates(ctx context.Context) ([]store.PersonCandidate, error) {
 	kind, value := personReference(c.req.With)
 	if kind == store.PersonRefKind(store.ContactAddressEmail) {
-		if owner, err := c.src.Meetings.IsAccountIdentityAddressContext(ctx, strings.TrimSpace(value)); err != nil || owner {
-			return nil, cmp.Or(err, fmt.Errorf("%w: owner account address", store.ErrInvalidActivityRequest))
+		owner, err := c.src.Meetings.IsAccountIdentityAddressContext(ctx, strings.TrimSpace(value))
+		if err != nil {
+			return nil, fmt.Errorf("check timeline owner address: %w", err)
+		}
+		if owner {
+			return nil, fmt.Errorf("%w: owner account address", store.ErrInvalidActivityRequest)
 		}
 	}
 	return c.src.People.ResolvePersonReferenceContext(ctx, kind, value, nil, 11)
