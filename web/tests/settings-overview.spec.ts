@@ -6,8 +6,8 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
   await page.setViewportSize({ width: 768, height: 844 });
   await installOperations(page);
   await page.route('**/api/v1/embeddings/local', route => route.fulfill({ json: {
-    host: 'archive.example.test', enabled: true, provider: 'configured', compatible: false,
-    ollama_available: false, phase: 'idle', download_bytes: 0, done_bytes: 0, total_bytes: 0
+    host: 'archive.example.test', enabled: true, provider: 'configured',
+    phase: 'idle', download_bytes: 0, done_bytes: 0, total_bytes: 0
   } }));
   await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
     eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
@@ -42,8 +42,7 @@ for (const width of [1280, 390]) {
         ...embeddingStatus, current: 4, pending: 6
       } }));
       await page.route('**/api/v1/embeddings/local', route => route.fulfill({ json: {
-        host: 'archive.example.test', enabled: true, provider, compatible: true,
-        ollama_available: false, download_bytes: 0, phase: 'idle',
+        host: 'archive.example.test', enabled: true, provider, download_bytes: 0, phase: 'idle',
         done_bytes: 0, total_bytes: 0, error: 'Message index build interrupted.'
       } }));
       await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
@@ -64,17 +63,12 @@ for (const width of [1280, 390]) {
         const line = element.querySelector('.kit-search-by-meaning__line')?.getBoundingClientRect();
         const coverage = element.querySelector('.row__coverage')!.getBoundingClientRect();
         const error = element.querySelector('.row__error')!.getBoundingClientRect();
-        return { firstGap: coverage.y - (line ?? name).bottom, errorGap: error.y - coverage.bottom, rowPadding: parseFloat(getComputedStyle(element).paddingTop), rowGap: parseFloat(getComputedStyle(element).rowGap), columnGap: parseFloat(getComputedStyle(element).columnGap) };
+        return { firstGap: coverage.y - (line ?? name).bottom, errorGap: error.y - coverage.bottom, rowPadding: parseFloat(getComputedStyle(element).paddingTop), rowGap: parseFloat(getComputedStyle(element).rowGap) };
       });
       expect(spacing.firstGap).toBeGreaterThan(spacing.errorGap);
       expect(spacing.firstGap).toBeLessThanOrEqual(spacing.rowPadding + (provider === 'ollama' ? spacing.rowGap : 0));
       expect(spacing.errorGap).toBeGreaterThanOrEqual(0);
-      if (width === 1280 && provider === 'ollama') {
-        const chip = await row.locator('.kit-search-by-meaning > .kit-chip').boundingBox();
-        const switchAction = await row.getByRole('button', { name: 'Use built-in instead' }).boundingBox();
-        expect(switchAction!.x - chip!.x - chip!.width).toBeGreaterThanOrEqual(spacing.columnGap);
-        expect(Math.abs(switchAction!.x + switchAction!.width - action!.x - action!.width)).toBeLessThanOrEqual(1);
-      }
+      if (provider === 'ollama') await expect(row.getByRole('button')).toHaveCount(1);
     });
   }
 }
@@ -83,7 +77,7 @@ test('local search hint follows results and groups its setup error with matching
   await installOperations(page);
   await page.route('**/api/v1/embeddings/local', route => route.request().method() === 'POST'
     ? route.fulfill({ status: 503, json: { error: 'unavailable', message: 'Local search setup is unavailable' } })
-    : route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } }));
+    : route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'launch', searchMode: 'full_text' }))}`);
   await page.getByRole('button', { name: 'Turn on', exact: true }).click();
   await expect(page.locator('.local-search-hint').getByRole('alert')).toBeVisible();
@@ -102,4 +96,33 @@ test('local search hint follows results and groups its setup error with matching
   expect(geometry.hintFont).toBe(geometry.errorFont);
   expect(geometry.hintLineHeight).toBe(geometry.errorLineHeight);
   expect(geometry.relatedGap).toBeLessThanOrEqual(geometry.tableGap / 2);
+});
+
+test('Turn on downloads, indexes, and goes live on a fresh install', async ({ page }) => {
+  await installOperations(page);
+  let phase: 'idle' | 'downloading' | 'indexing' = 'idle';
+  let enabled = false;
+  const posts: (string | null)[] = [];
+  await page.route('**/api/v1/embeddings/local', route => {
+    if (route.request().method() === 'POST') {
+      posts.push(route.request().postData());
+      phase = 'downloading';
+    }
+    return route.fulfill({ status: route.request().method() === 'POST' ? 202 : 200, json: {
+      host: '', enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle',
+      download_bytes: enabled ? 0 : 290000000, done_bytes: phase === 'downloading' ? 116000000 : 0, total_bytes: 290000000
+    } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
+  const row = page.locator('[data-feature="message_embedding"]');
+  await expect(row).toContainText('Downloads 290 MB once, shared by all Kenn apps');
+  await row.getByRole('button', { name: 'Turn on' }).click();
+  await expect(row.getByRole('progressbar', { name: 'Search by meaning setup' })).toHaveAttribute('aria-valuenow', '116000000');
+  await expect(row).toContainText('Downloading 116 MB of 290 MB');
+  phase = 'indexing'; enabled = true;
+  await expect(row).toContainText('Indexing', { timeout: 3000 });
+  phase = 'idle';
+  await expect(row.locator('.kit-search-by-meaning > .kit-chip')).toHaveText('On', { timeout: 3000 });
+  await expect(row.getByRole('progressbar')).toHaveCount(0);
+  expect(posts).toEqual([null]);
 });

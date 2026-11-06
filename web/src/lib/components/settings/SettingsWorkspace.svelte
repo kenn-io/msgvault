@@ -140,12 +140,12 @@
       }
     }
   }
-  async function turnOnLocalSearch(builtin: boolean): Promise<void> {
+  async function turnOnLocalSearch(): Promise<void> {
     if (localPosting || localStatus?.running || (localStatus && localStatus.phase !== 'idle')) return;
     localPosting = true;
     localError = '';
     try {
-      const { data, response, error } = await enableLocalEmbeddings({ use_builtin: builtin }, client);
+      const { data, response, error } = await enableLocalEmbeddings(client);
       if (!response.ok || !data) throw new Error(error?.message || 'Could not turn on search by meaning.');
       localStatus = data;
       clearTimeout(localTimer);
@@ -653,9 +653,8 @@
           {:else}
             <SettingsOverview
               localSearch={localStatus && localStatus.provider !== 'configured' ? localSearchState(localStatus, embeddingStatus) : undefined}
-              localLabels={localStatus ? localSearchLabels(localStatus, embeddingStatus) : undefined}
-              localRetryBuiltin={localStatus?.retry_use_builtin ?? false}
-              {localError} onLocalSearch={(builtin) => void turnOnLocalSearch(builtin)}
+              localLabels={localStatus ? localSearchLabels(localStatus) : undefined}
+              {localError} onLocalSearch={() => void turnOnLocalSearch()}
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}

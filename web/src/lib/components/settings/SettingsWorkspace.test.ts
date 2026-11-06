@@ -788,80 +788,87 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
 });
 
-it('discloses the built-in download before switching from Ollama', async () => {
+const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.example.test', enabled: false, provider: '', download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, ...status });
+const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
+
+it('shows an Ollama setup as status only', async () => {
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return request.method === 'POST'
-      ? Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 })
-      : Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible: true, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false });
+    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'ollama' }));
     if (path === '/api/v1/embeddings/status') return Response.json(embeddingStatus);
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'ollama-switch', eligible_count: 10, embedded_count: 10, percentage: 100, status: 'ready', actions: [] });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'ollama', eligible_count: 10, embedded_count: 10, percentage: 100, status: 'ready', actions: [] });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
   });
   render(SettingsWorkspace, { client, operationsController });
-  const button = await screen.findByRole('button', { name: 'Use built-in instead' });
-  const row = screen.getByText('Search by meaning').closest('li')!;
-  expect(row.textContent).toContain('Downloads 290 MB once to archive.example.test');
-  await fireEvent.click(button);
-  await waitFor(() => expect(seen.find(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')?.body).toEqual({ use_builtin: true }));
+  const row = (await screen.findByText('On · Ollama')).closest('li')!;
+  expect(within(row).queryAllByRole('button')).toEqual([]);
+  expect(row.textContent).not.toContain('Downloads');
+  expect(localPosts(seen)).toEqual([]);
 });
 
-it('retries a failed built-in switch instead of resuming Ollama', async () => {
+it('shows a failed startup in the Off row and retries it through Turn on', async () => {
   let attempts = 0;
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') {
-      if (request.method === 'POST') {
-        attempts++;
-        return Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 });
-      }
-      return Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible: true, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: attempts ? 'connection interrupted' : undefined, retry_use_builtin: attempts > 0 });
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') {
+      attempts++;
+      return Response.json(localStatus({ running: true }), { status: 202 });
     }
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'switch-failure-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
-    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+    return Response.json(localStatus(attempts ? { enabled: true, provider: 'builtin', download_bytes: 0 } : { download_bytes: 0, error: 'Search by meaning could not start. Turn on to retry.' }));
   });
-  const view = render(SettingsWorkspace, { client, operationsController });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Use built-in instead' }));
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('connection interrupted'));
-  const posts = () => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
-  expect(posts().map(request => request.body)).toEqual([{ use_builtin: true }]);
-  view.unmount();
   render(SettingsWorkspace, { client, operationsController });
-  await screen.findByRole('alert');
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
-  await waitFor(() => expect(posts()).toHaveLength(2));
-  expect(posts()[1].body).toEqual({ use_builtin: true });
+  const row = (await screen.findByRole('alert')).closest('li')!;
+  expect(within(row).getByRole('alert').textContent).toBe('Search by meaning could not start. Turn on to retry.');
+  await fireEvent.click(within(row).getByRole('button', { name: 'Turn on' }));
+  await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
+  expect(localPosts(seen)[0].body).toBeUndefined();
+  await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
 });
 
-it('retries setup after a publication failure without changing the selected provider', async () => {
+it('retries setup while the message index is not current', async () => {
   let retried = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') {
         retried = true;
-        return Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 });
+        return Response.json(localStatus({ running: true }), { status: 202 });
       }
-      return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: retried ? undefined : 'invalid embed cron' });
+      return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: retried ? undefined : 'invalid embed cron' }));
     }
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
-    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 4, percentage: 66.7, status: 'initializing', actions: [] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 4, pending: 0 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
   });
   render(SettingsWorkspace, { client, operationsController });
   expect((await screen.findByRole('alert')).textContent).toBe('invalid embed cron');
   await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
-  await waitFor(() => expect(seen.find(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')?.body).toEqual({ use_builtin: false }));
+  await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
+  expect(localPosts(seen)[0].body).toBeUndefined();
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
-it.each(['manual', 'scheduled'] as const)('clears the setup failure after a successful %s index recovery', async recovery => {
+it('hides a setup error once the message index is current', async () => {
+  const { client, operationsController } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: 'Message index build interrupted.' }));
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'current-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+  });
+  const { container } = render(SettingsWorkspace, { client, operationsController });
+  await waitFor(() => expect(container.querySelector('[data-feature="message_embedding"] .kit-search-by-meaning')?.textContent).toContain('On'));
+  const row = container.querySelector<HTMLElement>('[data-feature="message_embedding"]')!;
+  expect(within(row).queryByRole('alert')).toBeNull();
+  expect(within(row).queryByRole('button', { name: 'Retry setup, Search by meaning' })).toBeNull();
+});
+
+it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {
   let recovered = false;
   let running = false;
   const { client, operationsController } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: recovered ? undefined : 'Message index build interrupted.' });
+    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: 'Message index build interrupted.' }));
     if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
@@ -896,7 +903,7 @@ it('retries a failed initial local status read through Refresh feature status', 
   const { client, operationsController } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (++reads === 1) throw new TypeError('Network interrupted');
-    return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+    return Response.json(localStatus());
   });
   render(SettingsWorkspace, { client, operationsController });
   await screen.findByRole('button', { name: 'Set up Search by meaning' });
@@ -919,8 +926,7 @@ it.each(['none', 'http', 'network'] as const)('turns on local search once and ke
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
     }
-    return Response.json({ enabled, provider: enabled ? 'builtin' : '', compatible: true, ollama_available: false,
-      phase, running: phase !== 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
+    return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }), { status: request.method === 'POST' ? 202 : 200 });
   });
   render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
@@ -928,7 +934,7 @@ it.each(['none', 'http', 'network'] as const)('turns on local search once and ke
   const turnOn = await screen.findByRole('button', { name: 'Turn on' });
   await fireEvent.click(turnOn);
   await fireEvent.click(turnOn);
-  expect(seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')).toHaveLength(1);
+  expect(localPosts(seen).map(request => request.body)).toEqual([undefined]);
   releaseActivation();
   await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();

@@ -18,7 +18,7 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
   if (path === '/api/v1/embeddings/local') return localFetch(input, init);
@@ -2796,13 +2796,13 @@ it.each(['success', 'http', 'network'] as const)('checks local availability once
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') {
-        posts.push(await request.json());
+        posts.push(request.body);
         if (posts.length === 1 && outcome !== 'success') {
           if (outcome === 'network') throw new TypeError('Network interrupted');
           return Response.json({ error: 'unavailable', message: 'The daemon is stopping' }, { status: 503 });
         }
       } else availabilityRequests += 1;
-      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
     return Response.json(exploreResponse());
   };
@@ -2812,7 +2812,7 @@ it.each(['success', 'http', 'network'] as const)('checks local availability once
   await waitFor(() => expect(availabilityRequests).toBe(1));
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
-  await screen.findByRole('button', { name: 'Turn on' });
+  expect((await screen.findByRole('button', { name: 'Turn on' })).closest('p')!.textContent).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test · Turn on');
   state.replaceSearchDraft('pear', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);
@@ -2823,7 +2823,7 @@ it.each(['success', 'http', 'network'] as const)('checks local availability once
     await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
   }
   await waitFor(() => expect(state.current.workspace).toBe('settings'));
-  expect(posts).toEqual(Array(outcome === 'success' ? 1 : 2).fill({ use_builtin: false }));
+  expect(posts).toEqual(Array(outcome === 'success' ? 1 : 2).fill(null));
   expect(state.current.settingsCategory).toBe('overview');
   view.unmount();
   state.destroy();

@@ -459,7 +459,7 @@
     startingLocalSearch = true;
     localSetupError = '';
     try {
-      const { response, error } = await enableLocalEmbeddings({ use_builtin: false }, client);
+      const { response, error } = await enableLocalEmbeddings(client);
       if (!response.ok) throw new Error(error?.message || 'Could not turn on search by meaning.');
       commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
     } catch (cause) { localSetupError = cause instanceof Error ? cause.message : 'Could not turn on search by meaning.'; }
@@ -746,19 +746,16 @@
     </div>
   {/if}
 
-  {#if session.coverage || loader.result?.searchDeletionScope === 'active'}
-    <div class="search-notes">
-      {#if session.coverage}
-        <SearchCoverage
-          requestedMode={exploreState.current.searchMode}
-          coverage={session.coverage}
-          onaction={handleCoverageAction}
-        />
-      {/if}
-      {#if loader.result?.searchDeletionScope === 'active'}
-        <p class="scope-note" role="status">Semantic search covers active messages only.</p>
-      {/if}
-    </div>
+  {#if session.coverage}
+    <SearchCoverage
+      requestedMode={exploreState.current.searchMode}
+      coverage={session.coverage}
+      onaction={handleCoverageAction}
+    />
+  {/if}
+
+  {#if loader.result?.searchDeletionScope === 'active'}
+    <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
   {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
@@ -939,8 +936,6 @@
   .local-search-hint :global(.kit-search-by-meaning-hint) { font-size: var(--font-size-xs); }
   .local-search-hint :global(button) { text-decoration: underline; }
   .local-search-hint p { margin: calc(var(--control-gap) / 2) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
-  .search-notes { display: grid; gap: var(--control-gap); }
-  .search-notes :global(.coverage) { min-height: 0; }
   .everything-workspace {
     display: flex;
     width: 100%;
