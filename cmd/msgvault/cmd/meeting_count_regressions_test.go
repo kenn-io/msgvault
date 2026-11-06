@@ -139,6 +139,29 @@ func TestDerivedRefreshWithPendingMailRequiresMeetingRepair(t *testing.T) {
 	}
 }
 
+func TestDerivedRefreshWithUnpublishedMeetingDecisionRequiresFullBuild(t *testing.T) {
+	requirements := require.New(t)
+	f := newMeetingCountSeriesFixture(t, 1)
+	_, err := buildCache(f.path, f.cache, true)
+	requirements.NoError(err)
+	before, err := query.ReadCacheSyncState(f.cache)
+	requirements.NoError(err)
+	note, err := f.st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: f.source, SourceMessageID: "pending-note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 3, 29, 10, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "pending-note", ConversationType: "meeting"},
+		RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
+		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{f.person}, DisplayNames: []string{"Person"}}},
+	})
+	requirements.NoError(err)
+	requirements.Greater(note, before.LastMessageID)
+	requirements.NoError(f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: f.event, Key: "20260314T100000Z"}))
+	_, err = buildCacheDerivedOnly(f.path, f.cache)
+	requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
+	after, err := query.ReadCacheSyncState(f.cache)
+	requirements.NoError(err)
+	assert.Equal(t, before, after, "leave the unpublished meeting decision pending")
+}
+
 func TestIndependentSeparateOccurrencesKeepTheirDays(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newMeetingCountSeriesFixture(t, 1)

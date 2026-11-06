@@ -156,7 +156,8 @@ func refreshDerivedDatasetsOnly(
 		var meetingChangePending bool
 		if err := sourceSnapshot.QueryRow(`SELECT EXISTS (
 			SELECT 1 FROM cache_related_change_journal
-			WHERE seq > ? AND message_id <= ? AND dataset = 'meeting_links'
+			WHERE seq > ? AND dataset = 'meeting_links'
+			AND (message_id <= ? OR message_id IN (SELECT member_message_id FROM meeting_link_decisions))
 		)`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&meetingChangePending); err != nil {
 			return nil, fmt.Errorf("inspect pending meeting changes: %w", err)
 		}
