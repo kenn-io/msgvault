@@ -70,10 +70,20 @@ func newMeetingLinkDecisionCommand(decision string, open meetingLinkOpen) *cobra
 			return err
 		}
 		defer cleanup()
-		_, err = client.DecideMeetingLink(cmd.Context(), id, event, decision)
-		return err
+		return decideMeetingLink(cmd, client, id, event, decision)
 	}
 	return command
+}
+
+func decideMeetingLink(cmd *cobra.Command, client meetingLinkClient, id int64, event, decision string) error {
+	response, err := client.DecideMeetingLink(cmd.Context(), id, event, decision)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Cache state: %s\n", response.CacheState); err != nil {
+		return fmt.Errorf("write meeting link decision: %w", err)
+	}
+	return nil
 }
 
 func newMeetingSuggestCommand(open meetingLinkOpen) *cobra.Command {
