@@ -271,7 +271,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	assert.Equal(2, strings.Count(stderr, "Hint:"))
 	assert.Contains(stderr, "Hint: semantic result limit reached; raise vector.search.max_page_size_hybrid above 100")
 	assert.Contains(stderr, "\nHint: hybrid candidate pool may omit matches; raise vector.search.k_per_signal")
-	page.Hints = nil
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &page)
 	assert.Len(page.Results, 100)
 	require.Len(page.Hints, 2)
@@ -282,14 +281,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	// A wider page alone exposes the pool limit.
 	raised.Search.MaxPageSizeHybrid = new(200)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	page.Hints = nil
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
 	require.Len(page.Hints, 1)
 	assert.Equal("candidate_pool_saturated", page.Hints[0]["code"])
 	raised.Search.KPerSignal = 200
 	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	page.Hints = nil
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
 	assert.Len(page.Results, 200)
 }

@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -15,46 +13,6 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
-
-func TestListSendersUsesTotalUniqueForMoreResultsHint(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	savedLimit, savedAfter, savedBefore, savedJSON := aggLimit, aggAfter, aggBefore, aggJSON
-	t.Cleanup(func() { aggLimit, aggAfter, aggBefore, aggJSON = savedLimit, savedAfter, savedBefore, savedJSON })
-	aggLimit, aggAfter, aggBefore, aggJSON = 50, "", "", true
-	requests := &atomic.Int32{}
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
-	mux.HandleFunc("/api/v1/aggregates", func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("senders", r.URL.Query().Get("view_type"))
-		assert.Equal("50", r.URL.Query().Get("limit"), "request only the displayed rows")
-		rows := make([]map[string]any, 50)
-		for i := range rows {
-			rows[i] = map[string]any{"key": fmt.Sprintf("sender-%d@example.com", i), "count": 1, "total_unique": 51}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"view_type": "senders", "rows": rows}))
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	dataDir := t.TempDir()
-	writeStatsHTTPDaemonRuntime(t, dataDir, server)
-	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
-	cmd := &cobra.Command{Use: "list-senders", RunE: listSendersCmd.RunE}
-	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true}))
-	var stderr bytes.Buffer
-	cmd.SetErr(&stderr)
-	done := captureStdout(t)
-	err := cmd.Execute()
-	out := done()
-	require.NoError(err)
-	assert.Equal(int32(1), requests.Load())
-	var rows []map[string]any
-	require.NoError(json.Unmarshal([]byte(out), &rows))
-	assert.Len(rows, 50)
-	assert.Equal("Hint: more senders exist; raise -n\n", stderr.String())
-}
 
 func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 	cfg := testConfigValue()
@@ -90,7 +48,7 @@ func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 	_ = testCtx
 	useLocal = true
 	invocationFromContext(testCtx).options.useLocal = true
-	aggLimit = 50
+	aggLimit = 1
 	aggAfter = ""
 	aggBefore = ""
 	aggJSON = false
@@ -98,6 +56,8 @@ func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "list-senders", RunE: listSendersCmd.RunE}
 	cmd.SetContext(testCtx)
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
 
 	err := cmd.Execute()
 	out := done()
@@ -107,6 +67,7 @@ func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 	assert.Contains(out, "SENDER", "table header")
 	assert.Contains(out, "alice@example.com", "sender row")
 	assert.Contains(out, "2.0K", "size formatting")
+	assert.Equal("Hint: more senders exist; raise -n\n", stderr.String())
 }
 
 func aggregateHTTPDaemon(t *testing.T, viewType string) (*httptest.Server, *atomic.Int32) {
@@ -136,7 +97,7 @@ func aggregateHTTPDaemon(t *testing.T, viewType string) (*httptest.Server, *atom
 				"total_size": 2048,
 				"attachment_size": 1024,
 				"attachment_count": 1,
-				"total_unique": 1
+				"total_unique": 2
 			}]
 		}`))
 	})
