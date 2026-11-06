@@ -42,10 +42,9 @@ func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
 		name    string
 		primary string
 		alias   string
-		want    string
 	}{
-		{name: "mixed case first", primary: "Alice", alias: "ALICE", want: "ALICE"},
-		{name: "uppercase first", primary: "ALICE", alias: "Alice", want: "Alice"},
+		{name: "mixed case first", primary: "Alice", alias: "ALICE"},
+		{name: "uppercase first", primary: "ALICE", alias: "Alice"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -68,7 +67,32 @@ func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
 			assert.Equal(primary, response.Rows[0].ParticipantID)
 			assert.Equal(PeopleCompletionName, response.Rows[0].Kind)
 			assert.Equal("observed", response.Rows[0].Source)
-			assert.Equal(test.want, response.Rows[0].Value)
+			assert.Equal("Alice", response.Rows[0].Value)
+		})
+	}
+}
+
+func TestPeopleCompletionPreservesCaseAcrossIdentifiers(t *testing.T) {
+	t.Parallel()
+	for _, identifiers := range [][]string{{"ALICE", "alice"}, {"alice", "ALICE"}} {
+		t.Run(identifiers[0]+" first", func(t *testing.T) {
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("archive@example.test", "slack")
+			participant := b.AddParticipant("primary@example.test", "example.test", "Alice")
+			for _, identifier := range identifiers {
+				b.AddParticipantIdentifier(participant, "slack", identifier, "@"+identifier, false)
+			}
+			when := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+			message := b.AddMessage(MessageOpt{SourceID: source, SentAt: when})
+			b.AddFrom(message, participant, "")
+			engine := b.BuildEngine()
+
+			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "@alice", Limit: 8})
+			require.NoError(t, err)
+			assert.Equal(t, []PeopleCompletion{{
+				ParticipantID: participant, DisplayLabel: "Alice", Kind: PeopleCompletionUsername,
+				Value: "@alice", MatchValue: "alice", Source: "slack", LastAt: when,
+			}}, response.Rows)
 		})
 	}
 }

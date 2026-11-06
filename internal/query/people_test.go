@@ -58,6 +58,7 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "gmail")
+	var participants []int64
 	// Vary recency so equal text matches have a visible order.
 	for index, person := range []struct {
 		email    string
@@ -68,6 +69,7 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 		{email: "substring@example.test", username: "malice"},
 	} {
 		participant := b.AddParticipant(person.email, "example.test", "")
+		participants = append(participants, participant)
 		b.AddParticipantIdentifier(participant, "slack", person.username, "@"+person.username, false)
 		message := b.AddMessage(MessageOpt{
 			SourceID: source, SentAt: time.Date(2026, 8, 22, 9, index, 0, 0, time.UTC),
@@ -79,9 +81,10 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 		query string
 		want  []int64
 	}{
-		{query: "@alice", want: []int64{1, 2}},
+		{query: "@alice", want: []int64{participants[0], participants[1]}},
 	} {
 		t.Run(test.query, func(t *testing.T) {
+			assert := assert.New(t)
 			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
 				Query: test.query, Page: PageSpec{Limit: 25},
 			})
@@ -90,8 +93,9 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 			for _, row := range response.Rows {
 				got = append(got, row.ID)
 			}
-			assert.Equal(t, test.want, got)
-			assert.Equal(t, int64(len(test.want)), response.TotalCount)
+			assert.Equal(test.want, got)
+			assert.NotContains(got, participants[2], "@alice excludes @malice")
+			assert.Equal(int64(len(test.want)), response.TotalCount)
 		})
 	}
 }

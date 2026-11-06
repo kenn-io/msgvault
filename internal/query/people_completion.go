@@ -100,8 +100,8 @@ func (e *DuckDBEngine) CompletePeople(
 		), matched AS (
 			SELECT d.canonical_id, d.display_label, d.current_temperature, d.last_at,
 			       params.*,
-			       unnest(list_reverse(list_filter(d.search_primitives, lambda primitive:
-			           -- CASE limits phone normalization to phone searches.
+			       unnest(list_filter(d.search_primitives, lambda primitive:
+			           -- CASE keeps regexp_replace off non-phone primitives.
 			           CASE
 			               WHEN primitive.kind = 'username' THEN
 			                   params.query_username != '' AND contains(primitive.match_value, params.query_username)
@@ -110,7 +110,7 @@ func (e *DuckDBEngine) CompletePeople(
 			                   contains(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), params.query_digits)
 			               ELSE false
 			           END
-			       ))) AS primitive
+			       )) AS primitive
 			FROM read_parquet('`+directory+`') d, params
 		), candidates AS (
 			SELECT d.canonical_id AS participant_id,
@@ -150,7 +150,7 @@ func (e *DuckDBEngine) CompletePeople(
 		), deduplicated AS (
 			SELECT *, row_number() OVER (
 				PARTITION BY participant_id, kind, match_value
-				ORDER BY source_rank, lower(display_value), source
+				ORDER BY source_rank, lower(display_value), source, display_value DESC
 			) AS duplicate_rank
 			FROM candidates
 		)
