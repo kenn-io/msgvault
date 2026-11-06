@@ -18,12 +18,13 @@ import (
 
 type localSetupTestController struct {
 	calls   atomic.Int32
+	enabled atomic.Bool
 	started chan context.Context
 	release chan struct{}
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, _ bool, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
@@ -60,6 +61,13 @@ func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T)
 		srv.Router().ServeHTTP(duplicate, duplicateRequest)
 		require.Equal(http.StatusAccepted, duplicate.Code)
 		assert.Equal(int32(1), controller.calls.Load())
+		conflict := httptest.NewRecorder()
+		conflictRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
+		conflictRequest.Header.Set("Content-Type", "application/json")
+		srv.Router().ServeHTTP(conflict, conflictRequest)
+		require.Equal(http.StatusConflict, conflict.Code)
+		assert.Contains(conflict.Body.String(), "different provider choice")
+		assert.Equal(int32(1), controller.calls.Load())
 		statusResponse := httptest.NewRecorder()
 		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
 		var status LocalEmbeddingsStatus
@@ -67,6 +75,7 @@ func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T)
 		assert.Equal(int64(5), status.DoneBytes)
 		close(controller.release)
 		synctest.Wait()
+		controller.enabled.Store(true)
 		statusResponse = httptest.NewRecorder()
 		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
 		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &status))

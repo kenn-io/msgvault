@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -48,13 +49,14 @@ func (s *Server) registerLocalEmbeddingsRoutes(api huma.API) {
 	post := rawAPIV1Operation("enableLocalEmbeddings", http.MethodPost, "/embeddings/local", "Turn on local search")
 	post.RequestBody = jsonRequestBodyFor[LocalEmbeddingsRequest](api)
 	post.Responses = jsonResponsesFor[LocalEmbeddingsStatus](api, http.StatusAccepted)
-	addErrorResponses(api, post.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusServiceUnavailable)
+	addErrorResponses(api, post.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusConflict, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, post, s.handleEnableLocalEmbeddings)
 }
 
 func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request) {
 	s.importMu.Lock()
 	controller, progress, running := s.localEmbeddings, s.localSetup, s.localSetupRunning
+	failedAt := s.localSetupBuildFailedAt
 	s.importMu.Unlock()
 	if controller == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "Local search setup is unavailable")
@@ -64,6 +66,21 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
 		return
+	}
+	if !running && progress.Error != "" && !failedAt.IsZero() {
+		// A separate Build index action can resolve a failed setup build. Provider
+		// installation and publication errors must still remain visible.
+		index, _, err := s.loadEmbeddingStatus(r.Context(), 0)
+		d := index.Diagnostics
+		if err == nil && d != nil && d.StartedAt.After(failedAt) && d.FinishedAt != nil && d.LastError == nil && index.Pending == 0 && index.Failed == 0 && index.Current > 0 && index.ActiveGeneration != nil && index.ActiveGeneration.ID == index.Generation.ID {
+			s.importMu.Lock()
+			if !s.localSetupRunning && s.localSetupBuildFailedAt.Equal(failedAt) {
+				s.localSetup.Error = ""
+				s.localSetupBuildFailedAt = time.Time{}
+				progress.Error = ""
+			}
+			s.importMu.Unlock()
+		}
 	}
 	status.Error = progress.Error
 	status.Running = running
@@ -86,6 +103,11 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.localSetupRunning {
+		if s.localSetupUseBuiltin != req.UseBuiltIn {
+			s.importMu.Unlock()
+			writeError(w, http.StatusConflict, "operation_in_progress", "Local search setup is already running with a different provider choice")
+			return
+		}
 		status := s.localSetup
 		s.importMu.Unlock()
 		writeJSON(w, http.StatusAccepted, status)
@@ -100,6 +122,8 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 	controller := s.localEmbeddings
 	s.localSetup = LocalEmbeddingsStatus{Phase: "idle", Running: true}
 	s.localSetupRunning = true
+	s.localSetupUseBuiltin = req.UseBuiltIn
+	s.localSetupBuildFailedAt = time.Time{}
 	status := s.localSetup
 	s.importWG.Add(1)
 	s.importMu.Unlock()
@@ -116,6 +140,9 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		s.importMu.Lock()
 		s.localSetupRunning = false
 		s.localSetup.Running = false
+		if err != nil && s.localSetup.Phase == "indexing" {
+			s.localSetupBuildFailedAt = time.Now()
+		}
 		s.localSetup.Phase = "idle"
 		if err != nil {
 			s.localSetup.Error = err.Error()

@@ -2,7 +2,7 @@ import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-u
 import type { EmbeddingStatus, LocalEmbeddingsStatus } from '../api/generated/models';
 
 export function localSearchState(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus, hostname = ''): SearchByMeaningState {
-  if (status.phase === 'downloading') return { kind: 'downloading', doneBytes: status.done_bytes, totalBytes: status.total_bytes || status.download_bytes };
+  if (status.phase === 'downloading' || (status.running && status.phase === 'idle')) return { kind: 'downloading', doneBytes: status.done_bytes, totalBytes: status.total_bytes || status.download_bytes };
   if (status.phase === 'indexing') return {
     kind: 'indexing', done: Number(embedding?.current) || 0, total: Number(embedding?.eligible) || 0,
     ...(embedding?.eta_seconds ? { etaMs: Number(embedding.eta_seconds) * 1000 } : {}),
@@ -20,6 +20,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): Partial<SearchByMeaningLabels> {
   return {
     meanwhile: 'Keyword search works',
+    ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing search by meaning' } : {}),
     ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
     rebuild: ('Switching rebuilds the index for {count} {items}' + (embedding?.eta_seconds ? ', {time}' : '')) + (status.document_rebuild ? '. Document search also rebuilds on this computer.' : '.'),
     ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index and rebuilds document search on this computer' } : {}),

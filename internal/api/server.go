@@ -324,6 +324,8 @@ type Server struct {
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus
 	localSetupRunning         bool
+	localSetupUseBuiltin      bool
+	localSetupBuildFailedAt   time.Time
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the

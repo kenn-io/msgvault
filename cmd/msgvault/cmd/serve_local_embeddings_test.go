@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -44,6 +45,8 @@ type localBuildTestRunner struct {
 	contexts    []context.Context
 	inspectOnly bool
 	failBuild   bool
+	beforeBuild func()
+	binary      string
 }
 
 func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
@@ -60,6 +63,9 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	cfg, err := config.LoadConfigFile(snapshot, home)
 	require.NoError(r.t, err)
 	require.Equal(r.t, r.home, cfg.HomeDir)
+	if r.beforeBuild != nil {
+		r.beforeBuild()
+	}
 	if r.inspectOnly {
 		return nil
 	}
@@ -71,6 +77,14 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 			require.NoError(r.t, emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "sync the scoped account(s) first\n"}))
 		}
 		return errors.New(cliSubprocessExitSentinel)
+	}
+	if r.binary != "" {
+		command := exec.CommandContext(ctx, r.binary, req.Args...)
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + r.home, "MSGVAULT_HOME=" + r.home, "MSGVAULT_TELEMETRY_ENABLED=0"}
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("build subprocess: %w: %s", err, output)
+		}
+		return nil
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
@@ -92,7 +106,7 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 }
 
 func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) {
-	for _, initialModel := range []string{"", "nomic-embed-text", "different-model", "available-ollama", "matching-build", "other-build", "documents", "documents-conflict", "people", "people-unconsented", "build-failure"} {
+	for _, initialModel := range []string{"", "nomic-embed-text", "different-model", "available-ollama", "configured-ollama", "matching-build", "other-build", "documents", "documents-conflict", "people", "people-unconsented", "build-failure"} {
 		t.Run("initial="+initialModel, func(t *testing.T) {
 			pendingKind := initialModel
 			if strings.HasPrefix(pendingKind, "documents") || strings.HasPrefix(pendingKind, "people") {
@@ -107,13 +121,21 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			if pendingKind == "other-build" {
 				initialModel = "different-model"
 			}
-			useOllama := initialModel == "available-ollama"
+			useOllama := initialModel == "available-ollama" || initialModel == "configured-ollama"
 			if useOllama {
 				initialModel = ""
 			}
 			dir := t.TempDir()
 			var inputs atomic.Int32
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/tags" {
+					models := []map[string]string{}
+					if pendingKind == "configured-ollama" {
+						models = append(models, map[string]string{"name": "nomic-embed-text:latest"})
+					}
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": models}))
+					return
+				}
 				assert.Equal(t, "/v1/embeddings", r.URL.Path)
 				var body struct {
 					Input []string `json:"input"`
@@ -162,6 +184,9 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			require.NoError(t, err)
 			state := &invocation{cfg: cfg, logger: slog.New(slog.DiscardHandler)}
 			runner := &localBuildTestRunner{t: t, home: dir}
+			if pendingKind == "configured-ollama" {
+				runner.binary = os.Getenv("MSGVAULT_E2E_BINARY")
+			}
 			ctx := withInvocation(t.Context(), state)
 			if strings.HasPrefix(pendingKind, "people") {
 				participant, err := st.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
@@ -195,7 +220,8 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 				require.NoError(t, file.Close())
 				require.NoError(t, runner.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", file.Name()}}, nil))
 			}
-			srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: state.logger, VectorCfg: cfg.Vector})
+			gate := api.NewSerialOperationGate()
+			srv := api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: state.logger, VectorCfg: cfg.Vector})
 			defer func() { _ = srv.Shutdown(context.Background()) }()
 			mcpCommand := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(mcpCommand)
@@ -256,16 +282,25 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			before := inputs.Load()
 			installs := 0
 			var runtimeContext context.Context
-			controller := &localEmbeddingsController{state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: srv, scheduler: sched, runner: runner,
+			controller := &localEmbeddingsController{gate: gate, state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: srv, scheduler: sched, runner: runner,
 				refreshMCP: func(ctx context.Context, active *invocation) error {
 					runtimeContext = ctx
 					return installServeMCP(ctx, mcpCommand, srv, active)
 				},
 				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-					return embedlocal.Status{DownloadBytes: 290000000, OllamaAvailable: useOllama}, nil
+					return embedlocal.Status{DownloadBytes: 290000000, OllamaAvailable: pendingKind == "available-ollama"}, nil
 				},
 				install: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 					installs++
+					_, _, held := gate.Holder()
+					if assert.False(t, held, "shared installation must leave the archive available to sync") {
+						release, ok := gate.BeginLabeledWorkContext(ctx, "scheduled sync")
+						assert.True(t, ok)
+						if ok {
+							release()
+						}
+					}
+
 					if pendingKind == "documents-conflict" {
 						require.NoError(t, os.WriteFile(path, []byte(content+"\n[web]\ntheme = \"dark\"\n"), 0o600))
 					}
@@ -277,6 +312,21 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 				},
 			}
 			srv.SetLocalEmbeddings(controller)
+			initialStatus := httptest.NewRecorder()
+			serve(initialStatus, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+			if useOllama {
+				assert.Contains(t, initialStatus.Body.String(), `"ollama_available":true`)
+			}
+			runner.beforeBuild = func() {
+				progress := httptest.NewRecorder()
+				serve(progress, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/status", nil))
+				require.Equal(t, http.StatusOK, progress.Code, progress.Body.String())
+				var status vector.EmbeddingStatus
+				require.NoError(t, json.Unmarshal(progress.Body.Bytes(), &status))
+				assert.Equal(t, "running", status.Job.State)
+				assert.Equal(t, "embeddings", status.Scheduler.SlotHolder)
+			}
+
 			contextsBefore := len(runner.contexts)
 			runner.failBuild = pendingKind == "build-failure"
 			response := httptest.NewRecorder()
@@ -344,7 +394,13 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 				assert.Contains(t, coverage.Body.String(), "build_index")
 				require.NoError(t, restartedServer.Shutdown(ctx))
 				restarted.CloseFeatures(state.logger)
+				runner.beforeBuild = nil
 				require.NoError(t, runner.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", path}}, nil))
+				recovered := httptest.NewRecorder()
+				serve(recovered, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+				var recoveredStatus api.LocalEmbeddingsStatus
+				require.NoError(t, json.Unmarshal(recovered.Body.Bytes(), &recoveredStatus))
+				assert.Empty(t, recoveredStatus.Error, "a separate successful build resolves the setup build failure")
 			} else {
 				assert.NotContains(t, status.Body.String(), `"error"`, status.Body.String())
 			}

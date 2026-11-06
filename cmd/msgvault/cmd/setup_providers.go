@@ -224,6 +224,14 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 	return result
 }
 
+func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	if embeddingProviderName(server) == "local" && probe.Reachable && probe.hasModel(setupOllamaTextModel) {
+		return server + "/v1"
+	}
+	return ""
+}
+
 func (r ollamaProbeResult) hasModel(name string) bool {
 	for _, model := range r.Models {
 		if model == name || strings.HasPrefix(model, name+":") {
@@ -309,7 +317,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
 		skipOllama = skipOllama || server == "http://localhost:11434" || server == "http://127.0.0.1:11434"
 	}
-	if needsLocalText && !detection.localEmbeddings && detection.ollamaLoopback && detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel) {
+	if needsLocalText && !detection.localEmbeddings && ollamaTextEndpoint(loaded.Chat.Server, detection.ollama) != "" {
 		detection.embeddingEndpoint = detection.ollamaEndpoint
 	} else if detection.localEmbeddings || needsLocalText {
 		dir, err := localEmbeddingsDir()

@@ -39,7 +39,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, err
 	}
-	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir})
+	status, _, err := c.inspectAvailable(ctx, dir, c.state.cfg)
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, err
 	}
@@ -64,6 +64,18 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		OllamaAvailable: status.OllamaAvailable, DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 
+// Inspect the configured local Ollama server as CLI setup does. Kit covers its default port.
+func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir string, cfg *config.Config) (embedlocal.Status, string, error) {
+	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir})
+	server := strings.TrimRight(strings.TrimSpace(cfg.Chat.Server), "/")
+	var endpoint string
+	if err == nil && !cfg.Vector.Embeddings.LocalOnly && cfg.Vector.Embeddings.Endpoint == "" && embeddingProviderName(server) == "local" && server != "http://localhost:11434" && server != "http://127.0.0.1:11434" {
+		endpoint = ollamaTextEndpoint(server, probeOllamaServer(ctx, server))
+		status.OllamaAvailable = status.OllamaAvailable || endpoint != ""
+	}
+	return status, endpoint, err
+}
+
 func isOllamaEmbeddingEndpoint(endpoint, configuredServer string) bool {
 	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
 	return server == "http://127.0.0.1:11434" || server == "http://localhost:11434" || (configuredServer != "" && server == strings.TrimRight(configuredServer, "/"))
@@ -77,19 +89,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if !c.handle.WaitContext(ctx) {
 		return ctx.Err()
 	}
-	if c.gate != nil {
-		begin := c.gate.BeginWorkContext
-		if labeled, ok := c.gate.(api.LabeledOperationGate); ok {
-			begin = func(ctx context.Context) (func(), bool) {
-				return labeled.BeginLabeledWorkContext(ctx, "search by meaning setup")
-			}
-		}
-		release, ok := begin(ctx)
-		if !ok {
-			return errors.New("the daemon is stopping")
-		}
-		defer release()
-	}
+
 	snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if err != nil {
 		return err
 	}
-	available, err := c.inspect(ctx, embedlocal.Options{DataDir: dir})
+	available, ollamaEndpoint, err := c.inspectAvailable(ctx, dir, loaded)
 	if err != nil {
 		return err
 	}
@@ -120,9 +120,12 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	useOllama := !builtin && !loaded.Vector.Embeddings.LocalOnly && (configured || available.OllamaAvailable)
 	detection := setupDetection{backend: backend, backendUnavailable: unavailable, configKeys: configKeys, localEmbeddings: !useOllama, resumeLocalText: configured && !builtin}
 	if useOllama && !configured {
-		detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
-		if err != nil {
-			return err
+		detection.embeddingEndpoint = ollamaEndpoint
+		if detection.embeddingEndpoint == "" {
+			detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
+			if err != nil {
+				return err
+			}
 		}
 		detection.ollamaEndpoint = detection.embeddingEndpoint
 	}
@@ -152,6 +155,19 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		if err != nil {
 			return err
 		}
+	}
+	if c.gate != nil {
+		begin := c.gate.BeginWorkContext
+		if labeled, ok := c.gate.(api.LabeledOperationGate); ok {
+			begin = func(ctx context.Context) (func(), bool) {
+				return labeled.BeginLabeledWorkContext(ctx, "msgvault embeddings build")
+			}
+		}
+		release, ok := begin(ctx)
+		if !ok {
+			return errors.New("the daemon is stopping")
+		}
+		defer release()
 	}
 	// Apply only this lane to the running daemon; other saved changes remain pending.
 	runtimeConfig := *c.state.cfg
