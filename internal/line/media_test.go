@@ -2,6 +2,7 @@ package line
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,84 @@ func (f *inboxFixture) fileEvent() Event {
 	e := f.message("1", "", f.now.UnixMilli())
 	e.Message = &Message{ID: "1", Type: "file", FileName: "synthetic.bin"}
 	return e
+}
+
+func TestMediaConversationPreview(t *testing.T) {
+	for _, tc := range []struct {
+		kind     string
+		filename string
+		body     string
+	}{
+		{"image", "", "[image]"},
+		{"video", "", "[video]"},
+		{"audio", "", "[audio]"},
+		{"file", "synthetic.bin", "synthetic.bin"},
+		{"file", "", "[file]"},
+	} {
+		t.Run(tc.kind+"/"+tc.filename, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			e := f.fileEvent()
+			e.Message.Type = tc.kind
+			e.Message.FileName = tc.filename
+			f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+			f.enqueue(t, e, time.Time{})
+			f.run(t)
+			checks.Equal(tc.body, f.archived(t, "1").body)
+			var snippet, preview sql.NullString
+			must.NoError(f.st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id='1'`).Scan(&snippet))
+			must.NoError(f.st.DB().QueryRow(`SELECT last_message_preview FROM conversations`).Scan(&preview))
+			checks.Equal(sql.NullString{String: tc.body, Valid: true}, snippet)
+			checks.Equal(sql.NullString{String: tc.body, Valid: true}, preview)
+		})
+	}
+}
+
+func TestMediaInterruptedRetryHorizon(t *testing.T) {
+	for _, cancelPass := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%t", cancelPass), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v2/bot/message/1/content" {
+					if cancelPass {
+						cancel()
+					} else {
+						f.processor.Interrupt()
+					}
+					<-r.Context().Done()
+					return
+				}
+				f.api.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
+			f.processor = NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+			f.enqueue(t, f.fileEvent(), time.Time{})
+			f.enqueue(t, f.message("2", "text survives interruption", f.now.UnixMilli()+1), time.Time{})
+			err := f.processor.Process(ctx)
+			if cancelPass {
+				must.ErrorIs(err, context.Canceled)
+			} else {
+				must.NoError(err)
+			}
+			checks.Equal("text survives interruption", f.archived(t, "2").body)
+			f.now = f.now.Add(retryHorizon + time.Hour)
+			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+			f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+			f.run(t)
+			var state string
+			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			checks.Equal("failed", state)
+			checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"), "restart after the original horizon must expire media without fetching it")
+			checks.Equal("text survives interruption", f.archived(t, "2").body)
+		})
+	}
 }
 
 func TestMediaSizeSearch(t *testing.T) {
