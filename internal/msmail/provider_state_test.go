@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,26 +39,34 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 				assert.Contains(t, fields, "flag", "native Graph acquisition must request follow-up state")
 			}
 			var payload map[string]any
-			require.NoError(t, json.Unmarshal(body, &payload))
+			if !assert.NoError(t, json.Unmarshal(body, &payload)) {
+				return
+			}
+			providerState, ok := state.Load().(map[string]any)
+			if !assert.True(t, ok, "provider state fixture must be a map") {
+				return
+			}
 			apply := func(item map[string]any) {
-				for k, v := range state.Load().(map[string]any) {
-					item[k] = v
-				}
+				maps.Copy(item, providerState)
 			}
 			if values, ok := payload["value"].([]any); ok {
 				for _, value := range values {
-					apply(value.(map[string]any))
+					item, ok := value.(map[string]any)
+					if !assert.True(t, ok, "Graph list values must be objects") {
+						return
+					}
+					apply(item)
 				}
 			} else {
 				apply(payload)
 			}
 			var err error
 			body, err = json.Marshal(payload)
-			require.NoError(t, err)
+			if !assert.NoError(t, err) {
+				return
+			}
 		}
-		for k, values := range rec.Header() {
-			w.Header()[k] = values
-		}
+		maps.Copy(w.Header(), rec.Header())
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(body)
 	}))
@@ -306,6 +315,7 @@ func TestProviderStateMigrationLostOldStreamRetainsMIMEDebt(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	f := newFakeGraph(t)
 	f.put("m1", "inbox")
+	f.put("m2", "inbox")
 	_, err := f.sync(t, st)
 	require.NoError(t, err)
 	src, err := st.GetSourceByTypeAndIdentifier(SourceType, "me@example.com")
@@ -322,9 +332,7 @@ func TestProviderStateMigrationLostOldStreamRetainsMIMEDebt(t *testing.T) {
 			f.expired["inbox"] = true
 			f.mu.Unlock()
 		}
-		for key, values := range recorder.Header() {
-			w.Header()[key] = values
-		}
+		maps.Copy(w.Header(), recorder.Header())
 		w.WriteHeader(recorder.Code)
 		_, _ = w.Write(recorder.Body.Bytes())
 	}))
@@ -341,18 +349,29 @@ func TestProviderStateMigrationLostOldStreamRetainsMIMEDebt(t *testing.T) {
 	f.badValue["m1"] = true
 	f.mu.Unlock()
 	f.put("m1", "inbox")
-	summary, err := f.sync(t, st)
+	f.pageSize = 1
+	f.stopAt = 1
+	f.stopStatus = http.StatusInternalServerError
+	_, err = f.sync(t, st)
+	require.Error(t, err, "the enrichment walk is interrupted after the old stream was proven live")
+	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
 	require.NoError(t, err)
-	assert.True(t, summary.Incomplete, "a migration cannot discard a lost old stream's MIME obligation")
-	last, err := st.GetLastSuccessfulSync(src.ID)
-	require.NoError(t, err)
-	var pending map[string]string
-	require.NoError(t, json.Unmarshal([]byte(last.CursorAfter.String), &pending))
-	assert.Contains(t, pending, "retry:m1")
+	require.NotNil(t, checkpoint)
+	var interrupted map[string]string
+	require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &interrupted))
+	assert.Equal(t, migrationStreamPrefix+strings.TrimPrefix(legacy["inbox"], categoryDeltaPrefix), interrupted["inbox"], "the live-stream phase survives the interrupted enrichment walk")
 	require.NoError(t, st.Close())
 	reopened, err := store.Open(path)
 	require.NoError(t, err)
 	defer func() { _ = reopened.Close() }()
+	summary, err := f.sync(t, reopened)
+	require.NoError(t, err)
+	assert.True(t, summary.Incomplete, "a migration cannot discard a lost old stream's MIME obligation")
+	last, err := reopened.GetLastSuccessfulSync(src.ID)
+	require.NoError(t, err)
+	var pending map[string]string
+	require.NoError(t, json.Unmarshal([]byte(last.CursorAfter.String), &pending))
+	assert.Contains(t, pending, "retry:m1")
 	f.mu.Lock()
 	delete(f.badValue, "m1")
 	f.mu.Unlock()

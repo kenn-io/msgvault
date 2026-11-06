@@ -31,6 +31,11 @@ const walkPrefix = "walk:"
 // migrationWalkPrefix retains known-MIME recovery after a pre-v2 stream is lost.
 const migrationWalkPrefix = walkPrefix + "migration-mime:"
 
+// migrationStreamPrefix records that the old stream was live before the new
+// provider-state walk. It survives an interrupted walk so a later expiry is
+// still treated as migration loss rather than ordinary cursor expiry.
+const migrationStreamPrefix = walkPrefix + "migration-stream:"
+
 // categoryDeltaPrefix identifies cursors created with categories in $select.
 // Old opaque cursors cannot gain fields, so their folders rewalk once. The old
 // cursor covers content changes until the replacement walk finishes.
@@ -169,11 +174,18 @@ func ImportSource(ctx context.Context, st *store.Store, c *Client, src *store.So
 		oldCursor, replacementCursor := "", ""
 		freshRound := false
 		refreshKnown := false
+		migrationProven := false
+		drainingOldStream := false
+		var preflightPage *msgraph.ListResponse[DeltaMessage]
 		switch {
 		case link == "":
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, migrationWalkPrefix):
 			link, seen, refreshKnown = DeltaStartURL(f.ID), map[string]bool{}, true
+		case strings.HasPrefix(link, migrationStreamPrefix):
+			oldCursor = strings.TrimPrefix(link, migrationStreamPrefix)
+			migrationProven = true
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, walkPrefix):
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, stateDeltaPrefix):
@@ -185,14 +197,47 @@ func ImportSource(ctx context.Context, st *store.Store, c *Client, src *store.So
 			oldCursor = link
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
+		if oldCursor != "" && !migrationProven {
+			// Check the old stream before starting the enrichment walk. An
+			// already-expired cursor gets the ordinary metadata-only walk; a
+			// successful check is persisted so expiry after interruption still
+			// triggers migration-only known-MIME recovery.
+			preflightPage, err = c.DeltaPage(ctx, oldCursor)
+			if errors.Is(err, msgraph.ErrGone) {
+				oldCursor = ""
+				preflightPage = nil
+				link, seen = DeltaStartURL(f.ID), map[string]bool{}
+				cursors[f.ID] = walkPrefix + link
+				if err = s.checkpoint(); err != nil {
+					return sum, err
+				}
+			} else if err != nil {
+				return sum, fmt.Errorf("folder %s: %w", f.Path, err)
+			} else {
+				migrationProven = true
+				cursors[f.ID] = migrationStreamPrefix + oldCursor
+				if err = s.checkpoint(); err != nil {
+					return sum, err
+				}
+			}
+		}
 		for {
-			page, perr := c.DeltaPage(ctx, link)
+			var page *msgraph.ListResponse[DeltaMessage]
+			var perr error
+			if preflightPage != nil && drainingOldStream {
+				page = preflightPage
+				preflightPage = nil
+				drainingOldStream = false
+			} else {
+				page, perr = c.DeltaPage(ctx, link)
+			}
 			if errors.Is(perr, msgraph.ErrGone) && replacementCursor != "" {
 				// This migration delayed the old stream until after the new
 				// selection walk. Losing that stream requires known-MIME recovery,
 				// unlike the inherited ordinary v2 expiry policy below.
 				link, seen = DeltaStartURL(f.ID), map[string]bool{}
 				replacementCursor, refreshKnown, restarted = "", true, true
+				migrationProven = false
 				cursors[f.ID] = migrationWalkPrefix + link
 				if err = s.checkpoint(); err != nil {
 					return sum, err
@@ -227,10 +272,21 @@ func ImportSource(ctx context.Context, st *store.Store, c *Client, src *store.So
 				// refresh MIME before the replacement cursor becomes active.
 				replacementCursor = link
 				link, seen, oldCursor = oldCursor, nil, ""
+				drainingOldStream = true
 				continue
 			}
 			cursors[f.ID] = stateDeltaPrefix + link
 			switch {
+			case migrationProven:
+				if replacementCursor != "" && page.NextLink == "" && freshRound {
+					cursors[f.ID] = stateDeltaPrefix + replacementCursor
+				} else {
+					streamCursor := oldCursor
+					if streamCursor == "" && replacementCursor != "" {
+						streamCursor = link
+					}
+					cursors[f.ID] = migrationStreamPrefix + streamCursor
+				}
 			case oldCursor != "":
 				cursors[f.ID] = oldCursor
 			case replacementCursor != "":
