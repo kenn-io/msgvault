@@ -30,7 +30,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		}
 		args = append(args, scopeArgs...)
 		// Undated anchors still carry safety and identity metadata.
-		eligible := strings.Replace(s.activityLiveEligibleSQL(), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1)
+		eligible := s.activityLiveEligibleWithoutDateSQL()
 		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
    m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,`+matrixPendingEncryptedSQL("m")+`
    FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.id IN (`+marks+`) AND `+eligible+scope), args...)

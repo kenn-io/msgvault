@@ -3,6 +3,11 @@ package store
 // activityLiveEligibleSQL closes the interval between source edits and projection.
 // Queries use m for messages and src for sources.
 func (s *Store) activityLiveEligibleSQL() string {
+	return `COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND ` + s.activityLiveEligibleWithoutDateSQL()
+}
+
+// activityLiveEligibleWithoutDateSQL also admits undated display anchors.
+func (s *Store) activityLiveEligibleWithoutDateSQL() string {
 	status := "m.metadata ->> 'status'"
 	superseded := "m.metadata ->> 'ics_superseded'"
 	if !s.IsPostgreSQL() {
@@ -10,7 +15,6 @@ func (s *Store) activityLiveEligibleSQL() string {
 		superseded = "CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'ics_superseded' END"
 	}
 	return `m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
- AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL
  AND NOT ` + s.activityUnsentSQL() + `
  AND (m.message_type <> 'calendar_event' OR (
  LOWER(TRIM(COALESCE((SELECT NULLIF(e.status,'decode_error') FROM calendar_events e WHERE e.message_id=m.id),` + status + `,''))) <> 'cancelled'

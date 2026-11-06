@@ -123,6 +123,8 @@ in the short window. Tier 2 is two-way contact in the long window, or meetings.
 Counts cover meetings, the email and chat messages that were sent or received,
 and Synctech and Google Voice calls that stayed connected for at least
 `min_call_seconds`. A call counts as one message each way, whoever dialed.
+The same email held in more than one account counts once, matched by Message-ID.
+Matrix messages still waiting to be decrypted don't count.
 Drafts, texts that never left your phone, missed calls, voicemail, and shorter
 calls don't count. Archives imported before this change keep counting unsent
 texts, and count no calls, until you import the backup again: run
