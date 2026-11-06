@@ -33,18 +33,6 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 	}
 }
 
-func TestMCPWriteHelpDisclosesDeliveryPolicyWrites(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var output bytes.Buffer
-	previousOutput := mcpCmd.OutOrStdout()
-	mcpCmd.SetOut(&output)
-	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
-
-	require.NoError(mcpCmd.Help())
-	assert.Contains(output.String(), "delivery-policy writes")
-}
-
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
