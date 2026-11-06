@@ -110,6 +110,9 @@ func (i *Importer) importRecord(ctx context.Context, sourceID int64, record Reco
 		if i.opts.IncludeSMS && record.SMS != nil {
 			msgID, err := i.importSMS(ctx, sourceID, *record.SMS)
 			if err != nil {
+				if msgID != 0 {
+					summary.MessageIDs = append(summary.MessageIDs, msgID)
+				}
 				return err
 			}
 			summary.MessageIDs = append(summary.MessageIDs, msgID)
@@ -132,6 +135,9 @@ func (i *Importer) importRecord(ctx context.Context, sourceID int64, record Reco
 		if i.opts.IncludeCalls && record.Call != nil {
 			msgID, err := i.importCall(ctx, sourceID, *record.Call)
 			if err != nil {
+				if msgID != 0 {
+					summary.MessageIDs = append(summary.MessageIDs, msgID)
+				}
 				return err
 			}
 			summary.MessageIDs = append(summary.MessageIDs, msgID)
@@ -201,7 +207,7 @@ func (i *Importer) importMMS(ctx context.Context, sourceID int64, mms MMS) (int6
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
 	messageID, err := i.upsertTextMessage(ctx, sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, !MMSUnsent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
 	if err != nil {
-		return 0, 0, err
+		return messageID, 0, err
 	}
 	imported, err := i.importMMSAttachments(ctx, sourceID, msgID, mms)
 	if err != nil {
@@ -241,7 +247,7 @@ func (i *Importer) importCall(ctx context.Context, sourceID int64, call Call) (i
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
 	messageID, err := i.upsertTextMessage(ctx, sourceID, convID, msgID, store.MessageTypeSynctechCall, senderID, recipientIDs, fromMe, true, call.Timestamp, body, body, 0, call)
 	if err != nil {
-		return 0, err
+		return messageID, err
 	}
 	// Only incoming and outgoing calls connected; a voicemail's duration is
 	// the recording, not a conversation.
@@ -250,7 +256,7 @@ func (i *Importer) importCall(ctx context.Context, sourceID int64, call Call) (i
 		connected = call.DurationSeconds
 	}
 	if err := i.store.SetMessageMetadataContext(ctx, messageID, store.CallConnectedMetadata(connected)); err != nil {
-		return 0, fmt.Errorf("record call length: %w", err)
+		return messageID, fmt.Errorf("record call length: %w", err)
 	}
 	return messageID, nil
 }
@@ -274,23 +280,25 @@ func (i *Importer) upsertTextMessage(ctx context.Context, sourceID, convID int64
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
+	// The message row has committed, so later failures still return its ID:
+	// the caller must refresh conversation statistics for it.
 	if body != "" {
 		if err := i.store.UpsertMessageBodyContext(ctx, msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
-			return 0, fmt.Errorf("upsert body: %w", err)
+			return msgID, fmt.Errorf("upsert body: %w", err)
 		}
 	}
 	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
-		return 0, fmt.Errorf("marshal raw record: %w", err)
+		return msgID, fmt.Errorf("marshal raw record: %w", err)
 	}
 	if err := i.store.UpsertMessageRawWithFormatContext(ctx, msgID, rawJSON, RawFormat); err != nil {
-		return 0, fmt.Errorf("upsert raw record: %w", err)
+		return msgID, fmt.Errorf("upsert raw record: %w", err)
 	}
 	if err := i.store.ReplaceMessageRecipientsContext(ctx, msgID, "from", []int64{senderID}, []string{""}); err != nil {
-		return 0, fmt.Errorf("replace from recipient: %w", err)
+		return msgID, fmt.Errorf("replace from recipient: %w", err)
 	}
 	if err := i.store.ReplaceMessageRecipientsContext(ctx, msgID, "to", recipientIDs, blankNames(len(recipientIDs))); err != nil {
-		return 0, fmt.Errorf("replace to recipient: %w", err)
+		return msgID, fmt.Errorf("replace to recipient: %w", err)
 	}
 	if err := i.store.UpsertFTSContext(ctx, msgID, subject, body, "", "", ""); err != nil {
 		slog.Warn("failed to update Synctech message FTS index",

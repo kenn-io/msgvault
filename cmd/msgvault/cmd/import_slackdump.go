@@ -128,6 +128,10 @@ func runExportPostImportMigrations(ctx context.Context, out io.Writer, st *store
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is required")
 	}
+	// An interrupted import has already created the source and committed
+	// messages, so the identity and migration steps run on an uncancelled
+	// context.
+	ctx = context.WithoutCancel(ctx)
 	var identityErr error
 	if !noDefaultIdentity {
 		source, err := st.GetSourceByIDContext(ctx, sourceID)

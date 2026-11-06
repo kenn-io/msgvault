@@ -132,7 +132,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else if summary.LimitReached && checkpoint != nil {
-			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint))
+			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(cleanup, syncID, checkpoint))
 		} else {
 			retErr = errors.Join(retErr, st.CompleteSyncContext(cleanup, syncID, ""))
 		}

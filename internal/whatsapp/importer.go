@@ -541,6 +541,13 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		imp.progress.OnChatComplete(chat.RawString, chatAdded)
 	}
+	// A cancel during the last chat's queries or writes ends its loops as
+	// errors, past the cancellation checks above. Report it so the run is
+	// not recorded as completed.
+	if err := ctx.Err(); err != nil {
+		syncErr = err
+		return nil, err
+	}
 
 	// Update denormalised conversation counts for the WhatsApp source.
 	if err := imp.store.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
