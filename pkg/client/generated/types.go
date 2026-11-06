@@ -1574,7 +1574,6 @@ type CallObservationView struct {
 	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
 	EndedAt            *time.Time        `json:"ended_at,omitempty"`
 	MessageID          int64             `json:"message_id"`
-	NativeCallID       *string           `json:"native_call_id,omitzero"`
 	OccurredAt         time.Time         `json:"occurred_at" validate:"required"`
 	Outcome            string            `json:"outcome" validate:"required"`
 	OwnerParticipation string            `json:"owner_participation" validate:"required"`

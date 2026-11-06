@@ -1708,8 +1708,6 @@ components:
         message_id:
           format: int64
           type: integer
-        native_call_id:
-          type: string
         occurred_at:
           format: date-time
           type: string

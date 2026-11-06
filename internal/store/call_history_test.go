@@ -185,7 +185,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	o := callhistory.Observation{
 		RecordID: "native-1",
 
-		Version: 1, Provider: "signal", Account: "example", NativeCallID: "native-1",
+		Version: 1, Provider: "signal", Account: "example",
 		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
 

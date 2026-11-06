@@ -24,7 +24,7 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 	o := Observation{
 		RecordID: row.CallID,
 
-		Version: 1, Provider: "signal", Account: r.Account, NativeCallID: row.CallID,
+		Version: 1, Provider: "signal", Account: r.Account,
 		Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
 		OccurredAt: time.UnixMilli(*row.Timestamp).UTC(),
 
