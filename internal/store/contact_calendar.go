@@ -6,24 +6,20 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
-
-	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-// calendarAttendedTranscriptIDs bounds candidate recordings before resolving
-// exact occurrences. It never expands a calendar history or reads message bodies.
-func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuery, filters ActivityFilters, limit int) ([]int64, bool, error) {
+// calendarTranscriptCandidates bounds recordings that may share calendar attendees.
+func (s *Store) calendarTranscriptCandidates(ctx context.Context, q ContactQuery, filters ActivityFilters, limit int) ([]int64, []string, bool, error) {
 	emails, err := s.contactSubjectEmails(ctx, q.Subject)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	emails = slices.DeleteFunc(emails, func(email string) bool { return filters.Exclusions.ExcludesAddress(email) != "" })
 	contacts := emails[:0]
 	for _, email := range emails {
 		owner, err := s.IsAccountIdentityAddressContext(ctx, email)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		if !owner {
 			contacts = append(contacts, email)
@@ -31,7 +27,7 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 	}
 	emails = contacts
 	if len(emails) == 0 {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	marks := placeholders(len(emails))
 	args := make([]any, 0, len(emails)+1)
@@ -47,7 +43,7 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 	// UID/provider keys and manual targets are only candidates: the forward
 	// resolver below still applies splits, ambiguity, current copies and scope.
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.message_type='meeting_transcript' AND m.list_id IS NULL
- AND ` + strings.Replace(s.activityLiveEligibleSQL(), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1) + `
+ AND ` + s.activityLiveEligibleWithoutDateSQL() + `
  AND EXISTS(SELECT 1 FROM calendar_events e JOIN messages cm ON cm.id=e.message_id
  WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm", "") + `
  AND EXISTS(SELECT 1 FROM calendar_event_attendees a WHERE a.message_id=e.message_id AND a.is_copy_self=FALSE AND a.role<>'room' AND LOWER(TRIM(a.email)) IN (` + marks + `))` + calendarScope + `
@@ -58,66 +54,27 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
  AND d.target_message_id=cm.id)))` + transcriptScope + ` ORDER BY m.id DESC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("discover calendar attended transcripts: %w", err)
+		return nil, nil, false, fmt.Errorf("discover calendar attended transcripts: %w", err)
 	}
 	candidates := []int64{}
 	for rows.Next() {
 		var id int64
 		if err = rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return nil, false, fmt.Errorf("scan calendar transcript: %w", err)
+			return nil, nil, false, fmt.Errorf("scan calendar transcript: %w", err)
 		}
 		candidates = append(candidates, id)
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, false, fmt.Errorf("iterate calendar transcripts: %w", err)
+		return nil, nil, false, fmt.Errorf("iterate calendar transcripts: %w", err)
 	}
 	more := len(candidates) > limit
 	if more {
 		candidates = candidates[:limit]
 	}
-	identity, err := s.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: candidates})
-	if err != nil {
-		return nil, more, err
-	}
-	occurrences := map[string]bool{}
-	result := []int64{}
-	for _, id := range candidates {
-		for _, ref := range identity.ByTranscript[id].ExactOccurrenceRefs {
-			matches, known := occurrences[ref]
-			if !known {
-				detail, err := s.GetCalendarOccurrenceContext(ctx, ref)
-				if err != nil {
-					return nil, more, err
-				}
-				o := detail.CalendarOccurrence
-				at := o.Start
-				if o.AllDay {
-					loc := q.Location
-					if loc == nil {
-						loc = time.UTC
-					}
-					at, _, _ = calrecur.CivilDateBoundary(o.StartDate, loc)
-				}
-				if !at.IsZero() && !at.After(q.Now) {
-					for _, a := range o.Attendees {
-						if !a.IsCopySelf && a.Role != "room" && slices.Contains(emails, strings.ToLower(strings.TrimSpace(a.Email))) {
-							matches = true
-							break
-						}
-					}
-				}
-				occurrences[ref] = matches
-			}
-			if matches {
-				result = append(result, id)
-				break
-			}
-		}
-	}
-	return result, more, nil
+	return candidates, emails, more, nil
 }
 
 func (s *Store) contactSubjectEmails(ctx context.Context, subject ActivitySubject) ([]string, error) {

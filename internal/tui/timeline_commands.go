@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -30,17 +31,22 @@ func (m *Model) startTimelineRequest(req timeline.Request, remember bool) tea.Cm
 	if m.timelineBackend == nil {
 		return nil
 	}
-	if remember && m.timelineState.result != nil && !m.timelineState.needsLoad {
+	req.Format = "json"
+	if req.Budget == 0 {
+		req.Budget = timeline.MaxBudget
+	}
+	current := m.timelineState.request
+	current.Format = "json"
+	if current.Budget == 0 {
+		current.Budget = timeline.MaxBudget
+	}
+	if remember && m.timelineState.result != nil && !m.timelineState.needsLoad && !reflect.DeepEqual(req, current) {
 		m.timelineState.history = append(m.timelineState.history, timelineNavigation{
 			request: m.timelineState.request, result: m.timelineState.result,
 			cursor: m.timelineState.cursor, scroll: m.timelineState.scroll,
 		})
 	}
 	m.cancelTimelineRequest()
-	req.Format = "json"
-	if req.Budget == 0 {
-		req.Budget = 65536
-	}
 	m.timelineState.request = req
 	m.timelineState.needsLoad = true
 

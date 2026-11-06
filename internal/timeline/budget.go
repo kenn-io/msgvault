@@ -9,12 +9,15 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+// MaxBudget is the largest timeline response in bytes.
+const MaxBudget = 65536
+
 // Fit selects ordered prefixes of each section and measures the final wire
 // encoding, including omission metadata and the actual continuation. Fit owns
 // the input and its payloads. SetContinuation supplies cursor bindings
 // before fitting a pageable result.
 func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
-	if t == nil || budget < 2048 || budget > 65536 || (format != "json" && format != "markdown") {
+	if t == nil || budget < 2048 || budget > MaxBudget || (format != "json" && format != "markdown") {
 		return nil, ErrInvalidRequest
 	}
 	original := *t

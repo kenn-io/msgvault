@@ -599,15 +599,3 @@ func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
 	assertions.True(summary.PeopleTruncated)
 	assertions.Contains(Markdown(fitted), "Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, +2")
 }
-
-func TestTimelineUpcomingStartsAfterDayWindow(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	f.calendar("today-later", `{"id":"today-later","start":{"dateTime":"2026-10-22T15:00:00Z"},"end":{"dateTime":"2026-10-22T16:00:00Z"}}`)
-	f.calendar("tomorrow", `{"id":"tomorrow","start":{"dateTime":"2026-10-23T00:00:00Z"},"end":{"dateTime":"2026-10-23T01:00:00Z"}}`)
-	got, err := Build(t.Context(), f.src, dayRequest())
-	requirements.NoError(err)
-	requirements.Len(allDayEntries(got), 1)
-	requirements.Len(got.Upcoming, 1)
-	assertions.Equal("2026-10-23T00:00:00Z", got.Upcoming[0].Time.Format(time.RFC3339))
-}

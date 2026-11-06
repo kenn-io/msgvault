@@ -1,6 +1,8 @@
 package timeline
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,6 +13,50 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+type relationshipMeetingReads struct {
+	MeetingsSource
+
+	resolutions int
+}
+
+func (r *relationshipMeetingReads) ResolveMeetingIdentitiesContext(ctx context.Context, req store.MeetingIdentityRequest) (store.MeetingIdentityResult, error) {
+	r.resolutions++
+	return r.MeetingsSource.ResolveMeetingIdentitiesContext(ctx, req)
+}
+
+type relationshipCalendarReads struct {
+	CalendarSource
+
+	details int
+}
+
+func (r *relationshipCalendarReads) GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
+	r.details++
+	return r.CalendarSource.GetCalendarOccurrenceContext(ctx, ref)
+}
+
+func TestRelationshipReusesCalendarAttendanceReads(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
+	f.calendar("attended", singleDayEvent)
+	note := f.transcript("notes", "planning@example.com", f.now.Add(-time.Hour))
+	other := f.EnsureParticipant("other@example.com", "Other", "example.com")
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", []int64{other}, nil))
+	f.project()
+	meetings := &relationshipMeetingReads{MeetingsSource: f.src.Meetings}
+	calendar := &relationshipCalendarReads{CalendarSource: f.src.Calendar}
+	f.src.Meetings, f.src.Calendar = meetings, calendar
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	assertions.Equal([]int64{note}, got.History[0].Meeting.LinkedTranscriptIDs)
+	assertions.Equal(1, got.Person.InteractionCount)
+	// The Store's attendance read already resolved this meeting and occurrence.
+	assertions.Zero(meetings.resolutions)
+	assertions.Zero(calendar.details)
+}
 
 func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
 	for _, pending := range []bool{false, true} {
@@ -48,6 +94,41 @@ func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
 func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
+func TestRelationshipLinkedTranscriptRetainsPeople(t *testing.T) {
+	for _, tc := range []struct {
+		name, attendees string
+		people          []string
+		attendeeCount   int
+	}{
+		{"no calendar attendees", `[]`, []string{"Alice"}, 0},
+		{"different calendar attendee", `[{"email":"other@example.com","displayName":"Other"}]`, []string{"Alice", "Other"}, 1},
+		{"same calendar attendee", `[{"email":"alice@example.com","displayName":"Alice"}]`, []string{"Alice"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			f.EnsureParticipant("other@example.com", "Other", "example.com")
+			event := f.calendar("attended", `{"id":"attended","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":`+tc.attendees+`}`)
+			note := f.transcript("attended", "", f.now.Add(-time.Hour))
+			requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+			f.project()
+			got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+			requirements.NoError(err)
+			requirements.Len(got.History, 1)
+			meeting := got.History[0].Meeting
+			requirements.NotNil(meeting)
+			assertions.Equal([]int64{note}, meeting.LinkedTranscriptIDs)
+			names := []string{}
+			for _, person := range meeting.People {
+				names = append(names, person.Name)
+			}
+			assertions.ElementsMatch(tc.people, names)
+			assertions.Equal(len(tc.people), meeting.PeopleCount)
+			assertions.Len(meeting.Attendees, tc.attendeeCount)
+		})
+	}
+}
+
 func TestRelationshipCallOnlyContact(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

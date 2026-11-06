@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -92,11 +93,23 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	for _, call := range calls {
 		ids = append(ids, call.MessageID)
 	}
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
-		return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: slices.Compact(slices.Sorted(slices.Values(refs))), TranscriptIDs: slices.Compact(slices.Sorted(slices.Values(transcriptIDs))), IncludeSuggestions: c.req.Scope.Owner})
-	})
-	c.gap("meetings", r.err, false)
-	identity := r.value
+	identity := c.identities
+	refs = slices.DeleteFunc(refs, func(ref string) bool { _, ok := identity.ByOccurrence[ref]; return ok })
+	transcriptIDs = slices.DeleteFunc(transcriptIDs, func(id int64) bool { _, ok := identity.ByTranscript[id]; return ok })
+	if identity.ByOccurrence == nil {
+		identity.ByOccurrence = map[string]store.MeetingIdentityInfo{}
+	}
+	if identity.ByTranscript == nil {
+		identity.ByTranscript = map[int64]store.MeetingIdentityInfo{}
+	}
+	if len(refs) > 0 || len(transcriptIDs) > 0 {
+		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: slices.Compact(slices.Sorted(slices.Values(refs))), TranscriptIDs: slices.Compact(slices.Sorted(slices.Values(transcriptIDs))), IncludeSuggestions: c.req.Scope.Owner})
+		})
+		c.gap("meetings", r.err, false)
+		maps.Copy(identity.ByOccurrence, r.value.ByOccurrence)
+		maps.Copy(identity.ByTranscript, r.value.ByTranscript)
+	}
 
 	// Resolve the provider/copy representative before using time, text or people.
 	canonical := make([]store.CalendarOccurrence, 0, len(occurrences))
@@ -180,6 +193,10 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		entries = append(entries, e)
 	}
 	seen := map[string]bool{}
+	transcriptPeople := map[int64][]Person{}
+	for _, m := range messages {
+		transcriptPeople[m.MessageID] = c.tierPeople(counterpartPeople(m.Counterparts))
+	}
 	for _, o := range occurrences {
 		info := identity.ByOccurrence[o.Ref]
 		key := info.Key
@@ -190,10 +207,8 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		seen[key] = true
-		people := c.occurrencePeople(o)
-		if !c.admitTier(people) {
-			continue
-		}
+		attendees := c.occurrencePeople(o)
+		people := slices.Clone(attendees)
 		linked := []int64{}
 		d, present := calendarDisplay.value[o.MessageID]
 		hidden := !present || d.HiddenText
@@ -203,7 +218,17 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 				linked = append(linked, id)
 				hidden = hidden || d.HiddenText
 				count += actions[id]
+				for _, p := range transcriptPeople[id] {
+					if !slices.ContainsFunc(people, func(existing Person) bool {
+						return p.PersonID > 0 && p.PersonID == existing.PersonID || p.ParticipantID > 0 && p.ParticipantID == existing.ParticipantID
+					}) {
+						people = append(people, p)
+					}
+				}
 			}
+		}
+		if !c.admitTier(people) {
+			continue
 		}
 		title := o.Subject
 		if hidden {
@@ -216,7 +241,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Status: o.Status, DeletedFromSource: o.DeletedFromSource, Title: UntrustedText{Text: title}, Start: at, End: o.End, AllDay: o.AllDay, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Status: o.Status, DeletedFromSource: o.DeletedFromSource, Title: UntrustedText{Text: title}, Start: at, End: o.End, AllDay: o.AllDay, Attendees: attendees, AttendeeCount: len(attendees), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -251,7 +276,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if c.req.Brief {
 			until = c.t.Now.Add(24 * time.Hour)
 		}
-		if o.Status != "cancelled" && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) && (c.req.Mode != ModeDay || date > c.t.Window.To) {
+		if o.Status != "cancelled" && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) {
 			upcoming = append(upcoming, e)
 		}
 	}
@@ -335,6 +360,9 @@ func displaySnippet(d store.MessageDisplay) string {
 func (c *composer) canonicalOccurrence(o store.CalendarOccurrence, info store.MeetingIdentityInfo) (store.CalendarOccurrence, bool) {
 	if info.OccurrenceRef == "" || info.OccurrenceRef == o.Ref {
 		return o, true
+	}
+	if resolved, ok := c.occurrences[info.OccurrenceRef]; ok {
+		return resolved, true
 	}
 
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {

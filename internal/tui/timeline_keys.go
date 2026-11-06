@@ -144,6 +144,7 @@ func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
 			date = result.Anchor.Time.In(loc).Format(time.DateOnly)
 		}
 	case timeline.ModeRelationship:
+		date = edge
 		if entry := m.highlightedTimelineEntry(); entry != nil {
 			date = entry.Time.In(loc).Format(time.DateOnly)
 		}
@@ -303,7 +304,9 @@ var errTimelineLoadCancelled = errors.New("timeline load cancelled · r to retry
 func (m *Model) popTimelineHistory() {
 	n := len(m.timelineState.history)
 	if n == 0 {
-		if m.timelineState.result == nil && m.timelineState.err == nil {
+		if m.timelineState.result != nil {
+			m.timelineState.err = nil
+		} else if m.timelineState.err == nil {
 			m.timelineState.err = errTimelineLoadCancelled
 		}
 		return

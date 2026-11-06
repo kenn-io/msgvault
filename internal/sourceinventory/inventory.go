@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telegram"
 )
 
 type Item = freshness.SourceInventoryItem
@@ -281,7 +282,7 @@ func staticSource(kind string) bool {
 	return slices.Contains([]string{
 		"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "google_voice",
 		"facebook_messenger", "imazing_csv", "slackdump", "synctech-sms",
-		"call_history", "ics", "whatsapp", "apple_messages", "google_messages", "imessage", "meeting_import",
+		"call_history", "ics", "whatsapp", "apple_messages", "google_messages", "imessage", "meeting_import", telegram.SourceType,
 	}, kind)
 }
 

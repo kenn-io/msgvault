@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 func activityFactSubjectClause(subject ActivitySubject) (string, []any, error) {
@@ -154,22 +156,29 @@ func MergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
 	}
 }
 
-func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) ([]int64, bool, error) {
+// AttendedTranscripts shares resolved meeting evidence with timeline composition.
+type AttendedTranscripts struct {
+	IDs         []int64
+	Identities  MeetingIdentityResult
+	Occurrences map[string]CalendarOccurrence
+}
+
+func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) (AttendedTranscripts, bool, error) {
 	if q.Now.IsZero() || limit < 1 || limit > 2000 {
-		return nil, false, fmt.Errorf("%w: transcript clock and limit 1..2000 required", ErrInvalidActivityRequest)
+		return AttendedTranscripts{}, false, fmt.Errorf("%w: transcript clock and limit 1..2000 required", ErrInvalidActivityRequest)
 	}
 	subject, subjectArgs, err := activityFactSubjectClause(q.Subject)
 	if err != nil {
-		return nil, false, err
+		return AttendedTranscripts{}, false, err
 	}
 	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
-		return nil, false, err
+		return AttendedTranscripts{}, false, err
 	}
 	filters.IncludeNoise = false
 	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject, Until: &q.Now}, filters)
 	if err != nil {
-		return nil, false, err
+		return AttendedTranscripts{}, false, err
 	}
 	args = append(args, subjectArgs...)
 	args = append(args, limit+1)
@@ -177,38 +186,81 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND f.role IN ('attendee','organizer') AND `+subject+`)
  ORDER BY r.occurred_at DESC,r.message_id DESC LIMIT ?`), args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("read attended transcripts: %w", err)
+		return AttendedTranscripts{}, false, fmt.Errorf("read attended transcripts: %w", err)
 	}
 	result := []int64{}
 	for rows.Next() {
 		var id int64
 		if err = rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return nil, false, fmt.Errorf("scan attended transcript: %w", err)
+			return AttendedTranscripts{}, false, fmt.Errorf("scan attended transcript: %w", err)
 		}
 		result = append(result, id)
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, false, fmt.Errorf("iterate attended transcripts: %w", err)
+		return AttendedTranscripts{}, false, fmt.Errorf("iterate attended transcripts: %w", err)
 	}
 	truncated := len(result) > limit
 	if truncated {
 		result = result[:limit]
 	}
-	calendarIDs, calendarMore, err := s.calendarAttendedTranscriptIDs(ctx, q, filters, limit)
+	candidates, emails, calendarMore, err := s.calendarTranscriptCandidates(ctx, q, filters, limit)
 	if err != nil {
-		return nil, false, err
+		return AttendedTranscripts{}, false, err
 	}
-	result = append(result, calendarIDs...)
+	ids := append(slices.Clone(result), candidates...)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	identity, err := s.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: ids, IncludeSuggestions: true})
+	if err != nil {
+		return AttendedTranscripts{}, false, err
+	}
+	page := AttendedTranscripts{Identities: identity, Occurrences: map[string]CalendarOccurrence{}}
+	matches := map[string]bool{}
+	for _, info := range identity.ByTranscript {
+		for _, ref := range info.ExactOccurrenceRefs {
+			if _, known := page.Occurrences[ref]; known {
+				continue
+			}
+			detail, err := s.GetCalendarOccurrenceContext(ctx, ref)
+			if err != nil {
+				return AttendedTranscripts{}, false, err
+			}
+			o := detail.CalendarOccurrence
+			page.Occurrences[ref] = o
+			at := o.Start
+			if o.AllDay {
+				loc := q.Location
+				if loc == nil {
+					loc = time.UTC
+				}
+				at, _, _ = calrecur.CivilDateBoundary(o.StartDate, loc)
+			}
+			if !at.IsZero() && !at.After(q.Now) {
+				for _, attendee := range o.Attendees {
+					if !attendee.IsCopySelf && attendee.Role != "room" && slices.Contains(emails, strings.ToLower(strings.TrimSpace(attendee.Email))) {
+						matches[ref] = true
+						break
+					}
+				}
+			}
+		}
+	}
+	for _, id := range candidates {
+		for _, ref := range identity.ByTranscript[id].ExactOccurrenceRefs {
+			if matches[ref] {
+				result = append(result, id)
+				break
+			}
+		}
+	}
 	slices.Sort(result)
 	result = slices.Compact(result)
 	truncated = truncated || calendarMore || len(result) > limit
-	if len(result) > limit {
-		result = result[:limit]
-	}
-	return result, truncated, nil
+	page.IDs = result[:min(len(result), limit)]
+	return page, truncated, nil
 }
 
 // CadenceForPersonContext reuses the contact-state cadence calculation while

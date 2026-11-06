@@ -27,6 +27,7 @@ func TestTimelineRefreshFailureRestoresLastResult(t *testing.T) {
 	assert := assert.New(t)
 	assert.Contains(stripANSI(refreshed.renderView()), failure.Error())
 	restored, _ := sendKey(t, refreshed, keyEsc())
+	require.NoError(restored.timelineState.err)
 	assert.Same(original, restored.timelineState.result)
 	assert.Equal(originalRequest, restored.timelineState.request)
 	assert.Equal(1, restored.timelineState.scroll)

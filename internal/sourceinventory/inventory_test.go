@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telegram"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -238,7 +239,7 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 }
 
 func TestImportOnlySourcesAreStatic(t *testing.T) {
-	for _, sourceType := range []string{"whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
+	for _, sourceType := range []string{telegram.SourceType, "whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics", "call_history"} {
 		t.Run(sourceType, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)

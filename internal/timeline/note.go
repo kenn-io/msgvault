@@ -9,9 +9,6 @@ import (
 
 // ReadDailyNote opens one authored entry through the existing day reader.
 func ReadDailyNote(ctx context.Context, source NotesSource, date string, id int64) (*store.DailyNoteEntry, error) {
-	if !store.IsValidLocalDate(date) || id <= 0 {
-		return nil, ErrInvalidRequest
-	}
 	for offset := 0; ; offset += 100 {
 		entries, err := source.ListDailyNoteEntriesContext(ctx, date, 100, offset)
 		if err != nil {

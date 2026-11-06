@@ -88,7 +88,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	q := store.ContactQuery{Subject: c.subject, Filters: c.src.Filters, Now: c.t.Now, Location: c.loc}
 	q.Filters.IncludeNoise = false
 	var messages, calls readResult[store.ContactAggregate]
-	var transcripts readResult[[]int64]
+	var transcripts readResult[store.AttendedTranscripts]
 	var history readResult[activityWindow]
 	var cold readResult[store.BurstPage]
 	var coldCount readResult[int]
@@ -100,7 +100,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 				return c.src.Activity.MessageContactAggregateContext(ctx, q)
 			})
-			transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]int64, error) {
+			transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.AttendedTranscripts, error) {
 				ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
 				if more && err == nil {
 					err = errors.New("attended meeting limit reached")
@@ -139,7 +139,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	)
 	c.gap("contact", messages.err, false)
 	c.gap("contact", calls.err, false)
-	c.gap("meetings", transcripts.err, len(transcripts.value) > 0)
+	c.gap("meetings", transcripts.err, len(transcripts.value.IDs) > 0)
 	c.gap("history", history.err, len(history.value.bursts) > 0)
 	c.gap("cold", cold.err, len(cold.value.Bursts) > 0)
 	c.gap("cold", coldCount.err, false)
@@ -148,16 +148,14 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.gap("calls", logicalCalls.err, false)
 	c.mergeContact(messages.value, false)
 	c.mergeContact(calls.value, true)
+	c.identities = transcripts.value.Identities
+	c.occurrences = transcripts.value.Occurrences
 	occurrences := slices.Clone(upcoming.value.Occurrences)
-	if len(transcripts.value) > 0 {
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
-			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{TranscriptIDs: transcripts.value})
-		})
-		c.gap("meetings", r.err, false)
-		displays := c.displays(transcripts.value)
+	if len(transcripts.value.IDs) > 0 {
+		displays := c.displays(transcripts.value.IDs)
 		seen := map[string]bool{}
-		for _, id := range transcripts.value {
-			info := r.value.ByTranscript[id]
+		for _, id := range transcripts.value.IDs {
+			info := c.identities.ByTranscript[id]
 			key := info.Key
 			if key == "" {
 				key = messageRef(id)
@@ -167,13 +165,11 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			}
 			resolved := false
 			for _, ref := range info.ExactOccurrenceRefs {
-				d, err := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
-				if err != nil {
-					c.gap("meetings", err, false)
+				o, ok := c.occurrences[ref]
+				if !ok {
 					continue
 				}
 				resolved = true
-				o := d.CalendarOccurrence
 				if seen[o.Ref] {
 					continue
 				}

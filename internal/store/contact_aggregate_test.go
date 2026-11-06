@@ -108,12 +108,12 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)
-	assertions.Len(got, 2)
+	assertions.Len(got.IDs, 2)
 	assertions.True(truncated)
 	q.Subject.ParticipantIDs = []int64{f.owner}
 	got, _, err = f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)
-	assertions.Empty(got)
+	assertions.Empty(got.IDs)
 }
 func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	requirements := require.New(t)
@@ -169,7 +169,7 @@ func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {
 			if transcript {
 				ids, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 				require.NoError(err)
-				assert.Equal([]int64{pastID}, ids)
+				assert.Equal([]int64{pastID}, ids.IDs)
 				assert.False(truncated)
 				return
 			}
@@ -254,13 +254,13 @@ func TestCalendarAttendanceTranscriptIDs(t *testing.T) {
 				requirements.NoError(err)
 				assertions.False(more)
 				if envelope == "canonical subject" || envelope == "source scope" {
-					assertions.Empty(ids)
+					assertions.Empty(ids.IDs)
 					return
 				}
-				assertions.ElementsMatch(notes, ids)
+				assertions.ElementsMatch(notes, ids.IDs)
 				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 1)
 				requirements.NoError(err)
-				assertions.Len(bounded, 1)
+				assertions.Len(bounded.IDs, 1)
 				assertions.True(more)
 			})
 		}
@@ -281,15 +281,15 @@ func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
 	q := store.ContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: now, Location: time.UTC}
 	before, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
 	requirements.NoError(err)
-	assertions.Empty(before)
+	assertions.Empty(before.IDs)
 	_, err = f.Store.LinkParticipants(f.peer, unobserved)
 	requirements.NoError(err)
 	after, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
 	requirements.NoError(err)
-	assertions.Equal(before, after)
+	assertions.Equal(before.IDs, after.IDs)
 	owner, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 	requirements.NoError(err)
-	assertions.ElementsMatch(notes, owner)
+	assertions.ElementsMatch(notes, owner.IDs)
 }
 
 func TestCalendarAttendanceExcludesUnflaggedAccountIdentity(t *testing.T) {
@@ -297,5 +297,5 @@ func TestCalendarAttendanceExcludesUnflaggedAccountIdentity(t *testing.T) {
 	q := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.owner}}, Now: now, Location: time.UTC}
 	ids, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
 	require.NoError(t, err)
-	assert.Empty(t, ids)
+	assert.Empty(t, ids.IDs)
 }

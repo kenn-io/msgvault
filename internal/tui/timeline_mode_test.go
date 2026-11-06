@@ -52,7 +52,7 @@ func timelineModeModel() Model {
 	m.mode = modeTimeline
 	m.timelineBackend = &timelineModeBackend{result: timelineModeFixture()}
 	m.timelineState.result = timelineModeFixture()
-	m.timelineState.request = timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-14", Format: "json"}
+	m.timelineState.request = timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-14", Format: "json", Budget: timeline.MaxBudget}
 	m.rebuildTimelineRows()
 	m.loading = false
 	return m
@@ -653,7 +653,7 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 		{"later upcoming", timeline.ModeDay, "2027-03-14", "2027-03-14", 2, true, false, "2027-03-13", "2027-03-15"},
 		{"anchor", timeline.ModeAnchor, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-15", "2027-03-17"},
 		{"relationship", timeline.ModeRelationship, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-13", "2027-03-15"},
-		{"empty relationship", timeline.ModeRelationship, "2027-03-12", "2027-03-14", 0, false, true, "", "2027-03-15"},
+		{"empty relationship", timeline.ModeRelationship, "2027-03-12", "2027-03-14", 0, false, true, "2027-03-11", "2027-03-15"},
 	} {
 		for _, step := range []struct {
 			key  rune
@@ -744,6 +744,26 @@ func TestTimelineRefreshOrRetryAfterNextPage(t *testing.T) {
 			assertions.Equal(wantCursor, refreshed.timelineState.request.Cursor)
 		})
 	}
+}
+
+func TestTimelineRefreshPreservesNavigationHistory(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	defer m.cancelTimelineRequest()
+	next, cmd := sendKey(t, m, key(']'))
+	requirements.NotNil(cmd)
+	defer next.cancelTimelineRequest()
+	next = sendMsg(t, next, cmd())
+	requirements.Len(next.timelineState.history, 1)
+	for range 3 {
+		next, cmd = sendKey(t, next, key('r'))
+		requirements.NotNil(cmd)
+		next = sendMsg(t, next, cmd())
+		assertions.Len(next.timelineState.history, 1)
+	}
+	back, _ := sendKey(t, next, keyEsc())
+	assertions.Equal(m.timelineState.request, back.timelineState.request)
+	assertions.Empty(back.timelineState.history)
 }
 
 func TestTimelineDailyNoteOpensDetail(t *testing.T) {
