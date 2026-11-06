@@ -90,7 +90,7 @@ func (o Observation) Validate() error {
 	if o.NativeCallID != "" && o.RecordID != o.NativeCallID {
 		return invalid("record_id must equal native_call_id")
 	}
-	if !validID(o.RecordID) || len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes {
+	if !validID(o.RecordID) || len(o.Raw) == 0 {
 		return invalid("record_id or raw")
 	}
 	seen := make(map[int64]string, len(o.Participants))

@@ -70,6 +70,14 @@ func TestNormalizedImportValidatesObservation(t *testing.T) {
 		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
+
+	o := exampleObservation()
+	o.OccurredAt = time.Date(2026, 10, 1, 12, 0, 0, 900, time.UTC)
+	o.EndedAt = new(time.Date(2026, 10, 1, 12, 0, 0, 100, time.UTC))
+	record, err := json.Marshal(o)
+	require.NoError(t, err)
+	_, err = (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
+	require.ErrorIs(t, err, ErrInvalid, "reject an end before the start within the same microsecond")
 }
 
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
