@@ -1269,54 +1269,6 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	must.ErrorIs(processor.Drain(ctx), context.Canceled)
 }
 
-func TestProcessorReceiptDuringLocalWritesInterruptsFirstEnrichment(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	first := f.fileEvent()
-	first.Source.UserID = ""
-	f.enqueue(t, first, time.Time{})
-	f.enqueue(t, f.message("2", "batch text", f.now.UnixMilli()+1), time.Time{})
-	must.NoError(f.st.CacheLineProfileContext(t.Context(), f.source.ID, testUser, `{"userId":"`+testUser+`","displayName":"Example User"}`, f.now))
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/bot/message/1/content" {
-			<-r.Context().Done()
-			return
-		}
-		f.api.ServeHTTP(w, r)
-	}))
-	defer server.Close()
-	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
-	received := false
-	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time {
-		if received {
-			return f.now
-		}
-		// The cached-profile clock runs between the first and second local writes.
-		var archived int
-		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id='1'`).Scan(&archived))
-		if archived == 1 {
-			received = true
-			f.enqueue(t, f.message("later", "new receipt", f.now.UnixMilli()+2), time.Time{})
-			f.processor.Interrupt()
-		}
-		return f.now
-	}))
-	f.processor = processor
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	must.NoError(processor.Process(ctx), "the new receipt must interrupt the first download")
-	checks.True(received)
-	checks.Equal("batch text", f.archived(t, "2").body)
-	var state, lastError string
-	must.NoError(f.st.DB().QueryRow(`SELECT state,last_error FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state, &lastError))
-	checks.Equal("retry", state)
-	checks.Equal("LINE processing interrupted", lastError)
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-later'`).Scan(&state))
-	checks.Equal("pending", state, "the new receipt remains queued for the next pass")
-}
-
 func TestProcessorArchivesLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
 	f := newInboxFixture(t)
 	started := make(chan struct{})

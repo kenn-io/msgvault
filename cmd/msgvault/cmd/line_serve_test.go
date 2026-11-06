@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -117,6 +118,7 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			loaded, err := config.Load(cfg.ConfigFilePath(), "")
 			must.NoError(err)
 			started := make(chan struct{}, 1)
+			release := make(chan struct{})
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if enrichment == "media" && strings.HasSuffix(r.URL.Path, "/content") ||
 					enrichment == "profile" && strings.Contains(r.URL.Path, "/profile/") {
@@ -125,8 +127,11 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 					case <-r.Context().Done():
 						return
 					}
-					<-r.Context().Done()
-					return
+					select {
+					case <-r.Context().Done():
+						return
+					case <-release:
+					}
 				}
 				fake.ServeHTTP(w, r)
 			}))
@@ -178,10 +183,11 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 				checks.Equal(2, receipts, "both acknowledged receipts must be durable while enrichment is blocked")
 				return
 			}
+			close(release)
 			checks.EventuallyWithT(func(c *assert.CollectT) {
 				var count int
 				require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='1'").Scan(&count))
-				assert.Equal(c, 1, count, "later text must archive while earlier media is blocked")
+				assert.Equal(c, 1, count, "later text must archive in the queued pass after media completes")
 			}, 5*time.Second, 20*time.Millisecond)
 		})
 	}
@@ -194,60 +200,56 @@ func TestLineBusyChannelRetainsMedia(t *testing.T) {
 	must.NoError(err)
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/content") {
-			close(started)
-			select {
-			case <-r.Context().Done():
-				return
-			case <-release:
-			}
-			timer := time.NewTimer(100 * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-r.Context().Done():
-				return
-			case <-timer.C:
-			}
+	synctest.Test(t, func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		started := make(chan struct{})
+		release := make(chan struct{})
+		lineClientFactory = func(id, secret string) *line.Client {
+			return line.NewClient(id, secret, line.WithHTTPClient(&http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/content") {
+					close(started)
+					select {
+					case <-r.Context().Done():
+						return nil, r.Context().Err()
+					case <-release:
+					}
+				}
+				response := httptest.NewRecorder()
+				fake.ServeHTTP(response, r)
+				return response.Result(), nil
+			})}))
 		}
-		fake.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	lineClientFactory = func(id, secret string) *line.Client {
-		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
-	}
-	sched := scheduler.New(nil).WithLogger(testLoggerValue())
-	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
-	must.NoError(err)
-	defer func() { <-sched.Stop().Done() }()
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
-	must.NoError(err)
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"media","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`}}))
-	runtime.wake(source.Identifier)
-	select {
-	case <-started:
-	case <-time.After(10 * time.Second):
-		must.FailNow("download did not start")
-	}
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "text", EventType: "message", TargetMessageID: "2", EventTimestamp: 1001, RawJSON: `{"type":"message","timestamp":1001,"webhookEventId":"text","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"busy channel text"}}`}}))
-	for range 10 {
+		prior := rebuildLineCacheAfterScheduledSync
+		rebuildLineCacheAfterScheduledSync = func(context.Context, string) error { return nil }
+		defer func() { rebuildLineCacheAfterScheduledSync = prior }()
+		sched := scheduler.New(nil).WithLogger(testLoggerValue())
+		runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+		must.NoError(err)
+		defer func() { <-sched.Stop().Done() }()
+		source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+		must.NoError(err)
+		must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"media","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`}}))
 		runtime.wake(source.Identifier)
-	}
-	// Model a download that completes after the new receipts have arrived.
-	close(release)
-	must.EventuallyWithT(func(c *assert.CollectT) {
+		select {
+		case <-started:
+		case <-time.After(time.Minute):
+			must.FailNow("download did not start")
+		}
+		must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "text", EventType: "message", TargetMessageID: "2", EventTimestamp: 1001, RawJSON: `{"type":"message","timestamp":1001,"webhookEventId":"text","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"busy channel text"}}`}}))
+		for range 10 {
+			runtime.wake(source.Identifier)
+		}
+		synctest.Wait()
+		close(release)
+		synctest.Wait()
+		row, err := st.LineMessageContext(t.Context(), source.ID, "1")
+		must.NoError(err)
+		refs, err := st.MessageProviderAttachments(row.ID, "line:")
+		must.NoError(err)
+		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State)
 		var count int
-		require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
-		assert.Equal(c, 1, count)
-	}, 10*time.Second, 20*time.Millisecond)
-	row, err := st.LineMessageContext(t.Context(), source.ID, "1")
-	must.NoError(err)
-	refs, err := st.MessageProviderAttachments(row.ID, "line:")
-	must.NoError(err)
-	assert.Equal(t, attachmentpolicy.StateStored, refs["line:1"].State)
-	var count int
-	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
-	assert.Equal(t, 1, count)
+		must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
+		checks.Equal(1, count)
+	})
 }

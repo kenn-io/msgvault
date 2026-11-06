@@ -95,52 +95,6 @@ func TestMediaConversationPreview(t *testing.T) {
 	}
 }
 
-func TestMediaInterruptedRetryHorizon(t *testing.T) {
-	for _, cancelPass := range []bool{false, true} {
-		t.Run(fmt.Sprintf("cancel=%t", cancelPass), func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v2/bot/message/1/content" {
-					if cancelPass {
-						cancel()
-					} else {
-						f.processor.Interrupt()
-					}
-					<-r.Context().Done()
-					return
-				}
-				f.api.ServeHTTP(w, r)
-			}))
-			defer server.Close()
-			client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
-			f.processor = NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-			f.enqueue(t, f.fileEvent(), time.Time{})
-			f.enqueue(t, f.message("2", "text survives interruption", f.now.UnixMilli()+1), time.Time{})
-			err := f.processor.Process(ctx)
-			if cancelPass {
-				must.ErrorIs(err, context.Canceled)
-			} else {
-				must.NoError(err)
-			}
-			checks.Equal("text survives interruption", f.archived(t, "2").body)
-			f.now = f.now.Add(retryHorizon + time.Hour)
-			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-			f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
-			f.run(t)
-			var state string
-			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-			checks.Equal("failed", state)
-			checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
-			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"), "restart after the original horizon must expire media without fetching it")
-			checks.Equal("text survives interruption", f.archived(t, "2").body)
-		})
-	}
-}
-
 func TestMediaSizeSearch(t *testing.T) {
 	for _, tc := range []struct {
 		name string

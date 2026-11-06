@@ -3,6 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -11,12 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"testing/synctest"
-	"time"
 )
 
 func TestLineMaxRuntimeHandsGateToSecondChannel(t *testing.T) {
@@ -68,7 +70,7 @@ func TestLineMaxRuntimeHandsGateToSecondChannel(t *testing.T) {
 		b, err := st.GetSourceByTypeAndIdentifier("line", "2000000002")
 		must.NoError(err)
 		for i := range 3 {
-			id := fmt.Sprint(i + 1)
+			id := strconv.Itoa(i + 1)
 			raw := fmt.Sprintf(`{"type":"message","webhookEventId":"media-%s","timestamp":%d,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"%s","type":"file","fileName":"example.txt"}}`, id, 1000+i, id)
 			must.NoError(st.EnqueueLineEventsContext(t.Context(), a.ID, a.Identifier, []store.LineWebhookEvent{{WebhookEventID: "media-" + id, EventType: "message", TargetMessageID: id, EventTimestamp: int64(1000 + i), RawJSON: raw}}))
 		}

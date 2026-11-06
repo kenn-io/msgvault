@@ -88,23 +88,14 @@ type Processor struct {
 	botID                     string
 	messagesAdded             int64
 	messagesUpdated           int64
-	interrupt                 chan struct{}
 }
 
 func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, attachmentsDir string, options ...ProcessorOption) *Processor {
-	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, interrupt: make(chan struct{}, 1), mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
+	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
 	for _, option := range options {
 		option(p)
 	}
 	return p
-}
-
-// Interrupt yields provider enrichment to a queued pass for newly received events.
-func (p *Processor) Interrupt() {
-	select {
-	case p.interrupt <- struct{}{}:
-	default:
-	}
 }
 
 func (p *Processor) recordMutation(ctx context.Context, added, updated int64) {
@@ -230,11 +221,6 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err != nil {
 		return err
 	}
-	// Clear stale interrupts before selecting the batch.
-	select {
-	case <-p.interrupt:
-	default:
-	}
 	rows, err := pass.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 500)
 	if err != nil {
 		return err
@@ -242,9 +228,6 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	finishEvent := func(row store.LineWebhookEvent, event Event, state string, eventErr error) error {
 		if eventErr != nil {
 			if ctx.Err() != nil {
-				if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "pending", "LINE processing interrupted", pass.retryAt(row, ctx.Err())); err != nil {
-					return errors.Join(ctx.Err(), err)
-				}
 				return ctx.Err()
 			}
 			if _, ok := errors.AsType[*invalidEventError](eventErr); ok {
@@ -354,28 +337,12 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		if work.run == nil {
 			continue
 		}
-		enrichCtx, cancel := context.WithCancel(ctx)
-		stopped := make(chan struct{})
-		go func() {
-			defer close(stopped)
-			select {
-			case <-p.interrupt:
-				cancel()
-			case <-enrichCtx.Done():
-			}
-		}()
-		eventErr := work.run(enrichCtx)
-		interrupted := enrichCtx.Err()
-		cancel()
-		<-stopped
-		if interrupted != nil {
-			if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "retry", "LINE processing interrupted", pass.retryAt(row, interrupted)); err != nil {
-				return errors.Join(ctx.Err(), err)
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			break
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		eventErr := work.run(ctx)
+		if err = ctx.Err(); err != nil {
+			return err
 		}
 		if err = finishEvent(row, work.event, "processed", eventErr); err != nil {
 			return err

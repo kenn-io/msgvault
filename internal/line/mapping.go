@@ -159,11 +159,11 @@ func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64,
 	if previous.ID != 0 {
 		p.recordMutation(ctx, 0, 1)
 	}
-	title := p.groupNames[key]
+	title, cached := p.groupNames[key]
 	var titleErr error
 	if kind == "direct_chat" {
 		title = profile.DisplayName
-	} else if e.Source.Type == "group" && title == "" {
+	} else if e.Source.Type == "group" && !cached {
 		var summary GroupSummary
 		summary, titleErr = p.client.GroupSummary(ctx, e.Source.GroupID)
 		if apiErr, ok := errors.AsType[*APIError](titleErr); ok && (apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusNotFound) {

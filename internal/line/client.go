@@ -19,10 +19,12 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+// RequestTimeout bounds one Messaging API request other than a media download.
+const RequestTimeout = 30 * time.Second
+
 const (
 	defaultAPIURL  = "https://api.line.me"
 	defaultDataURL = "https://api-data.line.me"
-	requestTimeout = 30 * time.Second
 	maxJSONBytes   = 1 << 20
 )
 
@@ -100,8 +102,8 @@ func NewClient(channelID, secret string, options ...ClientOption) *Client {
 	// redirects to forward a bearer header or replay a secret-bearing POST.
 	cloned := *c.http
 	cloned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	if cloned.Timeout <= 0 || cloned.Timeout > requestTimeout {
-		cloned.Timeout = requestTimeout
+	if cloned.Timeout <= 0 || cloned.Timeout > RequestTimeout {
+		cloned.Timeout = RequestTimeout
 	}
 	c.http = &cloned
 	return c
