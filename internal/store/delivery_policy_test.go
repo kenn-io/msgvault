@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -11,33 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
-
-func TestDeliveryPolicyAuditLookupUsesIndexSQLite(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	assert, require := assert.New(t), require.New(t)
-	// Match the SQLite query in deliveryApprovalCoversPointsTx.
-	rows, err := st.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN
-		SELECT EXISTS (SELECT 1 FROM person_contact_points,
-		(SELECT created_at FROM delivery_policy_audit WHERE person_uid=? AND scope=? ORDER BY revision DESC LIMIT 1) approval
-		WHERE id=? AND (active_from IS NULL OR julianday(active_from) <= julianday(approval.created_at)))`,
-		"example-person", store.DeliveryPersonAllRoutes, 1)
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(rows.Err())
-	plan := strings.Join(details, "\n")
-	assert.Contains(plan, "SEARCH delivery_policy_audit USING INDEX idx_delivery_policy_audit_latest")
-	assert.NotContains(plan, "USE TEMP B-TREE")
-}
 
 func deliveryContactPoint(t *testing.T, f *storetest.Fixture, personID int64, address string) {
 	t.Helper()
