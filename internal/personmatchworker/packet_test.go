@@ -1,6 +1,7 @@
 package personmatchworker
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/personmatchpolicy"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestBuildPairPacketUsesOnlySupportedIdentityEvidence(t *testing.T) {
@@ -93,6 +95,45 @@ func TestLocalPolicyInputChecksPairSummaryGuards(t *testing.T) {
 	input.Probability, input.MinimumProbability = 0.99, 0.8
 	assert.Equal(t, personmatchpolicy.ProposedAccept, personmatchpolicy.Evaluate(input).Action,
 		"a matching phone is positive evidence and different stable-ID scopes do not conflict")
+}
+
+func TestLocalPolicyInputBlocksConflictingSignalACIsWithoutDisclosingThem(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := storetest.New(t).Store
+	leftACI := "00000000-0000-4000-8000-000000000001"
+	rightACI := "00000000-0000-4000-8000-000000000002"
+	left, err := st.EnsureParticipantByIdentifier("signal_aci", leftACI, "Signal Example")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("signal_aci", rightACI, "Signal Example")
+	require.NoError(err)
+	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
+	require.NoError(err)
+	candidate := store.IdentityMatchCandidate{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		State: store.IdentityMatchStateCandidate, Actionable: true,
+		Evidence: []store.IdentityMatchEvidence{
+			{EvidenceKind: "email", SourceSupport: []store.IdentityMatchSourceSupport{{SourceID: 1}}},
+			{EvidenceKind: "display_name", SourceSupport: []store.IdentityMatchSourceSupport{{SourceID: 2}}},
+		},
+	}
+	packet, signals, err := BuildPairPacket(&candidate)
+	require.NoError(err)
+	input := localPolicyInput(candidate, summaries, signals)
+	input.Probability, input.MinimumProbability = 0.99, 0.8
+	assert.True(input.ConflictingStableID)
+	decision := personmatchpolicy.Evaluate(input)
+	assert.Equal(personmatchpolicy.NeedsReview, decision.Action)
+	assert.Equal([]string{"conflicting_stable_id"}, decision.Blockers)
+
+	// Run supplies only these endpoints to the scorer after its local guard.
+	packet.Left, packet.Right = summaries.Left, summaries.Right
+	encoded, err := json.Marshal(packet)
+	require.NoError(err)
+	assert.NotContains(string(encoded), "signal_aci")
+	assert.NotContains(string(encoded), leftACI)
+	assert.NotContains(string(encoded), rightACI)
 }
 
 func TestLocalPolicyInputVerifiesExactFullName(t *testing.T) {
