@@ -77,27 +77,19 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 		b.AddFrom(message, participant, "")
 	}
 	engine := b.BuildEngine()
-	for _, test := range []struct {
-		query string
-		want  []int64
-	}{
-		{query: "@alice", want: []int64{participants[0], participants[1]}},
-	} {
-		t.Run(test.query, func(t *testing.T) {
-			assert := assert.New(t)
-			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
-				Query: test.query, Page: PageSpec{Limit: 25},
-			})
-			require.NoError(t, err)
-			got := make([]int64, 0, len(response.Rows))
-			for _, row := range response.Rows {
-				got = append(got, row.ID)
-			}
-			assert.Equal(test.want, got)
-			assert.NotContains(got, participants[2], "@alice excludes @malice")
-			assert.Equal(int64(len(test.want)), response.TotalCount)
-		})
+	assert := assert.New(t)
+	want := []int64{participants[0], participants[1]}
+	response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+		Query: "@alice", Page: PageSpec{Limit: 25},
+	})
+	require.NoError(t, err)
+	got := make([]int64, 0, len(response.Rows))
+	for _, row := range response.Rows {
+		got = append(got, row.ID)
 	}
+	assert.Equal(want, got)
+	assert.NotContains(got, participants[2], "@alice excludes @malice")
+	assert.Equal(int64(len(want)), response.TotalCount)
 }
 
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
