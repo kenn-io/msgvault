@@ -651,13 +651,13 @@ All `group_by` values return a JSON array of objects with these fields:
 
 Embedded MCP servers register vector tools from the backends supplied by their
 caller. Daemon-backed MCP reads one authenticated health response during
-startup and enables the full schema for search by meaning only when the response reports
+startup and enables the full text search schema only when the response reports
 `text_enabled: true` with API schema `2.28.0` or newer. It registers
 `search_visual_attachments` only when `visual_enabled: true`, the same lane
 fields are available, and the daemon serves the visual route from schema
 `2.4.0` or newer. Disabled or unknown lanes omit their optional searchers. The
 reduced `semantic_search_messages` entry remains as discovery guidance and
-returns `vector_not_enabled` until search by meaning is configured.
+returns `vector_not_enabled` until text search is configured.
 
 A successful authenticated health response with API schema `3.21.0` or newer also registers `get_embeddings_status`.
 

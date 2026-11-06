@@ -4701,7 +4701,7 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 
 Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
-configured key variable (default `MISTRAL_API_KEY`). When search by meaning is unset,
+configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
 available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
@@ -4733,7 +4733,7 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-`--local-embeddings` uses the shared local server for search by meaning, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
 
 Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
@@ -4768,7 +4768,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
 
-Report the setup state of each feature (search by meaning, semantic people search,
+Report the setup state of each feature (text search, semantic people search,
 visual attachments, documents, document vectors, people sweep, activity
 projection, media policy): state, provider, model, recorded consent, schedule,
 the reason a lane is off, and the command that turns it on. Reads `config.toml`,

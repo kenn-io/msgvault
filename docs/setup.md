@@ -396,9 +396,9 @@ are opt-in. Put your API keys in the environment so setup can propose search
 features. Hosted people inference also needs an explicit provider and model:
 
 ```bash
-export VOYAGE_API_KEY="..."     # search by meaning, people, and visual search
+export VOYAGE_API_KEY="..."     # text, people, and visual search
 export MISTRAL_API_KEY="..."    # document attachments
-export OPENAI_API_KEY="..."     # search by meaning without a Voyage key
+export OPENAI_API_KEY="..."     # text search without a Voyage key
 msgvault setup providers        # review provider disclosures and write opt-in config
 msgvault setup status           # what is on, what is off, and why
 ```

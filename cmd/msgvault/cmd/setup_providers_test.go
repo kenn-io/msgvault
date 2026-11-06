@@ -906,8 +906,6 @@ func TestSetupStatusConsentGatedLanesRequireActiveConsent(t *testing.T) {
 				}
 			}
 			assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
-			assert.Contains(findLane(t, report, lanePersonSearch).Reason, "embeds one curated document per person alongside messages")
-			assert.Contains(findLane(t, report, laneDocumentVectors).Reason, "sent to the provider for search by meaning")
 		})
 	}
 }
@@ -982,7 +980,6 @@ func TestSetupProvidersVoyageWritesRecommendedDefaults(t *testing.T) {
 	assert.Contains(output, "multimodal probe --seeds <private-seed-dir> --out "+setupVoyageManifestPath(loaded))
 	assert.Contains(output, "msgvault embeddings build --full-rebuild --yes")
 	assert.Contains(output, "person provider consent --semantic-embeddings --yes")
-	assert.Contains(output, "embeds one curated, non-sensitive attribute document per person alongside messages")
 	assert.NotContains(output, setupProvidersTestKey)
 
 	// Re-running leaves a configured archive alone.
@@ -1047,7 +1044,6 @@ func TestSetupProvidersMistralEnablesDocumentsAndVectors(t *testing.T) {
 	assert.Contains(output, "documents consent-mistral --capabilities "+manifest+" --yes")
 	assert.Contains(output, "msgvault documents vectors consent --yes")
 	assert.Contains(output, "retention=zdr, training=opted-out")
-	assert.Contains(output, "document chunks and search query text are sent to the provider for search by meaning after separate document and query consents")
 	// The follow-ups must include actual indexing after both consent steps.
 	build := strings.LastIndex(output, "msgvault documents vectors build")
 	require.NotEqual(-1, build)

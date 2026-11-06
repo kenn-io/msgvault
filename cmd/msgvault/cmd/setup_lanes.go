@@ -425,7 +425,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
-		lane.Reason = "embeds one curated document per person alongside messages"
+		lane.Reason = "one curated document per person rides the text-search generation"
 		if text := textSearchLane(cfg, env); text.State != laneStateOn {
 			lane.State = laneStatePending
 			lane.Reason += "; search by meaning is not ready: " + text.Reason
@@ -576,7 +576,7 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
-		lane.Reason = "document chunks and search query text are sent to the provider for search by meaning under separate consents"
+		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
 		if text := textSearchLane(cfg, env); text.State != laneStateOn {
 			lane.State = laneStatePending
 			lane.Reason += "; search by meaning is not ready: " + text.Reason

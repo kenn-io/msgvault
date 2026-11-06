@@ -2304,9 +2304,9 @@ Empty config disables scheduled embedding; you can still run
 | `run_after_sync` | `false` | Run an embed pass after successful scheduled Gmail, IMAP, Teams, and Discord syncs. Other sources use the standalone cron or a manual build. |
 
 `msgvault setup providers` supplies `run_after_sync = true` and
-`cron = "*/15 * * * *"` when it enables search by meaning. It preserves either key
-when explicitly set, including `false` and `""`. Existing schedules for search
-by meaning stay unchanged. See
+`cron = "*/15 * * * *"` when it enables a text lane. It preserves either key
+when explicitly set, including `false` and `""`. Already enabled text lanes keep
+their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
 Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
@@ -2316,7 +2316,7 @@ Completed provider responses are saved in the vector store before the next reque
 #### `[vector.people]`
 
 Semantic people search: one curated document per durable person, built from
-searchable non-sensitive attributes, embedded into the generation for search by meaning.
+searchable non-sensitive attributes, embedded into the text-search generation.
 Requires `[vector] enabled = true` and a separate consent
 (`msgvault person provider consent --semantic-embeddings --yes`).
 
