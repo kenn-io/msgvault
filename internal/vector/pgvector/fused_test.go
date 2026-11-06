@@ -599,7 +599,7 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			_, err := f.db.Exec(`UPDATE messages SET deleted_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
+			_, err := f.db.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
 			require.NoError(err)
 			if tc.unembedded {
 				require.NoError(b.Delete(ctx, gen, []int64{5}))

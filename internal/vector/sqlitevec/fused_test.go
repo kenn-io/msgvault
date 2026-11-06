@@ -1325,10 +1325,10 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			b, ctx := newFusedBackendForTest(t)
 			gen := seedAndEmbed(t, b, map[int64][]float32{1: {1, 0.3, 0, 0}, 2: {1, 0.5, 0, 0}, 3: {1, 0.1, 0, 0}, 4: {1, 0.2, 0, 0}, 5: {1, 0.4, 0, 0}})
-			_, err := b.mainDB.Exec(`DELETE FROM messages_fts`)
+			_, err := b.mainDB.ExecContext(t.Context(), `DELETE FROM messages_fts`)
 			require.NoError(t, err)
 			for id, rank := range map[int64]int{1: 1, 2: 2, 3: 3, 4: 5, 5: 4} {
-				_, err := b.mainDB.Exec(`INSERT INTO messages_fts(rowid,subject,body) VALUES (?, '', ?)`, id, strings.Repeat("invoice ", 6-rank)+strings.Repeat("filler ", rank))
+				_, err := b.mainDB.ExecContext(t.Context(), `INSERT INTO messages_fts(rowid,subject,body) VALUES (?, '', ?)`, id, strings.Repeat("invoice ", 6-rank)+strings.Repeat("filler ", rank))
 				require.NoError(t, err)
 			}
 			if path == "accelerator" {
@@ -1356,7 +1356,7 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					assert, require := assert.New(t), require.New(t)
-					_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
+					_, err := b.mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
 					require.NoError(err)
 					if tc.unembedded {
 						require.NoError(b.Delete(ctx, gen, []int64{5}))

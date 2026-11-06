@@ -2376,7 +2376,7 @@ func TestHandleCLISearchHasMore(t *testing.T) {
 			})
 			srv.ftsIndexComplete.Store(true)
 			resp := httptest.NewRecorder()
-			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=scope&limit=50", nil))
+			srv.Router().ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=scope&limit=50", nil))
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 			var page struct {
 				Results []json.RawMessage `json:"results"`
@@ -8050,7 +8050,7 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			backend.searchHits = tc.hits
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
