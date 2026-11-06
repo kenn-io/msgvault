@@ -496,6 +496,9 @@ func applyIMAPMailboxDeltas(
 			if existing.RawSize == 0 {
 				existing.RawSize = observation.RawSize
 			}
+			if observation.Flags != nil {
+				existing.Flags = slices.Clone(observation.Flags)
+			}
 			continue
 		}
 		observationIndexes[key] = len(normalizedObservations)

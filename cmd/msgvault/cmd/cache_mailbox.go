@@ -13,6 +13,9 @@ func initializeMailboxSnapshot(snapshot *cacheSourceSnapshot) (*cacheSourceSnaps
 		return nil, fmt.Errorf("inspect provider mailbox observations: %w", err)
 	}
 	snapshot.hasMailboxObservations = count > 0
+	if buildCacheAfterSnapshotInitializationHook != nil {
+		buildCacheAfterSnapshotInitializationHook()
+	}
 	return snapshot, nil
 }
 

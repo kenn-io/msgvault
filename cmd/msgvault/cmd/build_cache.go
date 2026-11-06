@@ -194,6 +194,10 @@ func wrapError(err error, message string) error {
 // race with cache construction after its source watermark is captured.
 var buildCacheAfterSnapshotHook func()
 
+// buildCacheAfterSnapshotInitializationHook is a deterministic test seam for
+// writes between the snapshot's first source read and cache export.
+var buildCacheAfterSnapshotInitializationHook func()
+
 // buildCacheBeforeStateWriteHook is a deterministic test seam for source
 // mutations that finish after table COPY operations but before cache state is
 // persisted.
@@ -1178,17 +1182,17 @@ func buildCacheLockedAttempt(
 	if err := registerCacheTextFunctions(context.Background(), db, textRepairs); err != nil {
 		return nil, err
 	}
+	// Record the freshness boundary before initializing the source snapshot,
+	// which itself performs the first read and pins SQLite's transaction. A
+	// deletion committed after this point must invalidate the published cache.
+	exportStarted := time.Now()
+	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
+
 	sourceSnapshot, err := openCacheSourceSnapshot(db, dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
-
-	// Record the freshness boundary immediately before the first source read.
-	// A sync or deletion that finishes after this instant may not be represented
-	// by the snapshot and must invalidate the cache on the next check.
-	exportStarted := time.Now()
-	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64

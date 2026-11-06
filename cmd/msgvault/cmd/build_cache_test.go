@@ -582,6 +582,38 @@ func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 		"the next automatic build must repair the post-snapshot deletion")
 }
 
+func TestBuildCacheWatermarkPrecedesSnapshotInitialization(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	insertSixthMessage(t, dbPath)
+	enableSQLiteWAL(t, dbPath)
+
+	buildCacheAfterSnapshotInitializationHook = func() {
+		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationSourceDeleteMessage)
+		// Ensure the original post-snapshot watermark would be a full second
+		// later than this second-resolution deletion timestamp.
+		time.Sleep(1100 * time.Millisecond)
+	}
+	t.Cleanup(func() { buildCacheAfterSnapshotInitializationHook = nil })
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	assert.Equal(int64(6), result.MaxMessageID)
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"the open snapshot still exports the message deleted after its first source read")
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(staleness.NeedsBuild, "the post-watermark deletion must make the cache stale: %+v", staleness)
+	assert.True(staleness.HasDeleted, "the deletion-only change must be detected without addition/update counters")
+	assert.True(staleness.FullRebuild, "repairing a source deletion requires replacing all shards")
+}
+
 func snapshotCacheParquet(t *testing.T, analyticsDir string) map[string][sha256.Size]byte {
 	t.Helper()
 	result := make(map[string][sha256.Size]byte)
@@ -1470,11 +1502,12 @@ func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
 }
 
 const (
-	cacheMutationDBEnv         = "MSGVAULT_TEST_CACHE_MUTATION_DB"
-	cacheMutationOpEnv         = "MSGVAULT_TEST_CACHE_MUTATION_OP"
-	cacheMutationDeleteMessage = "delete-message"
-	cacheMutationInsertMessage = "insert-message"
-	cacheMutationUpdateRelated = "update-related"
+	cacheMutationDBEnv               = "MSGVAULT_TEST_CACHE_MUTATION_DB"
+	cacheMutationOpEnv               = "MSGVAULT_TEST_CACHE_MUTATION_OP"
+	cacheMutationDeleteMessage       = "delete-message"
+	cacheMutationInsertMessage       = "insert-message"
+	cacheMutationUpdateRelated       = "update-related"
+	cacheMutationSourceDeleteMessage = "source-delete-message"
 )
 
 func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
@@ -1488,6 +1521,8 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 	switch os.Getenv(cacheMutationOpEnv) {
 	case cacheMutationDeleteMessage:
 		_, err = db.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
+	case cacheMutationSourceDeleteMessage:
+		_, err = db.Exec(`UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = 6`)
 	case cacheMutationInsertMessage:
 		_, err = db.Exec(`
 			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)

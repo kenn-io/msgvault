@@ -585,22 +585,26 @@ func TestApplyIMAPMailboxDeltas_PreservesEmptyFlagsAsUnread(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://alice@example.com")
 	require.NoError(err)
-	seedIMAPMessage(t, st, src, "INBOX|1", "unknown-flags@example.com")
-	seedIMAPMessage(t, st, src, "INBOX|2", "empty-flags@example.com")
+	seedIMAPMessage(t, st, src, "INBOX|1", "latest-flags@example.com")
+	seedIMAPMessage(t, st, src, "INBOX|2", "preserved-flags@example.com")
+	seedIMAPMessage(t, st, src, "INBOX|3", "unknown-flags@example.com")
 	summary := completedIMAPSyncSummary(t, st, src)
 
 	err = applyIMAPMailboxDeltas(context.Background(), st, src, summary.SyncRunID, []imaplib.MailboxDelta{{
 		Mailbox: "INBOX",
-		State:   imaplib.FolderState{UIDValidity: 17, UIDNext: 3, KnownUIDs: []uint32{1, 2}},
+		State:   imaplib.FolderState{UIDValidity: 17, UIDNext: 4, KnownUIDs: []uint32{1, 2, 3}},
 	}}, []imaplib.MembershipObservation{
-		{Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "INBOX|1", Flags: nil},
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "INBOX|1", Flags: []string{"\\Seen"}},
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "INBOX|1", Flags: []string{}},
 		{Mailbox: "INBOX", UIDValidity: 17, UID: 2, SourceMessageID: "INBOX|2", Flags: []string{}},
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 2, SourceMessageID: "INBOX|2", Flags: nil},
+		{Mailbox: "INBOX", UIDValidity: 17, UID: 3, SourceMessageID: "INBOX|3", Flags: nil},
 	})
 	require.NoError(err)
 
 	for _, tc := range []struct {
 		id, wantRead string
-	}{{"INBOX|1", "unknown"}, {"INBOX|2", "unread"}} {
+	}{{"INBOX|1", "unread"}, {"INBOX|2", "unread"}, {"INBOX|3", "unknown"}} {
 		ids, err := st.MessageExistsBatch(src.ID, []string{tc.id})
 		require.NoError(err)
 		state, err := st.ProviderMailboxStateContext(t.Context(), ids[tc.id])
