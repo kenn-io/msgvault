@@ -2975,6 +2975,16 @@ type ListPersonFactClaimsErrorResponseJSON503 = ErrorResponse
 
 type ListPersonFactClaimsErrorResponseJSONDefault = ErrorResponse
 
+type ListPersonFactContestsResponse = PersonFactContestsResponse
+
+type ListPersonFactContestsErrorResponse = ErrorResponse
+
+type ListPersonFactContestsErrorResponseJSON = ErrorResponse
+
+type ListPersonFactContestsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonFactContestsErrorResponseJSONDefault = ErrorResponse
+
 type ListPersonFactDecisionsResponse = PersonFactDecisionsResponse
 
 type ListPersonFactDecisionsErrorResponse = ErrorResponse
@@ -6785,6 +6795,17 @@ type ListPersonFactClaimsResp struct {
 	JSON404      *ListPersonFactClaimsErrorResponseJSON
 	JSON503      *ListPersonFactClaimsErrorResponseJSON503
 	JSONDefault  *ListPersonFactClaimsErrorResponseJSONDefault
+}
+
+type ListPersonFactContestsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonFactContestsResponse
+	JSON400      *ListPersonFactContestsErrorResponse
+	JSON404      *ListPersonFactContestsErrorResponseJSON
+	JSON503      *ListPersonFactContestsErrorResponseJSON503
+	JSONDefault  *ListPersonFactContestsErrorResponseJSONDefault
 }
 
 type ListPersonFactDecisionsResp struct {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -313,10 +314,83 @@ func newPersonFactsCommand() *cobra.Command {
 		},
 	}
 
+	contested := &cobra.Command{
+		Use: "contested <person-id>", Short: "List contested automatic person facts", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			personID, err := positivePersonCLIArg(cmd, args[0], personValue)
+			if err != nil {
+				return err
+			}
+			client, _, err := OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			query := &generated.ListPersonFactContestsQuery{}
+			if options.includeSensitive {
+				include := true
+				query.IncludeSensitive = &include
+			}
+			response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListPersonFactContestsResp, error) {
+				return api.ListPersonFactContestsWithResponse(cmd.Context(), &generated.ListPersonFactContestsRequestOptions{PathParams: &generated.ListPersonFactContestsPath{ID: personID}, Query: query})
+			})
+			if err != nil {
+				return err
+			}
+			if options.jsonOutput {
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Contests, json.Deterministic(true))
+			}
+			writer := bufio.NewWriter(cmd.OutOrStdout())
+			if !options.includeSensitive {
+				_, _ = fmt.Fprintln(writer, "Sensitive fields are hidden; use --include-sensitive to include them.")
+			}
+			if len(response.JSON200.Contests) == 0 {
+				_, _ = fmt.Fprintln(writer, "No contested facts.")
+				return writer.Flush()
+			}
+			for _, contest := range response.JSON200.Contests {
+				target := contest.Target.Slug
+				if contest.Target.Kind != contest.Target.Slug {
+					target = contest.Target.Kind + "/" + target
+				}
+				_, _ = fmt.Fprintf(writer, "%s (resolved %s)\n", target, contest.ResolvedAt.Format(time.RFC3339))
+				if contest.ResolutionRevision != contest.Target.Revision {
+					_, _ = fmt.Fprintln(writer, "  Definition changed since resolution.")
+				}
+				if len(contest.Current) == 0 {
+					_, _ = fmt.Fprintln(writer, "  Current: none")
+				}
+				for _, current := range contest.Current {
+					_, _ = fmt.Fprintf(writer, "  Current: %s\n", current.Value)
+				}
+				for _, claim := range contest.Claims {
+					detail := personFactCLIClaimRelation(claim.Relation)
+					redundantReason := personfacts.ClaimRelation(claim.Relation) == personfacts.RelationContradict && personfacts.DecisionReason(claim.Decision.Reason) == personfacts.ReasonExplicitContradiction ||
+						personfacts.ClaimRelation(claim.Relation) == personfacts.RelationSupersede && personfacts.DecisionReason(claim.Decision.Reason) == personfacts.ReasonExplicitSupersession
+					if !redundantReason {
+						detail += "; " + personFactCLIDecisionReason(claim.Decision.Reason)
+					}
+					_, _ = fmt.Fprintf(writer, "  Claim: %s (%s)\n", claim.Value, detail)
+					if claim.ValidFrom != nil {
+						_, _ = fmt.Fprintf(writer, "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
+					}
+					if claim.ValidUntil != nil {
+						_, _ = fmt.Fprintf(writer, "    Valid until: %s\n", claim.ValidUntil.Format(time.RFC3339))
+					}
+					for _, evidence := range claim.Evidence {
+						_, _ = fmt.Fprintf(writer, "    Evidence: %s %s %s (event %s, recorded %s)\n", evidence.EvidenceKey, personFactCLIOptionalString(evidence.SourceRef), personFactCLIOptionalString(evidence.SourceURL), evidence.EventTime.Format(time.RFC3339), evidence.RecordedTime.Format(time.RFC3339))
+					}
+				}
+			}
+			return writer.Flush()
+		},
+	}
+	contested.Flags().BoolVar(&options.includeSensitive, "include-sensitive", false, "Include sensitive targets")
+
 	pin := newPersonFactPinCommand(options, true)
 	unpin := newPersonFactPinCommand(options, false)
 
-	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, pins, pin, unpin} {
+	for _, command := range []*cobra.Command{catalog, evidence, status, claims, decisions, pins, pin, unpin, contested} {
 		command.Flags().BoolVar(&options.jsonOutput, flagJSON, false, "Output as JSON")
 	}
 	for _, command := range []*cobra.Command{evidence, claims, decisions} {
@@ -325,8 +399,32 @@ func newPersonFactsCommand() *cobra.Command {
 		addPersonFactCLIPageFlags(command, options)
 	}
 	addPersonFactCLIPageFlags(status, options)
-	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin)
+	facts.AddCommand(catalog, evidence, status, claims, decisions, pins, pin, unpin, contested)
 	return facts
+}
+
+func personFactCLIClaimRelation(relation string) string {
+	switch personfacts.ClaimRelation(relation) {
+	case personfacts.RelationSupport:
+		return "supports"
+	case personfacts.RelationContradict:
+		return "contradicts"
+	case personfacts.RelationSupersede:
+		return "replaces"
+	default:
+		return relation
+	}
+}
+
+func personFactCLIDecisionReason(reason string) string {
+	switch personfacts.DecisionReason(reason) {
+	case personfacts.ReasonInsufficientMargin:
+		return "too little advantage over competing claims"
+	case personfacts.ReasonCompetingTie:
+		return "too close to choose"
+	default:
+		return reason
+	}
 }
 
 func newPersonFactPinCommand(options *personFactsCLIOptions, pinned bool) *cobra.Command {

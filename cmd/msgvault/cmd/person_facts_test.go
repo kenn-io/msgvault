@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -363,4 +364,107 @@ func runPersonFactsCommand(ctx context.Context, t *testing.T, args ...string) (s
 
 func outputIndex(output, value string) int {
 	return strings.Index(output, value)
+}
+
+func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	const sensitiveContests = `[{
+		"target":{"kind":"attribute","key":"religion-key","slug":"religion","revision":"revision-2","sensitive":true},
+		"resolution_revision":"revision-1","resolved_at":"2026-08-22T12:00:00Z",
+		"current":[],"claims":[{
+			"claim_key":"claim-buddhism","value":"\"Buddhism\"","relation":"support",
+			"decision":{"reason":"competing-tie"},
+			"evidence":[{"evidence_key":"evidence-buddhism","source_ref":"message:42",
+				"source_url":"https://example.test/buddhism",
+				"event_time":"2026-08-22T10:00:00Z","recorded_time":"2026-08-22T11:00:00Z"}]
+		},{
+			"claim_key":"claim-hinduism","value":"\"Hinduism\"","relation":"support",
+			"decision":{"reason":"competing-tie"},"evidence":[]
+		},{
+			"claim_key":"claim-contradiction","value":"\"Buddhism\"","relation":"contradict",
+			"decision":{"reason":"explicit-contradiction"},"evidence":[]
+		}]
+	}]`
+	const employmentContests = `[{
+		"target":{"kind":"employment","key":"system:employment","slug":"employment","revision":"revision-1","sensitive":false},
+		"resolution_revision":"revision-1","resolved_at":"2026-08-22T12:00:00Z",
+		"current":[],"claims":[]
+	}]`
+	var queries []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodGet, r.Method)
+		queries = append(queries, r.URL.Query())
+		contests := `[]`
+		switch r.URL.Path {
+		case "/api/v1/people/7/fact-contests":
+			if r.URL.Query().Get("include_sensitive") == "true" {
+				contests = sensitiveContests
+			}
+		case "/api/v1/people/8/fact-contests":
+		case "/api/v1/people/9/fact-contests":
+			contests = employmentContests
+		default:
+			assertions.Fail("unexpected contested facts path", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err := fmt.Fprintf(w, `{"contests":%s}`, contests)
+		assertions.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+
+	defaultOutput, err := runPersonFactsCommand(ctx, t, "contested", "7")
+	requirements.NoError(err)
+	assertions.Equal("Sensitive fields are hidden; use --include-sensitive to include them.\nNo contested facts.\n", defaultOutput)
+
+	output, err := runPersonFactsCommand(ctx, t, "contested", "7", "--include-sensitive")
+	requirements.NoError(err)
+	assertions.NotContains(output, "Sensitive fields are hidden")
+	assertions.Contains(output, "attribute/religion (resolved 2026-08-22T12:00:00Z)")
+	assertions.Contains(output, "Claim: \"Buddhism\" (supports; too close to choose)")
+	assertions.Contains(output, "Claim: \"Hinduism\" (supports; too close to choose)")
+	assertions.Contains(output, "Claim: \"Buddhism\" (contradicts)\n")
+	for _, expected := range []string{"https://example.test/buddhism", "Definition changed since resolution"} {
+		assertions.Contains(output, expected)
+	}
+
+	jsonOutput, err := runPersonFactsCommand(ctx, t, "contested", "7", "--include-sensitive", "--json")
+	requirements.NoError(err)
+	var contests []generated.PersonFactContest
+	requirements.NoError(json.Unmarshal([]byte(jsonOutput), &contests))
+	requirements.Len(contests, 1)
+	assertions.Equal("religion", contests[0].Target.Slug)
+	requirements.Len(contests[0].Claims, 3)
+	assertions.Equal(`"Buddhism"`, contests[0].Claims[0].Value)
+	assertions.Equal(`"Hinduism"`, contests[0].Claims[1].Value)
+	requirements.Len(contests[0].Claims[0].Evidence, 1)
+	assertions.Equal(new("https://example.test/buddhism"), contests[0].Claims[0].Evidence[0].SourceURL)
+
+	empty, err := runPersonFactsCommand(ctx, t, "contested", "8", "--include-sensitive")
+	requirements.NoError(err)
+	assertions.Equal("No contested facts.\n", empty)
+
+	command := newPersonFactsCommand()
+	command.SetOut(failingSearchWriter{})
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"contested", "7", "--include-sensitive"})
+	command.SetContext(ctx)
+	requirements.ErrorIs(command.Execute(), io.ErrClosedPipe)
+
+	output, err = runPersonFactsCommand(ctx, t, "contested", "9")
+	requirements.NoError(err)
+	assertions.Contains(output, "employment (resolved 2026-08-22T12:00:00Z)")
+	assertions.NotContains(output, "employment/employment")
+
+	requirements.Len(queries, 6)
+	assertions.False(queries[0].Has("include_sensitive"), "contested defaults to non-sensitive")
+	for _, query := range queries[1:5] {
+		assertions.Equal("true", query.Get("include_sensitive"))
+	}
+	assertions.False(queries[5].Has("include_sensitive"))
 }

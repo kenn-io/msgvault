@@ -327,8 +327,16 @@ func (s *personFactFailingStore) SetPersonFactPinContext(
 type personFactCapturingStore struct {
 	*stubIdentityCacheStore
 
-	catalog personfacts.Catalog
-	target  personfacts.TargetRef
+	catalog                 personfacts.Catalog
+	target                  personfacts.TargetRef
+	contestIncludeSensitive []bool
+}
+
+func (s *personFactCapturingStore) ListPersonFactContestsContext(
+	_ context.Context, _ int64, includeSensitive bool,
+) ([]store.PersonFactContest, error) {
+	s.contestIncludeSensitive = append(s.contestIncludeSensitive, includeSensitive)
+	return nil, nil
 }
 
 func (s *personFactCapturingStore) BuildPersonFactCatalogContext(
@@ -451,4 +459,56 @@ func mapKeysAny(values map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestPersonFactContestsHTTPEmptyAndMissing(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, _, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	response := doRequest(t, srv.Router(), http.MethodGet,
+		fmt.Sprintf("/api/v1/people/%d/fact-contests", personID), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal("no-store", response.Header().Get("Cache-Control"))
+	assertions.JSONEq(`{"contests":[]}`, response.Body.String())
+	missing := doRequest(t, srv.Router(), http.MethodGet,
+		"/api/v1/people/999999999/fact-contests", nil, nil)
+	assertions.Equal(http.StatusNotFound, missing.Code)
+}
+
+func TestPersonFactContestsHTTPIncludesClaimsAndEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, personID, target, "contest-first", `"chat"`)
+	applyPersonFactAPIGeneration(t, st, personID, target, "contest-second", `"email"`)
+	response := doRequest(t, srv.Router(), http.MethodGet,
+		fmt.Sprintf("/api/v1/people/%d/fact-contests", personID), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body PersonFactContestsResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Contests, 1)
+	requirements.Len(body.Contests[0].Claims, 2)
+	requirements.Len(body.Contests[0].Current, 1)
+	assertions.JSONEq(`"chat"`, body.Contests[0].Current[0].Value)
+	assertions.Equal(target.Revision, body.Contests[0].ResolutionRevision)
+}
+
+func TestPersonFactContestsHTTPSensitiveOptIn(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	_, wrapped := newIdentityLinkTestServer(t)
+	participantID := wrapped.mustParticipant(t, "sensitive@example.test", "sensitive", "example.test")
+	person, _, err := wrapped.CreatePersonFromParticipant(participantID)
+	requirements.NoError(err)
+	capturing := &personFactCapturingStore{stubIdentityCacheStore: wrapped}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		capturing, nil, testLogger())
+	path := fmt.Sprintf("/api/v1/people/%d/fact-contests", person.ID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code)
+	assertions.Equal([]bool{false}, capturing.contestIncludeSensitive)
+	response = doRequest(t, srv.Router(), http.MethodGet, path+"?include_sensitive=true", nil, nil)
+	requirements.Equal(http.StatusOK, response.Code)
+	assertions.Equal([]bool{false, true}, capturing.contestIncludeSensitive)
 }
