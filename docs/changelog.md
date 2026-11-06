@@ -16,7 +16,6 @@ All notable changes to msgvault, grouped by release.
   continue using retained evidence. They need HTTP API schema 3.44.0.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
-- Only owners can send reviewed LINE replies.
 - The owner can [reply to LINE chats](usage/line.md#reply-from-a-reviewed-draft) from reviewed local drafts through the CLI, daemon API, or MCP. Sending requires a per-channel opt-in, reuses durable retry keys, and archives accepted replies in their original conversation. Replies from Official Account Manager remain unavailable.
 - [LINE Official Account](usage/line.md) archives incoming chats through signed webhooks, including available media, quotes, group text edits, membership, and retained flagged unsends. Capture starts at go-live; earlier history and replies sent through Official Account Manager or other tools are unavailable. Setup requires a public HTTPS webhook and environment-only channel credentials.
 - Resumed Gmail full syncs preserve their starting History point so the next

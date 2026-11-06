@@ -182,6 +182,13 @@ func (s *Store) ExecuteGCContext(
 		`); err != nil {
 			return fmt.Errorf("clear source-deleted LINE event payloads: %w", err)
 		}
+		if _, err := q.Exec(`
+			UPDATE line_reply_attempts
+			SET body = '', quote_token = '', remote_quote_token = '', source_conversation_id = ''
+			WHERE message_id IN (SELECT id FROM messages WHERE ` + gcPurgedMessageSQL + `)
+		`); err != nil {
+			return fmt.Errorf("clear source-deleted LINE reply payloads: %w", err)
+		}
 
 		result, err := q.Exec(`
 		DELETE FROM messages
