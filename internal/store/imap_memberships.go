@@ -898,15 +898,11 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			_ = rows.Close()
 			return err
 		}
-		separator := strings.LastIndexByte(c.key, '|')
-		if separator < 0 || c.key[:separator] != mailbox {
+		keyMailbox, uid, ok := decodeIMAPSourceKey(c.key)
+		if !ok || keyMailbox != mailbox {
 			continue
 		}
-		uid, err := strconv.ParseUint(c.key[separator+1:], 10, 32)
-		if err != nil || uid == 0 || c.key[separator+1:] != strconv.FormatUint(uid, 10) {
-			continue
-		}
-		c.uid = uint32(uid)
+		c.uid = uid
 		_, observed := observations[c.uid]
 		if protected {
 			continue
@@ -947,6 +943,18 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 	return nil
 }
 
+func decodeIMAPSourceKey(key string) (mailbox string, uid uint32, ok bool) {
+	separator := strings.LastIndexByte(key, '|')
+	if separator < 0 {
+		return "", 0, false
+	}
+	value, err := strconv.ParseUint(key[separator+1:], 10, 32)
+	if err != nil || value == 0 || key[separator+1:] != strconv.FormatUint(value, 10) {
+		return "", 0, false
+	}
+	return key[:separator], uint32(value), true
+}
+
 // captureScannedUntracked marks live rows without memberships whose source key
 // names a scanned mailbox at a UID missing from its complete resulting UID set,
 // or at any UID when the mailbox has a new generation.
@@ -972,21 +980,16 @@ func (r *imapMembershipResolver) captureScannedUntracked(
 		if err := rows.Scan(&id, &key); err != nil {
 			return fmt.Errorf("scan untracked IMAP message: %w", err)
 		}
-		separator := strings.LastIndexByte(key, '|')
-		if separator < 0 {
+		mailbox, uid, ok := decodeIMAPSourceKey(key)
+		if !ok {
 			continue
 		}
-		mailbox := key[:separator]
 		delta, scanned := deltas[mailbox]
 		if !scanned {
 			continue
 		}
 		newGeneration := previous[mailbox] != 0 && previous[mailbox] != delta.uidValidity
-		uid, err := strconv.ParseUint(key[separator+1:], 10, 32)
-		if err != nil || uid == 0 || key[separator+1:] != strconv.FormatUint(uid, 10) {
-			continue
-		}
-		if _, ok := present[mailbox][uint32(uid)]; newGeneration || !ok {
+		if _, ok := present[mailbox][uid]; newGeneration || !ok {
 			affected[id] = struct{}{}
 		}
 	}

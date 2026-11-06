@@ -1008,16 +1008,17 @@ Sync warns when an account key matches no stored IMAP source or a folder name
 matches no selectable mailbox. Unmatched folders stay configured and will be
 excluded if created later. Blank saved folder names prevent daemon startup.
 
-To reconcile deletions within scanned folders, enable the setting for the exact
-`ACCOUNT` value from `msgvault list-accounts`:
+To reconcile deletions within scanned folders:
 
 ```toml
 [sync]
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
+Use `ACCOUNT` (`msgvault list-accounts`); restart the daemon. Wrong keys or non-Trash/Junk skips do nothing.
+
 Blank account keys in `imap_reconcile_filtered_deletions` are rejected when the
-config loads. Restart the daemon after editing the file. This opt-in reconciles deletions in
+config loads. This opt-in reconciles deletions in
 scanned folders only when every mailbox skipped by the saved exclusions is one of the
 account's Trash or Junk mailboxes and no `folders` allow list is set. Msgvault
 counts every mailbox the server advertises with a Trash or Junk LIST special-use
@@ -1031,7 +1032,7 @@ msgvault advances cursors and replaces memberships only for scanned folders.
 Date-filtered, limited, resumed, failed, or interrupted runs do not commit this
 reconciliation.
 
-Opted-in syncs skip QRESYNC and list every scanned folder in full on each run.
+Opted-in syncs skip QRESYNC and reuse saved state for unchanged folders.
 
 A message moved into skipped Trash or Junk becomes eligible for `gc` only when
 no stored folder membership remains. Stored memberships in skipped folders
