@@ -161,3 +161,52 @@ func TestLineReplyCredentialFailureCode(t *testing.T) {
 	require.Error(err)
 	assert.Equal("credentials_unavailable", err.Error())
 }
+
+func TestLineReplyInvalidTextExplainsLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	a, draft, fake := lineReplyAdapterFixture(t)
+	_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, strings.Repeat("a", 5001))
+	require.NoError(err)
+	var events []api.CLIRunEvent
+	err = a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=2"}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.Error(err)
+	assert.Equal("invalid_args", err.Error())
+	assert.Equal([]api.CLIRunEvent{{Type: cliStreamStderr, Data: "line: invalid reply text: exceeds 5000 UTF-16 code units\n"}}, events)
+	assert.Zero(fake.Count(http.MethodPost, "/v2/bot/message/push"))
+}
+
+func TestLineReplyJSONFlagForwarding(t *testing.T) {
+	for _, flag := range []string{"", "--json=false", "--json=true"} {
+		t.Run("json flag "+flag, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			a, draft, _ := lineReplyAdapterFixture(t)
+			command := newSendLineReplyCommand()
+			args := []string{draft.DraftID, "--revision", "1"}
+			if flag != "" {
+				args = append(args, flag)
+			}
+			require.NoError(command.ParseFlags(args))
+			forwarded, err := daemonCLIArgsFromCobra(command, command.Flags().Args())
+			require.NoError(err)
+			var out strings.Builder
+			err = a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: forwarded}, func(event api.CLIRunEvent) error {
+				assert.Equal(cliStreamStdout, event.Type)
+				out.WriteString(event.Data)
+				return nil
+			})
+			require.NoError(err)
+			if flag == "--json=true" {
+				var receipt line.ReplyReceipt
+				require.NoError(json.Unmarshal([]byte(out.String()), &receipt))
+				assert.Equal(store.LineReplySent, receipt.Status)
+			} else {
+				assert.Contains(out.String(), "status=sent accepted=true")
+			}
+		})
+	}
+}

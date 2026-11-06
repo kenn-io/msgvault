@@ -85,6 +85,44 @@ func (f *replyFixture) sender() *line.ReplySender {
 	return &line.ReplySender{Store: f.st, Now: f.now, Client: func(context.Context, store.LineReplyAttempt) (*line.Client, error) { return f.client, nil }}
 }
 
+func TestReplyAcceptanceWithoutMessageIDSurvivesExpiry(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newReplyFixture(t, "user", nil)
+			header := http.Header{"X-Line-Request-Id": {"accepted-request"}}
+			if status == http.StatusConflict {
+				header.Set("X-Line-Accepted-Request-Id", "accepted-request")
+				header.Set("X-Line-Request-Id", "retry-request")
+			}
+			f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: status, Header: header, Body: `{}`})
+			sender := f.sender()
+			receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(store.LineReplyRemoteUnknown, receipt.Status)
+			assert.True(receipt.Accepted)
+			assert.Equal("accepted-request", receipt.RequestID)
+			assert.Empty(receipt.RemoteMessageID)
+			require.NotNil(receipt.RetryAfter)
+			repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(receipt, repeated)
+			f.setNow(f.now().Add(24 * time.Hour))
+			expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(store.LineReplyExpired, expired.Status)
+			assert.True(expired.Accepted)
+			assert.Equal("accepted-request", expired.RequestID)
+			assert.Nil(expired.RetryAfter)
+			repeated, err = sender.Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(expired, repeated)
+			assert.Equal(1, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		})
+	}
+}
+
 func TestReplySendAndReceiptReplay(t *testing.T) {
 	for _, kind := range []string{"user", "group", "room"} {
 		t.Run(kind, func(t *testing.T) {
@@ -733,13 +771,13 @@ func TestReplyConflictingReceiptKeepsDurableIdentity(t *testing.T) {
 	unresolved, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("remote_unknown", unresolved.Status)
-	assert.False(unresolved.Accepted)
+	assert.True(unresolved.Accepted)
 	f.setNow(f.now().Add(31 * time.Second))
 	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: 409, Header: http.Header{"X-Line-Accepted-Request-Id": {"synthetic-conflict-0"}}, Body: `{"sentMessages":[{"id":"` + f.draft.DraftID + `-0"}]}`})
 	conflicting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.ErrorIs(err, store.ErrLineReplyReceiptConflict)
 	assert.Equal("remote_unknown", conflicting.Status)
-	assert.False(conflicting.Accepted)
+	assert.True(conflicting.Accepted)
 	assert.Empty(conflicting.RemoteMessageID)
 	assert.Equal(unresolved.RequestID, conflicting.RequestID)
 	f.setNow(f.now().Add(31 * time.Second))

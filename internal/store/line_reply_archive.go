@@ -59,6 +59,12 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if err != nil {
 			return err
 		}
+		var quotedMessageID string
+		if a.QuoteToken != "" {
+			quotedMessageID = a.ReplyToSourceMessageID
+		} else {
+			parentID = 0
+		}
 		// Persistence already holds the shared identity lock. Resolve the registered
 		// identifier here so a participant merge cannot leave a stale numeric ID.
 		identifier := lineidentity.UserIdentifier(a.ChannelID, a.BotUserID)
@@ -79,8 +85,8 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		}
 		fields, err := json.Marshal(struct {
 			QuoteToken      string `json:"quoteToken,omitempty"`
-			QuotedMessageID string `json:"quotedMessageId"`
-		}{QuoteToken: a.RemoteQuoteToken, QuotedMessageID: a.ReplyToSourceMessageID})
+			QuotedMessageID string `json:"quotedMessageId,omitempty"`
+		}{QuoteToken: a.RemoteQuoteToken, QuotedMessageID: quotedMessageID})
 		if err != nil {
 			return errors.New("encode LINE reply metadata")
 		}
@@ -109,7 +115,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		return &MessagePersistData{
 			Message: &Message{SourceID: a.SourceID, ConversationID: a.ConversationID, SourceMessageID: a.RemoteMessageID,
 				MessageType: lineSourceType, SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: true,
-				ReplyToMessageID: sql.NullInt64{Int64: parentID, Valid: parentID != 0}, SentAt: sql.NullTime{Time: a.AdmittedAt, Valid: true},
+				ReplyToMessageID: sql.NullInt64{Int64: parentID, Valid: parentID != 0 && a.QuoteToken != ""}, SentAt: sql.NullTime{Time: a.AdmittedAt, Valid: true},
 				Snippet: sql.NullString{String: textutil.PrefixRunes(a.Body, 200), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
 			BodyText: sql.NullString{String: a.Body, Valid: true}, Metadata: &metadata, RawMIME: raw, RawFormat: "line_push_receipt_json",
 			Recipients:     recipients,

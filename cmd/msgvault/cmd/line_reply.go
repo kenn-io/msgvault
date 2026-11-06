@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,7 +30,8 @@ func (a *storeAPIAdapter) runCLISendLineReply(ctx context.Context, req api.CLIRu
 	if len(req.Env) != 0 || req.Cwd != "" {
 		return draftReplyError("invalid_args", errors.New("LINE sending does not accept environment or directory overrides"))
 	}
-	intent, err := parseDraftLifecycleArgs(req.Args)
+	args := slices.DeleteFunc(slices.Clone(req.Args), func(arg string) bool { return arg == "--json=false" })
+	intent, err := parseDraftLifecycleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -75,6 +77,9 @@ func (a *storeAPIAdapter) runCLISendLineReply(ctx context.Context, req api.CLIRu
 		}
 		if !receipt.Accepted {
 			if errors.Is(sendErr, line.ErrInvalidReplyText) {
+				if err := emit(api.CLIRunEvent{Type: cliStreamStderr, Data: sendErr.Error() + "\n"}); err != nil {
+					return draftReplyError("output_failed", err)
+				}
 				return draftReplyError("invalid_args", sendErr)
 			}
 			if errors.Is(sendErr, store.ErrSyncAlreadyActive) {

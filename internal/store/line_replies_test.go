@@ -38,6 +38,33 @@ func replyStoreFixture(t *testing.T) (*store.Store, store.ChatDraft, int64) {
 	return st, draft, parent
 }
 
+func TestLineReplyArchiveQuotesOnlyWithToken(t *testing.T) {
+	for _, quoted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without quote token", true: "with quote token"}[quoted], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			if !quoted {
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET metadata=? WHERE id=?`), `{}`, parent)
+				require.NoError(err)
+			}
+			acceptedReply(t, st, draft)
+			sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			var reply sql.NullInt64
+			var metadata string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id,metadata FROM messages WHERE id=?`), sent.MessageID).Scan(&reply, &metadata))
+			if quoted {
+				assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, reply)
+				assert.JSONEq(`{"quoteToken":"synthetic-sent-quote","quotedMessageId":"100"}`, metadata)
+			} else {
+				assert.False(reply.Valid)
+				assert.JSONEq(`{"quoteToken":"synthetic-sent-quote"}`, metadata)
+			}
+		})
+	}
+}
+
 func TestLineReplyAdmissionFreezesRevision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
