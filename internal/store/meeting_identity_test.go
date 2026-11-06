@@ -272,8 +272,8 @@ func TestMeetingIdentityPreservesNoteScheduledRepresentative(t *testing.T) {
 		assert.Equal(record.Links[0].Ref, got.ByTranscript[note].OccurrenceRef)
 		assert.Equal([]string{syncedRef}, got.ByTranscript[note].ExactOccurrenceRefs)
 		for _, ref := range refs {
-			assert.Equal("occ:"+syncedRef, got.ByOccurrence[ref].Key)
-			assert.Equal(syncedRef, got.ByOccurrence[ref].OccurrenceRef)
+			assert.Equal("occ:"+refs[0], got.ByOccurrence[ref].Key)
+			assert.Equal(refs[0], got.ByOccurrence[ref].OccurrenceRef)
 		}
 	}
 }
@@ -374,13 +374,13 @@ func TestMeetingIdentityOccurrenceOnlyPreservesGranolaRepresentative(t *testing.
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
 	require.NoError(err)
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-	assert.Equal("occ:"+seriesRef, got.ByTranscript[note].Key)
+	assert.Equal("occ:"+ref, got.ByTranscript[note].Key)
 	assert.Equal(record.Links[0].Ref, got.ByTranscript[note].OccurrenceRef)
-	// Both copies share the representative selected for the note.
+	// Both copies share a group while the note retains its selected copy.
 	got, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{seriesRef}})
 	require.NoError(err)
 	assert.Equal([]int64{note}, got.ByOccurrence[seriesRef].LinkedTranscriptIDs)
-	assert.Equal("occ:"+seriesRef, got.ByOccurrence[seriesRef].Key)
+	assert.Equal("occ:"+ref, got.ByOccurrence[seriesRef].Key)
 }
 
 func TestMeetingIdentityOccurrenceOnlyFindsOrphanDecisionAfterMasterArrives(t *testing.T) {
@@ -572,6 +572,8 @@ func TestMeetingIdentityCompletesNewManualGroups(t *testing.T) {
 				assert.Equal([]int64{first, deferred}, got.ByOccurrence[refs[0]].LinkedTranscriptIDs)
 				assert.Len(got.ByOccurrence, 1, "discovered notes do not expand the requested meetings")
 				assert.NotContains(got.ByTranscript, second)
+				assert.ElementsMatch(refs, got.ByTranscript[first].ExactOccurrenceRefs)
+				assert.Equal(fmt.Sprintf("msg:%d", first), got.ByTranscript[first].Key)
 			case "transcript only with split":
 				assert, require := assert.New(t), require.New(t)
 				st := newRFC822IDBackfillBackendStore(t)

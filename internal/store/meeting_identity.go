@@ -19,7 +19,8 @@ type MeetingIdentityRequest struct {
 	TranscriptIDs  []int64
 }
 
-// MeetingIdentityInfo describes exact meeting evidence.
+// MeetingIdentityInfo describes exact meeting evidence. Key groups calendar copies;
+// transcript references retain the copies selected for that note.
 type MeetingIdentityInfo struct {
 	Key                 string
 	OccurrenceRef       string
@@ -243,14 +244,16 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
 			}
+			linkedCandidates := candidates
 			if !explicit[id] {
-				candidates = slices.DeleteFunc(candidates, func(o linkOccurrence) bool { return groups[o.Identity] == nil })
-				if len(candidates) == 0 {
+				linkedCandidates = slices.DeleteFunc(slices.Clone(candidates), func(o linkOccurrence) bool { return groups[o.Identity] == nil })
+				if len(linkedCandidates) == 0 {
 					continue
 				}
 			}
-			resolvedMembers[id] = candidates
-			for _, candidate := range candidates {
+			transcriptOccurrences[id] = candidates
+			resolvedMembers[id] = linkedCandidates
+			for _, candidate := range linkedCandidates {
 				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
 				memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
 			}
@@ -273,32 +276,20 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if !ok {
 				continue
 			}
-			transcriptOccurrences[id] = candidates
 			for _, candidate := range candidates {
 				g, err := groupFor(candidate)
 				if err != nil {
 					return result, fmt.Errorf("resolve transcript occurrence: %w", err)
 				}
 				g.linked = append(g.linked, id)
+				aliases[publicMeetingOccurrenceRef(candidate)] = g
 			}
 		}
-	}
-	// Retain the representatives selected by the single-note reader, including
-	// its scheduled-start preference, before deduplicating across notes.
-	var selected []linkOccurrence
-	for _, candidates := range transcriptOccurrences {
-		selected = append(selected, candidates...)
-	}
-	for _, o := range uniqueMeetingOccurrences(selected) {
-		g := groups[o.Identity]
-		g.occurrence = o
-		aliases[formatMeetingOccurrence(o.Ref)] = g
-		aliases[publicMeetingOccurrenceRef(o)] = g
 	}
 	for id, candidates := range transcriptOccurrences {
 		info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
 		for _, candidate := range candidates {
-			info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, publicMeetingOccurrenceRef(groups[candidate.Identity].occurrence))
+			info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, publicMeetingOccurrenceRef(candidate))
 		}
 		slices.Sort(info.ExactOccurrenceRefs)
 		info.ExactOccurrenceRefs = slices.Compact(info.ExactOccurrenceRefs)
