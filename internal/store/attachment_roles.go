@@ -205,19 +205,31 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 func (s *Store) UpsertAttachmentRecordWithStats(
 	ctx context.Context, messageID int64, write AttachmentWrite, invalidateCache bool,
 ) error {
+	return s.upsertAttachmentRecordWithStats(ctx, messageID, write, invalidateCache, false)
+}
+
+func (s *Store) upsertAttachmentRecordWithStats(
+	ctx context.Context, messageID int64, write AttachmentWrite, invalidateCache, recomputeSize bool,
+) error {
 	write = write.normalized()
 	if err := write.validate(); err != nil {
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
-		if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
+		if err := s.upsertAttachmentRecord(q, messageID, write); err != nil {
 			return err
 		}
-		if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
 			return err
+		}
+		if recomputeSize && write.State == attachmentpolicy.StateStored {
+			if err := recomputeMessageSizeEstimateWith(q, messageID); err != nil {
+				return err
+			}
 		}
 		if invalidateCache {
 			return s.bumpDerivedDataRevision(tx)

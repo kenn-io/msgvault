@@ -7,7 +7,7 @@ description: Archive incoming LINE Official Account chats through signed Messagi
 # Archive LINE Official Account chats
 
 Connect a LINE Official Account to archive incoming direct chats, group chats,
-and existing multi-person rooms. Text becomes searchable before profile or
+and existing multi-person rooms. Text is archived before profile or
 media downloads finish. Quotes link to messages in the same archived chat;
 `join`, `leave`, `memberJoined`, and `memberLeft` events update participants.
 Friendship events (`follow` and `unfollow`) are ignored. Incoming direct messages

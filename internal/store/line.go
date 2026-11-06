@@ -10,8 +10,6 @@ import (
 	"slices"
 	"time"
 	"unicode/utf8"
-
-	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 const lineSourceType = "line"
@@ -611,24 +609,5 @@ func (s *Store) UpdateLineParticipantNameContext(ctx context.Context, participan
 // UpsertLineAttachmentContext records media and refreshes the message facts used
 // by search and analytics, including downloads completed by a later retry.
 func (s *Store) UpsertLineAttachmentContext(ctx context.Context, messageID int64, write AttachmentWrite) error {
-	write = write.normalized()
-	if err := write.validate(); err != nil {
-		return err
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
-			return err
-		}
-		if err := s.upsertAttachmentRecord(q, messageID, write); err != nil {
-			return err
-		}
-		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
-			return err
-		}
-		if write.State == attachmentpolicy.StateStored {
-			return recomputeMessageSizeEstimateWith(q, messageID)
-		}
-		return nil
-	})
+	return s.upsertAttachmentRecordWithStats(ctx, messageID, write, false, true)
 }
