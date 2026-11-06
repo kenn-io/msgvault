@@ -525,17 +525,22 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsGatesLineReplyBySchema(t *testing.T) {
-	assert.NotContains(t, mcpDraftCommands(true, "3.47.0"), api.CLIRunSendLineReplyCommand)
 	for _, tc := range []struct {
 		name          string
 		schemaVersion string
 		wantLineReply bool
+		delegated     bool
 	}{
+		{name: "delegated commands", schemaVersion: "3.47.0", delegated: true},
 		{name: "before LINE reply schema", schemaVersion: "3.46.0"},
 		{name: "LINE reply schema", schemaVersion: "3.47.0", wantLineReply: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
+			if tc.delegated {
+				assert.NotContains(mcpDraftCommands(true, tc.schemaVersion), api.CLIRunSendLineReplyCommand)
+				return
+			}
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/health" {
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.schemaVersion})

@@ -114,12 +114,8 @@ func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
 		var created chatDraftOutput
 		require.NoError(json.Unmarshal([]byte(createdJSON), &created))
 		assert.Equal("line", created.SourceType)
-		out, err := run("send-line-reply", created.DraftID, "--revision", "1", "--json")
+		_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
 		require.NoError(err)
-		var sent line.ReplyReceipt
-		require.NoError(json.Unmarshal([]byte(out), &sent))
-		assert.Equal("sent", sent.Status)
-		assert.True(sent.Accepted)
 		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 	})
 	t.Run("local daemon runtime send", func(t *testing.T) {

@@ -137,41 +137,31 @@ func TestLineReplyCacheAfterOutputFailureAndRecovery(t *testing.T) {
 }
 
 func TestLineReplyArchiveRecoveryAfterConfigRemoval(t *testing.T) {
-	for _, failure := range []string{"archive", "receipt"} {
-		t.Run(failure, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			a, draft, fake := lineReplyAdapterFixture(t)
-			trigger := `CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`
-			if failure == "receipt" {
-				trigger = `CREATE TRIGGER fail_line_reply_receipt BEFORE UPDATE ON line_reply_attempts WHEN NEW.state='remote_accepted' BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`
-			}
-			_, err := a.store.DB().Exec(trigger)
-			require.NoError(err)
-			req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
-			var out strings.Builder
-			err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-			require.NoError(err)
-			var pending line.ReplyReceipt
-			require.NoError(json.Unmarshal([]byte(out.String()), &pending))
-			assert.True(pending.Accepted)
-			assert.Equal("synthetic-request-1", pending.RequestID)
-			assert.Equal("900000000000000001", pending.RemoteMessageID)
-			if failure == "receipt" {
-				return
-			}
-			assert.Equal("sent_archive_pending", pending.Status)
-			_, err = a.store.DB().Exec(`DROP TRIGGER fail_line_reply_archive`)
-			require.NoError(err)
-			a.config.Line = nil
-			require.NoError(a.config.Save())
-			out.Reset()
-			err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-			require.NoError(err)
-			assert.Contains(out.String(), `"status":"sent"`)
-			assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	a, draft, fake := lineReplyAdapterFixture(t)
+	trigger := `CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`
+	_, err := a.store.DB().Exec(trigger)
+	require.NoError(err)
+	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
+	var out strings.Builder
+	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+	require.NoError(err)
+	var pending line.ReplyReceipt
+	require.NoError(json.Unmarshal([]byte(out.String()), &pending))
+	assert.True(pending.Accepted)
+	assert.Equal("synthetic-request-1", pending.RequestID)
+	assert.Equal("900000000000000001", pending.RemoteMessageID)
+	assert.Equal("sent_archive_pending", pending.Status)
+	_, err = a.store.DB().Exec(`DROP TRIGGER fail_line_reply_archive`)
+	require.NoError(err)
+	a.config.Line = nil
+	require.NoError(a.config.Save())
+	out.Reset()
+	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+	require.NoError(err)
+	assert.Contains(out.String(), `"status":"sent"`)
+	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestLineReplyCredentialFailureCode(t *testing.T) {

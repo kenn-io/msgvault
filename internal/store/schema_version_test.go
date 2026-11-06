@@ -19,41 +19,35 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestSchemaVersionLINEIngestionArchiveRequiresReplyUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	s := testutil.NewTestStore(t)
-	ctx := t.Context()
-	_, err := s.DB().ExecContext(ctx, "DROP TABLE line_reply_attempts")
-	require.NoError(err)
-	_, err = s.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='33' WHERE key='schema_version'")
-	require.NoError(err)
-	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
-	var count int
-	require.Error(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_reply_attempts").Scan(&count))
-	require.NoError(s.InitSchemaContext(ctx))
-	require.NoError(s.ValidateSchemaContext(ctx))
-	require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_reply_attempts").Scan(&count))
-	assert.Zero(count)
-}
-
-func TestSchemaVersionMainArchiveRequiresLINEUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	s := testutil.NewTestStore(t)
-	ctx := t.Context()
-	for _, table := range []string{"line_webhook_events", "line_profiles", "line_memberships"} {
-		_, err := s.DB().ExecContext(ctx, "DROP TABLE "+table)
-		require.NoError(err)
+func TestSchemaVersionArchiveRequiresLINEUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		tables  []string
+	}{
+		{"32", []string{"line_webhook_events", "line_profiles", "line_memberships", "line_reply_attempts"}},
+		{"33", []string{"line_reply_attempts"}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+			for _, table := range tc.tables {
+				_, err := s.DB().ExecContext(ctx, "DROP TABLE "+table)
+				require.NoError(err)
+			}
+			_, err := s.DB().ExecContext(ctx, s.Rebind("UPDATE archive_metadata SET value=? WHERE key='schema_version'"), tc.version)
+			require.NoError(err)
+			require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+			require.NoError(s.InitSchemaContext(ctx))
+			require.NoError(s.ValidateSchemaContext(ctx))
+			for _, table := range tc.tables {
+				var count int
+				require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count))
+				assert.Zero(count)
+			}
+		})
 	}
-	_, err := s.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='32' WHERE key='schema_version'")
-	require.NoError(err)
-	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
-	var count int
-	require.NoError(s.InitSchemaContext(ctx))
-	require.NoError(s.ValidateSchemaContext(ctx))
-	require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_webhook_events").Scan(&count))
-	assert.Zero(count)
 }
 
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {

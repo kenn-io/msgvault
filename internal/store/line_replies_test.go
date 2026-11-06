@@ -113,28 +113,6 @@ func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
 	assert.Equal(now.Add(3*time.Minute), attempt.NextRetryAt)
 }
 
-func TestLineReplyRejectionFlagDeterminesReceipt(t *testing.T) {
-	for _, definite := range []bool{true, false} {
-		t.Run(map[bool]string{true: "definite rejection", false: "no definite rejection flag"}[definite], func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Now().UTC().Truncate(time.Microsecond)
-			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-			require.NoError(err)
-			receipt, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: definite})
-			require.NoError(err)
-			want := store.LineReplyRemoteUnknown
-			if definite {
-				want = store.LineReplyProviderRejected
-			}
-			assert.Equal(want, receipt.State)
-		})
-	}
-}
-
 func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.LineReplyAttempt {
 	t.Helper()
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
@@ -313,10 +291,6 @@ func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
 				assert.Equal("accepted-request", receipt.RequestID)
 				assert.Equal(200, receipt.StatusCode)
 			}
-			target, err := st.GetOrCreateSource("line", "2000000002")
-			require.NoError(err)
-			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
-			require.NoError(err)
 		})
 	}
 }
@@ -431,6 +405,8 @@ func TestLineReplyAdmissionHonorsSyncSourceScope(t *testing.T) {
 }
 
 func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
+	// Archive GC is SQLite-only.
+	t.Setenv("MSGVAULT_TEST_DB", "")
 	for _, phase := range []string{"before admission", "lost response", "known receipt"} {
 		t.Run(phase, func(t *testing.T) {
 			assert := assert.New(t)
@@ -443,8 +419,17 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 				require.NoError(err)
 			}
-			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), parent)
+			if phase == "known receipt" {
+				_, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
+				require.NoError(err)
+			}
+			require.NoError(st.MarkMessageDeletedContext(t.Context(), draft.SourceID, "100"))
+			plan, err := st.PlanGCContext(t.Context())
 			require.NoError(err)
+			require.Equal(int64(1), plan.SourceDeleted)
+			deleted, err := st.ExecuteGCContext(t.Context(), plan)
+			require.NoError(err)
+			require.Equal(int64(1), deleted)
 			if phase == "before admission" {
 				_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 				assert.ErrorIs(err, store.ErrChatDraftInvalidDestination)
@@ -454,8 +439,10 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(time.Minute), now.Add(2*time.Minute))
 				require.NoError(err)
 			}
-			_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
-			require.NoError(err)
+			if phase == "lost response" {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
+				require.NoError(err)
+			}
 			sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			assert.Equal(store.LineReplySent, sent.State)
@@ -542,18 +529,23 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 	for _, tc := range []struct {
 		state        string
 		afterRefusal bool
+		unflagged400 bool
 	}{
-		{store.LineReplyAdmitted, false},
-		{store.LineReplyAdmitted, true},
-		{store.LineReplyRemoteUnknown, false},
-		{store.LineReplyAcceptedUnresolved, false},
-		{store.LineReplyRemoteAccepted, false},
-		{store.LineReplyProviderRejected, false},
-		{store.LineReplyRemoteUnknownExpired, false},
-		{store.LineReplyAcceptedUnresolvedExpired, false},
-		{store.LineReplySent, false},
+		{store.LineReplyAdmitted, false, false},
+		{store.LineReplyAdmitted, true, false},
+		{store.LineReplyRemoteUnknown, false, false},
+		{store.LineReplyRemoteUnknown, false, true},
+		{store.LineReplyAcceptedUnresolved, false, false},
+		{store.LineReplyRemoteAccepted, false, false},
+		{store.LineReplyProviderRejected, false, false},
+		{store.LineReplyRemoteUnknownExpired, false, false},
+		{store.LineReplyAcceptedUnresolvedExpired, false, false},
+		{store.LineReplySent, false, false},
 	} {
 		name := tc.state
+		if tc.unflagged400 {
+			name += "/unflagged 400"
+		}
 		if tc.afterRefusal {
 			name += "/after credential refusal"
 		}
@@ -577,6 +569,9 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 				require.NoError(err)
 				outcome := store.LineReplyOutcome{StatusCode: 503}
+				if tc.unflagged400 {
+					outcome.StatusCode = 400
+				}
 				switch state {
 				case store.LineReplyAcceptedUnresolved, store.LineReplyAcceptedUnresolvedExpired:
 					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200}

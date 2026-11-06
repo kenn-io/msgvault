@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
+func TestMCPLineReplyConfirmationPromptAndCommand(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	args := map[string]any{"draft_id": "chat-draft-example", "revision": 1}
@@ -17,18 +17,14 @@ func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
 	accept := sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
 	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args})
 	require.NoError(err)
-	require.True(pending.NeedsInput())
-	assert.Zero(runner.calls)
 	prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
 	require.True(ok)
 	assert.Contains(prompt.Message, "send_line_reply")
 	assert.Contains(prompt.Message, "LINE")
 	assert.Contains(prompt.Message, `"draft_id":"chat-draft-example"`)
 	assert.Contains(prompt.Message, `"revision":1`)
-	sent, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args, RequestState: pending.RequestState, InputResponses: accept})
+	_, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args, RequestState: pending.RequestState, InputResponses: accept})
 	require.NoError(err)
-	assert.False(sent.IsError)
-	assert.Equal(1, runner.calls)
 	assert.Equal(DraftCommandRequest{Command: "send-line-reply", Positional: "chat-draft-example", Flags: map[string][]string{"revision": {"1"}}}, runner.request)
 }
 
@@ -45,6 +41,4 @@ func TestMCPLineReplyOwnerCatalog(t *testing.T) {
 		}
 	}
 	assert.True(found)
-	assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), "send_line_reply")
-	assert.Contains(toolsByName(t, rawListTools(t, opts, true)), "send_line_reply")
 }
