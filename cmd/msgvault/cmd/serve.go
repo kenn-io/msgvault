@@ -4253,6 +4253,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	logger := state.logger
 	ctx = withInvocation(ctx, state)
 	logger.Info("starting scheduled sync", "identifier", identifier)
+	if rapidEmailPollingEnabled(state.cfg, identifier) {
+		return runRapidEmailSync(ctx, identifier, s, getOAuthMgr, state)
+	}
 
 	// The source lookup is a short local read. It ignores cancellation, as it
 	// did before, so a yielded run still reaches the importer, which reports
@@ -4633,13 +4636,29 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	}
 	cfg := state.cfg
 	logger := state.logger
-	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
+	rapid := rapidEmailPollingEnabled(cfg, src.Identifier)
+	if rapid {
+		if err := validateRapidIMAP(src, cfg); err != nil {
+			return nil, err
+		}
+	}
+	imapOpts := imapFolderStateOptions(s, src, rapid, cfg, logger)
 	imapOpts = append(imapOpts, imapSyncFolderFilter(ctx, s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
 	}
-	defer func() { _ = apiClient.Close() }()
+	defer func() {
+		if rapid {
+			if client, ok := apiClient.(*imaplib.Client); ok {
+				cleanup, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				_ = client.CloseContext(cleanup)
+				return
+			}
+		}
+		_ = apiClient.Close()
+	}()
 
 	opts := sync.DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
@@ -4666,18 +4685,29 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
+	finalized := false
 	summary, err := syncer.FullWithFinalizer(
 		ctx,
 		src,
 		func(summary *gmail.SyncSummary) error {
+			if rapid {
+				client, ok := apiClient.(*imaplib.Client)
+				if !ok || !imapSyncCanCommit(ctx, summary, 0) || client.LabelsSnapshotFiltered() || !client.LabelsSnapshotComplete() || client.ObservedMailboxDeltas() == nil {
+					return &scheduler.AcquisitionError{Outcome: scheduler.AcquisitionIncomplete}
+				}
+			}
 			if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
 				return fmt.Errorf("save IMAP incremental state: %w", err)
 			}
+			finalized = true
 			return nil
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
+	}
+	if rapid && !finalized {
+		return summary, &scheduler.AcquisitionError{Outcome: scheduler.AcquisitionIncomplete}
 	}
 	return summary, nil
 }

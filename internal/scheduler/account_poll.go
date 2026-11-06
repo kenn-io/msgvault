@@ -20,9 +20,18 @@ const (
 	AcquisitionFailed     AcquisitionOutcome = "failed"
 )
 
+type AcquisitionReason uint8
+
+const (
+	AcquisitionReasonUnknown AcquisitionReason = iota
+	AcquisitionCanonicalTarget
+	AcquisitionFilteredCoverage
+)
+
 // AcquisitionError retains the cause and provider floor without publishing
 // provider response bodies, URLs or credentials through account status.
 type AcquisitionError struct {
+	Reason      AcquisitionReason
 	Outcome     AcquisitionOutcome
 	NotBefore   time.Time
 	Credentials bool
@@ -30,6 +39,12 @@ type AcquisitionError struct {
 }
 
 func (e *AcquisitionError) Error() string {
+	switch e.Reason {
+	case AcquisitionCanonicalTarget:
+		return "rapid email requires one active canonical mail source; check the configured account identifier"
+	case AcquisitionFilteredCoverage:
+		return "rapid email requires unfiltered coverage; remove folder/date filters or disable poll_interval"
+	}
 	if e.Credentials {
 		return "email credentials unavailable; reauthorize the selected account"
 	}

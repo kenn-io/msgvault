@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -57,4 +58,40 @@ poll_interval = "30s"
 			assert.Equal(t, before, count(), "rapid reconciliation never creates a source")
 		})
 	}
+}
+
+func TestRapidEmailResolverRejectsAliasAndRetiredSource(t *testing.T) {
+	f := storetest.New(t)
+	old, err := f.Store.GetOrCreateSource("gmail", "old@example.test")
+	require.NoError(t, err)
+	current, err := f.Store.GetOrCreateSource("gmail", "current@example.test")
+	require.NoError(t, err)
+	alias := "primary-mailbox"
+	_, err = f.Store.UpdateSourceSettingsContext(t.Context(), old.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(t, err)
+	_, err = rapidEmailSource(f.Store, alias)
+	assert.Error(t, err, "archive aliases are not canonical rapid selectors")
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: old.ID, IntoSourceID: current.ID})
+	require.NoError(t, err)
+	_, err = rapidEmailSource(f.Store, old.Identifier)
+	assert.Error(t, err, "retired mail sources cannot fall back to credentials or creation")
+}
+
+func TestRapidEmailResolverSelectsCurrentSourceAfterReplacement(t *testing.T) {
+	f := storetest.New(t)
+	old, err := f.Store.GetOrCreateSource("gmail", "sample@example.test")
+	require.NoError(t, err)
+	_, err = f.Store.GetOrCreateSource("gmail", "anchor@example.test")
+	require.NoError(t, err)
+	first, err := rapidEmailSource(f.Store, old.Identifier)
+	require.NoError(t, err)
+	assert.Equal(t, old.ID, first.ID)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM sources WHERE id=?`), old.ID)
+	require.NoError(t, err)
+	replacement, err := f.Store.GetOrCreateSource("gmail", old.Identifier)
+	require.NoError(t, err)
+	require.NotEqual(t, old.ID, replacement.ID)
+	current, err := rapidEmailSource(f.Store, old.Identifier)
+	require.NoError(t, err)
+	assert.Equal(t, replacement.ID, current.ID, "each valid pass resolves current Store state")
 }

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -191,6 +192,84 @@ func TestAccountPollingStartupPreservesDeferredManualIntent(t *testing.T) {
 		synctest.Wait()
 		assert.EqualValues(t, 2, calls.Load())
 		assert.EqualValues(t, 1, completions.Load(), "startup cannot replace an accepted ordinary manual request with poll-only intent")
+		<-s.Stop().Done()
+	})
+}
+
+func TestAccountPollingOutcomeStatusAndManualCompletion(t *testing.T) {
+	for _, outcome := range []error{nil, ErrDeferUntilNextTrigger, &AcquisitionError{Outcome: AcquisitionIncomplete}, &AcquisitionError{Outcome: AcquisitionDeferred}, &AcquisitionError{Outcome: AcquisitionCancelled}, errors.New("synthetic-secret-marker")} {
+		name := "complete"
+		if outcome != nil {
+			name = outcome.Error()
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var events atomic.Int32
+				s := pollingSchedulerFixture(t, func(context.Context, string) error { return outcome }).WithCompletion(func() { events.Add(1) })
+				require.NoError(t, s.TriggerSync("sample@example.test", true))
+				synctest.Wait()
+				status := s.Status()[0]
+				assert.False(t, status.LastAttempted.IsZero())
+				assert.NotContains(t, status.LastError, "synthetic-secret-marker")
+				if outcome == nil {
+					assert.False(t, status.LastCompleted.IsZero())
+					assert.EqualValues(t, 1, events.Load())
+				} else {
+					assert.True(t, status.LastCompleted.IsZero())
+					assert.True(t, status.LastRun.IsZero())
+					assert.Zero(t, events.Load())
+				}
+				<-s.Stop().Done()
+			})
+		})
+	}
+}
+
+func TestAccountPollingStopJoinsStartupAndRejectsCapturedTimer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cancelled, release := make(chan struct{}), make(chan struct{})
+		var calls atomic.Int32
+		s := pollingSchedulerFixture(t, func(ctx context.Context, _ string) error {
+			calls.Add(1)
+			<-ctx.Done()
+			close(cancelled)
+			<-release
+			return nil
+		})
+		s.mu.RLock()
+		entry := s.cron.Entry(s.accounts["sample@example.test"].entry).Job
+		s.mu.RUnlock()
+		s.Start()
+		s.Start()
+		synctest.Wait()
+		stopped := s.Stop()
+		<-cancelled
+		select {
+		case <-stopped.Done():
+			assert.Fail(t, "Stop completed before the admitted callback unwound")
+		default:
+		}
+		close(release)
+		<-stopped.Done()
+		entry.Run()
+		assert.EqualValues(t, 1, calls.Load())
+		assert.True(t, s.Status()[0].LastCompleted.IsZero(), "a nil return after cancellation is not catchup")
+		assert.Error(t, s.TriggerSync("sample@example.test", true))
+	})
+}
+
+func TestAccountPollingIncompleteSkipsPostSyncAndKeepsIndependentIndexing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var post, index atomic.Int32
+		s := pollingSchedulerFixture(t, func(context.Context, string) error { return &AcquisitionError{Outcome: AcquisitionIncomplete} })
+		s.SetVisualPostSyncJob(func(context.Context) error { post.Add(1); return nil })
+		require.NoError(t, s.AddJob(Job{Name: "index backstop", Schedule: "0 0 1 1 *", Run: func(context.Context) error { index.Add(1); return nil }}))
+		require.NoError(t, s.TriggerSync("sample@example.test", false))
+		synctest.Wait()
+		assert.Zero(t, post.Load(), "incomplete acquisition is not a successful post-sync trigger")
+		require.True(t, s.IsJobScheduled("index backstop"))
+		require.NoError(t, s.TriggerJob("index backstop"))
+		assert.EqualValues(t, 1, index.Load(), "independent indexing remains usable and the gate is released")
 		<-s.Stop().Done()
 	})
 }
