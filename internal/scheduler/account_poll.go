@@ -92,7 +92,7 @@ func (s *Scheduler) SetAccountPollInterval(identifier string, interval time.Dura
 	defer s.mu.Unlock()
 	r := s.accounts[identifier]
 	if r == nil {
-		return fmt.Errorf("account is not scheduled")
+		return errors.New("account is not scheduled")
 	}
 	if r.entry != 0 {
 		s.cron.Remove(r.entry)

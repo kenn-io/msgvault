@@ -32,7 +32,7 @@ func TestRapidEmailGraphProfileMismatchPrecedesArchiveMutation(t *testing.T) {
 	dir := t.TempDir()
 	ctx := testInvocationContext(t.Context(), &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, invocationOptions{})
 	err = runRapidGraphSource(ctx, src, f.Store, client, invocationFromContext(ctx))
-	assert.ErrorContains(err, "reauthorize")
+	require.ErrorContains(err, "reauthorize")
 	assert.EqualValues(1, calls.Load())
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int

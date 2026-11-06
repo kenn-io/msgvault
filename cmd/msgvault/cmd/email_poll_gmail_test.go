@@ -96,7 +96,7 @@ poll_interval = "30s"
 	require.NoError(st.Store.UpdateSourceSyncCursor(src.ID, "100"))
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	err = runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
-	assert.ErrorContains(err, "reauthorize", "authenticated mismatch must fail closed with stable remediation")
+	require.ErrorContains(err, "reauthorize", "authenticated mismatch must fail closed with stable remediation")
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int
 		require.NoError(st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))

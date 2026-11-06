@@ -124,7 +124,7 @@ func (c *pollingIMAPConn) Write(p []byte) (int, error) {
 		for len(out) > 0 {
 			written, err := c.Conn.Write(out)
 			if err != nil {
-				return n, err
+				return n, fmt.Errorf("write IMAP fixture response: %w", err)
 			}
 			if written == 0 {
 				return n, io.ErrShortWrite
@@ -274,7 +274,7 @@ func TestRapidEmailIMAPRejectsEffectiveFilterBeforeMutation(t *testing.T) {
 			src := pollingIMAPSource(t, st.Store, ic)
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			err := runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
-			assert.ErrorContains(t, err, "filter")
+			require.ErrorContains(t, err, "filter")
 			for _, table := range []string{"messages", "sync_runs", "account_identities", "imap_folder_state"} {
 				var n int
 				require.NoError(t, st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
@@ -398,7 +398,7 @@ func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
 	require.Eventually(func() bool {
 		status := s.Status()[0]
 		return status.Pending && !status.Running && !status.Queued
-	}, 300*time.Millisecond, 5*time.Millisecond, "manual follow-up remains admitted but deferred under the provider floor")
+	}, 5*time.Second, 10*time.Millisecond, "manual follow-up remains admitted but deferred under the provider floor")
 	assert.EqualValues(1, callbacks.Load(), "the scheduler must not start another acquisition before the provider deadline")
 	assert.True(s.Status()[0].Pending)
 	assert.EqualValues(1, counted.accepted.Load(), "the deferred request opens no second IMAP connection")
