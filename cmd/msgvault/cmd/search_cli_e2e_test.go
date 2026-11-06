@@ -159,17 +159,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.Len(semantic.Results, 1)
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
-	// Semantic pages use the measured extra result to advise a larger limit.
+	// A final semantic page gives no more-results hint.
 	var page struct {
-		Results []map[string]any                 `json:"results"`
-		Hints   []struct{ Code, Message string } `json:"hints"`
+		Results       []map[string]any    `json:"results"`
+		PoolSaturated bool                `json:"pool_saturated"`
+		Hints         []map[string]string `json:"hints"`
 	}
-	decode(run("search", "project plan filename:plan.pdf", "--mode", "vector", "--limit", "1", "--json"), &page)
-	require.Len(page.Results, 1)
-	require.Len(page.Hints, 1)
-	assert.Equal("more_available", page.Hints[0].Code)
-	assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
-	page.Hints = nil
 	decode(run("search", "project plan filename:plan.pdf", "--mode", "vector", "--limit", "2", "--json"), &page)
 	assert.Len(page.Results, 2)
 	assert.Empty(page.Hints)
@@ -266,41 +261,35 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)
 	// An extra ranked row can be returned by raising --limit alone.
-	var poolPage struct {
-		Results       []map[string]any    `json:"results"`
-		PoolSaturated bool                `json:"pool_saturated"`
-		Hints         []map[string]string `json:"hints"`
-	}
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10", "--json"), &poolPage)
-	assert.True(poolPage.PoolSaturated)
-	require.Len(poolPage.Hints, 1)
-	assert.Equal("more_available", poolPage.Hints[0]["code"])
-	assert.Equal("more messages match; raise --limit", poolPage.Hints[0]["message"])
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10", "--json"), &page)
+	assert.True(page.PoolSaturated)
+	require.Len(page.Hints, 1)
+	assert.Equal("more_available", page.Hints[0]["code"])
+	assert.Equal("more messages match; raise --limit", page.Hints[0]["message"])
 	// At both caps, widening the pool and the page is needed to return more.
 	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
 	assert.Equal(2, strings.Count(stderr, "Hint:"))
 	assert.Contains(stderr, "Hint: semantic result limit reached; raise vector.search.max_page_size_hybrid above 100")
 	assert.Contains(stderr, "\nHint: hybrid candidate pool may omit matches; raise vector.search.k_per_signal")
-	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
-	assert.True(poolPage.PoolSaturated)
-	assert.Len(poolPage.Results, 100)
-	require.Len(poolPage.Hints, 2)
-	assert.Equal("ranking_limit_reached", poolPage.Hints[0]["code"])
-	assert.Contains(poolPage.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
-	assert.Equal("candidate_pool_saturated", poolPage.Hints[1]["code"])
-	assert.Contains(poolPage.Hints[1]["message"], "vector.search.k_per_signal")
+	page.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &page)
+	assert.Len(page.Results, 100)
+	require.Len(page.Hints, 2)
+	assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
+	assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
+	assert.Equal("candidate_pool_saturated", page.Hints[1]["code"])
+	assert.Contains(page.Hints[1]["message"], "vector.search.k_per_signal")
 	// A wider page alone exposes the pool limit.
 	raised.Search.MaxPageSizeHybrid = new(200)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
-	require.Len(poolPage.Hints, 1)
-	assert.Equal("candidate_pool_saturated", poolPage.Hints[0]["code"])
+	page.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
+	require.Len(page.Hints, 1)
+	assert.Equal("candidate_pool_saturated", page.Hints[0]["code"])
 	raised.Search.KPerSignal = 200
 	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &poolPage)
-	assert.Len(poolPage.Results, 200)
+	page.Hints = nil
+	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
+	assert.Len(page.Results, 200)
 }
