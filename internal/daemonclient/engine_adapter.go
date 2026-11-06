@@ -449,7 +449,7 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 	if statsGroupBy != query.ViewNoStats {
 		viewType = optionalString(viewTypeToString(statsGroupBy))
 	}
-	return &generated.FastSearchQuery{
+	params := &generated.FastSearchQuery{
 		Q:               queryStr,
 		ViewType:        viewType,
 		Sender:          fields.Sender,
@@ -475,6 +475,8 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		Sort:            optionalString(messageSortFieldToString(filter.Sorting.Field)),
 		Direction:       optionalString(sortDirectionToString(filter.Sorting.Direction)),
 	}
+	params.IncludeSenderNameHint = optionalBool(filter.IncludeSenderNameHint)
+	return params
 }
 
 func fastSearchScopedQueryString(q *search.Query, queryStr string, filter query.MessageFilter) (string, bool) {
@@ -1222,12 +1224,16 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "fast-search"); err != nil {
 		return nil, err
 	}
-	return &query.SearchFastResult{
+	result := &query.SearchFastResult{
 		IndexState: stringValue(resp.JSON200.IndexState),
 		Messages:   e.store.messageSummariesWithURLs(ctx, resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
-	}, nil
+	}
+	if hint := resp.JSON200.SenderNameHint; hint != nil {
+		result.SenderNameHint = &query.SenderNameHint{Message: hint.Message, Query: hint.Query}
+	}
+	return result, nil
 }
 
 func (e *Engine) GetDeletionTargetsByFilter(ctx context.Context, filter query.MessageFilter) ([]query.DeletionTarget, error) {

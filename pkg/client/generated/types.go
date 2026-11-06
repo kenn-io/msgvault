@@ -2867,6 +2867,7 @@ type CliSearchResponse struct {
 	Results          []CLIQueryMessageSummary `json:"results" validate:"required"`
 	ScopeLabel       *string                  `json:"scope_label,omitzero"`
 	ScopeSourceCount *int64                   `json:"scope_source_count,omitempty"`
+	SenderNameHint   *string                  `json:"sender_name_hint,omitzero"`
 }
 
 func (c CliSearchResponse) Validate() error {
@@ -14922,6 +14923,7 @@ type SearchFastResponse struct {
 	IndexState       *string             `json:"index_state,omitzero"`
 	Messages         []MessageSummary    `json:"messages" validate:"required"`
 	Query            string              `json:"query" validate:"required"`
+	SenderNameHint   *SenderNameHint     `json:"sender_name_hint,omitempty"`
 	Stats            *TotalStatsResponse `json:"stats,omitempty"`
 	TotalCount       int64               `json:"total_count"`
 	Warnings         []string            `json:"warnings,omitempty"`
@@ -14941,6 +14943,13 @@ func (s SearchFastResponse) Validate() error {
 	}
 	if err := typesValidator.Var(s.Query, "required"); err != nil {
 		errors = errors.Append("Query", err)
+	}
+	if s.SenderNameHint != nil {
+		if v, ok := any(s.SenderNameHint).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderNameHint", err)
+			}
+		}
 	}
 	if s.Stats != nil {
 		if v, ok := any(s.Stats).(runtime.Validator); ok {
@@ -15115,6 +15124,15 @@ type SenderCount struct {
 }
 
 func (s SenderCount) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SenderNameHint struct {
+	Message string `json:"message" validate:"required"`
+	Query   string `json:"query" validate:"required"`
+}
+
+func (s SenderNameHint) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 

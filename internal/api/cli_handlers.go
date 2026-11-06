@@ -681,6 +681,7 @@ type cliDeleteDedupedExecuteResponse struct {
 
 type cliSearchResponse struct {
 	HasMore          bool                   `json:"has_more,omitzero"`
+	SenderNameHint   string                 `json:"sender_name_hint,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -2521,6 +2522,13 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp.Results = results
+	if len(results) == 0 && offset == 0 {
+		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
+			if hint := matcher.MatchSenderName(r.Context(), parsed, query.MessageFilter{}, false); hint != nil {
+				resp.SenderNameHint = hint.Message
+			}
+		}
+	}
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {

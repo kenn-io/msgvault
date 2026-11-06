@@ -4,6 +4,10 @@
 
 export type FastSearchParams = {
   /**
+   * Suggest sender addresses after an empty first page
+   */
+  include_sender_name_hint?: boolean;
+  /**
    * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   q: string;

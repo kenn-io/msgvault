@@ -2956,6 +2956,8 @@ components:
         scope_source_count:
           format: int64
           type: integer
+        sender_name_hint:
+          type: string
       required:
         - results
       type: object
@@ -15077,6 +15079,8 @@ components:
           type: array
         query:
           type: string
+        sender_name_hint:
+          $ref: "#/components/schemas/SenderNameHint"
         stats:
           $ref: "#/components/schemas/TotalStatsResponse"
         total_count:
@@ -15256,6 +15260,17 @@ components:
       required:
         - sender
         - count
+      type: object
+    SenderNameHint:
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+        query:
+          type: string
+      required:
+        - message
+        - query
       type: object
     SessionLoginRequest:
       additionalProperties: false
@@ -32605,6 +32620,11 @@ paths:
     get:
       operationId: fastSearch
       parameters:
+        - description: Suggest sender addresses after an empty first page
+          in: query
+          name: include_sender_name_hint
+          schema:
+            type: boolean
         - description: Search query; full text accepts standalone pipe-separated OR alternatives
           in: query
           name: q

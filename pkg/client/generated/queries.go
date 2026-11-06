@@ -1451,6 +1451,9 @@ func (s SearchMessagesByDomainsQuery) Validate() error {
 }
 
 type FastSearchQuery struct {
+	// IncludeSenderNameHint Suggest sender addresses after an empty first page
+	IncludeSenderNameHint *bool `json:"include_sender_name_hint,omitempty"`
+
 	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 

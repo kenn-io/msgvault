@@ -12,5 +12,6 @@ export interface CliSearchResponse {
   results: CLIQueryMessageSummary[];
   scope_label?: string;
   scope_source_count?: number;
+  sender_name_hint?: string;
   [key: string]: unknown;
 }

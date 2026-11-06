@@ -268,6 +268,8 @@ type SearchFastResult struct {
 	Messages   []MessageSummary
 	TotalCount int64
 	Stats      *TotalStats
+
+	SenderNameHint *SenderNameHint // set only when the search opted in and SQLite answered
 }
 
 // TotalStats provides overall database statistics.

@@ -1065,6 +1065,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}, messageFilterScopeParams())
 	case "fastSearch":
 		params := append([]*huma.Param{
+			queryBooleanParam("include_sender_name_hint", "Suggest sender addresses after an empty first page"),
 			queryStringParam("q", "Search query; full text accepts standalone pipe-separated OR alternatives", true),
 			queryStringParam("view_type", "Request aggregate stats grouped by this view; omit to skip stats", false),
 		}, messageFilterParams()...)

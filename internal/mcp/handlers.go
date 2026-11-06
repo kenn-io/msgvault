@@ -775,7 +775,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		q.AccountIDs = []int64{*selection.sourceID}
 	}
 
-	var filter query.MessageFilter
+	filter := query.MessageFilter{IncludeSenderNameHint: true}
 	selection.applyToFilter(&filter)
 
 	// Fetch one extra row so unknown totals still support reliable pagination.
@@ -787,16 +787,18 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	if hasMore {
 		result.Messages = result.Messages[:limit]
 	}
+	var hints []searchMetadataHint
+	if result.SenderNameHint != nil {
+		hint := searchMetadataHint{Code: "sender_name_requires_address", Message: result.SenderNameHint.Message}
+		hint.RetryWith.Query = result.SenderNameHint.Query
+		hints = append(hints, hint)
+	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
-			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), Hints: hints, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
 		})
 	}
-	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr))
-}
-
-func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string) (*toolResult, error) {
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings})
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(result.Messages, result.TotalCount, offset), Hints: hints, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr)})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {

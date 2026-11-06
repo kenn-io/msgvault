@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
@@ -235,4 +237,42 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Equal(before+2, boundedRequests.Load())
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
+}
+
+func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	db, _ := sqlobserve.Open(t, nil)
+	seedMetadataSearch(t, db)
+	_, err := db.Exec(`INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'),(2,1,'from');
+ UPDATE messages SET account_address='reader@example.test', account_path='inbound';`)
+	require.NoError(err)
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
+	for _, handler := range []toolHandler{h.searchMetadata, h.searchMessages} {
+		response := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": "from:alex subject:first account:reader@example.test"})
+		assert.Empty(response.Data)
+		require.Len(response.Hints, 1)
+		assert.Equal("sender_name_requires_address", response.Hints[0].Code)
+		assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
+		assert.Equal("from:alex@example.com subject:first account:reader@example.test", response.Hints[0].RetryWith.Query)
+		retry := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": response.Hints[0].RetryWith.Query})
+		require.Len(retry.Data, 1)
+		assert.Equal(int64(1), retry.Data[0].ID)
+		assert.Empty(retry.Hints)
+	}
+}
+
+func TestSearchMetadataSenderNameHintUnknownTotal(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+		assert.True(filter.IncludeSenderNameHint)
+		return &query.SearchFastResult{TotalCount: -1, SenderNameHint: &query.SenderNameHint{Message: "try from:alex@example.com", Query: "from:alex@example.com"}}, nil
+	}}
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, engine, &requests))
+	response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "from:alex"})
+	require.Len(response.Hints, 1)
+	assert.Equal(int64(-1), response.Total)
+	assert.Equal("from:alex@example.com", response.Hints[0].RetryWith.Query)
 }

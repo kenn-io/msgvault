@@ -1004,11 +1004,19 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 
 // The following named response types make every catalog output schema visible
 // without changing existing JSON field names.
+type searchMetadataHint struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RetryWith struct {
+		Query string `json:"query"`
+	} `json:"retry_with"`
+}
 type searchMetadataResponse struct {
 	paginatedResponse[query.MessageSummary]
 
-	IndexState string   `json:"index_state,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
+	Hints      []searchMetadataHint `json:"hints,omitempty"`
+	IndexState string               `json:"index_state,omitempty"`
+	Warnings   []string             `json:"warnings,omitempty"`
 }
 type searchInMessageResponse struct {
 	paginatedResponse[messageMatch]

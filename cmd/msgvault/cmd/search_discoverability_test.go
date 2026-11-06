@@ -164,3 +164,40 @@ func TestSearchJSONAttachmentMetadataAvailability(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchSenderNameHintOnStderr(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		t.Run(strconv.FormatBool(jsonMode), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			resetSearchFlags()
+			t.Cleanup(resetSearchFlags)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "sender_name_hint": "try from:alex@example.com"}))
+			}))
+			t.Cleanup(srv.Close)
+			cfg := &config.Config{}
+			cfg.Remote.URL, cfg.Remote.AllowInsecure = srv.URL, true
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			root.AddCommand(searchCmd)
+			var stderr bytes.Buffer
+			root.SetErr(&stderr)
+			args := []string{"search", "from:alex"}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			root.SetArgs(args)
+			done := captureStdout(t)
+			err := root.Execute()
+			out := done()
+			require.NoError(err)
+			if jsonMode {
+				assert.JSONEq("[]", out)
+			} else {
+				assert.Equal("No messages found.\n", out)
+			}
+			assert.Equal("Hint: try from:alex@example.com\n", stderr.String())
+		})
+	}
+}

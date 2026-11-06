@@ -935,6 +935,7 @@ export * from "./selector";
 export * from "./selectorKind";
 export * from "./senderAuthVerdict";
 export * from "./senderCount";
+export * from "./senderNameHint";
 export * from "./sessionLoginRequest";
 export * from "./sessionStatus";
 export * from "./sessionStatusAuthMode";

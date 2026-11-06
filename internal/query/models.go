@@ -240,7 +240,8 @@ const (
 
 // MessageFilter specifies which messages to retrieve.
 type MessageFilter struct {
-	AccountScopes []search.AccountScope // picker account selections; intersect with source filters
+	IncludeSenderNameHint bool                  // opt into sender suggestions for empty metadata searches
+	AccountScopes         []search.AccountScope // picker account selections; intersect with source filters
 
 	// Filter by aggregate key
 	Sender        string // filter by sender email

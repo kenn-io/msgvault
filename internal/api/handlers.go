@@ -2293,6 +2293,8 @@ type SearchFastResponse struct {
 	TotalCount       int64               `json:"total_count"`
 	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
+
+	SenderNameHint *query.SenderNameHint `json:"sender_name_hint,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -3921,6 +3923,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	filter.IncludeSenderNameHint, _, err = queryBool(r, "include_sender_name_hint")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	q := search.ParseOR(queryStr)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
@@ -3971,6 +3978,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		SenderNameHint:   result.SenderNameHint,
 		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
 		Query:            queryStr,

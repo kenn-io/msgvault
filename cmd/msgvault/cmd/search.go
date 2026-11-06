@@ -54,7 +54,7 @@ stored snippet, available match_snippet, and attachment names/counts.
 Use show-thread <message-id> to read a conversation chronologically.
 
 Supported operators:
-  from:        Sender email address
+  from:        Sender email address or domain
   to:          Recipient email address
   cc:          CC recipient
   bcc:         BCC recipient
@@ -299,6 +299,9 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		defer func() {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more messages match; use --offset %d for the next page\n", searchOffset+len(resp.Results))
 		}()
+	}
+	if len(resp.Results) == 0 && resp.SenderNameHint != "" {
+		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+resp.SenderNameHint) }()
 	}
 	// JSON mode must stay machine-parseable even with zero results:
 	// emit an empty array, never prose.
