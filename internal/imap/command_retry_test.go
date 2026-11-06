@@ -97,15 +97,25 @@ func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	passCtx, capture := WithRetryFloorCapture(ctx)
-	firstResult := make(chan error, 1)
+	firstCtx, cancelFirst := context.WithCancel(passCtx)
+	defer cancelFirst()
+	type commandResult struct {
+		err         error
+		callbackErr error
+	}
+	firstResult := make(chan commandResult, 1)
 	followupCalls := atomic.Int32{}
 	finished := make(chan error, 1)
 	go func() {
 		finished <- client.withConn(passCtx, func(conn *imapclient.Client) error {
-			_, err := runCommand(passCtx, client, func() ([]*imap.ListData, error) {
-				return conn.List("", "*", nil).Collect()
+			var callbackErr error
+			_, err := runCommand(firstCtx, client, func() ([]*imap.ListData, error) {
+				result, err := conn.List("", "*", nil).Collect()
+				callbackErr = err
+				cancelFirst()
+				return result, err
 			})
-			firstResult <- err
+			firstResult <- commandResult{err: err, callbackErr: callbackErr}
 			_, err = runCommand(passCtx, client, func() (struct{}, error) {
 				followupCalls.Add(1)
 				return struct{}{}, nil
@@ -114,19 +124,20 @@ func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
 		})
 	}()
 
-	var firstErr error
+	var first commandResult
 	select {
-	case firstErr = <-firstResult:
+	case first = <-firstResult:
 	case <-time.After(5 * time.Second):
 		cancel()
 		<-finished
-		require.FailNow("the real IMAP LIMIT response did not produce an immediate captured deferral")
+		require.FailNow("the canceled first command did not return the observed LIMIT response and retry floor")
 	}
 	var response *imap.Error
-	require.ErrorAs(firstErr, &response, "the first command must observe the real typed LIMIT response")
+	require.ErrorAs(first.callbackErr, &response, "the first command callback must observe the real typed LIMIT response")
 	assert.Equal(imap.ResponseCodeLimit, response.Code)
+	require.ErrorIs(first.err, context.Canceled, "only the first command's child context is canceled after the server response")
 	var firstFloor interface{ RetryNotBefore() time.Time }
-	require.ErrorAs(firstErr, &firstFloor)
+	require.ErrorAs(first.err, &firstFloor)
 	assert.True(firstFloor.RetryNotBefore().After(time.Now()))
 	assert.True(capture.RetryNotBefore().After(time.Now()))
 	assert.EqualValues(1, limited.Load())
