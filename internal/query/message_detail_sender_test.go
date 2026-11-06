@@ -118,21 +118,14 @@ func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			var dbPath string
-			var db *sql.DB
-			if backend == "sqlite" {
-				dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-				db = dbtest.NewTestDB(t, "../store/schema.sql").DB
-				seedMessageDetailSenderRows(t, db)
-			} else {
-				dbPath, db = seedMessageDetailSenderFixture(t)
-				t.Cleanup(func() { _ = db.Close() })
-			}
+			dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+			db := dbtest.NewTestDB(t, "../store/schema.sql").DB
+			seedMessageDetailSenderRows(t, db)
 			_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
 			requirements.NoError(err)
 			var reader messageDetailReader = NewSQLiteEngine(db)
 			if backend == "duckdb" {
-				engine, err := NewDuckDBEngine("", dbPath, db, DuckDBOptions{DisableSQLiteScanner: true})
+				engine, err := NewDuckDBEngine("", "", db, DuckDBOptions{DisableSQLiteScanner: true})
 				requirements.NoError(err)
 				t.Cleanup(func() { _ = engine.Close() })
 				reader = engine
