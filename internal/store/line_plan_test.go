@@ -15,7 +15,7 @@ func TestLineInboxStatusUsesReceivedIndexSQLite(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
-	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT MAX(received_at) FROM line_webhook_events WHERE source_id=?", 1)
+	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+lineInboxLastReceivedSQL, 1)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var details []string

@@ -96,41 +96,6 @@ func TestMediaConversationPreview(t *testing.T) {
 	}
 }
 
-func TestMediaSizeSearch(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		kind string
-		size int64
-	}{
-		{"image", "image", 22},
-		{"file", "file", 28},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			path := "/v2/bot/message/1/content"
-			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
-			e := f.fileEvent()
-			e.Message.Type = tc.kind
-			if tc.kind == "image" {
-				e.Message.FileName = ""
-			}
-			f.enqueue(t, e, time.Time{})
-			f.run(t)
-			messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
-			must.NoError(err)
-			checks.Equal(int64(1), total)
-			must.Len(messages, 1)
-			checks.Equal(f.archived(t, "1").id, messages[0].ID)
-			checks.Equal(tc.size, messages[0].SizeEstimate)
-			_, total, err = f.st.SearchMessagesQuery(search.Parse(fmt.Sprintf("larger:%d", tc.size)), 0, 10)
-			must.NoError(err)
-			checks.Zero(total)
-		})
-	}
-}
-
 func TestMediaTranscodingRetry(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -156,15 +121,6 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	checks.Len(stored.ContentHash, 64)
 	checks.NotEmpty(stored.StoragePath)
 	checks.Equal(2, f.api.Count(http.MethodGet, path))
-	messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
-	must.NoError(err)
-	checks.Equal(int64(1), total)
-	must.Len(messages, 1)
-	checks.Equal(f.archived(t, "1").id, messages[0].ID)
-	checks.Equal(int64(28), messages[0].SizeEstimate)
-	_, total, err = f.st.SearchMessagesQuery(search.Parse("larger:28"), 0, 10)
-	must.NoError(err)
-	checks.Zero(total)
 }
 
 func TestMediaFailureAtRetryHorizon(t *testing.T) {

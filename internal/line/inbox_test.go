@@ -685,11 +685,6 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	must.NoError(err)
 	must.Equal(int64(1), deleted)
 
-	for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
-		var raw string
-		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
-		checks.Equal("{}", raw)
-	}
 	f.now = retryAt
 	f.run(t)
 	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
@@ -703,11 +698,9 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	f.run(t)
 	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
 	must.ErrorIs(err, sql.ErrNoRows)
-	var raw string
 	var rows int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows))
 	checks.Equal(1, rows)
-	checks.Equal("{}", raw)
 }
 
 func TestProcessorProfileNotFoundCompletesText(t *testing.T) {

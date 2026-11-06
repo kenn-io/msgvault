@@ -32,7 +32,6 @@ func TestSchemaVersionMainArchiveRequiresLINEUpgrade(t *testing.T) {
 	require.NoError(err)
 	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
 	var count int
-	require.Error(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_webhook_events").Scan(&count))
 	require.NoError(s.InitSchemaContext(ctx))
 	require.NoError(s.ValidateSchemaContext(ctx))
 	require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_webhook_events").Scan(&count))

@@ -166,6 +166,8 @@ func (s *Store) FinishLineEventContext(ctx context.Context, id int64, state, las
 	})
 }
 
+const lineInboxLastReceivedSQL = `SELECT MAX(received_at) FROM line_webhook_events WHERE source_id=?`
+
 func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (LineInboxStatus, error) {
 	var out LineInboxStatus
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(SUM(CASE WHEN state IN ('pending','retry') THEN 1 ELSE 0 END),0),
@@ -174,7 +176,7 @@ func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (Lin
 		return out, fmt.Errorf("count LINE inbox: %w", err)
 	}
 	var lastReceived nullableTimestamp
-	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT MAX(received_at) FROM line_webhook_events WHERE source_id=?`), sourceID).Scan(&lastReceived); err != nil {
+	if err := s.db.QueryRowContext(ctx, s.Rebind(lineInboxLastReceivedSQL), sourceID).Scan(&lastReceived); err != nil {
 		return out, fmt.Errorf("last LINE receipt: %w", err)
 	}
 	out.LastReceivedAt = nullableTimePointer(lastReceived)

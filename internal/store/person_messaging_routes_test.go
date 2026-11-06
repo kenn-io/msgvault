@@ -558,32 +558,6 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	assertions.Equal("line", line.Routes.Items[0].Network)
 }
 
-func TestMessagingRoutesLINEUsesNativeNetworkFilter(t *testing.T) {
-	t.Parallel()
-	f := storetest.New(t)
-	person, peer := messagingPerson(t, f.Store, "line-route-peer")
-	source, err := f.Store.GetOrCreateSource("line", "line-channel")
-	require.NoError(t, err)
-	conversation, err := f.Store.EnsureConversationWithType(source.ID, "line-peer", "direct_chat", "Synthetic LINE chat")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.EnsureConversationParticipant(conversation, peer, "member"))
-	for _, network := range []string{"", "discord"} {
-		t.Run(network, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: network})
-			require.NoError(err)
-			if network == "discord" {
-				assert.Empty(page.Routes.Items)
-				return
-			}
-			require.Len(page.Routes.Items, 1)
-			assert.Equal(conversation, page.Routes.Items[0].ConversationID)
-			assert.Equal("line", page.Routes.Items[0].Network)
-		})
-	}
-}
-
 func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

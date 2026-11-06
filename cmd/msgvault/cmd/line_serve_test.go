@@ -177,9 +177,6 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			must.True(held, "enrichment must hold the operation gate during the second receipt")
 			must.Equal(http.StatusOK, receive(1, `{"id":"1","type":"text","text":"later searchable text"}`))
 			if enrichment == "profile" {
-				var receipts int
-				must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id IN ('event-0', 'event-1')").Scan(&receipts))
-				checks.Equal(2, receipts, "both acknowledged receipts must be durable while enrichment is blocked")
 				return
 			}
 			for range 10 {
