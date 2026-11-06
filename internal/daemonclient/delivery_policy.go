@@ -2,7 +2,9 @@ package daemonclient
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
+	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -25,8 +27,11 @@ func (c *Client) GetDeliveryPolicy(ctx context.Context, q store.DeliveryPolicyQu
 	if response.JSON200 == nil {
 		return nil, errDeliveryPolicyResponse
 	}
-	state := deliveryPolicyState(*response.JSON200)
-	return &state, nil
+	state := &store.DeliveryPolicyState{}
+	if err := json.Unmarshal(response.Body, state); err != nil {
+		return nil, fmt.Errorf("decode delivery policy response: %w", err)
+	}
+	return state, nil
 }
 
 func (c *Client) SetDeliveryPolicy(ctx context.Context, w store.DeliveryPolicyWrite) (*store.DeliveryPolicyReceipt, error) {
@@ -39,7 +44,11 @@ func (c *Client) SetDeliveryPolicy(ctx context.Context, w store.DeliveryPolicyWr
 	if response.JSON200 == nil {
 		return nil, errDeliveryPolicyResponse
 	}
-	return deliveryPolicyReceipt(*response.JSON200), nil
+	receipt := &store.DeliveryPolicyReceipt{}
+	if err := json.Unmarshal(response.Body, receipt); err != nil {
+		return nil, fmt.Errorf("decode set delivery policy response: %w", err)
+	}
+	return receipt, nil
 }
 
 func (c *Client) ClearDeliveryPolicy(ctx context.Context, w store.DeliveryPolicyWrite) (*store.DeliveryPolicyReceipt, error) {
@@ -52,7 +61,11 @@ func (c *Client) ClearDeliveryPolicy(ctx context.Context, w store.DeliveryPolicy
 	if response.JSON200 == nil {
 		return nil, errDeliveryPolicyResponse
 	}
-	return deliveryPolicyReceipt(*response.JSON200), nil
+	receipt := &store.DeliveryPolicyReceipt{}
+	if err := json.Unmarshal(response.Body, receipt); err != nil {
+		return nil, fmt.Errorf("decode clear delivery policy response: %w", err)
+	}
+	return receipt, nil
 }
 
 // deliveryPolicyBody builds the one request shape that set and clear share.
@@ -61,35 +74,4 @@ func deliveryPolicyBody(w store.DeliveryPolicyWrite) *generated.DeliveryPolicyWr
 		PersonUID: w.PersonUID, Endpoint: optionalString(w.Endpoint), ExpectedRevision: w.ExpectedRevision,
 		Policy: optionalString(string(w.Policy)), ScopeAcknowledgement: optionalString(w.ScopeAcknowledgement), Reason: w.Reason,
 	}
-}
-
-func deliveryPolicyPtr(value *string) *store.DeliveryPolicy {
-	if value == nil {
-		return nil
-	}
-	return new(store.DeliveryPolicy(*value))
-}
-
-func deliveryPolicyState(in generated.DeliveryPolicyState) store.DeliveryPolicyState {
-	out := store.DeliveryPolicyState{
-		PersonUID: in.PersonUID, Revision: in.Revision,
-		StoredPolicy: deliveryPolicyPtr(in.StoredPolicy), EffectivePolicy: store.DeliveryPolicy(in.EffectivePolicy),
-		InheritanceSource: in.InheritanceSource, Reason: in.Reason,
-	}
-	if in.Endpoint != nil {
-		out.Endpoint = *in.Endpoint
-	}
-	return out
-}
-
-func deliveryPolicyReceipt(in generated.DeliveryPolicyReceipt) *store.DeliveryPolicyReceipt {
-	out := &store.DeliveryPolicyReceipt{Before: deliveryPolicyState(in.Before), After: deliveryPolicyState(in.After)}
-	if a := in.Audit; a != nil {
-		out.Audit = &store.DeliveryPolicyAudit{
-			Actor: a.Actor, Reason: a.Reason, CreatedAt: a.CreatedAt, Scope: a.Scope,
-			BeforePolicy: deliveryPolicyPtr(a.BeforePolicy), AfterPolicy: deliveryPolicyPtr(a.AfterPolicy),
-			ContactPointID: a.ContactPointID,
-		}
-	}
-	return out
 }
