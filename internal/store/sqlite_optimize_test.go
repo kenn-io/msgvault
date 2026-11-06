@@ -175,7 +175,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 func TestStoreClosePreservesAnalyzedStatistics(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
-	s, err := OpenForTest(path)
+	s, err := openSQLiteContext(t.Context(), path, testSQLiteParams)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(s.db.Close()) })
 	require.NoError(s.InitSchema())

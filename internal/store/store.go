@@ -579,8 +579,16 @@ func (s *Store) Close() error {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
+			conn, err := s.db.Conn(ctx)
+			if err == nil {
+				_, err = conn.ExecContext(ctx, "PRAGMA analysis_limit=1000")
+				if err == nil {
+					err = optimizeSQLiteStatistics(ctx, conn)
+				}
+				_ = conn.Close()
+			}
 			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
-			logSQLiteOptimizeError("store close", optimizeSQLiteStatistics(ctx, s.db.DB))
+			logSQLiteOptimizeError("store close", err)
 			cancel()
 		}
 
@@ -716,16 +724,18 @@ func optimizeSQLiteStatistics(ctx context.Context, db contextStatementQuerier) e
 	err := db.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
 		FROM pragma_optimize(0x10003) WHERE optimize NOT IN (
 			SELECT printf('ANALYZE "main"."%w_data"', name) FROM sqlite_master
-			WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
+			WHERE `+sqliteFTS5TablePredicate+`
 		)`).Scan(&statements)
 	if err == nil && statements != "" {
-		_, err = db.ExecContext(ctx, "PRAGMA analysis_limit=1000;"+statements)
+		_, err = db.ExecContext(ctx, statements)
 	}
 	if err != nil {
 		return err
 	}
 	return dropFTSDataStatistics(ctx, db)
 }
+
+const sqliteFTS5TablePredicate = `type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'`
 
 // dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
 // FTS5 merges segments by deleting rowid ranges from _data, and trigger-
@@ -747,7 +757,7 @@ func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) erro
 	}
 	_, err = db.ExecContext(ctx, `DELETE FROM sqlite_stat1 WHERE tbl IN (
 		SELECT name || '_data' FROM sqlite_master
-		WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
+		WHERE `+sqliteFTS5TablePredicate+`
 	)`)
 	if err != nil {
 		return fmt.Errorf("drop FTS5 planner statistics: %w", err)
