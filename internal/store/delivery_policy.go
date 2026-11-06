@@ -502,45 +502,51 @@ func (s *Store) writeDeliveryPolicy(ctx context.Context, w DeliveryPolicyWrite, 
 			receipt = &DeliveryPolicyReceipt{Before: *before, After: *before}
 			return nil
 		}
-		scope, mailbox := DeliveryPersonAllRoutes, q.Endpoint
-		if mailbox != "" {
-			scope = mailbox
-		}
-		var point sql.NullInt64
-		if reset {
-			_, err = tx.ExecContext(ctx, `DELETE FROM delivery_policies WHERE person_id=? AND mailbox=?`, before.PersonID, mailbox)
-		} else {
-			if w.Policy == DeliverySendAllowed && mailbox != "" {
-				point = sql.NullInt64{Int64: before.points[0], Valid: true}
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO delivery_policies(person_id,mailbox,policy,contact_point_id,approved_through_contact_point_id) VALUES (?,?,?,?,?)
-				ON CONFLICT(person_id,mailbox) DO UPDATE SET policy=excluded.policy, contact_point_id=excluded.contact_point_id, approved_through_contact_point_id=excluded.approved_through_contact_point_id`,
-				before.PersonID, mailbox, w.Policy, point, approvedThrough)
-		}
-		if err != nil {
-			return err
-		}
-		if err = s.bumpDeliveryRevisionTx(ctx, tx, before.PersonID); err != nil {
-			return err
-		}
-		after, _, err := s.deliveryStateTx(ctx, tx, q, false, false, holders)
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		if err = insertDeliveryAuditTx(ctx, tx, deliveryAuditRow{
-			PersonUID: w.PersonUID, Revision: after.Revision, Scope: scope, Before: before.StoredPolicy,
-			After: after.StoredPolicy, Actor: w.Actor, Reason: w.Reason, At: now, Point: point,
-		}); err != nil {
-			return err
-		}
-		receipt = &DeliveryPolicyReceipt{Before: *before, After: *after, Audit: &DeliveryPolicyAudit{
-			Actor: w.Actor, Reason: w.Reason, CreatedAt: now, Scope: scope,
-			BeforePolicy: before.StoredPolicy, AfterPolicy: after.StoredPolicy, ContactPointID: nullInt64Ptr(point),
-		}}
-		return nil
+		receipt, err = s.applyDeliveryPolicyTx(ctx, tx, w, reset, before, approvedThrough, holders)
+		return err
 	})
 	return receipt, err
+}
+
+// applyDeliveryPolicyTx persists a policy change and its revision and audit.
+func (s *Store) applyDeliveryPolicyTx(ctx context.Context, tx *loggedTx, w DeliveryPolicyWrite, reset bool, before *DeliveryPolicyState, approvedThrough sql.NullInt64, holders *deliveryHolderCache) (*DeliveryPolicyReceipt, error) {
+	scope, mailbox := DeliveryPersonAllRoutes, before.Endpoint
+	if mailbox != "" {
+		scope = mailbox
+	}
+	var point sql.NullInt64
+	var err error
+	if reset {
+		_, err = tx.ExecContext(ctx, `DELETE FROM delivery_policies WHERE person_id=? AND mailbox=?`, before.PersonID, mailbox)
+	} else {
+		if w.Policy == DeliverySendAllowed && mailbox != "" {
+			point = sql.NullInt64{Int64: before.points[0], Valid: true}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO delivery_policies(person_id,mailbox,policy,contact_point_id,approved_through_contact_point_id) VALUES (?,?,?,?,?)
+			ON CONFLICT(person_id,mailbox) DO UPDATE SET policy=excluded.policy, contact_point_id=excluded.contact_point_id, approved_through_contact_point_id=excluded.approved_through_contact_point_id`,
+			before.PersonID, mailbox, w.Policy, point, approvedThrough)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = s.bumpDeliveryRevisionTx(ctx, tx, before.PersonID); err != nil {
+		return nil, err
+	}
+	after, _, err := s.deliveryStateTx(ctx, tx, DeliveryPolicyQuery{PersonUID: w.PersonUID, Endpoint: mailbox}, false, false, holders)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if err = insertDeliveryAuditTx(ctx, tx, deliveryAuditRow{
+		PersonUID: w.PersonUID, Revision: after.Revision, Scope: scope, Before: before.StoredPolicy,
+		After: after.StoredPolicy, Actor: w.Actor, Reason: w.Reason, At: now, Point: point,
+	}); err != nil {
+		return nil, err
+	}
+	return &DeliveryPolicyReceipt{Before: *before, After: *after, Audit: &DeliveryPolicyAudit{
+		Actor: w.Actor, Reason: w.Reason, CreatedAt: now, Scope: scope,
+		BeforePolicy: before.StoredPolicy, AfterPolicy: after.StoredPolicy, ContactPointID: nullInt64Ptr(point),
+	}}, nil
 }
 
 // deliveryAuditRow is one delivery_policy_audit row.
@@ -561,20 +567,13 @@ func insertDeliveryAuditTx(ctx context.Context, tx *loggedTx, r deliveryAuditRow
 // endDeliveryPoliciesTx ends delivery policies of one person with an audit row
 // each. A merge or delete never widens what was approved: sending stays
 // draft_only until the owner approves again. With wideSendOnly, the
-// person-wide send_allowed and approvals for restrictedMailboxes end. Other
-// exact-address approvals stay bound to their contact points.
-func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *Person, revision int64, actor, reason string, wideSendOnly bool, restrictedMailboxes ...string) error {
+// person-wide send_allowed ends. Exact-address approvals stay bound to their
+// contact points.
+func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *Person, revision int64, actor, reason string, wideSendOnly bool) error {
 	scopeFilter := ""
 	args := []any{owner.ID}
 	if wideSendOnly {
-		scopeFilter = " AND policy='send_allowed' AND (mailbox=''"
-		if len(restrictedMailboxes) > 0 {
-			scopeFilter += " OR mailbox IN (" + sqlPlaceholders(len(restrictedMailboxes)) + ")"
-			for _, mailbox := range restrictedMailboxes {
-				args = append(args, mailbox)
-			}
-		}
-		scopeFilter += ")"
+		scopeFilter = " AND policy='send_allowed' AND mailbox=''"
 	}
 	now := time.Now().UTC()
 	// The caller passes persons.revision; clients see it plus the delivery revision.
