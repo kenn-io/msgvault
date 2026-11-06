@@ -315,7 +315,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		}
 		building = nil
 	}
-	args := []string{"embeddings", "build", "--yes"}
+	args := []string{"embeddings", "build", "--yes", "--person-policy-config", loaded.ConfigFilePath()}
 	if building == nil {
 		active, err := vf.Backend.ActiveGeneration(ctx)
 		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {

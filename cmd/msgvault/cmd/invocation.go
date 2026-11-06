@@ -52,6 +52,7 @@ type invocation struct {
 	logResult *logging.Result
 	sends     *posthog.SendGroup
 
+	personPolicyConfig string
 	syncFailures       *telemetry.SyncFailures
 	imapFolderAccounts *sync.Once
 }

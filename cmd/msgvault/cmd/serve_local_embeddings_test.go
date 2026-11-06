@@ -90,7 +90,7 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	oldYes, oldRebuild, oldRetire := embedYes, embedFullRebuild, embeddingsRetireYes
 	defer func() { embedYes, embedFullRebuild, embeddingsRetireYes = oldYes, oldRebuild, oldRetire }()
 	command := newEmbeddingsBuildCmd("build")
-	command.RunE = func(cmd *cobra.Command, _ []string) error { return runEmbed(cmd) }
+	command.RunE = func(cmd *cobra.Command, _ []string) error { return runEmbeddingsBuildLocal(cmd) }
 	if req.Args[1] == "retire" {
 		command = &cobra.Command{Use: "retire", RunE: runEmbeddingsRetire}
 		command.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Confirm retirement")
@@ -115,6 +115,7 @@ type localActivationFixture struct {
 	controller    *localEmbeddingsController
 	runner        *localBuildTestRunner
 	embeddingKey  atomic.Value
+	onEmbedding   func([]string) error
 	inputs        atomic.Int32
 	installs      int
 	refreshes     int
@@ -165,6 +166,12 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
 			http.Error(w, "invalid embedding request", http.StatusBadRequest)
 			return
+		}
+		if f.onEmbedding != nil {
+			if err := f.onEmbedding(body.Input); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		f.inputs.Add(int32(len(body.Input)))
 		assert.NoError(t, writeFakeEmbeddingResponse(w, len(body.Input), 768))
