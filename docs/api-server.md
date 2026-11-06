@@ -160,9 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.45.0**.
+it is separate from the binary release version. The current schema is **3.46.0**.
 
-Schema 3.45.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` to vector and hybrid search. `has_more` stays true whenever an extra ranked hit exists past the returned page, including at the configured ranking cap. `ranking_limit_reached` carries the effective cap when an extra measured match lies beyond it, or a saturated hybrid candidate pool fills the cap. At that cap, raise `vector.search.max_page_size_hybrid` on the server, restart it, and request a larger page. When the candidate pool also reaches its limit, raise `vector.search.k_per_signal` too.
+Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` to vector and hybrid search. `has_more` stays true whenever an extra ranked hit exists past the returned page, including at the configured ranking cap. `ranking_limit_reached` carries the effective cap when an extra measured match lies beyond it, or a saturated hybrid candidate pool fills the cap. At that cap, raise `vector.search.max_page_size_hybrid` on the server, restart it, and request a larger page. When the candidate pool also reaches its limit, raise `vector.search.k_per_signal` too.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
