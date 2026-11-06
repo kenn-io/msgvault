@@ -574,7 +574,7 @@ func parseLocalDateTime(layout, value string, loc *time.Location) (time.Time, er
 	}
 	// Explicit gap values use the offset before the forward transition.
 	for cursor := anchor.Add(-72 * time.Hour).In(loc); cursor.Before(anchor.Add(72 * time.Hour)); {
-		end := zoneEnd(cursor)
+		_, end := cursor.ZoneBounds()
 		if end.IsZero() {
 			break
 		}

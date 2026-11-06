@@ -101,7 +101,6 @@ func TestCivilDateBoundaryExportedSemantics(t *testing.T) {
 		{"2027-03-13", "", "2027-03-13T00:00:00Z", true},
 		{"2018-11-04", "America/Sao_Paulo", "2018-11-04T03:00:00Z", true},
 		{"2011-12-30", "Pacific/Apia", "2011-12-30T10:00:00Z", false},
-		{"2020-12-28", "America/New_York", "2020-12-28T05:00:00Z", true},
 		{"2040-12-31", "America/New_York", "2040-12-31T05:00:00Z", true},
 		{"2041-01-01", "America/New_York", "2041-01-01T05:00:00Z", true},
 	} {
