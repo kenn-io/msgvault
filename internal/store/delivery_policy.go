@@ -560,13 +560,21 @@ func insertDeliveryAuditTx(ctx context.Context, tx *loggedTx, r deliveryAuditRow
 
 // endDeliveryPoliciesTx ends delivery policies of one person with an audit row
 // each. A merge or delete never widens what was approved: sending stays
-// draft_only until the owner approves again. With wideSendOnly, only a
-// person-wide send_allowed ends, since a merge grows its coverage to addresses
-// the owner never approved; exact-address approvals stay bound to their contact points.
-func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *Person, revision int64, actor, reason string, wideSendOnly bool) error {
+// draft_only until the owner approves again. With wideSendOnly, the
+// person-wide send_allowed and approvals for restrictedMailboxes end. Other
+// exact-address approvals stay bound to their contact points.
+func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *Person, revision int64, actor, reason string, wideSendOnly bool, restrictedMailboxes ...string) error {
 	scopeFilter := ""
+	args := []any{owner.ID}
 	if wideSendOnly {
-		scopeFilter = " AND mailbox='' AND policy='send_allowed'"
+		scopeFilter = " AND policy='send_allowed' AND (mailbox=''"
+		if len(restrictedMailboxes) > 0 {
+			scopeFilter += " OR mailbox IN (" + sqlPlaceholders(len(restrictedMailboxes)) + ")"
+			for _, mailbox := range restrictedMailboxes {
+				args = append(args, mailbox)
+			}
+		}
+		scopeFilter += ")"
 	}
 	now := time.Now().UTC()
 	// The caller passes persons.revision; clients see it plus the delivery revision.
@@ -575,7 +583,7 @@ func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *
 		return err
 	}
 	revision += delivery
-	rows, err := tx.QueryContext(ctx, `SELECT mailbox, policy FROM delivery_policies WHERE person_id=?`+scopeFilter+` ORDER BY mailbox`, owner.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT mailbox, policy FROM delivery_policies WHERE person_id=?`+scopeFilter+` ORDER BY mailbox`, args...)
 	if err != nil {
 		return err
 	}
@@ -605,7 +613,7 @@ func (s *Store) endDeliveryPoliciesTx(ctx context.Context, tx *loggedTx, owner *
 		}
 	}
 	if len(ended) > 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM delivery_policies WHERE person_id=?`+scopeFilter, owner.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM delivery_policies WHERE person_id=?`+scopeFilter, args...); err != nil {
 			return err
 		}
 	}

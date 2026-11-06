@@ -462,6 +462,47 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		})
 	}
 
+	t.Run("absorbed restriction ends survivor approval", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		f := storetest.New(t)
+		survivor, addresses := deliveryPerson(t, f)
+		const address = "alice@x.test"
+		deliveryContactPoint(t, f, survivor.ID, address)
+		setDelivery(t, f.Store, survivor.VCardUID, address, store.DeliverySendAllowed)
+		setDelivery(t, f.Store, survivor.VCardUID, addresses[0], store.DeliverySendAllowed)
+
+		absorbed, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("absorbed@example.test", "Absorbed Person", "example.test"))
+		require.NoError(err)
+		deliveryContactPoint(t, f, absorbed.ID, address)
+		ambiguous := readDelivery(t, f.Store, survivor.VCardUID, address)
+		assert.Equal(store.DeliveryDraftOnly, ambiguous.EffectivePolicy)
+		assert.Equal("ambiguous_endpoint", ambiguous.Reason)
+		setDelivery(t, f.Store, absorbed.VCardUID, address, store.DeliveryDraftOnly)
+
+		survivor, err = f.Store.GetPersonContext(t.Context(), survivor.ID)
+		require.NoError(err)
+		absorbed, err = f.Store.GetPersonContext(t.Context(), absorbed.ID)
+		require.NoError(err)
+		_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+			SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+			ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+			IdempotencyKey: "delivery-policy-merge-restricted-address", Actor: "merger",
+		})
+		require.NoError(err)
+		assert.Equal(store.DeliveryDraftOnly, readDelivery(t, f.Store, survivor.VCardUID, address).EffectivePolicy)
+		assert.Equal(store.DeliverySendAllowed, readDelivery(t, f.Store, survivor.VCardUID, addresses[0]).EffectivePolicy)
+
+		calls := 0
+		err = f.Store.WithDeliveryAdmissionContext(t.Context(), deliveryRecipient(survivor, address), func(context.Context) error { calls++; return nil })
+		var refusal *store.DeliveryAdmissionError
+		require.ErrorAs(err, &refusal)
+		assert.Zero(calls)
+
+		var audits int
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy IS NULL`), survivor.VCardUID, address).Scan(&audits))
+		assert.Equal(1, audits, "the survivor's ended approval has a merge audit row")
+	})
+
 	t.Run("person delete", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		f := storetest.New(t)
