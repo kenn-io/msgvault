@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/freshness"
 )
 
 func budgetTimeline(n int) *Timeline {
@@ -80,6 +81,24 @@ func TestFitMinimumEnvelopeSucceedsAt2048(t *testing.T) {
 	}
 }
 
+func TestFitBudgetsFreshness(t *testing.T) {
+	for _, format := range []string{"json", "markdown"} {
+		t.Run(format, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			v := budgetTimeline(1)
+			for i := range 100 {
+				v.Freshness.Sources = append(v.Freshness.Sources, freshness.SourceFreshness{SourceType: "gmail", Identifier: fmt.Sprintf("account-%d@example.com", i), Reason: "never_synced", SyncCommand: "msgvault sync-incremental account@example.com"})
+			}
+			out, err := Fit(v, format, 2048)
+			requirements.NoError(err)
+			assertions.LessOrEqual(encodedSize(t, out, format), 2048)
+			assertions.NotEmpty(out.History)
+			assertions.Equal(100-len(out.Freshness.Sources), out.Omitted.Budget["freshness"])
+			assertions.Empty(out.Cursor)
+		})
+	}
+}
+
 func TestFitFallbackCursorKeysPreserveSubsecondOrder(t *testing.T) {
 	for _, section := range []string{"history", "upcoming"} {
 		t.Run(section, func(t *testing.T) {
@@ -108,9 +127,19 @@ func TestFitFallbackCursorKeysPreserveSubsecondOrder(t *testing.T) {
 }
 func TestFitTooSmall(t *testing.T) {
 	v := budgetTimeline(0)
-	v.Freshness.Warnings = []string{strings.Repeat("warning ", 2000)}
-	_, err := Fit(v, "json", 2048)
+	_, err := Fit(v, "json", 1)
 	require.ErrorIs(t, err, ErrBudgetTooSmall)
+}
+
+func TestFitOmitsOversizedFreshnessWarning(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := budgetTimeline(0)
+	v.Freshness.Warnings = []string{strings.Repeat("warning ", 2000)}
+	out, err := Fit(v, "json", 2048)
+	requirements.NoError(err)
+	assertions.Empty(out.Freshness.Warnings)
+	assertions.Equal(1, out.Omitted.Budget["freshness"])
+	assertions.Empty(out.Cursor)
 }
 func TestFitForwardProgressStub(t *testing.T) {
 	for _, tc := range []struct {

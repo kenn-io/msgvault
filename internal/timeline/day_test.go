@@ -55,14 +55,25 @@ func TestBuildDayRecurringSeriesMovedOccurrence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
-	f.calendar("weekly", `{"id":"weekly","start":{"dateTime":"2026-10-15T10:00:00Z"},"end":{"dateTime":"2026-10-15T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	master := f.calendar("weekly", `{"id":"weekly","start":{"dateTime":"2026-10-15T10:00:00Z"},"end":{"dateTime":"2026-10-15T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	moved := f.calendar("moved", `{"id":"moved","recurringEventId":"weekly","originalStartTime":{"dateTime":"2026-10-22T10:00:00Z"},"start":{"dateTime":"2026-10-22T15:00:00Z"},"end":{"dateTime":"2026-10-22T16:00:00Z"}}`)
 	got, err := Build(t.Context(), f.src, dayRequest())
 	requirements.NoError(err)
 	requirements.Len(allDayEntries(got), 1)
 	e := allDayEntries(got)[0]
-	assertions.Equal(fmt.Sprintf("evt:%d", moved), e.Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d@20261022T100000Z", master), e.Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d@20261022T100000Z", master), e.AnchorRef)
+	assertions.Equal(fmt.Sprintf("evt:%d@20261022T100000Z", master), e.Open[0].Args["ref"])
 	assertions.Equal(15, e.Time.Hour())
+
+	detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", moved))
+	requirements.NoError(err)
+	c := composer{ctx: t.Context(), src: f.src, req: dayRequest(), t: got, loc: time.UTC, entryDates: map[string]string{}}
+	entries, _ := c.mergeEntries(nil, nil, []store.CalendarOccurrence{detail.CalendarOccurrence}, nil, nil)
+	requirements.Len(entries, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", moved), entries[0].Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d", moved), entries[0].AnchorRef)
+	assertions.Equal(fmt.Sprintf("evt:%d", moved), entries[0].Open[0].Args["ref"])
 }
 func TestBuildDayDraftReplyNotOutbound(t *testing.T) {
 	assertions := assert.New(t)

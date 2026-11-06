@@ -45,7 +45,7 @@ func (s *Store) calendarTranscriptCandidates(ctx context.Context, q ContactQuery
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.message_type='meeting_transcript' AND m.list_id IS NULL
  AND ` + s.activityLiveEligibleWithoutDateSQL() + `
  AND EXISTS(SELECT 1 FROM calendar_events e JOIN messages cm ON cm.id=e.message_id
- WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm", "") + `
+ WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm") + `
  AND EXISTS(SELECT 1 FROM calendar_event_attendees a WHERE a.message_id=e.message_id AND a.is_copy_self=FALSE AND a.role<>'room' AND LOWER(TRIM(a.email)) IN (` + marks + `))` + calendarScope + `
  AND (EXISTS(SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND
  ((k.kind='ical_uid' AND k.value<>'' AND k.value=` + uid + `) OR

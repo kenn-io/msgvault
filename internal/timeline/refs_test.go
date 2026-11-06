@@ -32,3 +32,10 @@ func TestParseAnchorForms(t *testing.T) {
 		requirements.ErrorIs(err, ErrUnknownReference, s)
 	}
 }
+
+func TestParseAnchorRejectsSkippedCivilDate(t *testing.T) {
+	loc, err := time.LoadLocation("Pacific/Apia")
+	require.NoError(t, err)
+	_, err = ParseAnchor("2011-12-30", loc)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+}

@@ -358,7 +358,8 @@ func displaySnippet(d store.MessageDisplay) string {
 }
 
 func (c *composer) canonicalOccurrence(o store.CalendarOccurrence, info store.MeetingIdentityInfo) (store.CalendarOccurrence, bool) {
-	if info.OccurrenceRef == "" || info.OccurrenceRef == o.Ref {
+	ref, err := store.ParseMeetingIdentityRef(info.OccurrenceRef)
+	if info.OccurrenceRef == "" || info.OccurrenceRef == o.Ref || err == nil && ref.MessageID == o.MessageID {
 		return o, true
 	}
 	if resolved, ok := c.occurrences[info.OccurrenceRef]; ok {

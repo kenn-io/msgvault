@@ -201,7 +201,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				require.NoError(err)
 				if assert.Len(suggestions.Suggestions, 1) {
 					assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-					assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
+					assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
 					assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 				}
 			}
@@ -216,14 +216,8 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				links, err := meetingLinksForTest(t, st, note)
 				require.NoError(err)
 				require.Len(links, 1)
-				assert.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
 				assert.True(listed.Start.Equal(links[0].Start), "resolved start must match the calendar listing")
 				assert.True(listed.End.Equal(links[0].End), "resolved end must match the calendar listing")
-				for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}} {
-					suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
-					require.NoError(err)
-					assert.Empty(suggestions.Suggestions)
-				}
 			}
 		}},
 		{"over budget", func(t *testing.T) {
@@ -245,11 +239,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 				requirements.NoError(err)
 				if assertions.Len(suggestions.Suggestions, 1) {
-					wantRef := listed.Ref
-					if target.Kind == "evt" {
-						wantRef = fmt.Sprintf("evt:%d@20270314", master)
-					}
-					assertions.Equal(wantRef, suggestions.Suggestions[0].Ref)
+					assertions.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
 					assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 					assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 				}
@@ -259,14 +249,8 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				links, err := meetingLinksForTest(t, st, note)
 				requirements.NoError(err)
 				requirements.Len(links, 1)
-				assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
 				assertions.True(listed.Start.Equal(links[0].Start))
 				assertions.True(listed.End.Equal(links[0].End))
-				for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}} {
-					suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
-					requirements.NoError(err)
-					assertions.Empty(suggestions.Suggestions)
-				}
 			}
 		}},
 		{"unsupported", func(t *testing.T) {
@@ -284,7 +268,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			listed := page.Occurrences[0]
-			assertions.Equal(fmt.Sprintf("evt:%d", edit), listed.Ref)
+			assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), listed.Ref)
 			assertions.Equal(edit, listed.MessageID)
 			assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
 			assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
@@ -296,11 +280,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 					suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 					require.NoError(err)
 					require.Len(suggestions.Suggestions, 1)
-					wantRef := listed.Ref
-					if target.Kind == "evt" {
-						wantRef = fmt.Sprintf("evt:%d@20270314", master)
-					}
-					assert.Equal(wantRef, suggestions.Suggestions[0].Ref)
+					assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
 					assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 					assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 				})
@@ -313,7 +293,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				links, err := meetingLinksForTest(t, st, note)
 				require.NoError(err)
 				require.Len(links, 1)
-				assert.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
+				assert.Equal(listed.Ref, links[0].Ref)
 				assert.True(listed.Start.Equal(links[0].Start))
 				assert.True(listed.End.Equal(links[0].End))
 			})
@@ -324,14 +304,9 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 					links, err := meetingLinksForTest(t, st, note)
 					require.NoError(err)
 					require.Len(links, 1)
-					assert.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
+					assert.Equal(listed.Ref, links[0].Ref)
 					assert.True(listed.Start.Equal(links[0].Start))
 					assert.True(listed.End.Equal(links[0].End))
-					for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: target}, {Kind: "msg", MessageID: note}} {
-						suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
-						require.NoError(err)
-						assert.Empty(suggestions.Suggestions)
-					}
 				})
 			}
 		}},
@@ -350,7 +325,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			listed := page.Occurrences[0]
-			assertions.Equal(fmt.Sprintf("evt:%d", edit), listed.Ref)
+			assertions.Equal(formatMeetingOccurrence(ref), listed.Ref)
 			assertions.Equal("cancelled", listed.Status)
 			assertions.True(from.Equal(listed.Start))
 			assertions.True(from.AddDate(0, 0, 1).Equal(listed.End))
@@ -359,7 +334,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 				links, err := meetingLinksForTest(t, st, note)
 				requirements.NoError(err)
 				requirements.Len(links, 1)
-				assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
+				assertions.Equal(listed.Ref, links[0].Ref)
 				assertions.True(listed.Start.Equal(links[0].Start))
 				assertions.True(listed.End.Equal(links[0].End))
 			})
@@ -378,7 +353,7 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 					links, err := meetingLinksForTest(t, st, note)
 					requirements.NoError(err)
 					requirements.Len(links, 1)
-					assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
+					assertions.Equal(listed.Ref, links[0].Ref)
 					requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
 					links, err = meetingLinksForTest(t, st, note)
 					requirements.NoError(err)

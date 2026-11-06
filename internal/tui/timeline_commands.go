@@ -104,9 +104,6 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 		switch reader {
 		case timelineReaderNote:
 			msg.note, msg.err = backend.GetDailyNoteContext(ctx, date, id)
-			if msg.err == nil && (msg.note == nil || msg.note.ID != id || msg.note.LocalDate != date) {
-				msg.err = errors.New("daily note reader: empty or mismatched entry")
-			}
 		case timelineReaderCalendar:
 			detail, err := backend.GetCalendarOccurrenceContext(ctx, ref)
 			msg.err = err

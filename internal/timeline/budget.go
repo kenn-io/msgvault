@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"maps"
 
+	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // MaxBudget is the largest timeline response in bytes.
 const MaxBudget = 65536
+
+const freshnessSection = "freshness"
 
 // Fit selects ordered prefixes of each section and measures the final wire
 // encoding, including omission metadata and the actual continuation. Fit owns
@@ -33,6 +36,9 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	out.Days = nil
 	out.Upcoming = nil
 	out.History = nil
+	out.Freshness.Sources = nil
+	out.Freshness.Projections = nil
+	out.Freshness.Warnings = nil
 	if original.OpenLoops != nil {
 		loops := *original.OpenLoops
 		loops.Items = nil
@@ -51,8 +57,8 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	}
 	available := budget - base
 	// A running ceiling passes each unused share to the following section.
-	ceilings := map[string]int{"open_loops": base + available*15/100, "upcoming": base + available*25/100, "days": budget, "history": budget}
-	for _, section := range []string{"open_loops", "upcoming", "days", "history"} {
+	ceilings := map[string]int{freshnessSection: base + available*15/100, "open_loops": base + available*15/100, "upcoming": base + available*25/100, "days": budget, "history": budget}
+	for _, section := range []string{freshnessSection, "open_loops", "upcoming", "days", "history"} {
 		admitted := 0
 		for _, item := range items {
 			if item.section != section {
@@ -71,7 +77,7 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 			}
 			limit := ceilings[section]
 			if size > limit {
-				if admitted > 0 {
+				if admitted > 0 || section == freshnessSection {
 					break
 				}
 				// A section's first row always makes progress, using a minimal identity
@@ -100,7 +106,7 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	}
 	if original.continuation == nil {
 		for section, total := range totals {
-			if section != "open_loops" && counts[section] < total {
+			if section != "open_loops" && section != freshnessSection && counts[section] < total {
 				return nil, fmt.Errorf("%w: pageable result needs SetContinuation", ErrInvalidRequest)
 			}
 		}
@@ -119,10 +125,22 @@ type pageItem struct {
 	section, part, date string
 	entry               *Entry
 	summary             *DaySummary
+	source              *freshness.SourceFreshness
+	projection          *ProjectionFreshness
+	warning             *string
 }
 
 func timelineItems(t *Timeline) []pageItem {
 	var out []pageItem
+	for i := range t.Freshness.Sources {
+		out = append(out, pageItem{section: freshnessSection, source: &t.Freshness.Sources[i]})
+	}
+	for i := range t.Freshness.Projections {
+		out = append(out, pageItem{section: freshnessSection, projection: &t.Freshness.Projections[i]})
+	}
+	for i := range t.Freshness.Warnings {
+		out = append(out, pageItem{section: freshnessSection, warning: &t.Freshness.Warnings[i]})
+	}
 	add := func(section, part, date string, entries []Entry) {
 		for i := range entries {
 			out = append(out, pageItem{section: section, part: part, date: date, entry: &entries[i]})
@@ -154,6 +172,15 @@ func appendItem(t *Timeline, item pageItem, stub bool) {
 		}
 	}
 	switch item.section {
+	case freshnessSection:
+		switch {
+		case item.source != nil:
+			t.Freshness.Sources = append(t.Freshness.Sources, *item.source)
+		case item.projection != nil:
+			t.Freshness.Projections = append(t.Freshness.Projections, *item.projection)
+		case item.warning != nil:
+			t.Freshness.Warnings = append(t.Freshness.Warnings, *item.warning)
+		}
 	case "open_loops":
 		t.OpenLoops.Items = append(t.OpenLoops.Items, e)
 	case "upcoming":
@@ -232,6 +259,9 @@ func entryStub(e Entry) Entry {
 }
 
 func clonePage(t Timeline) Timeline {
+	t.Freshness.Sources = append([]freshness.SourceFreshness(nil), t.Freshness.Sources...)
+	t.Freshness.Projections = append([]ProjectionFreshness(nil), t.Freshness.Projections...)
+	t.Freshness.Warnings = append([]string(nil), t.Freshness.Warnings...)
 	t.History = append([]Entry(nil), t.History...)
 	t.Upcoming = append([]Entry(nil), t.Upcoming...)
 	t.Days = append([]Day(nil), t.Days...)
@@ -266,7 +296,7 @@ func preparePage(t, original *Timeline, totals, counts map[string]int, format st
 	for section, total := range totals {
 		lost := total - counts[section]
 		if lost > 0 {
-			if section != "open_loops" {
+			if section != "open_loops" && section != freshnessSection {
 				needsCursor = true
 			}
 			if old, ok := t.Omitted.Budget[section]; ok {
@@ -280,7 +310,7 @@ func preparePage(t, original *Timeline, totals, counts map[string]int, format st
 				}
 			}
 			t.Omitted.Budget[section] = lost
-			if section != "open_loops" {
+			if section != "open_loops" && section != freshnessSection {
 				needsCursor = true
 			}
 		}
@@ -309,7 +339,7 @@ func preparePage(t, original *Timeline, totals, counts map[string]int, format st
 	maps.Copy(positions, c.Positions)
 	delete(positions, "open_loops")
 	for _, item := range timelineItems(t) {
-		if item.section == "open_loops" {
+		if item.section == "open_loops" || item.section == freshnessSection {
 			continue
 		}
 		key := "day:" + item.date

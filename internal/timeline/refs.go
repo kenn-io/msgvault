@@ -100,7 +100,10 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 		a.Kind = map[string]string{"msg": "message", "conv": "conversation", "evt": "meeting"}[m[1]]
 		return a, nil
 	}
-	if at, _, err := calrecur.CivilDateBoundary(s, loc); err == nil {
+	if at, exists, err := calrecur.CivilDateBoundary(s, loc); err == nil {
+		if !exists {
+			return a, fmt.Errorf("%w: civil date does not exist in %s", ErrInvalidRequest, loc)
+		}
 		a.Kind = "date"
 		a.Time = at
 		return a, nil

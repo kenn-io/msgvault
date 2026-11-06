@@ -212,7 +212,7 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	return text, entries
 }
 func entryRow(e Entry, loc *time.Location) string {
-	ref := FormatShortRef(e.Ref)
+	ref := FormatShortRef(cmp.Or(e.AnchorRef, e.Ref))
 	clock := e.Time.In(loc).Format("15:04")
 	var body string
 	switch {
@@ -252,7 +252,11 @@ func entryRow(e Entry, loc *time.Location) string {
 			body += fmt.Sprintf(" · %d actions", m.ActionItemCount)
 		}
 		if len(m.PossiblyRelated) > 0 {
-			body += " · possibly related " + strings.Join(m.PossiblyRelated, ", ")
+			refs := make([]string, 0, len(m.PossiblyRelated))
+			for _, ref := range m.PossiblyRelated {
+				refs = append(refs, FormatShortRef(ref))
+			}
+			body += " · possibly related " + strings.Join(refs, ", ")
 		}
 	case e.Burst != nil:
 		p := e.Burst

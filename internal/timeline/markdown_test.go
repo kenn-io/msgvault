@@ -66,3 +66,17 @@ func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v.History[0].Burst.Copies = map[int64]int{1: 2, 2: 2, 3: 2}
 	assert.Contains(t, Markdown(v), "(3 extra copies)")
 }
+
+func TestMarkdownUsesAnchorAndShortRelatedRefs(t *testing.T) {
+	v := sampleTimeline(ModeAnchor)
+	v.Days = nil
+	v.Upcoming = nil
+	v.History = []Entry{v.History[2], v.History[0]}
+	v.History[0].Ref = "conv:412"
+	v.History[0].AnchorRef = "msg:9031"
+	v.History[1].Meeting.PossiblyRelated = []string{"msg:9032", "evt:8812@20261022T133000Z"}
+	got := Markdown(v)
+	assert.Contains(t, got, "#9031")
+	assert.NotContains(t, got, "c412")
+	assert.Contains(t, got, "possibly related #9032, e8812@20261022T1330Z")
+}

@@ -49,7 +49,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
-	assertions.Equal(fmt.Sprintf("evt:%d", moved), page.Occurrences[0].Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 
 	_, zero := calendarFixture(t, st, "zero", `{"id":"zero","start":{"dateTime":"2027-03-14T13:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
