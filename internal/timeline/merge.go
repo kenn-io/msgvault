@@ -251,7 +251,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if c.req.Brief {
 			until = c.t.Now.Add(24 * time.Hour)
 		}
-		if o.Status != "cancelled" && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) {
+		if o.Status != "cancelled" && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) && (c.req.Mode != ModeDay || date > c.t.Window.To) {
 			upcoming = append(upcoming, e)
 		}
 	}

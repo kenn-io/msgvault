@@ -712,7 +712,7 @@ func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {
 	}
 }
 
-func TestTimelineRefreshAfterNextPageRestartsFirstPage(t *testing.T) {
+func TestTimelineRefreshOrRetryAfterNextPage(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(failed), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -734,10 +734,14 @@ func TestTimelineRefreshAfterNextPageRestartsFirstPage(t *testing.T) {
 			requirements.NotNil(cmd)
 			refreshed = sendMsg(t, refreshed, cmd())
 			requirements.Len(backend.requests, 2)
-			assertions.Empty(backend.requests[1].Cursor)
+			wantCursor := ""
+			if failed {
+				wantCursor = "opaque-next-page"
+			}
+			assertions.Equal(wantCursor, backend.requests[1].Cursor)
 			assertions.Equal(original.Date, backend.requests[1].Date)
 			assertions.Equal(original.Mode, backend.requests[1].Mode)
-			assertions.Empty(refreshed.timelineState.request.Cursor)
+			assertions.Equal(wantCursor, refreshed.timelineState.request.Cursor)
 		})
 	}
 }

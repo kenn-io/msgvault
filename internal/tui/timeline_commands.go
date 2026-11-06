@@ -43,12 +43,7 @@ func (m *Model) startTimelineRequest(req timeline.Request, remember bool) tea.Cm
 	}
 	m.timelineState.request = req
 	m.timelineState.needsLoad = true
-	// Pending requests have no selectable stale entries. Esc restores the
-	// complete prior result and selection from history.
-	m.timelineState.result = nil
-	m.timelineState.lines = nil
-	m.timelineState.entries = nil
-	m.timelineState.cursor, m.timelineState.scroll = 0, 0
+
 	m.timelineState.reader = timelineReaderNone
 	m.timelineState.loading = true
 	m.timelineState.err = nil

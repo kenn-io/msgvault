@@ -166,8 +166,6 @@ type calendarOccurrenceReadCase struct {
 	content                               calevent.Content
 	standalone, sparseDetail              bool
 	unexpandableReason                    string
-	openUnexpandableReason                string
-	opensUnexpandable                     bool
 	exceptionStart, exceptionEnd          string
 	fractionalBounds                      bool
 	rejectGeneratedRef                    bool
@@ -274,8 +272,8 @@ func calendarOccurrenceReadCases() []calendarOccurrenceReadCase {
 		{count: 1, rejectGeneratedRef: true, aliasRef: true, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`, unexpandableReason: "unsupported recurrence"},
 		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent, sparseDetail: true, unexpandableReason: "unsupported recurrence"},
 		{count: 1, aliasRef: true, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
-		{count: 2, rejectGeneratedRef: true, name: "unresolvable exception", state: "unresolvable", openUnexpandableReason: "missing series master and event bounds", fields: `"status":"cancelled"`},
-		{count: 3, rejectGeneratedRef: true, name: "fractional original", state: "fractional original", opensUnexpandable: true, fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, fractionalBounds: true},
+		{count: 2, rejectGeneratedRef: true, name: "unresolvable exception", state: "unresolvable", fields: `"status":"cancelled"`},
+		{count: 3, rejectGeneratedRef: true, name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, fractionalBounds: true},
 		{count: 1, rejectGeneratedRef: true, name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, fractionalBounds: true},
 		{count: 2, rejectGeneratedRef: true, name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 1, name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
@@ -361,18 +359,9 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 			}
 			for _, unsupported := range page.Unexpandable {
 				if unsupported.MessageID == exception || tc.state == "missing bounds" {
-					detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", unsupported.MessageID))
-					if tc.opensUnexpandable {
-						requirements.NoError(err)
-						assertions.Equal(exception, detail.MessageID)
-						continue
-					}
+					_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", unsupported.MessageID))
 					requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
-					reason := unsupported.Reason
-					if tc.openUnexpandableReason != "" {
-						reason = tc.openUnexpandableReason
-					}
-					assertions.Contains(err.Error(), reason)
+					assertions.Contains(err.Error(), unsupported.Reason)
 				}
 			}
 			if tc.rejectGeneratedRef {
@@ -383,7 +372,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				}
 			}
 			if tc.state == "unresolvable" {
-				assertions.Equal([]CalendarUnexpandable{{MessageID: exception, Reason: "exception original start must have whole-second precision"}}, page.Unexpandable)
+				assertions.Equal([]CalendarUnexpandable{{MessageID: exception, Reason: "missing series master and event bounds"}}, page.Unexpandable)
 				assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), page.Occurrences[0].Ref)
 				assertions.Equal(fmt.Sprintf("evt:%d@20270309T170000Z", master), page.Occurrences[1].Ref)
 			}

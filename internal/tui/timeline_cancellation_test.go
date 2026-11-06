@@ -68,3 +68,50 @@ func TestTimelineInitialLoadCancellationIsVisible(t *testing.T) {
 	requirements.NotNil(cmd)
 	assertions.True(retry.timelineState.loading)
 }
+
+func TestTimelineFailedNavigationKeepsPageAndRetriesRequest(t *testing.T) {
+	for _, keyName := range []rune{'n', '[', ']'} {
+		t.Run(string(keyName), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			m := timelineModeModel()
+			m.timelineState.result.Cursor = "next-page"
+			original := m.timelineState.result
+			m.timelineState.scroll = 1
+			m, cmd := sendKey(t, m, key(keyName))
+			defer m.cancelTimelineRequest()
+			requirements.NotNil(cmd)
+			requested := m.timelineState.request
+			msg, ok := cmd().(timelineLoadedMsg)
+			requirements.True(ok)
+			msg.result, msg.err = nil, errors.New("temporarily unavailable")
+			m = sendMsg(t, m, msg)
+			assertions.Same(original, m.timelineState.result)
+			assertions.Equal(1, m.timelineState.scroll)
+			assertions.Contains(stripANSI(m.renderView()), "Project update")
+			m, cmd = sendKey(t, m, key('r'))
+			defer m.cancelTimelineRequest()
+			requirements.NotNil(cmd)
+			cmd()
+			backend, ok := m.timelineBackend.(*timelineModeBackend)
+			requirements.True(ok)
+			assertions.Equal(requested, backend.requests[len(backend.requests)-1])
+		})
+	}
+}
+
+func TestTimelineDayStepAcrossSkippedMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		key  rune
+		date string
+	}{{'[', "2026-09-05"}, {']', "2026-09-07"}} {
+		t.Run(string(tc.key), func(t *testing.T) {
+			m := timelineModeModel()
+			m.timelineState.result.Timezone = "America/Santiago"
+			m.timelineState.result.Window = timeline.Window{From: "2026-09-06", To: "2026-09-06"}
+			m, cmd := sendKey(t, m, key(tc.key))
+			defer m.cancelTimelineRequest()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tc.date, m.timelineState.request.Date)
+		})
+	}
+}

@@ -23,7 +23,7 @@ const maxBursts = 5000
 // Build reads the authorized archive, composes a stable view and fits its final
 // encoding. It never issues SQL or writes archive data.
 func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
-	if !req.Scope.Owner && (len(sourcescope.IDs(ctx)) == 0 || req.With != "") {
+	if !req.Scope.Owner && len(sourcescope.IDs(ctx)) == 0 {
 		return nil, ErrInvalidRequest
 	}
 	req, err := normalizeRequest(req)
@@ -45,6 +45,15 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 	t := &Timeline{Mode: req.Mode, Timezone: loc.String(), TimezoneIsDefault: src.ZoneDefault, Now: now, Freshness: Freshness{AsOf: now, StaleThreshold: 86400, Sources: []freshness.SourceFreshness{}, Projections: []ProjectionFreshness{}, Warnings: []string{}}, Omitted: Omitted{Budget: map[string]any{}}}
 	c := composer{ctx: ctx, src: src, req: req, t: t, loc: loc, positions: map[string]string{}, keys: map[string]string{}, entryDates: map[string]string{}, more: map[string]bool{}}
 	windowAt := func(at time.Time) (Window, error) { return resolveWindow(req, at, loc) }
+	var person store.PersonCandidate
+	if req.With != "" {
+		p, e := c.resolvePerson()
+		if e != nil {
+			return nil, e
+		}
+		person = p
+		c.setSubject(p)
+	}
 	var target anchorTarget
 	if req.Mode == ModeAnchor {
 		target, err = c.resolveAnchor()
@@ -79,15 +88,8 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 		t.Freshness.AsOf = now
 		c.positions = positions
 	}
-	if req.With != "" {
-		p, e := c.resolvePerson()
-		if e != nil {
-			return nil, e
-		}
-		c.setSubject(p)
-		if req.Mode == ModeRelationship {
-			c.buildRelationship(p)
-		}
+	if req.Mode == ModeRelationship {
+		c.buildRelationship(person)
 	}
 	switch req.Mode {
 	case ModeDay:
@@ -131,6 +133,9 @@ func normalizeRequest(req Request) (Request, error) {
 		if req.Mode == ModeAnchor {
 			return req, fmt.Errorf("%w: date/days/from/to conflict with around", ErrInvalidRequest)
 		}
+	}
+	if req.Around == "" && (req.BeforeSet || req.AfterSet || req.Before != 0 || req.After != 0) {
+		return req, fmt.Errorf("%w: before/after require around", ErrInvalidRequest)
 	}
 	if req.Format == "" {
 		req.Format = "markdown"
@@ -185,10 +190,10 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 		if req.Brief {
 			days = 2
 		}
-		from = now.In(loc).AddDate(0, 0, 1-days).Format(time.DateOnly)
+		from, _ = calrecur.AddCivilDateDays(to, 1-days)
 	}
-	start, e1 := time.ParseInLocation(time.DateOnly, from, loc)
-	end, e2 := time.ParseInLocation(time.DateOnly, to, loc)
+	start, e1 := time.Parse(time.DateOnly, from)
+	end, e2 := time.Parse(time.DateOnly, to)
 	if e1 != nil || e2 != nil || end.Before(start) {
 		return Window{}, ErrInvalidRequest
 	}

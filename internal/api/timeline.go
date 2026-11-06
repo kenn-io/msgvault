@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -121,8 +119,7 @@ func (s *Server) timelineSources() (timeline.Sources, error) {
 }
 
 func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
+	ctx := r.Context()
 	req, err := parseTimelineRequest(r.URL.RawQuery)
 	if err != nil {
 		s.writeTimelineError(w, err)

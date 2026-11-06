@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -64,16 +63,12 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 	defer release()
 	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	query := `SELECT m.id,md.projection_version,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_details md ON md.message_id=m.id LEFT JOIN meeting_action_items a ON a.message_id=m.id
- WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s) GROUP BY m.id,md.projection_version`
+	query := `SELECT m.id,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_action_items a ON a.message_id=m.id
+ WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s) GROUP BY m.id`
 	err = queryInChunksContext(ctx, snapshot.tx, ids, args, query, func(rows *loggedRows) error {
 		var id int64
 		var count int
-		var version sql.NullInt64
-		if err := rows.Scan(&id, &version, &count); err != nil {
-			return err
-		}
-		if err := validateMeetingProjectionVersion(version); err != nil {
+		if err := rows.Scan(&id, &count); err != nil {
 			return err
 		}
 		result[id] = count

@@ -101,7 +101,7 @@ func DecodeCursor(value string, b CursorBinding) (Cursor, error) {
 	if err := store.DecodeReadCursor(value, &wire, cursorMaxBytes); err != nil {
 		return fail()
 	}
-	if wire.Nanos < 0 || wire.Nanos >= 1000000000 {
+	if wire.Now <= 0 || wire.Now > 253402300799 || wire.Nanos < 0 || wire.Nanos >= 1000000000 {
 		return fail()
 	}
 	now := time.Unix(wire.Now, int64(wire.Nanos)).UTC()
@@ -113,7 +113,7 @@ func DecodeCursor(value string, b CursorBinding) (Cursor, error) {
 		b.Window = window
 	}
 	archive, filter, err := cursorHashes(b)
-	if err != nil || wire.Version != 1 || wire.Archive != archive || wire.Filter != filter || wire.Sections == nil || wire.Now <= 0 {
+	if err != nil || wire.Version != 1 || wire.Archive != archive || wire.Filter != filter || wire.Sections == nil {
 		return fail()
 	}
 	if _, ok := wire.Sections["open_loops"]; ok {

@@ -15,6 +15,9 @@ func TestBuildRejectsInvalidRequests(t *testing.T) {
 		options []string
 		want    error
 	}{
+		{"before without anchor", Request{Before: 1}, []string{"before/after", "around"}, ErrInvalidRequest},
+		{"explicit zero after without anchor", Request{AfterSet: true}, []string{"before/after", "around"}, ErrInvalidRequest},
+		{"relationship after", Request{With: "email:alice@example.com", After: 1}, []string{"before/after", "around"}, ErrInvalidRequest},
 		{"relationship date", Request{With: "email:alice@example.com", Date: "2026-10-22"}, []string{"with", "date"}, ErrInvalidRequest},
 		{"anchor date", Request{Around: "2026-10-22", Date: "2026-10-22"}, []string{"around", "date"}, ErrInvalidRequest},
 		{"anchor malformed date", Request{Around: "2026-10-22", Date: "bad"}, []string{"around", "date"}, ErrInvalidRequest},

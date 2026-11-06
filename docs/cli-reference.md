@@ -66,7 +66,7 @@ answered, fails with `<id> isn't an open loop.`
 
 Read day activity, relationship history, or the context around an archived
 message or meeting through the selected daemon. This is unreleased and requires
-API schema 3.45.0 or newer. See [Timeline](usage/timeline.md) for the workflow
+API schema 3.47.0 or newer. See [Timeline](usage/timeline.md) for the workflow
 and output conventions.
 
 ```bash
@@ -89,7 +89,7 @@ msgvault timeline --json --budget 4096
 | `--include-cold`, `--include-noise` | Include activity omitted by the default cold and noise filters |
 | `--brief` | Smaller output, five loops and 24 hours of upcoming activity |
 | `--budget N` | Final output bytes, 2048–65536; default 16384, or 6144 with `--brief` |
-| `--json` | Compact JSON instead of Markdown; no added trailing newline |
+| `--json` | Compact JSON instead of Markdown; ends with a newline |
 | `--cursor C` | Continue with the same filters, format, and authorization scope |
 
 `--date`, `--days`, and the `--from`/`--to` pair are alternatives. Day boundaries

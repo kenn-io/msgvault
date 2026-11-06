@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
@@ -80,9 +81,14 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch msg.String() {
 	case "r":
 		req := m.timelineState.request
-		req.Cursor = ""
+		if m.timelineState.err == nil {
+			req.Cursor = ""
+		}
 		return m.requestTimeline(req)
 	case "n":
+		if m.timelineState.loading {
+			return m, nil
+		}
 		if result := m.timelineState.result; result != nil && result.Cursor != "" {
 			req := m.timelineState.request
 			req.Cursor = result.Cursor
@@ -131,23 +137,24 @@ func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
 	if back {
 		delta, edge = -1, result.Window.From
 	}
-	day := result.Now.In(loc)
+	date := result.Now.In(loc).Format(time.DateOnly)
 	switch result.Mode {
 	case timeline.ModeAnchor:
 		if result.Anchor != nil {
-			day = result.Anchor.Time.In(loc)
+			date = result.Anchor.Time.In(loc).Format(time.DateOnly)
 		}
 	case timeline.ModeRelationship:
 		if entry := m.highlightedTimelineEntry(); entry != nil {
-			day = entry.Time.In(loc)
+			date = entry.Time.In(loc).Format(time.DateOnly)
 		}
 	default:
-		day, err = time.ParseInLocation(time.DateOnly, edge, loc)
-		if err != nil {
-			return m, nil
-		}
+		date = edge
 	}
-	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)})
+	date, err = calrecur.AddCivilDateDays(date, delta)
+	if err != nil {
+		return m, nil
+	}
+	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: date})
 }
 
 func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

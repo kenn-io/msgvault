@@ -69,6 +69,12 @@ func newTimelineCommand() *cobra.Command {
 		}
 		req.BeforeSet = cmd.Flags().Changed("before")
 		req.AfterSet = cmd.Flags().Changed("after")
+		if !req.BeforeSet {
+			req.Before = 0
+		}
+		if !req.AfterSet {
+			req.After = 0
+		}
 		client, closeClient, err := timelineOpen(cmd.Context())
 		if err != nil {
 			return err

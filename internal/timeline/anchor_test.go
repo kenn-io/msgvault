@@ -284,3 +284,43 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("2026-09-06", meeting.Anchor.Time.In(loc).Format(time.DateOnly))
 }
+
+func TestTimelineAnchorWithBccSelectsMatchingCopy(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	bcc := f.EnsureParticipant("bcc@example.com", "Bcc contact", "example.com")
+	f.add(f.now, false, func(m *store.Message) {
+		m.RFC822MessageID = sql.NullString{String: "<bcc-copy@example.com>", Valid: true}
+	})
+	source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	conv, err := f.Store.EnsureConversationWithType(source.ID, "bcc-copy", "email_thread", "Bcc copy")
+	requirements.NoError(err)
+	copyID := f.add(f.now, false, func(m *store.Message) {
+		m.SourceID, m.ConversationID = source.ID, conv
+		m.RFC822MessageID = sql.NullString{String: "<bcc-copy@example.com>", Valid: true}
+	})
+	requirements.NoError(f.Store.ReplaceMessageRecipients(copyID, "bcc", []int64{bcc}, nil))
+	f.project()
+	req := anchorRequest(messageRef(copyID))
+	req.With = "email:bcc@example.com"
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	assertions.Equal(messageRef(copyID), got.History[0].AnchorRef)
+	assertions.True(got.History[0].Anchor)
+}
+
+func TestTimelineDefaultWindowAfterSkippedMidnight(t *testing.T) {
+	f := newTimelineFixture(t)
+	loc, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	f.src.Location = loc
+	f.src.Clock = func() time.Time { return time.Date(2026, 9, 7, 0, 30, 0, 0, loc) }
+	req := dayRequest()
+	req.Date = ""
+	got, err := Build(t.Context(), f.src, req)
+	require.NoError(t, err)
+	assert.Equal(t, Window{From: "2026-09-06", To: "2026-09-07"}, got.Window)
+}

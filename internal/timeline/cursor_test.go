@@ -172,3 +172,21 @@ func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
 		requirements.ErrorIs(err, ErrCursorExpired)
 	}
 }
+
+func TestTimelineCursorRejectsOutOfRangeTime(t *testing.T) {
+	requirements := require.New(t)
+	b := cursorBinding()
+	encoded, err := EncodeCursor(b, map[string]string{})
+	requirements.NoError(err)
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	requirements.NoError(err)
+	var wire cursorWire
+	requirements.NoError(json.Unmarshal(raw, &wire))
+	for _, seconds := range []int64{253402300800, 9223372036854775807} {
+		wire.Now = seconds
+		raw, err = json.Marshal(wire)
+		requirements.NoError(err)
+		_, err = DecodeCursor(base64.RawURLEncoding.EncodeToString(raw), b)
+		requirements.ErrorIs(err, ErrCursorExpired)
+	}
+}

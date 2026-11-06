@@ -135,7 +135,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	if (query.Limit != nil || query.Cursor != "") && len(page.Occurrences) > limit {
 		page.Occurrences = page.Occurrences[:limit]
 		last := page.Occurrences[len(page.Occurrences)-1]
-		page.NextCursor, err = encodeReadCursor(calendarOccurrenceCursor{Version: 1, ArchiveUID: uid, FilterHash: hash, Start: last.Start, Ref: last.Ref})
+		page.NextCursor, err = EncodeReadCursor(calendarOccurrenceCursor{Version: 1, ArchiveUID: uid, FilterHash: hash, Start: last.Start, Ref: last.Ref}, meetingActionsCursorBytes)
 		if err != nil {
 			return page, err
 		}
@@ -421,12 +421,12 @@ func decodeCalendarOccurrenceCursor(value, uid, hash string) (calendarOccurrence
 	var header struct {
 		Version int `json:"version"`
 	}
-	err := decodeReadCursor(value, &header, json.RejectUnknownMembers(false))
+	err := DecodeReadCursor(value, &header, meetingActionsCursorBytes, json.RejectUnknownMembers(false))
 	if err == nil && header.Version != 1 {
 		return cursor, fmt.Errorf("%w: unsupported cursor version %d", ErrCalendarOccurrenceInvalid, header.Version)
 	}
 	if err == nil {
-		err = decodeReadCursor(value, &cursor)
+		err = DecodeReadCursor(value, &cursor, meetingActionsCursorBytes)
 	}
 	if err != nil || cursor.ArchiveUID != uid || cursor.FilterHash != hash || cursor.Start.IsZero() || cursor.Ref == "" {
 		return cursor, fmt.Errorf("%w: cursor does not match this archive, window, or scope", ErrCalendarOccurrenceInvalid)
