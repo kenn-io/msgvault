@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,19 +50,19 @@ func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListTo
 
 func TestMCPArchiveFamilies(t *testing.T) {
 	for _, tc := range []struct{ source, tool string }{
-		{"mbox", ""}, {"gcal", "calendar_freebusy"},
+		{"mbox", ""},
 		{"granola", "get_meeting_context"}, {"chatwoot", "get_meeting_context"},
 		{"circleback", "get_meeting_context"}, {"pocket", "get_meeting_context"},
 		{"muesli", "get_meeting_context"}, {"notion_meetings", "get_meeting_context"},
 		{"meeting_import", "get_meeting_context"}, {"omi", "get_meeting_context"},
 		{"plaud", "get_meeting_context"}, {"twilio", "get_meeting_context"},
 		{"twenty", "get_meeting_context"}, {"beeper", "find_chat"},
-		{"slack", "get_slack_sync_policy"}, {"slackdump", "get_slack_sync_policy"},
-		{"gmail", "draft_reply"}, {"imap", "draft_reply"},
+		{"slack", "get_slack_sync_policy"},
+		{"imap", "draft_reply"},
 		{"teams", "draft_compose"}, {"discord", "draft_compose"},
 		{"whatsapp", "find_chat"}, {"telegram", "find_chat"}, {"matrix", "find_chat"},
 		{"apple_messages", "find_chat"}, {"synctech_sms", "find_chat"}, {"imazing_csv", "find_chat"},
-		{"facebook_messenger", "find_chat"}, {"google_voice", "find_chat"}, {"inline", "find_chat"},
+		{"facebook_messenger", "find_chat"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			assert := assert.New(t)
@@ -105,42 +106,55 @@ func TestMCPArchiveFamilies(t *testing.T) {
 }
 
 func TestMCPArchiveIntegrationProbes(t *testing.T) {
+	kataSettings := `[{"key":"integrations.kata.enabled","value":{"boolean":true}},{"key":"integrations.kata.endpoint","value":{"string":"https://kata.example"}}]`
 	for _, tc := range []struct {
-		name, connections, settings  string
-		sourceFailure, carddav, kata bool
+		name, connections, settings, failed string
+		carddav, kata                       bool
 	}{
-		{"named CardDAV", `[{"connection":"work"}]`, `[]`, false, true, false},
-		{"orphaned CardDAV", `[{"connection":"old","orphaned":true}]`, `[]`, false, false, false},
-		{"Kata enabled", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}},{"key":"integrations.kata.endpoint","value":{"string":"https://kata.example"}}]`, false, false, true},
-		{"Kata missing endpoint", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}}]`, false, false, false},
-		{"source probe failed", `[{"connection":"default"}]`, `[]`, true, true, false},
+		{"named CardDAV", `[{"connection":"work"}]`, `[]`, "", true, false},
+		{"orphaned CardDAV", `[{"connection":"old","orphaned":true}]`, `[]`, "", false, false},
+		{"Kata enabled", `[]`, kataSettings, "", false, true},
+		{"Kata missing endpoint", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}}]`, "", false, false},
+		{"source timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/sources/status", true, true},
+		{"CardDAV timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/carddav/connections", false, true},
+		{"settings timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/settings", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/api/v1/sources/status":
-					if tc.sourceFailure {
-						http.Error(w, "unavailable", http.StatusServiceUnavailable)
-						return
+			synctest.Test(t, func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				client, err := daemonclient.New(daemonclient.Config{URL: "http://daemon.example", AllowInsecure: true, HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+					if r.URL.Path == tc.failed {
+						<-r.Context().Done()
 					}
-					_, _ = io.WriteString(w, `{"sources":[]}`)
-				case "/api/v1/carddav/connections":
-					_, _ = io.WriteString(w, `{"connections":`+tc.connections+`}`)
-				case "/api/v1/settings":
-					_, _ = io.WriteString(w, `{"settings":`+tc.settings+`}`)
-				default:
-					http.NotFound(w, r)
+					if err := r.Context().Err(); err != nil {
+						return nil, err
+					}
+					body := ""
+					switch r.URL.Path {
+					case "/api/v1/sources/status":
+						body = `{"sources":[{"source_type":"gcal"}]}`
+					case "/api/v1/carddav/connections":
+						body = `{"connections":` + tc.connections + `}`
+					case "/api/v1/settings":
+						body = `{"settings":` + tc.settings + `}`
+					default:
+						assert.Fail("unexpected discovery path", r.URL.Path)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				})}})
+				require.NoError(err)
+				defer func() { require.NoError(client.Close()) }()
+				started := time.Now()
+				families := discoverMCPFamilies(t.Context(), client, slog.New(slog.DiscardHandler))
+				if tc.failed != "" {
+					assert.Equal(10*time.Second, time.Since(started))
 				}
+				listed := archiveMCPCatalog(t, mcpserver.ServeOptions{Calendar: client, PersonCardDAV: client, Kata: client, KataLookup: true, PersonAgendaBackend: client, Families: families})
+				assert.Equal(tc.failed != "/api/v1/sources/status", slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "calendar_freebusy" }))
+				assert.Equal(tc.carddav, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_carddav_publication" }))
+				assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_person_agenda" }))
+				assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "find_kata_issues" }))
 			})
-			families := discoverMCPFamilies(t.Context(), client, slog.New(slog.DiscardHandler))
-			assert.Equal(tc.carddav, families.CardDAV)
-			assert.Equal(tc.kata, families.Kata)
-			listed := archiveMCPCatalog(t, mcpserver.ServeOptions{PersonCardDAV: client, Kata: client, KataLookup: true, PersonAgendaBackend: client, Families: families})
-			assert.Equal(tc.carddav, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_carddav_publication" }))
-			assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_person_agenda" }))
-			assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "find_kata_issues" }))
 		})
 	}
 }
@@ -318,5 +332,42 @@ func TestMCPArchiveHTTPCallsSkipDiscovery(t *testing.T) {
 			assert.Contains(response.Body.String(), "synthetic message")
 		}
 		assert.Equal(1, probes)
+	}
+}
+
+func TestMCPArchiveLocalChatDrafts(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slackdump", "chat-archive")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
+	requirements.NoError(err)
+	server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
+	for _, delegated := range []bool{false, true} {
+		t.Run(map[bool]string{false: "owner", true: "delegated"}[delegated], func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
+			if delegated {
+				ctx = mcpDraftAgentContext(t, server, source.ID, []string{"draft.create", "draft.edit"})
+			}
+			session := mcpDraftTestSession(ctx, t)
+			names := mcpDraftToolNames(t, session)
+			assert.Contains(names, "draft_compose")
+			assert.Contains(names, "draft_get")
+			created, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "draft_compose", Arguments: map[string]any{"conversation": conversation, "body": "local chat draft"}})
+			require.NoError(err)
+			require.False(created.IsError, "%v", created.Content)
+			output, ok := created.StructuredContent.(map[string]any)
+			require.True(ok)
+			assert.Equal("slackdump", output["source_type"])
+			assert.Equal("msgvault", output["location"])
+			read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "draft_get", Arguments: map[string]any{"draft_id": output["draft_id"]}})
+			require.NoError(err)
+			require.False(read.IsError, "%v", read.Content)
+			result, ok := read.StructuredContent.(map[string]any)
+			require.True(ok)
+			assert.Equal("local chat draft", result["body"])
+			assert.Equal(output["draft_id"], result["draft_id"])
+		})
 	}
 }

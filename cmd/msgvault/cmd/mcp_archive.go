@@ -32,15 +32,15 @@ func addMCPSourceFamilies(f *mcpserver.ArchiveFamilies, kind string) {
 }
 
 func discoverMCPFamilies(ctx context.Context, st *daemonclient.Client, log *slog.Logger) *mcpserver.ArchiveFamilies {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	families := &mcpserver.ArchiveFamilies{}
 	client, err := st.GeneratedClient()
 	if err != nil {
 		log.Warn("MCP archive families hidden because daemon discovery failed", "error", err)
 		return families
 	}
-	sources, err := client.ListSourceStatusWithResponse(ctx, &generated.ListSourceStatusRequestOptions{})
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	sources, err := client.ListSourceStatusWithResponse(probeCtx, &generated.ListSourceStatusRequestOptions{})
+	cancel()
 	if err != nil || sources.JSON200 == nil {
 		log.Warn("MCP source families hidden because source discovery failed", "error", err)
 	} else {
@@ -48,7 +48,9 @@ func discoverMCPFamilies(ctx context.Context, st *daemonclient.Client, log *slog
 			addMCPSourceFamilies(families, source.SourceType)
 		}
 	}
-	connections, err := client.ListCardDAVConnectionsWithResponse(ctx)
+	probeCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+	connections, err := client.ListCardDAVConnectionsWithResponse(probeCtx)
+	cancel()
 	if err != nil || connections.JSON200 == nil {
 		log.Warn("MCP CardDAV tools hidden because connection discovery failed", "error", err)
 	} else {
@@ -58,7 +60,9 @@ func discoverMCPFamilies(ctx context.Context, st *daemonclient.Client, log *slog
 			}
 		}
 	}
-	settings, err := client.GetSettingsWithResponse(ctx)
+	probeCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+	settings, err := client.GetSettingsWithResponse(probeCtx)
+	cancel()
 	if err != nil || settings.JSON200 == nil {
 		log.Warn("MCP Kata tools hidden because settings discovery failed", "error", err)
 	} else {
