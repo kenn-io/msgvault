@@ -55,7 +55,6 @@ type PersonCallSummary struct {
 	Declined         int   `json:"declined"`
 	Cancelled        int   `json:"cancelled"`
 	Unknown          int   `json:"unknown"`
-	Conflicting      int   `json:"conflicting"`
 	ExampleMessageID int64 `json:"example_message_id"`
 }
 
@@ -64,10 +63,10 @@ type PersonCallSummary struct {
 // stay unknown, and undated legacy calls are excluded from both call readers.
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
-	return `SELECT message_id, canonical_key, kind, direction,
-		outcome, owner_participation, occurred_at, duration_seconds, withdrawn FROM call_details
+	return `SELECT message_id, 'call' AS kind, '' AS direction,
+		outcome, owner_participation, occurred_at, NULL AS duration_seconds, withdrawn FROM call_details
 		UNION ALL
-		SELECT m.id, '', 'call',
+		SELECT m.id, 'call',
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
@@ -196,8 +195,8 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	return out, nil
 }
 
-// SummarizeCallsContext groups all active observations before applying the
-// time window. Exact identities never combine partial attendance claims.
+// SummarizeCallsContext counts each active record within the time window.
+// Each record must establish attendance on its own.
 // Current curated person bindings determine whose evidence is counted.
 func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]PersonCallSummary, error) {
 	if q.AfterID != 0 {
@@ -212,10 +211,10 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "p.person_id = ?"), append(args, q.PersonID)
 	}
 	if q.After != nil {
-		where, args = append(where, "i.occurred_at >= ?"), append(args, q.After.UTC())
+		where, args = append(where, "a.occurred_at >= ?"), append(args, q.After.UTC())
 	}
 	if q.Before != nil {
-		where, args = append(where, "i.occurred_at < ?"), append(args, q.Before.UTC())
+		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
 	out := []PersonCallSummary{}
@@ -251,35 +250,22 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		}
 		rows, err = tx.QueryContext(ctx, `
 		WITH active AS (
-			SELECT c.*, CASE WHEN c.canonical_key = '' THEN 'm:' || CAST(c.message_id AS TEXT)
-				ELSE 'n:' || c.canonical_key END AS identity_key
+			SELECT c.*
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		), identities AS (
-			SELECT identity_key, MIN(occurred_at) AS occurred_at,
-				MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
-				MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled')
-					THEN 1 ELSE 0 END) AS negative,
-				MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
-				MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
-				MAX(CASE WHEN outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
-			FROM active GROUP BY identity_key
 		), per_person AS (
-			SELECT a.identity_key, pp.person_id, MIN(a.message_id) AS example_id,
+			SELECT a.message_id, pp.person_id,
 				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
 					AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) AS confirmed
 			FROM active a JOIN (`+s.callRolesSQL()+`) r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
-			GROUP BY a.identity_key, pp.person_id
+			GROUP BY a.message_id, pp.person_id
 		), classified AS (
-			SELECT p.person_id, p.example_id,
-				CASE WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
-					WHEN p.confirmed = 1 THEN 'answered'
-					WHEN i.missed = 1 THEN 'missed'
-					WHEN i.declined = 1 THEN 'declined'
-					WHEN i.cancelled = 1 THEN 'cancelled'
+			SELECT p.person_id, p.message_id AS example_id,
+				CASE WHEN p.confirmed = 1 THEN 'answered'
+					WHEN a.outcome IN ('missed', 'declined', 'cancelled') THEN a.outcome
 					ELSE 'unknown' END AS category
-			FROM per_person p JOIN identities i ON i.identity_key = p.identity_key
+			FROM per_person p JOIN active a ON a.message_id = p.message_id
 			WHERE `+strings.Join(where, " AND ")+`
 		)
 		SELECT person_id,
@@ -288,7 +274,6 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 			SUM(CASE WHEN category = 'declined' THEN 1 ELSE 0 END),
 			SUM(CASE WHEN category = 'cancelled' THEN 1 ELSE 0 END),
 			SUM(CASE WHEN category = 'unknown' THEN 1 ELSE 0 END),
-			SUM(CASE WHEN category = 'conflicting' THEN 1 ELSE 0 END),
 			MIN(example_id)
 		FROM classified GROUP BY person_id ORDER BY answered DESC, person_id
 		LIMIT ? OFFSET ?`, args...)
@@ -299,7 +284,7 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		for rows.Next() {
 			var v PersonCallSummary
 			if err := rows.Scan(&v.PersonID, &v.Answered, &v.Missed, &v.Declined, &v.Cancelled,
-				&v.Unknown, &v.Conflicting, &v.ExampleMessageID); err != nil {
+				&v.Unknown, &v.ExampleMessageID); err != nil {
 				return fmt.Errorf("scan call summary: %w", err)
 			}
 			out = append(out, v)

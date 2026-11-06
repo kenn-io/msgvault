@@ -11313,7 +11313,6 @@ func (p PersonBriefVersionsResponse) Validate() error {
 type PersonCallSummary struct {
 	Answered         int64 `json:"answered"`
 	Cancelled        int64 `json:"cancelled"`
-	Conflicting      int64 `json:"conflicting"`
 	Declined         int64 `json:"declined"`
 	ExampleMessageID int64 `json:"example_message_id"`
 	Missed           int64 `json:"missed"`

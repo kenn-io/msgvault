@@ -142,7 +142,7 @@ func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
 	}
 }
 
-func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
+func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -176,17 +176,16 @@ func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	put("one", "b", "answered", "joined", "joined")
 	put("partial", "a", "answered", "unknown", "joined")
 	put("partial", "a", "unknown", "joined", "unknown")
-	put("conflict", "a", "answered", "joined", "joined")
-	put("conflict", "a", "missed", "not_joined", "unknown")
+	put("separate", "a", "answered", "joined", "joined")
+	put("separate", "a", "missed", "not_joined", "unknown")
 	put("missed", "a", "missed", "not_joined", "unknown")
 	got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(person.ID, got[0].PersonID)
-	assertions.Equal(2, got[0].Answered)
-	assertions.Equal(1, got[0].Unknown)
-	assertions.Equal(1, got[0].Conflicting)
-	assertions.Equal(1, got[0].Missed)
+	assertions.Equal(4, got[0].Answered)
+	assertions.Equal(2, got[0].Unknown)
+	assertions.Equal(2, got[0].Missed)
 	assertions.Equal(first, got[0].ExampleMessageID)
 
 	list, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 2})
@@ -210,10 +209,10 @@ func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &at})
 	requirements.NoError(err)
 	requirements.Len(got, 1)
-	assertions.Equal(2, got[0].Answered)
+	assertions.Equal(4, got[0].Answered)
 }
 
-func TestCallSummaryGroupsBeforeWindowAndUsesCurrentBindings(t *testing.T) {
+func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -247,11 +246,12 @@ func TestCallSummaryGroupsBeforeWindowAndUsesCurrentBindings(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(person.ID, got[0].PersonID)
-	assertions.Equal(1, got[0].Answered, "aliases and observations each deduplicate")
+	assertions.Equal(2, got[0].Answered, "aliases count once per record")
 	window := at.Add(time.Minute)
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &window})
 	requirements.NoError(err)
-	assertions.Empty(got, "later duplicate cannot move a call into the window")
+	requirements.Len(got, 1)
+	assertions.Equal(1, got[0].Answered, "each record uses its own occurrence time")
 	requirements.NoError(st.DeletePersonContext(t.Context(), person.ID, person.Revision))
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
