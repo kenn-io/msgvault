@@ -62,12 +62,16 @@ func (r ImportRequest) Observation() (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
+	o.OccurredAt = o.OccurredAt.UTC()
+	if o.EndedAt != nil {
+		*o.EndedAt = o.EndedAt.UTC()
+	}
 	if err := o.Validate(); err != nil {
 		return Observation{}, err
 	}
-	o.OccurredAt = o.OccurredAt.UTC().Truncate(time.Microsecond)
+	o.OccurredAt = o.OccurredAt.Truncate(time.Microsecond)
 	if o.EndedAt != nil {
-		*o.EndedAt = o.EndedAt.UTC().Truncate(time.Microsecond)
+		*o.EndedAt = o.EndedAt.Truncate(time.Microsecond)
 	}
 	return o, nil
 }

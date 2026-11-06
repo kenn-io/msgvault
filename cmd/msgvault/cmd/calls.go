@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -66,9 +67,13 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			}
 			defer cleanup()
 			decoder := jsontext.NewDecoder(input)
+			rejected := 0
 			for record := 1; ; record++ {
 				data, err := decoder.ReadValue()
 				if errors.Is(err, io.EOF) && record > 1 {
+					if rejected > 0 {
+						return fmt.Errorf("%d call import records rejected", rejected)
+					}
 					return nil
 				}
 				if err != nil {
@@ -76,6 +81,12 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				}
 				result, err := client.ImportCallObservation(cmd.Context(), data)
 				if err != nil {
+					var apiErr *daemonclient.APIError
+					if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity {
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "call import record %d: %v\n", record, err)
+						rejected++
+						continue
+					}
 					return fmt.Errorf("call import record %d: %w", record, err)
 				}
 				if err := writeJSONOutput(cmd, result); err != nil {

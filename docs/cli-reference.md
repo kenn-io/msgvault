@@ -66,7 +66,7 @@ answered, fails with `<id> isn't an open loop.`
 ## calls
 
 Import and inspect supplied call evidence through the selected daemon. Requires
-owner authentication and API schema 3.45.0 or newer. Output is JSON.
+owner authentication and API schema 3.46.0 or newer. Output is JSON.
 
 ```bash
 msgvault calls import observation.json   # omit the file or use - for stdin
