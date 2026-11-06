@@ -89,7 +89,7 @@ func TestLiveEligibilityExcludesChangesAfterProjection(t *testing.T) {
 			latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conversationID)
 			requirements.NoError(err)
 			assertions.Zero(latest)
-			display, err := f.Store.MessageDisplayContext(t.Context(), ids)
+			display, err := f.Store.MessageDisplayContext(t.Context(), ids, store.ActivityFilters{})
 			requirements.NoError(err)
 			assertions.Empty(display)
 		})

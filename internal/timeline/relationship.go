@@ -176,13 +176,15 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			if seen[key] {
 				continue
 			}
-			resolved := false
+			resolved := len(info.ExactOccurrenceRefs) > 0
 			for _, ref := range info.ExactOccurrenceRefs {
+				if !transcripts.value.MatchedOccurrences[ref] {
+					continue
+				}
 				o, ok := c.occurrences[ref]
 				if !ok {
 					continue
 				}
-				resolved = true
 				if seen[o.Ref] {
 					continue
 				}

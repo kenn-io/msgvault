@@ -80,7 +80,7 @@ func snapshotAnchorBurstReads(ctx context.Context, t *testing.T, src Sources, re
 	t.Helper()
 	require.Empty(t, req.With)
 	require.False(t, req.Conversation)
-	display, err := src.Activity.MessageDisplayContext(ctx, []int64{anchorID})
+	display, err := src.Activity.MessageDisplayContext(ctx, []int64{anchorID}, src.Filters)
 	require.NoError(t, err)
 	require.NotNil(t, display[anchorID].OccurredAt)
 	at := display[anchorID].OccurredAt.In(src.Location)

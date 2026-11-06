@@ -35,7 +35,7 @@ type ActivitySource interface {
 	ActivityMessageRepresentativeContext(ctx context.Context, messageID int64, q store.BurstQuery) (int64, error)
 	ListActivityBurstsContext(ctx context.Context, q store.BurstQuery) (store.BurstPage, error)
 	ListActivityMessagesContext(ctx context.Context, q store.MessageQuery) ([]store.ActivityMessage, error)
-	MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error)
+	MessageDisplayContext(ctx context.Context, ids []int64, filters store.ActivityFilters) (map[int64]store.MessageDisplay, error)
 	LatestEligibleMessageContext(ctx context.Context, conversationID int64) (int64, error)
 	MessageContactAggregateContext(ctx context.Context, q store.ContactQuery) (store.ContactAggregate, error)
 	AttendedTranscriptIDsContext(ctx context.Context, q store.ContactQuery, limit int) (store.AttendedTranscripts, bool, error)

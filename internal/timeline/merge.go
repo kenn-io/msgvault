@@ -61,7 +61,7 @@ func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageD
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
 	r := readWithin(c.ctx, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
-		return c.src.Activity.MessageDisplayContext(ctx, ids)
+		return c.src.Activity.MessageDisplayContext(ctx, ids, c.filters())
 	})
 	if !c.req.Scope.Owner {
 		for id, display := range r.value {
@@ -157,6 +157,11 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			personIDs = append(personIDs, p.PersonID)
 		}
 	}
+	for _, d := range display {
+		for _, p := range counterpartPeople(d.Counterparts) {
+			personIDs = append(personIDs, p.PersonID)
+		}
+	}
 	for _, call := range calls {
 		for _, p := range call.Participants {
 			personIDs = append(personIDs, p.PersonID)
@@ -191,8 +196,8 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	seen := map[string]bool{}
 	transcriptPeople := map[int64][]Person{}
-	for _, m := range messages {
-		transcriptPeople[m.MessageID] = c.tierPeople(counterpartPeople(m.Counterparts))
+	for id, d := range display {
+		transcriptPeople[id] = c.tierPeople(counterpartPeople(d.Counterparts))
 	}
 	for _, o := range occurrences {
 		info := identity.ByOccurrence[o.Ref]

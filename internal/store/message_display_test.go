@@ -36,7 +36,7 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	requirements.NoError(err)
 	// The production Matrix writer persists recovery state alongside the snippet.
 	// Display hydration must work without a message body.
-	got, err := f.Store.MessageDisplayContext(t.Context(), []int64{hidden, encrypted, undated})
+	got, err := f.Store.MessageDisplayContext(t.Context(), []int64{hidden, encrypted, undated}, store.ActivityFilters{})
 	requirements.NoError(err)
 	assertions.True(got[hidden].HiddenText)
 	assertions.NotNil(got[hidden].OccurredAt)
@@ -44,7 +44,7 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	assertions.NotNil(got[encrypted].OccurredAt)
 	requirements.Contains(got, undated)
 	assertions.Nil(got[undated].OccurredAt)
-	got, err = f.Store.MessageDisplayContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), []int64{hidden, encrypted, undated})
+	got, err = f.Store.MessageDisplayContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), []int64{hidden, encrypted, undated}, store.ActivityFilters{})
 	requirements.NoError(err)
 	assertions.Empty(got)
 }

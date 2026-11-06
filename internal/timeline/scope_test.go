@@ -30,7 +30,7 @@ func TestDelegatedResponseIgnoresHiddenSourceAndNativeCalls(t *testing.T) {
 	hiddenConv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
 	requirements.NoError(err)
 	baselineCall := f.call(f.now.Add(-3 * time.Hour))
-	callDisplay, err := f.Store.MessageDisplayContext(t.Context(), []int64{baselineCall})
+	callDisplay, err := f.Store.MessageDisplayContext(t.Context(), []int64{baselineCall}, f.src.Filters)
 	requirements.NoError(err)
 	f.project()
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, calendar.ID, callDisplay[baselineCall].SourceID})
@@ -234,7 +234,7 @@ func TestDelegatedNativeCallAnchorsAreUnavailable(t *testing.T) {
 	f := newTimelineFixture(t)
 	id := f.call(f.now.Add(-time.Hour))
 	f.project()
-	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
+	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id}, f.src.Filters)
 	require.NoError(t, err)
 	d := display[id]
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{d.SourceID})
@@ -251,7 +251,7 @@ func TestDelegatedConversationAnchorSkipsNewerNativeCall(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	call := f.call(f.now.Add(-time.Hour))
-	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{call})
+	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{call}, f.src.Filters)
 	requirements.NoError(err)
 	d := display[call]
 	id := f.add(f.now.Add(-2*time.Hour), false, func(m *store.Message) { m.SourceID = d.SourceID; m.ConversationID = d.ConversationID })

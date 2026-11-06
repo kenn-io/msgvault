@@ -17,12 +17,38 @@ type MessageDisplay struct {
 	HiddenText, Encrypted    bool
 	OccurredAt               *time.Time
 	ConversationID, SourceID int64
+	Counterparts             []ActivityMessageCounterpart
 }
 
-func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]MessageDisplay, error) {
+func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64, filters ActivityFilters) (map[int64]MessageDisplay, error) {
 	// Undated anchors still carry safety and identity metadata.
 	eligible := s.activityLiveEligibleWithoutDateSQL()
-	return s.messageDisplaysContext(ctx, ids, eligible)
+	displays, err := s.messageDisplaysContext(ctx, ids, eligible)
+	if err != nil {
+		return nil, err
+	}
+	facts := make([]activityReadMessage, 0, len(displays))
+	for id, display := range displays {
+		if display.MessageType == "meeting_transcript" {
+			facts = append(facts, activityReadMessage{ID: id})
+		}
+	}
+	if len(facts) == 0 {
+		return displays, nil
+	}
+	filters, err = s.normalizedActivityFilters(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.hydrateActivityCounterpartsContext(ctx, facts, filters); err != nil {
+		return nil, err
+	}
+	for _, fact := range facts {
+		display := displays[fact.ID]
+		display.Counterparts = fact.Counterparts
+		displays[fact.ID] = display
+	}
+	return displays, nil
 }
 
 func (s *Store) messageDisplaysContext(ctx context.Context, ids []int64, eligible string) (map[int64]MessageDisplay, error) {

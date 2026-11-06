@@ -37,11 +37,11 @@ func (s anchorReadFailure) ListActivityBurstsContext(ctx context.Context, q stor
 	}
 	return s.ActivitySource.ListActivityBurstsContext(ctx, q)
 }
-func (s anchorReadFailure) MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error) {
+func (s anchorReadFailure) MessageDisplayContext(ctx context.Context, ids []int64, filters store.ActivityFilters) (map[int64]store.MessageDisplay, error) {
 	if s.display != nil {
 		return nil, s.display
 	}
-	return s.ActivitySource.MessageDisplayContext(ctx, ids)
+	return s.ActivitySource.MessageDisplayContext(ctx, ids, filters)
 }
 
 type anchorCalendarFailure struct {

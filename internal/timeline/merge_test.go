@@ -3,6 +3,7 @@ package timeline
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,39 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestTimelineLinkedMeetingPeopleOutsideNoteDay(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	event := f.calendar("overnight", strings.NewReplacer(
+		`"dateTime":"2026-10-22T10:00:00Z"`, `"dateTime":"2026-10-21T23:00:00Z"`,
+		`"dateTime":"2026-10-22T11:00:00Z"`, `"dateTime":"2026-10-22T01:00:00Z"`,
+		`"attendees":[{"email":"alice@example.com","displayName":"Alice"}]`, `"attendees":[]`,
+	).Replace(singleDayEvent))
+	note := f.transcript("overnight", "", time.Date(2026, 10, 21, 23, 30, 0, 0, time.UTC))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+	person := f.savePerson()
+	f.tier(person, 1)
+	f.project()
+	req := dayRequest()
+	req.Mode, req.With = ModeDay, "email:alice@example.com"
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), entries[0].Ref)
+	requirements.NotNil(entries[0].Meeting)
+	assertions.True(entries[0].Meeting.Attended)
+	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
+	requirements.Len(entries[0].Meeting.People, 1)
+	assertions.Equal(f.peer, entries[0].Meeting.People[0].ParticipantID)
+	assertions.Equal(1, entries[0].Meeting.People[0].Tier)
+	req.Tiers = []int{1}
+	tiered, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(tiered), 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), allDayEntries(tiered)[0].Ref)
+}
 
 // The cap selects a prefix of the readers' shared (FirstAt, Key) ordering,
 // before the day renderer applies its separate tier/exchange ranking.

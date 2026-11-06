@@ -158,9 +158,10 @@ func MergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
 
 // AttendedTranscripts shares resolved meeting evidence with timeline composition.
 type AttendedTranscripts struct {
-	IDs         []int64
-	Identities  MeetingIdentityResult
-	Occurrences map[string]CalendarOccurrence
+	IDs                []int64
+	Identities         MeetingIdentityResult
+	Occurrences        map[string]CalendarOccurrence
+	MatchedOccurrences map[string]bool
 }
 
 func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) (AttendedTranscripts, bool, error) {
@@ -217,8 +218,14 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 	if err != nil {
 		return AttendedTranscripts{}, false, err
 	}
-	page := AttendedTranscripts{Identities: identity, Occurrences: map[string]CalendarOccurrence{}}
-	matches := map[string]bool{}
+	page := AttendedTranscripts{Identities: identity, Occurrences: map[string]CalendarOccurrence{}, MatchedOccurrences: map[string]bool{}}
+	matches := page.MatchedOccurrences
+	// Direct transcript participation applies to all of its linked occurrences.
+	for _, id := range result {
+		for _, ref := range identity.ByTranscript[id].ExactOccurrenceRefs {
+			matches[ref] = true
+		}
+	}
 	for _, info := range identity.ByTranscript {
 		for _, ref := range info.ExactOccurrenceRefs {
 			if _, known := page.Occurrences[ref]; known {

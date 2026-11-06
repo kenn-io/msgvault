@@ -54,7 +54,7 @@ func TestCleartextMarkerIsOrdinaryMessage(t *testing.T) {
 				assertions.Equal(3, explanation.Signals.ActiveDaysLong)
 			}
 			if !pending {
-				display, err := f.Store.MessageDisplayContext(t.Context(), ids)
+				display, err := f.Store.MessageDisplayContext(t.Context(), ids, store.ActivityFilters{})
 				requirements.NoError(err)
 				for _, id := range ids {
 					assertions.False(display[id].Encrypted)
