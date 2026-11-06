@@ -66,22 +66,16 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 			return err
 		}
 		for _, d := range decisions {
-			identity, err := storedMeetingIdentity(ctx, r, d.Ref, &budget)
+			previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
+			identity := previous.Identity
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				identity, err = storedMeetingIdentity(ctx, r, d.Ref, &budget)
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return err
-			}
-			if identity != target.Identity {
-				previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
-				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				identity = previous.Identity
 			}
 			if identity == target.Identity {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE member_message_id = ? AND target_message_id = ? AND occurrence_key = ?`, memberID, d.Ref.MessageID, d.Ref.Key); err != nil {

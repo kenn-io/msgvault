@@ -168,7 +168,7 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 		switch {
 		case row.Event.Kind == meetingExceptionKind && row.Event.Start != nil:
 			starts = append(starts, *row.Event.Start)
-		case row.Event.Kind == meetingSeriesKind && target.Identity.OccurrenceKey != "":
+		case target.Identity.OccurrenceKey != "":
 			copied, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}, budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				continue

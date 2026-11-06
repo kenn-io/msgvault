@@ -152,17 +152,16 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 			row.Event.Status = meetingCancelledStatus
 		}
-		if row.Event.Original != nil {
-			if len(masters) == 1 {
-				row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
-			} else {
-				if row.Event.Start == nil || row.Event.End == nil {
-					return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
-				}
-				o := occurrenceFromRow(row, row.Event.Original.Key())
-				o.Ref.Key = ""
-				return o, nil
+		if row.Event.Original != nil && len(masters) == 1 {
+			masters[0].ICalUID = cmp.Or(masters[0].ICalUID, row.ICalUID)
+			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
+		} else if row.Event.Original != nil {
+			if row.Event.Start == nil || row.Event.End == nil {
+				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 			}
+			o := occurrenceFromRow(row, row.Event.Original.Key())
+			o.Ref.Key = ""
+			return o, nil
 		}
 	}
 	if ref.Key == "" {
@@ -204,6 +203,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if len(moved) > 0 {
 		x := moved[len(moved)-1]
 		if x.Event.Start != nil && x.Event.End != nil {
+			row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
 			if err != nil {
@@ -362,10 +362,7 @@ candidatesLoop:
 		var candidates []linkOccurrence
 		if key.Kind == "google_event_id" {
 			ref := OccurrenceRef{MessageID: row.MessageID}
-			if row.Event.Kind == meetingSeriesKind {
-				if base == "" {
-					continue
-				}
+			if base != "" && row.Event.ProviderEventID == base {
 				ref.Key = instance.Key()
 			}
 			o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
