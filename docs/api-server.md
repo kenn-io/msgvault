@@ -160,7 +160,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.44.0**.
+it is separate from the binary release version. The current schema is **3.45.0**.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
@@ -207,6 +207,14 @@ Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
 Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
+
+Schema 3.45.0 adds owner-only GET/POST
+`/api/v1/integrations/kata/issues/{ref}/agreement`. GET returns recorded
+agreement history, last accepted terms and pending proposal IDs. POST records
+one explicitly reviewed event after its exact citations have been linked to
+the task; issue revision guards prevent applying a stale update. Responses
+wrap the view as `agreement`. See [agreement review](usage/agreements.md) for
+the input and state transition contract. No automatic extraction is enabled.
 
 Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on

@@ -164,7 +164,7 @@ func newKataCmd() *cobra.Command {
 	}
 	issueContext.Flags().Int64Var(&offset, "offset", 0, "Index of the first passage to show")
 
-	root.AddCommand(evidence, create, link, issues, issueContext)
+	root.AddCommand(evidence, create, link, issues, issueContext, newKataAgreementCommand())
 	return root
 }
 

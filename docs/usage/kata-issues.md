@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: "2026-11-06"
 title: Kata issues from archive evidence
 description: Create Kata issues that quote exact text from messages, meeting transcripts, and files.
 ---
@@ -9,7 +9,8 @@ Kata issue. The issue quotes the exact passage you chose and records where it
 came from, so anyone reading it in Kata sees the original words. Kata owns the
 issue after that: its title, state, and history live there.
 
-This workflow is newer than the latest release.
+To distinguish requested terms from accepted commitments and proposed changes,
+use [agreement review](agreements.md) on the same task.
 
 ## Connect Kata
 
