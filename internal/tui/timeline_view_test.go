@@ -30,6 +30,23 @@ func TestTimelineViewRendersSharedMarkdownRows(t *testing.T) {
 	assert.Equal("burst:1:7:2027-03-14", m.timelineState.entries[0].Entry.AnchorRef)
 	assert.Contains(view, "[Timeline]")
 }
+
+func TestTimelineViewHidesCursorAndKeepsNextPage(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	m.timelineState.result.Cursor = "opaque-continuation-token"
+	m.rebuildTimelineRows()
+	view := stripANSI(m.renderView())
+	assertions.NotContains(view, "cursor:")
+	assertions.NotContains(view, "opaque-continuation-token")
+	assertions.Contains(view, "n next page")
+	requirements.Len(m.timelineState.entries, 1)
+	row := m.timelineState.entries[0]
+	assertions.Contains(m.timelineState.lines[row.Line], row.Entry.AnchorRef)
+	next, cmd := sendKey(t, m, key('n'))
+	requirements.NotNil(cmd)
+	assertions.Equal("opaque-continuation-token", next.timelineState.pending.Cursor)
+}
 func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	m := timelineModeModel()

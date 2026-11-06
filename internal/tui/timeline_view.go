@@ -10,11 +10,17 @@ import (
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
-// rebuildTimelineRows retains the shared Markdown verbatim. Entry metadata only
+// rebuildTimelineRows renders shared Markdown without the cursor. Entry metadata only
 // supplies selection and navigation; the TUI does not compose activity rows.
 func (m *Model) rebuildTimelineRows() {
 	state := &m.timelineState
-	text, entries := timeline.MarkdownWithEntries(state.result)
+	result := state.result
+	if result != nil {
+		page := *result
+		page.Cursor = ""
+		result = &page
+	}
+	text, entries := timeline.MarkdownWithEntries(result)
 	state.lines = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	state.entries = entries
 	state.cursor = min(max(state.cursor, 0), max(len(state.entries)-1, 0))

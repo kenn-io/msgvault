@@ -106,6 +106,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var cold readResult[store.BurstPage]
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
+	var calendar readResult[store.CalendarOccurrencePage]
 	var upcoming readResult[store.CalendarOccurrencePage]
 	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Until: &c.t.Now, Descending: true, Limit: maxBursts}
 	c.parallel(
@@ -146,6 +147,9 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			})
 		},
 		func() {
+			// The calendar reader adds a 28-hour candidate margin. Keep it
+			// within year 1 so PostgreSQL can represent its date parameters.
+			calendar = c.readCalendar(historyQuery.After.Add(48*time.Hour), c.t.Now.Add(time.Nanosecond))
 			upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
 		},
 		func() { c.loadFreshness() },
@@ -163,7 +167,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.mergeContact(calls.value, true)
 	c.identities = transcripts.value.Identities
 	c.occurrences = transcripts.value.Occurrences
-	occurrences := slices.Clone(upcoming.value.Occurrences)
+	occurrences := append(slices.Clone(calendar.value.Occurrences), upcoming.value.Occurrences...)
 	if len(transcripts.value.IDs) > 0 {
 		displays := c.displays(transcripts.value.IDs)
 		seen := map[string]bool{}
@@ -208,6 +212,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			}
 		}
 	}
+	c.calendarGaps(calendar, "history")
 	c.calendarGaps(upcoming, "upcoming")
 	bursts := mergeBursts(history.value.bursts, cold.value.Bursts)
 	slices.Reverse(bursts)

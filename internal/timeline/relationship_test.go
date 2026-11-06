@@ -74,6 +74,31 @@ func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
 
+func TestTimelineRelationshipPastCalendarWithoutNotes(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	event := f.calendar("planning", strings.ReplaceAll(singleDayEvent, "2026-10-22", "2019-01-24"))
+	f.project()
+	for _, ref := range []string{"email:alice@example.com", fmt.Sprintf("person:%d", f.savePerson())} {
+		t.Run(ref, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			got, err := Build(t.Context(), f.src, relationshipRequest(ref))
+			requirements.NoError(err)
+			requirements.Len(got.History, 1)
+			assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
+			assertions.Equal("2019-01-24", got.History[0].Time.Format(time.DateOnly))
+			requirements.NotNil(got.History[0].Meeting)
+			assertions.Empty(got.History[0].Meeting.LinkedTranscriptIDs)
+		})
+	}
+	req := dayRequest()
+	req.Date = "2019-01-24"
+	day, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(day), 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), allDayEntries(day)[0].Ref)
+}
+
 func TestTimelineRelationshipCallExactlyNow(t *testing.T) {
 	for _, at := range []time.Time{
 		time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC),
