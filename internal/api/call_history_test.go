@@ -82,7 +82,7 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		raw  string
 		want float64
 	}{{"0", 0}, {"12.5", 12.5}} {
-		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"duration","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","duration_seconds":%s,"raw":{}}}`, tc.raw)
+		body := fmt.Sprintf(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"duration","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","duration_seconds":%s,"raw":{}}}`, tc.raw)
 		imported := do("POST", "/api/v1/import/calls", body)
 		requirements.Equal(200, imported.Code, imported.Body.String())
 		listed := do("GET", "/api/v1/calls", "")

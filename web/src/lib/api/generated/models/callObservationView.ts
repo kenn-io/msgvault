@@ -9,7 +9,6 @@ export interface CallObservationView {
   /** @nullable */
   duration_seconds: number | null;
   ended_at?: string;
-  kind: string;
   message_id: number;
   native_call_id?: string;
   occurred_at: string;

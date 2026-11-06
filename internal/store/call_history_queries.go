@@ -63,10 +63,11 @@ type PersonCallSummary struct {
 // stay unknown, and undated legacy calls are excluded from both call readers.
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
-	return `SELECT message_id, 'call' AS kind, '' AS direction,
+	return `SELECT message_id, '' AS direction,
 		outcome, owner_participation, occurred_at, NULL AS duration_seconds FROM call_details
+		WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id = message_id AND m.message_type = '` + callhistory.MessageType + `')
 		UNION ALL
-		SELECT m.id, 'call',
+		SELECT m.id,
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
@@ -117,7 +118,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	out := []CallObservationView{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT m.id, m.source_id, m.source_message_id, m.metadata, m.message_type,
-			src.source_type, src.identifier, c.kind, c.direction, c.outcome,
+			src.source_type, src.identifier, c.direction, c.outcome,
 			c.owner_participation, c.occurred_at, c.duration_seconds
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			JOIN sources src ON src.id = m.source_id
@@ -130,7 +131,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 			var metadata sql.NullString
 			var messageType string
 			if err := rows.Scan(&view.MessageID, &view.SourceID, &view.RecordID, &metadata, &messageType,
-				&view.Provider, &view.Account, &view.Kind, &view.Direction, &view.Outcome,
+				&view.Provider, &view.Account, &view.Direction, &view.Outcome,
 				&view.OwnerParticipation, &view.OccurredAt, &view.DurationSeconds); err != nil {
 				_ = rows.Close()
 				return err

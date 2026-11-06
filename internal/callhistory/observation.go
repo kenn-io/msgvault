@@ -28,7 +28,6 @@ type Evidence struct {
 	Provider           string     `json:"provider"`
 	Account            string     `json:"account"`
 	NativeCallID       string     `json:"native_call_id,omitempty"`
-	Kind               string     `json:"kind"`
 	Direction          string     `json:"direction"`
 	Outcome            string     `json:"outcome"`
 	OwnerParticipation string     `json:"owner_participation"`
@@ -69,8 +68,7 @@ func (e Evidence) Validate() error {
 		(e.NativeCallID != "" && !validID(e.NativeCallID)) {
 		return invalid("version or provenance")
 	}
-	if e.Kind != "call" ||
-		!slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
+	if !slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
 		!slices.Contains([]string{"answered", "missed", "declined", "cancelled", unknown}, e.Outcome) ||
 		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) {
 		return invalid("evidence classification")

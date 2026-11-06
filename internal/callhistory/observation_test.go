@@ -12,7 +12,7 @@ func exampleObservation() Observation {
 		RecordID: "record-1",
 
 		Version: 1, Provider: "signal", Account: "example-account",
-		Kind: "call", Direction: "incoming", Outcome: "answered",
+		Direction: "incoming", Outcome: "answered",
 		OwnerParticipation: "joined",
 		OccurredAt:         time.Date(2026, 10, 1, 9, 0, 0, 0, time.FixedZone("", -7*3600)),
 

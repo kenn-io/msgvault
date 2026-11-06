@@ -1705,8 +1705,6 @@ components:
         ended_at:
           format: date-time
           type: string
-        kind:
-          type: string
         message_id:
           format: int64
           type: integer
@@ -1741,7 +1739,6 @@ components:
         - version
         - provider
         - account
-        - kind
         - direction
         - outcome
         - owner_participation

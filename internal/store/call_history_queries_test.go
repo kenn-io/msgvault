@@ -134,7 +134,7 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 			RecordID: native,
 
 			Version: 1, Provider: "signal", Account: account, NativeCallID: native,
-			Kind: "call", Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
+			Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
 			OccurredAt: at,
 
 			Participants: []callhistory.Participant{{ID: peer, Participation: role}},
@@ -183,7 +183,7 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 		RecordID: "one",
 
 		Version: 1, Provider: "signal", Account: "a",
-		Kind: "call", Direction: "unknown", Outcome: "answered", OwnerParticipation: "joined",
+		Direction: "unknown", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: at,
 
 		Participants: []callhistory.Participant{{ID: a, Participation: "joined"}, {ID: b, Participation: "joined"}},
@@ -192,7 +192,7 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
 	o.RecordID, o.OccurredAt = "two", at.Add(time.Hour)
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
+	secondID, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
 	got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
@@ -226,6 +226,21 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(rebound.ID, got[0].PersonID)
+
+	t.Run("reclassified message", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'email' WHERE id = ?`), secondID)
+		requirements.NoError(err)
+		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+		requirements.NoError(err)
+		requirements.Len(calls, 1)
+		assertions.NotEqual(secondID, calls[0].MessageID)
+		summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
+		requirements.NoError(err)
+		requirements.Len(summary, 1)
+		assertions.Equal(1, summary[0].Answered)
+	})
 }
 
 func TestCallQueriesRejectInvalidBounds(t *testing.T) {
