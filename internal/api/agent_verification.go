@@ -193,10 +193,9 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 	}
 	body := string(data)
 	c := verification.Content{Filenames: names}
+	c.Text = body
 	if html || strings.HasPrefix(sniffed, "text/html") {
 		c.HTML = body
-	} else {
-		c.Text = body
 	}
 	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || nestedEncoding.MatchString(body) || verification.Is(c) {
 		return nil, denied
