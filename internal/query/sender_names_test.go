@@ -52,6 +52,8 @@ func TestSenderNameHints(t *testing.T) {
 		want          bool
 	}{
 		{"from:alex subject:hintfixture", true, 10, 0, true},
+		{"from:alex subject:hintfixture | from:alex subject:absent", true, 10, 0, true},
+		{"from:alex subject:hintfixture | from:kim subject:absent", true, 10, 0, false},
 		{"from:example.co subject:hintfixture", true, 10, 0, true},
 		{"from:alex subject:hintfixture", false, 10, 0, false},
 		{"from:alex subject:hintfixture", true, 0, 0, false},
@@ -62,9 +64,12 @@ func TestSenderNameHints(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%s/%t/%d/%d", tc.q, tc.opt, tc.limit, tc.offset), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			result, err := env.Engine.SearchFastWithStats(env.Ctx, search.ParseOR(tc.q), tc.q, MessageFilter{IncludeHints: tc.opt}, ViewNoStats, tc.limit, tc.offset)
+			q := search.ParseOR(tc.q)
+			original := search.ParseOR(tc.q)
+			result, err := env.Engine.SearchFastWithStats(env.Ctx, q, tc.q, MessageFilter{IncludeHints: tc.opt}, ViewNoStats, tc.limit, tc.offset)
 			requirements.NoError(err)
 			assertions.Equal(tc.want, len(result.Hints) > 0)
+			assertions.Equal(original, q)
 		})
 	}
 }

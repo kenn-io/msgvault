@@ -23,16 +23,15 @@ func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query) []S
 
 func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	buildParts func(context.Context, *search.Query) ([]string, []any, string)) []SearchHint {
-	if len(q.FromAddrs) != 1 {
+	sender, scoped, ok := senderNameScope(q)
+	if !ok {
 		return nil
 	}
-	scoped := *q
-	scoped.FromAddrs = nil
-	conditions, args, join := buildParts(ctx, &scoped)
+	conditions, args, join := buildParts(ctx, scoped)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
-	senderText := strings.TrimPrefix(q.FromAddrs[0], "@")
+	senderText := strings.TrimPrefix(sender, "@")
 	if senderText == "" {
-		senderText = q.FromAddrs[0]
+		senderText = sender
 	}
 	pattern := "%" + escapeSQLiteLike(senderText) + "%"
 	participantIndex, recipientIndex := "", ""
@@ -77,6 +76,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	}
 	defer func() { _ = rows.Close() }()
 	var labels []string
+	var retry string
 	for rows.Next() {
 		var address string
 		var count int64
@@ -84,8 +84,8 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 			return senderHintFailure(err)
 		}
 		if labels == nil {
-			scoped.FromAddrs = []string{address}
-			address = "try " + search.Format(&scoped)
+			retry = search.Format(withSender(*q, address))
+			address = "try " + retry
 		}
 		unit := "messages"
 		if count == 1 {
@@ -96,7 +96,6 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	if err := rows.Err(); err != nil || labels == nil {
 		return senderHintFailure(err)
 	}
-	retry := search.Format(&scoped)
 	message := fmt.Sprintf("from: matches addresses; senders matching %q: %s", senderText, labels[0])
 	if len(labels) > 1 {
 		message += "; other matching senders: " + strings.Join(labels[1:], ", ")
@@ -104,6 +103,50 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	hint := SearchHint{Code: "sender_name_requires_address", Message: message}
 	hint.RetryWith.Query = retry
 	return []SearchHint{hint}
+}
+
+// senderNameScope returns the one from: value shared by q and its
+// alternatives, and a copy of q without it that keeps only sender-bearing
+// alternatives. A retained alternative left unrestricted widens the count to
+// the parent scope.
+func senderNameScope(q *search.Query) (string, *search.Query, bool) {
+	sender := ""
+	for _, node := range append([]*search.Query{q}, q.Alternatives...) {
+		switch {
+		case len(node.FromAddrs) > 1, len(node.FromAddrs) == 1 && sender != "" && node.FromAddrs[0] != sender:
+			return "", nil, false
+		case len(node.FromAddrs) == 1:
+			sender = node.FromAddrs[0]
+		}
+	}
+	scoped := *q
+	scoped.FromAddrs, scoped.Alternatives = nil, nil
+	for _, alternative := range q.Alternatives {
+		if len(q.FromAddrs) == 0 && len(alternative.FromAddrs) == 0 {
+			continue
+		}
+		branch := *alternative
+		branch.FromAddrs = nil
+		if branch.IsEmpty() {
+			scoped.Alternatives = nil
+			break
+		}
+		scoped.Alternatives = append(scoped.Alternatives, &branch)
+	}
+	return sender, &scoped, sender != ""
+}
+
+// withSender returns a copy of q with each from: value replaced by address.
+func withSender(q search.Query, address string) *search.Query {
+	if len(q.FromAddrs) > 0 {
+		q.FromAddrs = []string{address}
+	}
+	alternatives := q.Alternatives
+	q.Alternatives = nil
+	for _, alternative := range alternatives {
+		q.Alternatives = append(q.Alternatives, withSender(*alternative, address))
+	}
+	return &q
 }
 
 // senderHintFailure logs a suppressed lookup error, if any, and returns no hint.
