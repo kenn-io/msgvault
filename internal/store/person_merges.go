@@ -327,6 +327,23 @@ func (s *Store) mergePersonsOnce(
 			return err
 		}
 
+		rows, err := tx.QueryContext(ctx, `SELECT mailbox FROM delivery_policies WHERE person_id=? AND policy='draft_only' AND mailbox<>''`, absorbed.ID)
+		if err != nil {
+			return err
+		}
+		var restrictedMailboxes []string
+		for rows.Next() {
+			var mailbox string
+			if err := rows.Scan(&mailbox); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			restrictedMailboxes = append(restrictedMailboxes, mailbox)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+
 		// The absorbed person is retired, so its audit uses the next revision.
 		if err := s.endDeliveryPoliciesTx(ctx, tx, absorbed, absorbed.Revision+1, request.Actor, "person_merged", false); err != nil {
 			return err
@@ -463,7 +480,7 @@ func (s *Store) mergePersonsOnce(
 		if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id=?`, survivor.ID).Scan(&survivorRevision); err != nil {
 			return err
 		}
-		if err := s.endDeliveryPoliciesTx(ctx, tx, survivor, survivorRevision, request.Actor, "person_merged", true); err != nil {
+		if err := s.endDeliveryPoliciesTx(ctx, tx, survivor, survivorRevision, request.Actor, "person_merged", true, restrictedMailboxes...); err != nil {
 			return err
 		}
 		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
