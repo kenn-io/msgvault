@@ -159,6 +159,7 @@ environment variable, then restart the daemon.
 
 Each channel can disable downloads with `media = false` or set a per-file
 cap with `max_media_mb`. The default cap is 250 MiB.
+Changes apply to messages processed after the change; earlier skipped media isn't fetched later, and LINE content expires.
 
 LINE may deliver duplicates or events out of order, and redelivery cannot
 guarantee completeness. msgvault acknowledges a batch only after committing
