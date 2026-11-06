@@ -217,7 +217,7 @@ func (s *Server) writeSearchCoverageCounts(
 	} else if coverage.status != SearchCoverageStale {
 		response.Status = SearchCoverageReady
 	}
-	response.Actions = s.searchCoverageActions(response.Status, coverage.fullBuildAvailable)
+	response.Actions = s.searchCoverageActions(response.Status, coverage.fullBuildAvailable || response.Status == SearchCoverageIncomplete && !s.embeddingBuildRunning())
 	writeJSON(w, http.StatusOK, response)
 }
 
