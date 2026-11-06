@@ -264,12 +264,12 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const { index } = scrollPositionAnchor(scrollTop, height, rows.length);
     const row = rows[index];
     if (row && !restoring) {
       activeKey = stableKey(row);
       onActiveKey?.(activeKey);
-      onScrollAnchor?.(stableKey(row), offset);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }

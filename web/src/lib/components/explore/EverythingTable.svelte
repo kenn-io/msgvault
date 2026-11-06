@@ -377,7 +377,7 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const { index } = scrollPositionAnchor(scrollTop, height, rows.length);
     const row = rows[index];
     if (row && !restoring) {
       const lastVisible = Math.min(
@@ -388,7 +388,7 @@
         activeKey = row.key;
         onActiveKey?.(row.key);
       }
-      onScrollAnchor?.(row.key, offset);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }
