@@ -9,21 +9,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestDropDocumentIndexUpgrade(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		interrupted    bool
-		queuedDeletion bool
+		name        string
+		interrupted bool
 	}{
 		{name: "interrupted=false"},
 		{name: "interrupted=true", interrupted: true},
-		{name: "queued document deletion", queuedDeletion: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.interrupted && !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -85,39 +81,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(f.Store.CompleteAttachmentChangeReconciliation(ctx, "document-index/v1", consumer.BaselineSequence))
 
-			var before int64
-			var queued []peoplesweep.ArchiveChange
-			var input personfacts.EvidenceInput
-			var key string
-			if tc.queuedDeletion {
-				exec(`INSERT INTO message_bodies (message_id,body_text) VALUES (?,?)`, messageID, "Email with a document")
-				window, err := f.Store.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{
-					PersonID: personID, Lane: peoplesweep.SourceConversationText,
-					ThroughSequence: latestPersonSweepSequence(t, f.Store), Limit: 100,
-				})
-				requirements.NoError(err)
-				input = sweepEvidenceInput(t, sweepItem(t, window.Seeds, messageID))
-				ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.Source.ID, MessageID: messageID, AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
-				input.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(ref)
-				requirements.NoError(err)
-				input.SourceVersion = "document/v1:chunk"
-				key, err = personfacts.EvidenceKey(input)
-				requirements.NoError(err)
-				persistSweepEvidence(t, f.Store, key, input)
-				before = latestPersonSweepSequence(t, f.Store)
-				exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, messageID)
-				exec(`DELETE FROM document_occurrences WHERE occurrence_key='occurrence'`)
-				for _, change := range personSweepChangesAfter(t, f.Store, personID, before) {
-					if change.SourceLane == peoplesweep.SourceDocumentText {
-						queued = append(queued, change)
-					}
-				}
-				requirements.Len(queued, 1)
-				checks.Equal(attachmentID, queued[0].AttachmentID)
-				checks.Equal("occurrence", queued[0].OccurrenceKey)
-				checks.Equal(peoplesweep.EvidenceEffectSourceDeleted, queued[0].EvidenceEffect)
-			}
-
 			var logs bytes.Buffer
 			previousLogger := slog.Default()
 			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
@@ -144,19 +107,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			}
 			requirements.NoError(f.Store.InitSchemaContext(ctx))
 			checks.Contains(logs.String(), `"msg":"deleted retired document rows during schema migration"`)
-
-			if tc.queuedDeletion {
-				var pending []peoplesweep.ArchiveChange
-				for _, change := range personSweepChangesAfter(t, f.Store, personID, before) {
-					if change.SourceLane == peoplesweep.SourceDocumentText {
-						pending = append(pending, change)
-					}
-				}
-				requirements.Equal(queued, pending)
-				changes, err := f.Store.BuildPersonSweepEvidenceStatusChanges(ctx, personID, pending)
-				requirements.NoError(err)
-				checks.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}}, changes)
-			}
 
 			// The next open re-applies the schema; the dropped hook must stay dropped.
 			requirements.NoError(f.Store.InitSchemaContext(ctx))

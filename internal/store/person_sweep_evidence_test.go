@@ -281,40 +281,6 @@ func TestLoadPersonSweepWindowSeparatesMeetingAndConversationLanes(t *testing.T)
 	assert.Equal(t, []int64{meetingID}, sweepMessageIDs(loadSweepWindow(t, f, peoplesweep.SourceMeetingText, 0).Seeds))
 }
 
-func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
-	checks := assert.New(t)
-	requirements := require.New(t)
-	f := newPersonSweepJournalFixture(t, true, false)
-	first := f.insertMessage(t, "first-meeting", "meeting_transcript", f.aliceID, time.Now().UTC())
-	second := f.insertMessage(t, "second-meeting", "meeting_transcript", f.aliceID, time.Now().UTC())
-	addSweepBody(t, f, first, "First meeting")
-	addSweepBody(t, f, second, "Second meeting")
-	after := latestPersonSweepSequence(t, f.store)
-	f.insertMessage(t, "other-lane", "email", f.aliceID, time.Now().UTC())
-	conversationThrough := latestPersonSweepSequence(t, f.store)
-	for _, id := range []int64{first, second} {
-		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE message_bodies SET body_text = 'Edited meeting' WHERE message_id = ?`), id)
-		requirements.NoError(err)
-	}
-	window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
-		PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: after, Limit: 2,
-	})
-	requirements.NoError(err)
-	checks.Equal([]int64{first, second}, sweepMessageIDs(window.Seeds))
-	checks.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
-	checks.Len(window.Changes, 3)
-
-	window, err = f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
-		PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: after,
-		ThroughSequence: conversationThrough, ReconcileUpper: fmt.Sprintf("%020d", second), Limit: 1,
-	})
-	requirements.NoError(err)
-	checks.Equal([]int64{first}, sweepMessageIDs(window.Seeds), "other-lane changes must allow reconciliation")
-	checks.Equal(fmt.Sprintf("%020d", first), window.NextReconcileKey)
-	checks.Equal(conversationThrough, window.NextSequence)
-	checks.Len(window.Changes, 1)
-}
-
 func TestLoadPersonSweepWindowBackstopCapturesFreshUpperKey(t *testing.T) {
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -744,18 +710,15 @@ func TestPersonSweepRetrievalHonorsTheJournalSequenceBound(t *testing.T) {
 func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
-		lane             peoplesweep.SourceClass
 		query            string
 		effect           peoplesweep.EvidenceChangeEffect
 		reason           personfacts.EvidenceStatusReason
 		withdrawDocument bool
 	}{
-		{"hard delete", peoplesweep.SourceConversationText, `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
-		{"soft delete", peoplesweep.SourceConversationText, `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
-		{"sender reassigned", peoplesweep.SourceConversationText, `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
-		{"body edited", peoplesweep.SourceConversationText, `UPDATE message_bodies SET body_text = 'Edited conversation evidence' WHERE message_id = ?`, peoplesweep.EvidenceEffectSourceEdited, personfacts.EvidenceStatusSourceEdited, false},
-		{"other lane hard delete", peoplesweep.SourceMeetingText, `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
-		{"other lane sender reassigned", peoplesweep.SourceMeetingText, `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
+		{"hard delete", `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
+		{"soft delete", `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
+		{"sender reassigned", `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
+		{"body edited", `UPDATE message_bodies SET body_text = 'Edited conversation evidence' WHERE message_id = ?`, peoplesweep.EvidenceEffectSourceEdited, personfacts.EvidenceStatusSourceEdited, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -785,7 +748,7 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			}
 			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
 			require.NoError(err)
-			window := loadSweepWindow(t, f, tc.lane, before)
+			window := loadSweepWindow(t, f, peoplesweep.SourceConversationText, before)
 			require.NotEmpty(window.Changes)
 			assert.Equal([]peoplesweep.EvidenceChangeEffect{tc.effect}, archiveEffects(window.Changes))
 			changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, window.Changes)
@@ -793,72 +756,12 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			want := []personfacts.EvidenceStatusChange{
 				{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: tc.reason},
 			}
-			if tc.lane != peoplesweep.SourceConversationText {
-				want = nil
-				for _, change := range window.Changes {
-					assert.Equal(peoplesweep.SourceDocumentText, change.SourceLane)
-				}
-				assert.Empty(window.Seeds, "meeting windows must skip conversation changes and their tombstones")
-				assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
-			}
 			if tc.withdrawDocument {
 				want = append(want, personfacts.EvidenceStatusChange{
 					EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Supported: false, Reason: tc.reason,
 				})
 			}
 			assert.ElementsMatch(want, changes)
-		})
-	}
-}
-
-func TestPersonSweepDriftingLaneCursorsDoNotReplayWithdrawal(t *testing.T) {
-	for _, lane := range []peoplesweep.SourceClass{peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText} {
-		t.Run(string(lane), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := newPersonSweepJournalFixture(t, true, false)
-			now := time.Now().UTC()
-			messageType, otherType := "email", "meeting_transcript"
-			otherLane := peoplesweep.SourceMeetingText
-			if lane == peoplesweep.SourceMeetingText {
-				messageType, otherType = otherType, messageType
-				otherLane = peoplesweep.SourceConversationText
-			}
-			id := f.insertMessage(t, "restored-evidence", messageType, f.aliceID, now)
-			addSweepBody(t, f, id, "Evidence restored after reimport")
-			input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, lane, 0).Seeds, id))
-			key, err := personfacts.EvidenceKey(input)
-			require.NoError(err)
-			persistSweepEvidence(t, f.store, key, input)
-			before := latestPersonSweepSequence(t, f.store)
-			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
-			require.NoError(err)
-			// The lagging lane stops here, before reaching the reimport.
-			f.insertMessage(t, "lagging-lane-page", otherType, f.aliceID, now)
-			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages SET deleted_at = NULL WHERE id = ?`), id)
-			require.NoError(err)
-			after := latestPersonSweepSequence(t, f.store)
-			restored, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, loadSweepWindow(t, f, lane, before).Changes)
-			require.NoError(err)
-			assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: true, Reason: personfacts.EvidenceStatusSourceReimported}}, restored)
-
-			cursors := []peoplesweep.Cursor{
-				{Key: peoplesweep.CursorKey{PersonID: f.alicePersonID, SourceLane: lane, ProgramFingerprint: peoplesweep.ProgramFingerprint()}, OptimisticSequence: after, ReconciliationComplete: true, LastBackstopAt: &now},
-				{Key: peoplesweep.CursorKey{PersonID: f.alicePersonID, SourceLane: otherLane, ProgramFingerprint: peoplesweep.ProgramFingerprint()}, OptimisticSequence: before, ReconciliationComplete: true, LastBackstopAt: &now},
-			}
-			progress, err := (peoplesweep.Assembler{Source: f.store, WindowLimit: 1}).Discover(t.Context(), peoplesweep.AssemblyRequest{
-				PersonID: f.alicePersonID, Cursors: cursors,
-				Profile: peoplesweep.ProviderProfile{AllowedSources: []peoplesweep.SourceClass{lane, otherLane}}, Now: now, BackstopInterval: time.Hour,
-			})
-			require.NoError(err)
-			assert.Empty(progress.EvidenceStatusChanges, "the lagging lane must preserve evidence already restored by its own lane")
-			require.Len(progress.Windows, 2)
-			laggingIndex := 0
-			if otherLane == peoplesweep.SourceMeetingText {
-				laggingIndex = 1
-			}
-			assert.Greater(progress.Windows[laggingIndex].NextSequence, before)
-			assert.Less(progress.Windows[laggingIndex].NextSequence, after)
 		})
 	}
 }

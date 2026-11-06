@@ -136,18 +136,6 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		window.Seeds = appendUniqueSweepEvidence(window.Seeds, reconcile)
 		window.NextReconcileKey, window.ReconciliationDone = next, done
 	}
-	// Other lanes affect stored document evidence only. Conversation and meeting
-	// evidence follow their own cursors, which may have already passed these changes.
-	window.Changes = nil
-	for _, change := range changes {
-		if change.Sequence > window.NextSequence {
-			break
-		}
-		if change.SourceLane != request.Lane {
-			change.SourceLane = peoplesweep.SourceDocumentText
-		}
-		window.Changes = append(window.Changes, change)
-	}
 	sort.SliceStable(window.Seeds, func(i, j int) bool { return window.Seeds[i].Ref.MessageID < window.Seeds[j].Ref.MessageID })
 	return window, nil
 }
@@ -902,10 +890,6 @@ func personSweepChangeMatchesRef(personID int64, change peoplesweep.ArchiveChang
 		return false
 	}
 	if ref.SourceLane == peoplesweep.SourceDocumentText {
-		if change.SourceLane == peoplesweep.SourceDocumentText &&
-			change.AttachmentID == ref.AttachmentID && change.OccurrenceKey == ref.OccurrenceKey {
-			return true
-		}
 		return change.AttachmentID == 0 && change.OccurrenceKey == "" &&
 			change.EvidenceEffect != peoplesweep.EvidenceEffectSourceEdited
 	}
