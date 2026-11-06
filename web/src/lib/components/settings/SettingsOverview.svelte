@@ -67,14 +67,18 @@
     {@const action = row.action}
     {@const authority = row.relatedStatus}
     {@const local = row.id === 'message_embedding' && localSearch}
+    {@const recovery = local && ['on', 'ollama', 'ollama-other'].includes(local.kind) && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
     <li class="row" data-feature={row.id}>
       {#if local}
         <div class="row__local">
           <SearchByMeaningRow state={local} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
         </div>
-        {#if ['on', 'ollama', 'ollama-other'].includes(local.kind) && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
+        {#if recovery}
           <div class="row__recovery">
-            <span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+            <div class="row__recovery-copy">
+              <span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+              {#if localError}<p class="row__error" role="alert">{localError}</p>{/if}
+            </div>
             {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name)}
           </div>
         {/if}
@@ -87,7 +91,7 @@
       {#if action?.kind === 'host'}<span class="row__consent">{action.text}</span>{/if}
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
       {/if}
-      {#if local && localError}<p class="row__error" role="alert">{localError}</p>{/if}
+      {#if local && localError && !recovery}<p class="row__error" role="alert">{localError}</p>{/if}
     </li>
   {/each}
 </ul>
@@ -123,8 +127,10 @@
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
   .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { text-wrap: balance; }
   .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
-  .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; gap: var(--control-gap) var(--section-gap); }
-  .row__coverage { display: flex; align-items: center; gap: var(--control-gap); grid-column: 1 / 3; color: var(--text-muted); font-size: var(--font-size-xs); }
+  .row:has(.row__recovery) .row__local :global(.kit-search-by-meaning--no-action) { grid-template-rows: auto; min-height: 0; }
+  .row__recovery-copy { display: grid; grid-column: 1 / 3; gap: calc(var(--control-gap) / 2); }
+  .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; gap: var(--control-gap) var(--section-gap); }
+  .row__coverage { display: flex; align-items: center; gap: var(--control-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; }
   .row__recovery :global(.build-index-action > .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border-color: var(--border-default); }
   .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); }
@@ -171,7 +177,7 @@
     .row__chip { justify-content: flex-end; }
     .row__local :global(.kit-search-by-meaning) { min-height: 0; grid-template-rows: none; }
     .row__local :global(.kit-chip) { justify-self: end; }
-    .row__recovery .row__coverage { grid-column: 1 / -1; }
+    .row__recovery-copy { grid-column: 1 / -1; }
     .row__recovery .row__action { grid-column: 1 / -1; }
     .row__local :global(.kit-search-by-meaning__action) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
     .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { grid-row: 3; }

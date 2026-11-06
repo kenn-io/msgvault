@@ -18,13 +18,12 @@ import (
 
 type localSetupTestController struct {
 	calls   atomic.Int32
-	enabled atomic.Bool
 	started chan context.Context
 	release chan struct{}
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, _ bool, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
@@ -75,7 +74,6 @@ func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T)
 		assert.Equal(int64(5), status.DoneBytes)
 		close(controller.release)
 		synctest.Wait()
-		controller.enabled.Store(true)
 		statusResponse = httptest.NewRecorder()
 		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
 		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &status))

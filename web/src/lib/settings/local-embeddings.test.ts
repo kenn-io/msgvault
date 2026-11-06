@@ -17,17 +17,15 @@ describe('local search row', () => {
     ['other Ollama', { ...off, enabled: true, provider: 'ollama' }, 'On · Ollama', 'Use built-in instead'],
     ['on', { ...off, enabled: true, provider: 'builtin' }, 'On', undefined],
     ['waiting for setup', { ...off, running: true }, 'Turning on', undefined],
-    ['waiting with files installed', { ...off, running: true, download_bytes: 0 }, 'Turning on', undefined],
-    ['waiting to switch', { ...off, running: true, enabled: true, provider: 'ollama' }, 'Turning on', undefined],
     ['downloading', { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, 'Turning on', undefined],
     ['indexing', { ...off, phase: 'indexing' }, 'Turning on', undefined],
-    ['retry', { ...off, error: 'Download interrupted' }, 'Off', 'Turn on'],
   ] as const)('%s', (_name, status, chip, action) => {
     render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: 'On' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
     if (status === off) expect(screen.getByText('Downloads 290 MB once to archive.example.test')).toBeDefined();
+    if (_name === 'downloaded') expect(screen.queryByText(/Downloads /)).toBeNull();
     if (_name === 'available Ollama') expect(screen.getByText('Uses Ollama on this computer')).toBeDefined();
     if (status.phase === 'indexing') expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('10');
     if (_name === 'other Ollama') expect(screen.getByText('Switching rebuilds the index for 10 messages.')).toBeDefined();

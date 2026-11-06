@@ -2789,7 +2789,7 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it('turns on semantic search from an empty full-text result and opens Settings overview', async () => {
+it.each(['success', 'http', 'network'] as const)('turns on semantic search from an empty full-text result after %s', async outcome => {
   window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
   const posts: unknown[] = [];
   let availabilityRequests = 0;
@@ -2797,8 +2797,13 @@ it('turns on semantic search from an empty full-text result and opens Settings o
     const request = input as Request;
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
-      if (request.method === 'POST') posts.push(await request.json());
-      else availabilityRequests += 1;
+      if (request.method === 'POST') {
+        posts.push(await request.json());
+        if (posts.length === 1 && outcome !== 'success') {
+          if (outcome === 'network') throw new TypeError('Network interrupted');
+          return Response.json({ error: 'unavailable', message: 'The daemon is stopping' }, { status: 503 });
+        }
+      } else availabilityRequests += 1;
       return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
     return Response.json(exploreResponse());
@@ -2810,37 +2815,18 @@ it('turns on semantic search from an empty full-text result and opens Settings o
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
-  expect(screen.getByText(/Downloads 290 MB once to archive\.example\.test/)).toBeDefined();
   state.replaceSearchDraft('pear', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);
   await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
+  if (outcome !== 'success') {
+    expect((await screen.findByRole('alert')).textContent).toContain(outcome === 'network' ? 'Network interrupted' : 'The daemon is stopping');
+    expect(state.current.workspace).toBe('everything');
+    await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+  }
   await waitFor(() => expect(state.current.workspace).toBe('settings'));
-  expect(posts).toEqual([{ use_builtin: false }]);
+  expect(posts).toEqual(Array(outcome === 'success' ? 1 : 2).fill({ use_builtin: false }));
   expect(state.current.settingsCategory).toBe('overview');
   view.unmount();
   state.destroy();
-});
-
-it.each(['http', 'network'])('keeps the search hint retry available after a %s setup failure', async failure => {
- window.history.replaceState(null,'',`/?explore=${encodeURIComponent(JSON.stringify({workspace:'everything',query:'orchard',searchMode:'full_text'}))}`);
- let posts=0;
- const fetchFn:typeof fetch=async input=>{
-  const request=input as Request;
-  if(new URL(request.url).pathname==='/api/v1/embeddings/local'){
-   if(request.method==='POST' && ++posts===1){
-    if(failure==='network') throw new TypeError('Network interrupted');
-    return Response.json({error:'unavailable',message:'The daemon is stopping'},{status:503});
-   }
-   return Response.json({enabled:false,provider:'',phase:'idle',download_bytes:290000000});
-  }
-  return Response.json(exploreResponse());
- };
- const state=new ExploreState(window);const view=render(AppShell,{client:createAPIClient(fetchFn,fetchFn),state});
- await fireEvent.click(await screen.findByRole('button',{name:'Turn on'}));
- expect((await screen.findByRole('alert')).textContent).toContain(failure==='network'?'Network interrupted':'The daemon is stopping');
- expect(state.current.workspace).toBe('everything');
- await fireEvent.click(screen.getByRole('button',{name:'Turn on'}));
- await waitFor(()=>expect(state.current.workspace).toBe('settings'));expect(posts).toBe(2);
- view.unmount();state.destroy();
 });

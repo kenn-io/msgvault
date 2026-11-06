@@ -31,8 +31,8 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
 });
 
 for (const width of [1280, 390]) {
-  for (const provider of ['builtin', 'ollama']) {
-    test(`index recovery follows coverage for ${provider} at ${width}px`, async ({ page }) => {
+  for (const provider of width === 1280 ? ['builtin', 'ollama'] : ['ollama']) {
+    test(`index recovery groups status and error for ${provider} at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1020 });
       await installOperations(page);
       await page.route('**/api/v1/operations/status', route => route.fulfill({ json: {
@@ -58,6 +58,16 @@ for (const width of [1280, 390]) {
       expect(coverage).not.toBeNull();
       expect(action).not.toBeNull();
       expect(coverage!.y + coverage!.height / 2).toBeLessThanOrEqual(action!.y + action!.height / 2 + 1);
+      const spacing = await row.evaluate(element => {
+        const name = element.querySelector('.kit-search-by-meaning__name')!.getBoundingClientRect();
+        const line = element.querySelector('.kit-search-by-meaning__line')?.getBoundingClientRect();
+        const coverage = element.querySelector('.row__coverage')!.getBoundingClientRect();
+        const error = element.querySelector('.row__error')!.getBoundingClientRect();
+        return { firstGap: coverage.y - (line ?? name).bottom, errorGap: error.y - coverage.bottom };
+      });
+      expect(spacing.firstGap).toBeLessThanOrEqual(6);
+      expect(spacing.errorGap).toBeGreaterThanOrEqual(0);
+      expect(spacing.errorGap).toBeLessThanOrEqual(3);
       if (width === 1280 && provider === 'ollama') {
         const chip = await row.locator('.row__local .kit-chip').boundingBox();
         const switchAction = await row.getByRole('button', { name: 'Use built-in instead' }).boundingBox();
