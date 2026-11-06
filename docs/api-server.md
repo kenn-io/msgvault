@@ -266,7 +266,7 @@ conflict when one UID resolves to multiple people. Person responses expose
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
 
-Schema 3.45.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
+Schema 3.46.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
 
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -3313,7 +3313,7 @@ first. It does not send anything, disable drafting, change existing drafts, or
 replace provider credentials and platform confirmation. Policies are managed
 over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
 
-These owner-only routes require API schema 3.45.0:
+These owner-only routes require API schema 3.46.0:
 
 | Operation | POST path | Request |
 | --- | --- | --- |
