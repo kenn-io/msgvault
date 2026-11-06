@@ -25,6 +25,29 @@ func TestMeetingJournalCalendarMailboxChange(t *testing.T) {
 	assertions.Positive(count, "a mailbox-only mapping change must invalidate meeting count keys")
 }
 
+func TestMeetingKeyedContentEditKeepsJournalQuiet(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite cache journal")
+	}
+	raw := `{"schema_version":1,"recording":{"summary":{"markdown":"Original summary"}},"calendar_event":{"iCalUid":"meeting@example.test","startsAt":"2027-03-14T10:00:00Z"}}`
+	_, note := projectionFixture(t, st, "note", "twenty_json", raw)
+	_, beforeHash := readProjection(t, st, note)
+	_, err := st.db.Exec(`DELETE FROM cache_related_change_journal`)
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(strings.Replace(raw, "Original summary", "Updated summary", 1)), "twenty_json"))
+	content, afterHash := readProjection(t, st, note)
+	assertions.Equal("Updated summary", content.Summary.Text)
+	assertions.NotEqual(beforeHash, afterHash)
+	var key string
+	requirements.NoError(st.db.QueryRow(`SELECT value FROM meeting_link_key WHERE message_id = ?`, note).Scan(&key))
+	assertions.Equal("meeting@example.test", key)
+	var changes int
+	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&changes))
+	assertions.Zero(changes, "a content-only edit preserves the meeting key")
+}
+
 func TestMeetingJournalTriggers(t *testing.T) {
 	for _, tc := range []struct {
 		name, setup, query, raw string
