@@ -75,7 +75,7 @@ func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 	case errors.Is(err, callhistory.ErrImportTooLarge):
 		writeError(w, 413, "request_too_large", "Call import exceeds 1 MiB")
 	case errors.Is(err, callhistory.ErrMalformedImport):
-		writeError(w, 400, "bad_request", "Invalid call import JSON")
+		writeError(w, 400, "bad_request", err.Error())
 	case errors.Is(err, callhistory.ErrInvalid):
 		writeError(w, 422, "validation_failed", err.Error())
 	case errors.Is(err, store.ErrSourceRetired):

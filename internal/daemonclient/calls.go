@@ -1,8 +1,10 @@
 package daemonclient
 
 import (
+	"bytes"
 	"context"
-	"encoding/json/v2"
+	"io"
+	"net/http"
 
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -10,12 +12,13 @@ import (
 )
 
 func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (*generated.CallImportResponse, error) {
-	var body generated.CallImportRequest
-	if err := json.Unmarshal(data, &body, json.RejectUnknownMembers(true)); err != nil {
-		return nil, err
-	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ImportCallObservationResp, error) {
-		return client.ImportCallObservationWithResponse(ctx, &generated.ImportCallObservationRequestOptions{Body: &body})
+		return client.ImportCallObservationWithResponse(ctx, &generated.ImportCallObservationRequestOptions{}, func(_ context.Context, req *http.Request) error {
+			req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
+			req.Body, _ = req.GetBody()
+			req.ContentLength = int64(len(data))
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err

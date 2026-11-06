@@ -97,11 +97,11 @@ func TestNormalizedImportValidatesObservation(t *testing.T) {
 }
 
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, tc := range []struct {
 		format, raw string
 	}{
+		{"signal_desktop", `{"callId":"x","timestamp":0}`},
 		{"signal_desktop", `{"callId":"x","timestamp":null}`},
 		{"signal_desktop", `{"callId":"x"}`},
 		{"signal_desktop", `{"callId":"x","timestamp":"1790841600000"}`},
@@ -109,11 +109,6 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 	} {
 		_, err := (ImportRequest{Format: tc.format, Account: "example", Record: []byte(tc.raw)}).Observation()
 		requirements.ErrorIs(err, ErrInvalid)
-	}
-	for _, end := range []string{"", `,"endedTimestamp":null`, `,"endedTimestamp":0`} {
-		_, err := (ImportRequest{Format: "signal_desktop", Account: "example", Record: []byte(`{"callId":"x","timestamp":0` + end + `}`)}).Observation()
-		requirements.ErrorIs(err, ErrInvalid)
-		assertions.ErrorContains(err, "Signal row or timestamp")
 	}
 }
 

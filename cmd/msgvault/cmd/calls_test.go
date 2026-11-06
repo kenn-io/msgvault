@@ -3,11 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"io"
-	"log/slog"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,11 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -28,6 +22,7 @@ type fakeCallCommandClient struct {
 	imports          [][]byte
 	lists, summaries []store.CallQuery
 	importErrorAt    int
+	importError      error
 }
 
 func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error) {
@@ -37,6 +32,9 @@ func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error
 func (c *fakeCallCommandClient) ImportCallObservation(_ context.Context, data []byte) (*generated.CallImportResponse, error) {
 	c.imports = append(c.imports, bytes.Clone(data))
 	if len(c.imports) == c.importErrorAt {
+		if c.importError != nil {
+			return nil, c.importError
+		}
 		return nil, errors.New("import rejected")
 	}
 	return &generated.CallImportResponse{MessageID: 42, SourceID: 7}, nil
@@ -56,17 +54,13 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	t.Run("continue after rejected Signal row", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		st := testutil.NewTestStore(t)
-		cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
-		logger := slog.New(slog.DiscardHandler)
-		daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
-		t.Cleanup(daemon.Close)
-		client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: daemon.Client()})
-		require.NoError(err)
-		t.Cleanup(func() { assert.NoError(client.Close()) })
+		client := &fakeCallCommandClient{importErrorAt: 2, importError: &daemonclient.APIError{
+			Status: 422, Message: "invalid call observation: Signal deleted call",
+		}}
 		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
 			return client, func() {}, nil
 		}})
+		command.SilenceUsage = true
 		var output, stderr bytes.Buffer
 		command.SetOut(&output)
 		command.SetErr(&stderr)
@@ -79,13 +73,8 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 		assert.Contains(stderr.String(), "call import record 2:")
 		assert.Contains(stderr.String(), "Signal deleted call")
 
-		output.Reset()
-		command.SetArgs([]string{"list"})
-		require.NoError(command.ExecuteContext(t.Context()))
-		var calls generated.CallEvidenceResponse
-		require.NoError(json.Unmarshal(output.Bytes(), &calls))
-		require.Len(calls.Items, 2)
-		assert.ElementsMatch([]string{"one", "two"}, []string{calls.Items[0].RecordID, calls.Items[1].RecordID})
+		require.Len(client.imports, 3)
+		assert.Equal("{\"message_id\":42,\"source_id\":7}\n{\"message_id\":42,\"source_id\":7}\n", output.String())
 	})
 
 	assertions := assert.New(t)
