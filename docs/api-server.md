@@ -3314,4 +3314,4 @@ These heuristics can miss unfamiliar wording and layouts, codes containing lower
 
 Search rows are masked in place, with membership and counts unchanged.
 
-Search can confirm a withheld value through prefix probes, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Attachment filenames are not masked on attachment routes. Add `verification.read` only when the delegated reader should receive verification content.
+Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Attachment filenames are not masked on attachment routes. Add `verification.read` only when the delegated reader should receive verification content.
