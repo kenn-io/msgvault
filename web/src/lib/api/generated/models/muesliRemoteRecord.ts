@@ -14,6 +14,8 @@ export interface MuesliRemoteRecord {
   formatted_notes?: string;
   id: number;
   manual_notes?: string;
+  /** @maxLength 128 */
+  meeting_platform?: string;
   raw_transcript?: string;
   source?: string;
   start_time: string;
