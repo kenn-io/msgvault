@@ -233,14 +233,11 @@ func TestRunScheduledIMessageFailureRequestsRefresh(t *testing.T) {
 		require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 		daemonCacheRefresher = previous
 	})
+	// Opening the iMessage database honors the cancelled context, so this run
+	// stops before it starts a sync run. It must still request the refresh.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	require.ErrorIs(runScheduledIMessage(canceled, st, cfg.IMessage), context.Canceled)
-	src, err := resolveImessageSource(st)
-	require.NoError(err)
-	run, err := st.GetLatestSync(src.ID)
-	require.NoError(err)
-	assert.Equal("failed", run.Status)
 	select {
 	case id := <-requested:
 		assert.Equal("apple-messages", id)
