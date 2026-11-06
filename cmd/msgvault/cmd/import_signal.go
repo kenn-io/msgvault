@@ -44,9 +44,6 @@ Examples:
   msgvault import-signal --phone "+447700900000" ~/signal-backup/database.sqlite`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if flags.limit < 0 {
-				return errors.New("--limit must be non-negative")
-			}
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
 			}

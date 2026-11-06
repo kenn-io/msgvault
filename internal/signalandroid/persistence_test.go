@@ -191,7 +191,7 @@ func TestReactorConflictLeavesSnapshot(t *testing.T) {
 	_, _, err = st.CreatePersonFromParticipant(phonePID)
 	require.NoError(err)
 	// Alice resolves normally; only the group message's reactor conflicts.
-	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 200`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (200, 3, 'x', 1700000300100, 1700000300101)`)
+	changeFixture(t, dir, `DELETE FROM group_membership WHERE recipient_id = 3`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 200`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (200, 3, 'x', 1700000300100, 1700000300101)`)
 	summary := runImport(t, st, dir, storage)
 	require.Positive(summary.Errors)
 	assert.Equal(before, importedMessages(t, st))

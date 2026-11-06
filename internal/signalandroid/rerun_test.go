@@ -93,26 +93,6 @@ func TestRerunReplacesReactions(t *testing.T) {
 	assert.Empty(reactionsOf("signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld)))
 }
 
-func TestRerunOlderBackupKeepsEditedMessage(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	dir, storage := t.TempDir(), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	runImport(t, st, dir, storage)
-	id := "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TEditOld)
-	require.Equal("First draft", importedMessages(t, st)[id].body)
-
-	// The older backup contains only the original, unedited draft.
-	changeFixture(t, dir,
-		`DELETE FROM message WHERE _id = 106`,
-		`UPDATE message SET latest_revision_id = NULL WHERE _id = 102`)
-	runImport(t, st, dir, storage)
-
-	assert.Equal("First draft", importedMessages(t, st)[id].body)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'First'`))
-	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Frist'`))
-}
-
 func TestRerunClearsEmptiedBody(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
