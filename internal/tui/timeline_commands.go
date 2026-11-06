@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
@@ -175,12 +174,7 @@ func (m *Model) activateTimeline() tea.Cmd {
 	}
 	req := m.timelineState.request
 	if m.timelineState.result != nil && !m.timelineState.needsLoad {
-		result := m.timelineState.result
-		loc, err := time.LoadLocation(result.Timezone)
-		if err != nil {
-			loc = time.UTC
-		}
-		if req.Mode != "" && req.Mode != timeline.ModeDay || req.Date != "" || req.From != "" || req.Days != 0 && result.Now.In(loc).Format(time.DateOnly) == time.Now().In(loc).Format(time.DateOnly) {
+		if req.Mode != "" && req.Mode != timeline.ModeDay || req.Date != "" {
 			m.loading = false
 			return nil
 		}

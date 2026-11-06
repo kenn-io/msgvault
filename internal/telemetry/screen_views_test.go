@@ -32,6 +32,10 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	assertions, requirements := assert.New(t), require.New(t)
 	h, ok := CaptureHandler(reporter, opts.DataDir).(*screenCaptureHandler)
 	requirements.True(ok)
+	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "timeline" {
+		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"screen_viewed","properties":{"screen":"timeline","surface":"tui"}}`).Code)
+		return
+	}
 	day := time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC)
 	h.now = func() time.Time { return day }
 	valid := `{"event":"screen_viewed","properties":{"screen":"settings","surface":"web"}}`
@@ -132,6 +136,19 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	requirements.NoError(os.WriteFile(claimsPath, previous, 0o600))
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
+}
+
+func TestTimelineScreenViewReachesReporter(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	stub := newWireStub(t)
+	runWireHelper(t, stub.server.URL, t.TempDir(), "MSGVAULT_SCREEN_VIEWS_TEST=timeline")
+	events := batchEvents(t, stub)
+	requirements.Len(events, 1)
+	assertions.Equal(EventScreenViewed, events[0]["event"])
+	props, ok := events[0]["properties"].(map[string]any)
+	requirements.True(ok)
+	assertions.Equal("timeline", props["screen"])
+	assertions.Equal("tui", props["surface"])
 }
 
 func TestMixedLedgerUpgradePreservesSearchClaims(t *testing.T) {

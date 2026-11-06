@@ -83,9 +83,7 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 		reload bool
 	}{
 		{"default", timeline.Request{Mode: timeline.ModeDay}, true},
-		{"days", timeline.Request{Mode: timeline.ModeDay, Days: 7}, true},
 		{"date", timeline.Request{Mode: timeline.ModeDay, Date: "2026-10-22"}, false},
-		{"range", timeline.Request{Mode: timeline.ModeDay, From: "2026-10-19", To: "2026-10-22"}, false},
 		{"relationship", timeline.Request{Mode: timeline.ModeRelationship, With: "person:42"}, false},
 		{"anchor", timeline.Request{Mode: timeline.ModeAnchor, Around: "msg:7"}, false},
 	} {

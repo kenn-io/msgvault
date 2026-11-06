@@ -19,7 +19,7 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 )
 
-var screenNames = []string{"everything", "directory", "directory_review", "files", "operations", "relationships", "saved_views", "sources", "deletions", "settings", "message", "email", "texts", "meetings"}
+var screenNames = []string{"everything", "directory", "directory_review", "files", "operations", "relationships", "saved_views", "sources", "deletions", "settings", "message", "email", "texts", "meetings", "timeline"}
 
 const screenViewsFile = "telemetry-screen-views.json"
 
