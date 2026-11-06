@@ -18,6 +18,8 @@ const (
 	meetingCancelledStatus = "cancelled"
 )
 
+var errMeetingSeriesNeedsOccurrenceKey = fmt.Errorf("series reference needs @<occurrence key>: %w", sql.ErrNoRows)
+
 // OccurrenceRef identifies an event, or one original occurrence of a series.
 type OccurrenceRef struct {
 	MessageID int64
@@ -237,7 +239,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	}
 	if ref.Key == "" {
 		if row.Event.Kind == meetingSeriesKind {
-			return linkOccurrence{}, fmt.Errorf("series reference needs @<occurrence key>: %w", sql.ErrNoRows)
+			return linkOccurrence{}, errMeetingSeriesNeedsOccurrenceKey
 		}
 		if row.Event.Start == nil || row.Event.End == nil {
 			return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)

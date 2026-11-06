@@ -100,6 +100,9 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	copyQueries := []meetingEventQuery{}
 	for i, ref := range refs {
 		o, err := resolvedMeetingOccurrence(ctx, r, ref, &budget)
+		if errors.Is(err, errMeetingSeriesNeedsOccurrenceKey) {
+			return result, err
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
