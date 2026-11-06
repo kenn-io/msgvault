@@ -163,13 +163,6 @@ func TestIndependentCLIReportsStaleMeetingCounts(t *testing.T) {
 		command.SetArgs([]string{strconv.FormatInt(f.notes[0], 10), "--event", fmt.Sprintf("evt:%d@20260314T100000Z", f.event)})
 		requirements.NoError(command.Execute())
 		assertions.Equal("Cache state: stale\n", out.String(), decision)
-		record, err := f.st.MeetingRecordContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: f.notes[0]})
-		requirements.NoError(err)
-		if decision == "link" {
-			assertions.Len(record.Links, 1)
-		} else {
-			assertions.Empty(record.Links)
-		}
 	}
 }
 

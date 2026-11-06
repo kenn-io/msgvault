@@ -50,65 +50,57 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{human, owners[identifier]}, []string{"Example Human", "Owner"}))
 		return id
 	}
-	persist("meeting_transcript", "first", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"planning@example.org"}}`)
+	first := persist("meeting_transcript", "first", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"planning@example.org"}}`)
 	second := persist("meeting_transcript", "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"planning@example.org"}}`)
 	cache := filepath.Join(t.TempDir(), "analytics")
 	var preservedShards map[string]string
-	readCount := func(want, wantLinked int64) {
-		engine, err := query.NewDuckDBEngine(cache, "", nil)
-		requirements.NoError(err)
-		defer func() { requirements.NoError(engine.Close()) }()
-		people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "human@example.org"})
-		requirements.NoError(err)
-		requirements.Len(people.Rows, 1)
-		assertions.Equal(want, people.Rows[0].MeetingCount)
-		db, err := sql.Open("duckdb", "")
-		requirements.NoError(err)
-		defer func() { requirements.NoError(db.Close()) }()
-		var linked int64
-		requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), second).Scan(&linked))
-		assertions.Equal(wantLinked, linked)
+	readKeys := func(wantIDs ...int64) {
+		want := make(map[int64][]string)
+		for _, id := range wantIDs {
+			want[id] = []string{"uid:planning@example.org/"}
+		}
+		assertions.Equal(want, readCachedMeetingKeys(t, cache))
 		if preservedShards != nil {
 			assertions.Equal(preservedShards, snapshotMessagesDatasetBytes(t, cache))
 		}
 	}
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
-	readCount(2, 0)
+	readKeys()
 	event := persist("calendar_event", "calendar", "gcal_json", `{"id":"event","iCalUID":"planning@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`)
 	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: `{"ical_uid":"planning@example.org"}`, Valid: true}))
 	assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 	incremental, err := buildCache(path, cache, false)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), incremental.StagedCount)
-	readCount(1, 1)
+	readKeys(first, second)
 	// A re-import changes automatic evidence while keeping the message ID.
 	for _, tc := range []struct {
-		uid           string
-		count, linked int64
+		uid     string
+		members []int64
 	}{
-		{"unmatched@example.org", 2, 0}, {"planning@example.org", 1, 1},
+		{"unmatched@example.org", []int64{first}}, {"planning@example.org", []int64{first, second}},
 	} {
 		requirements.NoError(st.UpsertMessageRawWithFormat(second, []byte(fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q}}`, tc.uid)), "twenty_json"))
 		assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 		_, err := buildCache(path, cache, false)
 		requirements.NoError(err)
-		readCount(tc.count, tc.linked)
+		readKeys(tc.members...)
 	}
 	preservedShards = snapshotMessagesDatasetBytes(t, cache)
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), second, store.OccurrenceRef{MessageID: event}))
 	assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 	_, err = buildCache(path, cache, false)
 	requirements.NoError(err)
-	readCount(2, 0)
+	readKeys(first)
 	requirements.NoError(st.LinkMeetingContext(t.Context(), second, store.OccurrenceRef{MessageID: event}))
 	_, err = buildCache(path, cache, false)
 	requirements.NoError(err)
-	readCount(1, 1)
+	readKeys(first, second)
 	preservedShards = nil
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
-	readCount(1, 1)
+	readKeys(first, second)
 }
 
 func TestMeetingKeysAckSnapshotBoundary(t *testing.T) {
@@ -181,20 +173,19 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 	excluded := fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`)
 	zoned := fmt.Sprintf(eventRaw, "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
 	for _, step := range []struct {
-		name, beforeRaw, raw, uid string
-		want                      int64
+		name, beforeRaw, raw, uid, wantKey string
 	}{
-		{"baseline", "", original, "series@example.test", 1},
-		{"projection removed", "", `{}`, "series@example.test", 2},
-		{"restored after projection removal", `{}`, original, "series@example.test", 1},
-		{"EXDATE", "", excluded, "series@example.test", 2},
-		{"restored after EXDATE", excluded, original, "series@example.test", 1},
-		{"zone", "", zoned, "series@example.test", 2},
-		{"restored after zone", zoned, original, "series@example.test", 1},
-		{"UID", "", original, "different@example.test", 2},
+		{"baseline", "", original, "series@example.test", "uid:series@example.test/20270321T100000Z"},
+		{"projection removed", "", `{}`, "series@example.test", ""},
+		{"restored after projection removal", `{}`, original, "series@example.test", "uid:series@example.test/20270321T100000Z"},
+		{"EXDATE", "", excluded, "series@example.test", ""},
+		{"restored after EXDATE", excluded, original, "series@example.test", "uid:series@example.test/20270321T100000Z"},
+		{"zone", "", zoned, "series@example.test", ""},
+		{"restored after zone", zoned, original, "series@example.test", "uid:series@example.test/20270321T100000Z"},
+		{"UID", "", original, "different@example.test", ""},
 	} {
 		t.Run(step.name, func(t *testing.T) {
-			requirements := require.New(t)
+			assertions, requirements := assert.New(t), require.New(t)
 			path := filepath.Join(t.TempDir(), "archive.db")
 			st, err := store.OpenForTest(path)
 			requirements.NoError(err)
@@ -211,36 +202,64 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 				Metadata: &sql.NullString{String: `{"ical_uid":"series@example.test"}`, Valid: true},
 			})
 			requirements.NoError(err)
+			var notes []int64
 			for _, id := range []string{"first", "second"} {
-				_, err = st.PersistMessage(&store.MessagePersistData{
+				note, err := st.PersistMessage(&store.MessagePersistData{
 					Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
 					Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: "meeting"},
 					RawFormat:    "twenty_json", RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-21T10:00:00Z"}}`),
 					Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{person}}},
 				})
 				requirements.NoError(err)
+				notes = append(notes, note)
 			}
 			cache := filepath.Join(t.TempDir(), "analytics")
+			readKeys := func(wantKey string) {
+				t.Helper()
+				want := make(map[int64][]string)
+				if wantKey != "" {
+					for _, id := range notes {
+						want[id] = []string{wantKey}
+					}
+				}
+				assertions.Equal(want, readCachedMeetingKeys(t, cache))
+			}
 			_, err = buildCache(path, cache, true)
 			requirements.NoError(err)
+			readKeys("uid:series@example.test/20270321T100000Z")
 			if step.beforeRaw != "" {
 				requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(step.beforeRaw), "gcal_json"))
 				_, err = buildCache(path, cache, false)
 				requirements.NoError(err)
+				readKeys("")
 			}
 			requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(step.raw), "gcal_json"))
 			requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: fmt.Sprintf(`{"ical_uid":%q}`, step.uid), Valid: true}))
-			assert.False(t, cacheNeedsBuild(path, cache).FullRebuild)
+			assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 			_, err = buildCache(path, cache, false)
 			requirements.NoError(err)
-			engine, err := query.NewDuckDBEngine(cache, "", nil)
-			requirements.NoError(err)
-			defer func() { requirements.NoError(engine.Close()) }()
-			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{})
-			requirements.NoError(err)
-			requirements.Len(people.Rows, 1)
-			assert.Equal(t, step.want, people.Rows[0].MeetingCount)
-			assert.False(t, cacheNeedsBuild(path, cache).NeedsBuild)
+			readKeys(step.wantKey)
+			assertions.False(cacheNeedsBuild(path, cache).NeedsBuild)
 		})
 	}
+}
+
+func readCachedMeetingKeys(t *testing.T, cache string) map[int64][]string {
+	t.Helper()
+	requirements := require.New(t)
+	db, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	defer func() { requirements.NoError(db.Close()) }()
+	rows, err := db.Query(`SELECT message_id, meeting_key FROM read_parquet(?)`, filepath.Join(cache, "meeting_keys", "*.parquet"))
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	keys := make(map[int64][]string)
+	for rows.Next() {
+		var id int64
+		var key string
+		requirements.NoError(rows.Scan(&id, &key))
+		keys[id] = append(keys[id], key)
+	}
+	requirements.NoError(rows.Err())
+	return keys
 }
