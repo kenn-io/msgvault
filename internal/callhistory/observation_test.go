@@ -51,6 +51,37 @@ func TestObservationValidation(t *testing.T) {
 	}
 }
 
+func FuzzCanonicalCallIdentity(f *testing.F) {
+	f.Add("signal", "a", "one", "signal", "b", "one")
+	f.Add("signal", "a", "one", "other", "a", "one")
+	f.Add("signal", "a", "one", "signal", "a", "two")
+	f.Add("signal", "a", "one", "signal", "a", "one")
+	f.Add("signal", "a", "", "signal", "a", "one")
+	f.Add("signal", "a", "one", "signal", "a", "")
+	f.Add("signal", "a", "", "signal", "b", "")
+	f.Fuzz(func(t *testing.T, providerA, accountA, idA, providerB, accountB, idB string) {
+		a := identityEvidence(providerA, accountA, idA)
+		b := identityEvidence(providerB, accountB, idB)
+		if a.Validate() != nil || b.Validate() != nil {
+			return
+		}
+		if idA == "" || idB == "" {
+			assert.Equal(t, idA == "", a.CanonicalKey() == "")
+			assert.Equal(t, idB == "", b.CanonicalKey() == "")
+		} else if providerA == providerB && accountA == accountB && idA == idB {
+			assert.Equal(t, a.CanonicalKey(), b.CanonicalKey())
+		} else {
+			assert.NotEqual(t, a.CanonicalKey(), b.CanonicalKey())
+		}
+	})
+}
+
+func identityEvidence(provider, account, nativeCallID string) Evidence {
+	o := exampleObservation()
+	o.Provider, o.Account, o.NativeCallID = provider, account, nativeCallID
+	return o.Evidence
+}
+
 func FuzzObservationDurationValidation(f *testing.F) {
 	f.Add(int64(0), true)
 	f.Add(int64(25), false)
@@ -66,5 +97,37 @@ func FuzzObservationDurationValidation(f *testing.F) {
 			return
 		}
 		require.NoError(t, o.Validate())
+	})
+}
+
+func FuzzNormalizedImportRoundtrip(f *testing.F) {
+	f.Add(uint64(0), true)
+	f.Add(uint64(0), false)
+	f.Add(math.Float64bits(math.MaxFloat64), true)
+	f.Fuzz(func(t *testing.T, bits uint64, hasDuration bool) {
+		// Materialize any finite nonnegative IEEE value, without rejecting
+		// generated inputs. Validation of negative/nonfinite inputs is separate.
+		bits &^= uint64(1) << 63
+		if bits>>52 == 0x7ff {
+			bits &^= uint64(1) << 52
+		}
+		o := exampleObservation()
+		if hasDuration {
+			o.NativeCallID = "call-1"
+			duration := math.Float64frombits(bits)
+			o.DurationSeconds = &duration
+		}
+		record, err := json.Marshal(o)
+		require.NoError(t, err)
+		wire, err := json.Marshal(ImportRequest{Format: "normalized", Account: o.Account, Record: record})
+		require.NoError(t, err)
+		got, err := DecodeImport(bytes.NewReader(wire))
+		require.NoError(t, err)
+		assert.Equal(t, o.RecordID, got.RecordID)
+		assert.Equal(t, o.NativeCallID, got.NativeCallID)
+		assert.Equal(t, o.DurationSeconds, got.DurationSeconds)
+		assert.True(t, o.OccurredAt.Equal(got.OccurredAt))
+		assert.Equal(t, o.Participants, got.Participants)
+		assert.Equal(t, o.CanonicalKey(), got.CanonicalKey())
 	})
 }

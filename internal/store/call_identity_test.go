@@ -66,6 +66,24 @@ func TestLogicalCallsEmptyKeysStaySeparate(t *testing.T) {
 	assertions.Empty(next)
 }
 
+func TestLogicalCallsSameNativeCallIDIsOneCall(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newLogicalCallFixture(t)
+	first := f.put(t, "one", nil)
+	f.put(t, "one", nil)
+	calls, next, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.Empty(next)
+	assertions.Equal(first, calls[0].MessageID)
+	assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, calls[0].Participants)
+	q := store.CallContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Now: f.at}
+	aggregate, err := f.st.CallContactAggregateContext(t.Context(), q)
+	requirements.NoError(err)
+	assertions.Equal(1, aggregate.Count)
+}
+
 func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 	for _, messageType := range []string{store.MessageTypeSynctechCall, store.MessageTypeGoogleVoiceCall} {
 		for _, outgoing := range []bool{false, true} {
@@ -114,14 +132,13 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 	}
 }
 
-func TestLogicalCallsRecordsKeepTheirOwnTimestampAndOutcome(t *testing.T) {
+func TestLogicalCallsTimestampIsEarliestObservation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	first := f.put(t, "one", nil)
-	later := f.at.Add(2 * time.Hour)
-	second := f.put(t, "one", func(o *callhistory.Observation) {
-		o.OccurredAt = later
+	f.put(t, "one", func(o *callhistory.Observation) {
+		o.OccurredAt = f.at.Add(2 * time.Hour)
 		o.Outcome = "missed"
 		o.OwnerParticipation = "not_joined"
 	})
@@ -129,18 +146,34 @@ func TestLogicalCallsRecordsKeepTheirOwnTimestampAndOutcome(t *testing.T) {
 	q.After, q.Before = f.at.Add(time.Hour), f.at.Add(24*time.Hour)
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
 	requirements.NoError(err)
-	requirements.Len(calls, 1)
-	assertions.Equal(second, calls[0].MessageID)
-	assertions.Equal(later, calls[0].OccurredAt)
-	assertions.Equal("missed", calls[0].Outcome)
-	assertions.False(calls[0].Participants[0].Credited)
+	assertions.Empty(calls, "later evidence must not move the logical call into day two")
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
 	requirements.NoError(err)
 	requirements.Len(calls, 1)
 	assertions.Equal(f.at, calls[0].OccurredAt)
 	assertions.Equal(first, calls[0].MessageID)
-	assertions.Equal("answered", calls[0].Outcome)
+	assertions.Equal("answered", calls[0].Outcome, "one whole observation establishes the answer")
 	assertions.True(calls[0].Participants[0].Credited)
+}
+
+func TestLogicalCallsNegativeOutcomesMustAgree(t *testing.T) {
+	for _, tc := range []struct{ first, second, want string }{
+		{"missed", "missed", "missed"},
+		{"missed", "declined", "unknown"},
+		{"cancelled", "unknown", "cancelled"},
+	} {
+		t.Run(tc.first+"/"+tc.second, func(t *testing.T) {
+			require := require.New(t)
+			f := newLogicalCallFixture(t)
+			for _, outcome := range []string{tc.first, tc.second} {
+				f.put(t, "one", func(o *callhistory.Observation) { o.Outcome, o.OwnerParticipation = outcome, "unknown" })
+			}
+			calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
+			require.NoError(err)
+			require.Len(calls, 1)
+			assert.Equal(t, tc.want, calls[0].Outcome)
+		})
+	}
 }
 
 func TestLogicalCallsPerParticipantCredit(t *testing.T) {
@@ -198,7 +231,7 @@ func TestLogicalCallsOutcomeIndependentOfParticipantCredit(t *testing.T) {
 	}
 }
 
-func TestLogicalCallsRecordsKeepTheirOwnDuration(t *testing.T) {
+func TestLogicalCallsDurationIsMax(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
@@ -207,12 +240,15 @@ func TestLogicalCallsRecordsKeepTheirOwnDuration(t *testing.T) {
 	f.put(t, "two", nil)
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
 	requirements.NoError(err)
-	requirements.Len(calls, 3)
-	requirements.NotNil(calls[0].DurationSeconds)
-	requirements.NotNil(calls[1].DurationSeconds)
-	assertions.InDelta(60., *calls[0].DurationSeconds, 1e-9)
-	assertions.InDelta(75., *calls[1].DurationSeconds, 1e-9)
-	assertions.Nil(calls[2].DurationSeconds)
+	requirements.Len(calls, 2)
+	for _, c := range calls {
+		if c.DurationSeconds != nil {
+			assertions.InDelta(75., *c.DurationSeconds, 1e-9)
+		} else {
+			assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, c.Participants)
+		}
+	}
+	requirements.NotEqual(calls[0].DurationSeconds == nil, calls[1].DurationSeconds == nil)
 }
 
 func TestLogicalCallsCreditUnsavedParticipant(t *testing.T) {
@@ -345,18 +381,18 @@ func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
 	f.put(t, "uncredited", func(o *callhistory.Observation) { o.Participants[0].Participation = "invited" })
 	f.put(t, "partial", func(o *callhistory.Observation) { o.OwnerParticipation = "unknown" })
 	f.put(t, "partial", func(o *callhistory.Observation) { o.Outcome = "unknown"; o.Participants[0].Participation = "unknown" })
-	f.put(t, "conflicting", nil)
-	f.put(t, "conflicting", func(o *callhistory.Observation) { o.Outcome = "missed"; o.OwnerParticipation = "not_joined" })
+	f.put(t, "answered-and-missed", nil)
+	f.put(t, "answered-and-missed", func(o *callhistory.Observation) { o.Outcome = "missed"; o.OwnerParticipation = "not_joined" })
 	f.put(t, "withdrawn", func(o *callhistory.Observation) { o.Withdrawn = true })
 	q := store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: f.at.Add(20 * 24 * time.Hour), Location: time.FixedZone("archive", -7*60*60)}
 	got, err := f.st.CallContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	expectedMonthly := [12]int{}
 	expectedMonthly[1] = 1
-	expectedMonthly[11] = 4
-	want := store.ContactAggregate{FirstAt: &old, LastAt: &outbound, LastInboundAt: new(f.at.Add(time.Hour)), LastOutboundAt: &outbound,
-		Count: 6, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: expectedMonthly}
-	assertions.Equal(want, got, "each record counts once, aliases and partial attendance add no credit")
+	expectedMonthly[11] = 3
+	want := store.ContactAggregate{FirstAt: &old, LastAt: &outbound, LastInboundAt: &f.at, LastOutboundAt: &outbound,
+		Count: 5, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: expectedMonthly}
+	assertions.Equal(want, got, "each call counts once; aliases and partial attendance add no credit")
 	q.Subject = store.ActivitySubject{ParticipantIDs: []int64{f.peer, alias}}
 	unsaved, err := f.st.CallContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
@@ -379,7 +415,7 @@ func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) 
 		o.OccurredAt = now.AddDate(0, 1, 0)
 		o.Direction = "outgoing"
 	})
-	// Later records cannot change an earlier record's attendance or outcome.
+	// Later records of a call still resolve the earlier call's credit.
 	f.put(t, "later-credit", func(o *callhistory.Observation) {
 		o.OccurredAt = earliest
 		o.Outcome = "unknown"
@@ -387,21 +423,21 @@ func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) 
 		o.Participants[0].Participation = "unknown"
 	})
 	f.put(t, "later-credit", func(o *callhistory.Observation) { o.OccurredAt = now.Add(time.Hour) })
-	f.put(t, "later-conflict", func(o *callhistory.Observation) { o.OccurredAt = before.Add(-2 * time.Hour) })
-	f.put(t, "later-conflict", func(o *callhistory.Observation) {
+	f.put(t, "later-missed", func(o *callhistory.Observation) { o.OccurredAt = before.Add(-2 * time.Hour) })
+	f.put(t, "later-missed", func(o *callhistory.Observation) {
 		o.OccurredAt = now.Add(time.Hour)
 		o.Outcome = "missed"
 		o.OwnerParticipation = "not_joined"
 	})
 	want := store.ContactAggregate{
 		FirstAt: new(before.Add(-2 * time.Hour)), LastAt: &now, LastInboundAt: &before, LastOutboundAt: &now,
-		Count: 3, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: [12]int{10: 2, 11: 1},
+		Count: 4, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: [12]int{10: 3, 11: 1},
 	}
 	for _, subject := range []store.ActivitySubject{{PersonID: person.ID}, {ParticipantIDs: []int64{f.peer}}} {
 		q := store.CallContactQuery{Subject: subject, Now: now, Location: time.FixedZone("archive", -7*60*60)}
 		got, err := f.st.CallContactAggregateContext(t.Context(), q)
 		requirements.NoError(err)
-		assertions.Equal(want, got, "bound records inclusively without combining attendance across records")
+		assertions.Equal(want, got, "bound calls by their earliest record, without hiding later evidence")
 		q.Now = earliest.Add(-24 * time.Hour)
 		got, err = f.st.CallContactAggregateContext(t.Context(), q)
 		requirements.NoError(err)

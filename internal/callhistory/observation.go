@@ -2,6 +2,9 @@
 package callhistory
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -53,6 +56,21 @@ type Observation struct {
 // ambiguous concatenation. It is archive metadata, not a display label.
 func (e Evidence) SourceIdentifier() string {
 	return fmt.Sprintf("calls/%d:%s%s", len(e.Provider), e.Provider, e.Account)
+}
+
+// CanonicalKey requires an explicit provider/account/native-call tuple.
+// Empty means callers must use this observation's own archive identity.
+func (e Evidence) CanonicalKey() string {
+	if e.NativeCallID == "" {
+		return ""
+	}
+	var data []byte
+	for _, value := range []string{e.Provider, e.Account, e.NativeCallID} {
+		data = binary.BigEndian.AppendUint64(data, uint64(len(value)))
+		data = append(data, value...)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func invalid(field string) error {
