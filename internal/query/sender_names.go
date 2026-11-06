@@ -122,7 +122,7 @@ func senderNameScope(q *search.Query) (string, *search.Query, bool) {
 	scoped := *q
 	scoped.FromAddrs, scoped.Alternatives = nil, nil
 	for _, alternative := range q.Alternatives {
-		if len(q.FromAddrs) == 0 && len(alternative.FromAddrs) == 0 {
+		if len(alternative.FromAddrs) == 0 {
 			continue
 		}
 		branch := *alternative
