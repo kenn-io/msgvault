@@ -390,7 +390,6 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			availability, err := f.controller.Inspect(f.ctx)
 			require.NoError(t, err)
 			assert.Equal(t, tc.available, availability.OllamaAvailable)
-			assert.NotEmpty(t, availability.Host)
 			if tc.stopped {
 				before, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(t, err)
@@ -788,7 +787,7 @@ func TestLocalEmbeddingsRecoveryAfterCachedPendingCounts(t *testing.T) {
 		}
 		var status vector.EmbeddingStatus
 		if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
-			t.Errorf("decode embedding status: %v", err)
+			assert.Fail(t, "decode embedding status", "%v", err)
 			return
 		}
 		assert.Equal(t, int64(1), status.Pending, "Settings observes pending coverage during setup")

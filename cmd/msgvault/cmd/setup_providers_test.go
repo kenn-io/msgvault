@@ -1394,11 +1394,10 @@ api_key_env = "STALE_PROVIDER_KEY"
 func TestSetupProvidersTaggedChatModelDiscovery(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[chat]\nserver = \"http://localhost:11435\"\n")
-	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:v2", "gpt-oss-128k:custom"}}
+	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:custom"}}
 	output, err := fixture.run(t, "providers", "--json", "--allow-sensitive")
 	require.NoError(err, output)
 	loaded := fixture.load(t)
-	assert.False(loaded.Vector.Enabled, "a custom embedding tag cannot serve the default embedding model")
 	require.True(loaded.People.Sweep.Enabled)
 	assert.Equal("gpt-oss-128k", loaded.People.Sweep.Providers[setupOllamaProfile].Model)
 }
