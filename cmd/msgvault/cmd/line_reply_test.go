@@ -119,6 +119,10 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				assert.Equal("credentials_unavailable", err.Error())
 			case "grant":
 				assert.Equal("not_permitted", err.Error())
+			case "revision":
+				assert.Equal("revision_mismatch", err.Error())
+			case "missing revision", "env", "cwd":
+				assert.Equal("invalid_args", err.Error())
 			}
 			if kind == "invalid text" {
 				assert.Equal("invalid_args", err.Error())

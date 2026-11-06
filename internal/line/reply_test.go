@@ -164,7 +164,7 @@ func TestReplyLostResponseThenRejectionKeepsOriginalKey(t *testing.T) {
 }
 
 func TestReplyRejectsBeforeProviderIO(t *testing.T) {
-	for _, kind := range []string{"invalid text", "invalid recipient", "disabled policy", "missing client"} {
+	for _, kind := range []string{"invalid text", "changed conversation type", "disabled policy", "missing client"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			f := newReplyFixture(t, "user", nil)
@@ -175,10 +175,8 @@ func TestReplyRejectsBeforeProviderIO(t *testing.T) {
 				require.NoError(err)
 				f.draft = edited
 			}
-			if kind == "invalid recipient" {
-				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE conversations SET source_conversation_id='user:invalid' WHERE id=?`), f.draft.ConversationID)
-				require.NoError(err)
-				_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE chat_drafts SET source_conversation_id='user:invalid' WHERE draft_id=?`), f.draft.DraftID)
+			if kind == "changed conversation type" {
+				_, err := f.st.EnsureConversationWithTypeContext(t.Context(), f.draft.SourceID, f.draft.SourceConversationID, "group_chat", "Example")
 				require.NoError(err)
 			}
 			if kind == "disabled policy" {
@@ -190,7 +188,7 @@ func TestReplyRejectsBeforeProviderIO(t *testing.T) {
 			before := len(f.fake.Requests())
 			_, err := sender.Send(t.Context(), f.draft.DraftID, f.draft.Revision)
 			require.Error(err)
-			if kind == "invalid recipient" {
+			if kind == "changed conversation type" {
 				require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
 			}
 			assert.Len(t, f.fake.Requests(), before)
@@ -199,64 +197,18 @@ func TestReplyRejectsBeforeProviderIO(t *testing.T) {
 }
 
 func TestReplyKnownReceiptRecoveryIgnoresProviderGates(t *testing.T) {
-	testReplyReceiptRecoveryAfterRestart(t, "accepted")
-}
-
-func TestReplyMissingParentRecoveryAfterGC(t *testing.T) {
-	for _, phase := range []string{"lost response after parent GC", "known receipt after parent GC"} {
-		t.Run(phase, func(t *testing.T) {
-			testReplyReceiptRecoveryAfterRestart(t, phase)
-		})
-	}
-}
-
-func testReplyReceiptRecoveryAfterRestart(t *testing.T, phase string) {
-	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "reply.db")
 	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
-	gc := strings.HasSuffix(phase, "after parent GC")
-	if gc {
-		if phase == "lost response after parent GC" {
-			f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-		} else {
-			_, err := f.st.DB().Exec(`CREATE TRIGGER fail_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
-			require.NoError(err)
-		}
-		pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-		if phase == "lost response after parent GC" {
-			require.NoError(err)
-			assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-		} else {
-			require.Error(err)
-			assert.Equal("sent_archive_pending", pending.Status)
-			assert.True(pending.Accepted)
-			assert.Equal("900000000000000001", pending.RemoteMessageID)
-			assert.Zero(pending.MessageID)
-			assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-			_, err = f.st.DB().Exec(`DROP TRIGGER fail_reply_archive`)
-			require.NoError(err)
-		}
-		require.NoError(f.st.MarkMessageDeletedContext(t.Context(), f.draft.SourceID, "100"))
-		plan, err := f.st.PlanGCContext(t.Context())
-		require.NoError(err)
-		assert.Equal(int64(1), plan.SourceDeleted)
-		deleted, err := f.st.ExecuteGCContext(t.Context(), plan)
-		require.NoError(err)
-		assert.Equal(int64(1), deleted)
-	} else {
-		_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, f.now, func(store.LineReplyAttempt) error { return nil })
-		require.NoError(err)
-		if phase == "accepted" {
-			attempt, err := f.st.StartLineReplyRequestContext(t.Context(), f.draft.DraftID, f.now, f.now.Add(30*time.Second))
-			require.NoError(err)
-			result, err := f.client.PushText(t.Context(), attempt.RetryKey, line.PushTextRequest{To: f.to, Text: attempt.Body, QuoteToken: attempt.QuoteToken})
-			require.NoError(err)
-			_, err = f.st.RecordLineReplyOutcomeContext(t.Context(), f.draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: result.StatusCode, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID})
-			require.NoError(err)
-		}
-	}
+	_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, f.now, func(store.LineReplyAttempt) error { return nil })
+	require.NoError(err)
+	attempt, err := f.st.StartLineReplyRequestContext(t.Context(), f.draft.DraftID, f.now, f.now.Add(30*time.Second))
+	require.NoError(err)
+	result, err := f.client.PushText(t.Context(), attempt.RetryKey, line.PushTextRequest{To: f.to, Text: attempt.Body, QuoteToken: attempt.QuoteToken})
+	require.NoError(err)
+	_, err = f.st.RecordLineReplyOutcomeContext(t.Context(), f.draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: result.StatusCode, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID})
+	require.NoError(err)
 	require.NoError(f.st.Close())
 	reopened, err := store.Open(path)
 	require.NoError(err)
@@ -264,27 +216,72 @@ func testReplyReceiptRecoveryAfterRestart(t *testing.T, phase string) {
 	f.st = reopened
 	f.resetClient()
 	sender := f.sender()
-	if phase == "accepted" {
-		f.now = f.now.Add(25 * time.Hour)
-		sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
-			return nil, errors.New("revoked policy and removed secret")
-		}
-	} else {
-		f.now = f.now.Add(31 * time.Second)
+	f.now = f.now.Add(25 * time.Hour)
+	sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
+		return nil, errors.New("revoked policy and removed secret")
 	}
 	sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("sent", sent.Status)
 	assert.Equal(1, f.fake.AcceptedPushes())
-	pushes := 1
-	if phase == "lost response after parent GC" {
-		pushes = 2
-	}
-	assert.Equal(pushes, f.fake.Count("POST", "/v2/bot/message/push"))
-	if gc {
-		body, err := f.st.GetMessageBodyText(sent.MessageID)
-		require.NoError(err)
-		assert.Equal("Thanks!", body)
+	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+}
+
+func TestReplyMissingParentRecoveryAfterGC(t *testing.T) {
+	for _, phase := range []string{"lost response after parent GC", "known receipt after parent GC"} {
+		t.Run(phase, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "reply.db")
+			f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
+			if phase == "lost response after parent GC" {
+				f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+			} else {
+				_, err := f.st.DB().Exec(`CREATE TRIGGER fail_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
+				require.NoError(err)
+			}
+			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			if phase == "lost response after parent GC" {
+				require.NoError(err)
+				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+			} else {
+				require.Error(err)
+				assert.Equal("sent_archive_pending", pending.Status)
+				assert.True(pending.Accepted)
+				assert.Equal("900000000000000001", pending.RemoteMessageID)
+				assert.Zero(pending.MessageID)
+				assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+				_, err = f.st.DB().Exec(`DROP TRIGGER fail_reply_archive`)
+				require.NoError(err)
+			}
+			require.NoError(f.st.MarkMessageDeletedContext(t.Context(), f.draft.SourceID, "100"))
+			plan, err := f.st.PlanGCContext(t.Context())
+			require.NoError(err)
+			assert.Equal(int64(1), plan.SourceDeleted)
+			deleted, err := f.st.ExecuteGCContext(t.Context(), plan)
+			require.NoError(err)
+			assert.Equal(int64(1), deleted)
+			require.NoError(f.st.Close())
+			reopened, err := store.Open(path)
+			require.NoError(err)
+			t.Cleanup(func() { _ = reopened.Close() })
+			f.st = reopened
+			f.resetClient()
+			sender := f.sender()
+			f.now = f.now.Add(31 * time.Second)
+			sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal("sent", sent.Status)
+			assert.Equal(1, f.fake.AcceptedPushes())
+			pushes := 1
+			if phase == "lost response after parent GC" {
+				pushes = 2
+			}
+			assert.Equal(pushes, f.fake.Count("POST", "/v2/bot/message/push"))
+			body, err := f.st.GetMessageBodyText(sent.MessageID)
+			require.NoError(err)
+			assert.Equal("Thanks!", body)
+		})
 	}
 }
 
@@ -686,121 +683,96 @@ func TestReplyConflictingReceiptKeepsDurableIdentity(t *testing.T) {
 }
 
 func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
-	for _, phase := range []string{"initial", "recovery"} {
-		for _, status := range []int{400, 429, 503} {
-			t.Run(phase+"/"+http.StatusText(status), func(t *testing.T) {
-				must := require.New(t)
-				checks := assert.New(t)
-				f := newReplyFixture(t, "user", nil)
-				state := store.LineReplyAdmitted
-				pushes := 0
-				if phase == "recovery" {
-					f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-					_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-					must.NoError(err)
-					f.now = f.now.Add(31 * time.Second)
-					state = store.LineReplyRemoteUnknown
-					pushes = 1
-				}
-				f.resetClient()
-				before := f.fake.Count(http.MethodPost, "/oauth2/v3/token")
-				f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"180"}}})
-				wait := 3 * time.Minute
-				if status == http.StatusBadRequest {
-					wait = 30 * time.Second
-				}
-				receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.ErrorIs(err, line.ErrCredentialsUnavailable)
-				checks.Equal(state, receipt.Status)
-				must.NotNil(receipt.RetryAfter)
-				checks.Equal(f.now.Add(wait), *receipt.RetryAfter)
-				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-				must.NoError(err)
-				checks.Equal(state, attempt.State)
-				checks.Equal(*receipt.RetryAfter, attempt.NextRetryAt)
-				if phase == "initial" {
-					checks.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
-				}
-				waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.NoError(err)
-				checks.Equal(receipt, waiting)
-				f.now = f.now.Add(wait - time.Second)
-				_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.NoError(err)
-				checks.Equal(before+1, f.fake.Count(http.MethodPost, "/oauth2/v3/token"))
-				checks.Equal(pushes, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-				f.now = f.now.Add(time.Second)
-				sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.NoError(err)
-				checks.Equal(store.LineReplySent, sent.Status)
-				completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-				must.NoError(err)
-				checks.Equal(attempt.RetryKey, completed.RetryKey)
-				if phase == "initial" {
-					checks.Equal(f.now.Add(23*time.Hour), completed.RetryUntil)
-					message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
-					must.NoError(err)
-					checks.Equal(f.now, message.SentAt.UTC())
-					for _, request := range f.fake.Requests() {
-						if request.Path == "/v2/bot/message/push" {
-							checks.Equal(attempt.RetryKey, request.Header.Get("X-Line-Retry-Key"))
-						}
-					}
-				} else {
-					checks.Equal(attempt.RetryUntil, completed.RetryUntil)
-				}
-			})
-		}
-	}
-}
-
-func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint string
 		response       lineapi.Response
+		wait           time.Duration
+		recovery       bool
 	}{
-		{"token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}},
-		{"token 403", "/oauth2/v3/token", lineapi.Response{Status: 403}},
-		{"token 500", "/oauth2/v3/token", lineapi.Response{Status: 500}},
-		{"invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}},
-		{"token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}},
-		{"push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}},
-		{"push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}},
+		{"initial/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, false},
+		{"initial/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false},
+		{"initial/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false},
+		{"recovery/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, true},
+		{"recovery/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true},
+		{"recovery/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true},
+		{"credentials/token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}, 30 * time.Second, false},
+		{"credentials/token 403", "/oauth2/v3/token", lineapi.Response{Status: 403}, 30 * time.Second, false},
+		{"credentials/token 500", "/oauth2/v3/token", lineapi.Response{Status: 500}, 30 * time.Second, false},
+		{"credentials/invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}, 30 * time.Second, false},
+		{"credentials/token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}, 30 * time.Second, false},
+		{"credentials/push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}, 30 * time.Second, false},
+		{"credentials/push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}, 30 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			must := require.New(t)
+			checks := assert.New(t)
 			f := newReplyFixture(t, "user", nil)
+			state := store.LineReplyAdmitted
+			if tc.recovery {
+				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+				_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				f.now = f.now.Add(31 * time.Second)
+				state = store.LineReplyRemoteUnknown
+			}
 			f.resetClient()
+			before := f.fake.Count(http.MethodPost, "/oauth2/v3/token")
 			responses := []lineapi.Response{tc.response}
 			if tc.endpoint == "/v2/bot/message/push" && tc.response.Status == http.StatusUnauthorized {
 				responses = append(responses, tc.response)
 			}
-			f.fake.Enqueue("POST", tc.endpoint, responses...)
-			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			require.ErrorIs(err, line.ErrCredentialsUnavailable)
-			pushes := f.fake.Count("POST", "/v2/bot/message/push")
-			if tc.endpoint == "/oauth2/v3/token" {
-				assert.Zero(pushes)
+			f.fake.Enqueue(http.MethodPost, tc.endpoint, responses...)
+			receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.ErrorIs(err, line.ErrCredentialsUnavailable)
+			checks.Equal(state, receipt.Status)
+			must.NotNil(receipt.RetryAfter)
+			checks.Equal(f.now.Add(tc.wait), *receipt.RetryAfter)
+			attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+			must.NoError(err)
+			checks.Equal(state, attempt.State)
+			checks.Equal(*receipt.RetryAfter, attempt.NextRetryAt)
+			if !tc.recovery {
+				checks.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
 			}
-			attempt, readErr := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-			require.NoError(readErr)
-			assert.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
-			assert.Equal(store.LineReplyAdmitted, pending.Status, "refused credentials prove nothing was submitted")
-			f.now = f.now.Add(31 * time.Second)
+			pushes := f.fake.Count(http.MethodPost, "/v2/bot/message/push")
+			if tc.endpoint == "/oauth2/v3/token" && !tc.recovery {
+				checks.Zero(pushes)
+			}
+			waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.NoError(err)
+			checks.Equal(receipt, waiting)
+			f.now = f.now.Add(tc.wait - time.Second)
+			_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.NoError(err)
+			if tc.endpoint == "/oauth2/v3/token" {
+				checks.Equal(before+1, f.fake.Count(http.MethodPost, "/oauth2/v3/token"))
+			}
+			checks.Equal(pushes, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+			f.now = f.now.Add(time.Second)
 			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			require.NoError(err)
-			assert.Equal(store.LineReplySent, sent.Status)
-			assert.Equal(1, f.fake.AcceptedPushes())
+			must.NoError(err)
+			checks.Equal(store.LineReplySent, sent.Status)
+			checks.Equal(1, f.fake.AcceptedPushes())
+			completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+			must.NoError(err)
+			checks.Equal(attempt.RetryKey, completed.RetryKey)
+			if strings.HasPrefix(tc.name, "initial/") {
+				checks.Equal(f.now.Add(23*time.Hour), completed.RetryUntil)
+				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
+				must.NoError(err)
+				checks.Equal(f.now, message.SentAt.UTC())
+			} else if tc.recovery {
+				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
+			}
 			var keys []string
 			for _, request := range f.fake.Requests() {
 				if request.Path == "/v2/bot/message/push" {
 					keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
 				}
 			}
-			require.Len(keys, pushes+1)
+			must.Len(keys, pushes+1)
 			for _, key := range keys {
-				assert.Equal(attempt.RetryKey, key)
+				checks.Equal(attempt.RetryKey, key)
 			}
 		})
 	}
