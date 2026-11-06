@@ -41,6 +41,7 @@ func TestSenderNameHints(t *testing.T) {
 		want          bool
 	}{
 		{"from:alex subject:hintfixture", true, 10, 0, true},
+		{"from:example.co subject:hintfixture", true, 10, 0, true},
 		{"from:alex subject:hintfixture", false, 10, 0, false},
 		{"from:alex subject:hintfixture", true, 0, 0, false},
 		{"from:alex subject:hintfixture", true, 10, 10, false},
@@ -73,7 +74,14 @@ func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
 	q.DeletionScope = search.DeletionScopeActive
 	assertions.Nil(env.Engine.MatchSenderName(env.Ctx, q))
 	q.DeletionScope = search.DeletionScopeAny
-	assertions.Len(env.Engine.MatchSenderName(env.Ctx, q), 1)
+	hints = env.Engine.MatchSenderName(env.Ctx, q)
+	requirements.Len(hints, 1)
+	retry := search.Parse(hints[0].RetryWith.Query)
+	retry.DeletionScope = q.DeletionScope
+	results, err := env.Engine.Search(env.Ctx, retry, 10, 0)
+	requirements.NoError(err)
+	requirements.Len(results, 1)
+	assertions.Equal(id, results[0].ID)
 }
 
 func TestSenderHintCandidatesRespectScope(t *testing.T) {

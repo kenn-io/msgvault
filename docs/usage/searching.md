@@ -179,7 +179,7 @@ and the order msgvault trusts them in.
 
 When an incomplete sender name or address such as `from:alex` or `from:alex@exam` finds no messages, SQLite searches suggest up to three matching addresses. Each count describes the corrected query within your current filters and account scope. The CLI prints the hint on stderr after its normal output, including with `--json`, whose stdout stays a bare array. MCP metadata search returns the same suggestion in `hints` with `retry_with.query`. DuckDB metadata search already matches sender names.
 
-When retrying in the CLI, keep options such as `--account` and `--collection` from your original command.
+When retrying in the CLI, keep options such as `--account`, `--collection`, and `--deletion-scope` from your original command.
 
 ### Domain Search
 

@@ -17,17 +17,17 @@ type SenderNameMatcher interface {
 // MatchSenderName counts corrected queries within the same search scope.
 // The hint is best effort: it is nil when none applies or the lookup fails.
 func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query) []SearchHint {
-	return e.matchSenderName(ctx, q, MessageFilter{}, e.buildFilteredDeepSearchQueryParts)
+	return e.matchSenderName(ctx, q, e.buildSearchQueryParts)
 }
 
-func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query, filter MessageFilter,
-	buildParts func(context.Context, *search.Query, MessageFilter) ([]string, []any, string)) []SearchHint {
+func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
+	buildParts func(context.Context, *search.Query) ([]string, []any, string)) []SearchHint {
 	if q.HasOR() || len(q.FromAddrs) != 1 {
 		return nil
 	}
 	scoped := *q
 	scoped.FromAddrs = nil
-	conditions, args, join := buildParts(ctx, &scoped, filter)
+	conditions, args, join := buildParts(ctx, &scoped)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	// First find addresses with matching sender metadata. Count all scoped
 	// messages at each address, but require a matching label within that scope.
