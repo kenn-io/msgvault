@@ -206,7 +206,7 @@
   function measuredViewport(element: HTMLDivElement): number {
     return tableViewportHeight(
       element.clientHeight,
-      headerElement?.offsetHeight || 30,
+      headerElement?.offsetHeight ?? 30,
       window.innerHeight
     );
   }

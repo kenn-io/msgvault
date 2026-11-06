@@ -212,6 +212,31 @@ test.describe('phone width', () => {
 test.describe('phone interactions', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
+  test('groups keep a fully visible row still when keyboard focus reaches it near the bottom', async ({ page }) => {
+    await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+      rows: Array.from({ length: total }, (_, i) => group(i + 1)), total_count: total, cache_revision: 'visible-bottom'
+    } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ groupingChain: ['source'] })))}`);
+    const grid = page.getByRole('grid', { name: 'Messages grouped by source' });
+    await expect(grid.locator('[aria-rowindex="2"]')).toBeVisible();
+    await grid.evaluate(el => { el.scrollTop = 100 * 58 - el.clientHeight + 15; el.dispatchEvent(new Event('scroll')); });
+    await grid.focus();
+    for (let i = 0; i < 20 && !(await grid.getAttribute('aria-activedescendant'))?.endsWith('99'); i++) {
+      await page.keyboard.press('ArrowDown');
+    }
+    await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A99$/);
+    const target = grid.locator('[aria-rowindex="101"]');
+    const [rowBounds, gridBounds] = await Promise.all([target.boundingBox(), grid.boundingBox()]);
+    expect(rowBounds!.y).toBeGreaterThanOrEqual(gridBounds!.y);
+    const bottomGap = gridBounds!.y + gridBounds!.height - rowBounds!.y - rowBounds!.height;
+    expect(bottomGap).toBeGreaterThanOrEqual(0);
+    expect(bottomGap).toBeLessThan(30);
+    const before = await grid.evaluate(el => el.scrollTop);
+    await page.keyboard.press('ArrowDown');
+    await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A100$/);
+    expect(await grid.evaluate(el => el.scrollTop)).toBe(before);
+  });
+
   for (const workspace of ['everything', 'files'] as const) {
     test(`${workspace} shows the sender or the roster when unavailable`, async ({ page }) => {
       for (const sender of ['Zoe Sender', '']) {
