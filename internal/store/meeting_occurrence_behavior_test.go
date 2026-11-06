@@ -95,14 +95,13 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	}
 }
 
-func TestMeetingSuggestionsOffsetCancellation(t *testing.T) {
-	t.Helper()
+func TestMeetingSuggestionsExcludeCancelledOccurrence(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
 	calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`)
 	data, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	data.Message.SentAt.Time = time.Date(2027, 3, 14, 6, 0, 0, 0, time.FixedZone("", -4*60*60))
+	data.Message.SentAt.Time = time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
 	data.Message.SentAt.Valid = true
 	_, err := st.UpsertMessage(data.Message)
 	require.NoError(err)

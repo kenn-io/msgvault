@@ -92,5 +92,6 @@ func TestMeetingLinksClient(t *testing.T) {
 	record, err = client.MeetingRecord(t.Context(), "msg:43")
 	links = record.Links
 	requirements.NoError(err)
+	assertions.Equal([]int64{43}, record.MessageIDs)
 	assertions.Empty(links)
 }
