@@ -42,14 +42,14 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 	}
 	raw, err := s.store.GetMessageRawContext(ctx, target.ID)
 	if err != nil {
-		return fmt.Errorf("read retained MIME for attachment repair: %w", err)
+		return fmt.Errorf("read saved message: %w", err)
 	}
 	if len(raw) == 0 {
-		return errors.New("retained MIME for attachment repair is empty")
+		return errors.New("Saved message is empty") //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
 	}
 	parsed, err := mime.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("parse retained MIME for attachment repair: %w", err)
+		return fmt.Errorf("decode saved message: %w", err)
 	}
 	// Partial parses cannot certify that every expected occurrence was restored.
 	if parsed.Incomplete {
@@ -73,7 +73,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 			}
 		}
 		if !matched {
-			return fmt.Errorf("retained MIME does not match existing attachment %q", ref.Filename)
+			return fmt.Errorf("Saved message conflicts with attachment %q", ref.Filename) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
 		}
 		if ref.State == "skipped" || ref.State == "unavailable" {
 			return fmt.Errorf("attachment %q was deliberately omitted (%s)", ref.Filename, ref.State)
@@ -114,13 +114,17 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 				(!errors.Is(readErr, fs.ErrNotExist) && !errors.Is(readErr, packstore.ErrPhysicalMissing) && !errors.Is(readErr, packstore.ErrPhysicalAuthorityMissing)) {
 				return fmt.Errorf("verify attachment %q: %w", att.Filename, readErr)
 			}
-			location, err := store.NewPackCatalog(s.store).Resolve(ctx, packstore.Hash(att.ContentHash))
-			if err != nil {
-				return err
-			}
-			if location.Pack != nil {
-				return fmt.Errorf("Restore the missing attachment storage file for %q: %w", att.Filename, readErr) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
-			}
+		}
+		location, err := store.NewPackCatalog(s.store).Resolve(ctx, packstore.Hash(att.ContentHash))
+		if err != nil {
+			return err
+		}
+		if location.Pack != nil && readErr != nil {
+			return fmt.Errorf("Restore the missing attachment storage file for %q: %w", att.Filename, readErr) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
+		}
+		if location.Pack == nil {
+			// A readable loose file can be residue from a failed directory sync.
+			// Durable dedup verifies and syncs it without replacing valid bytes.
 			receipt, err := export.StoreAttachmentFileDurable(s.opts.AttachmentsDir, &att)
 			if receipt.Created {
 				created[receipt.StoragePath] = receipt

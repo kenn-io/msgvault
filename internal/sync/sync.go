@@ -2014,8 +2014,8 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		delete(s.pendingAcquisitions, data.message.SourceMessageID)
 	}
 
-	// File I/O stays outside the RAW transaction. Never hide a failed write by
-	// reducing the expected count to the successfully stored subset.
+	// File I/O stays outside the RAW transaction. Gmail retains the expected
+	// count on failure; IMAP keeps its existing best-effort subset statistics.
 	var attachmentErr error
 	if gmailMaterialization && work&materializeMIME != 0 && data.mimeIncomplete {
 		attachmentErr = errors.New("Saved message is incomplete and needs repair.") //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
@@ -2026,12 +2026,20 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	if materialize {
 		for _, att := range data.attachments {
 			if err := s.storeAttachment(messageID, &att); err != nil {
+				if s.opts.SourceType == sourceTypeIMAP {
+					s.logger.Warn("failed to store attachment", "message", messageID, "attachment", att.Filename, "error", err)
+					continue
+				}
 				attachmentErr = errors.Join(attachmentErr, fmt.Errorf("store attachment %q: %w", att.Filename, err))
 			}
 		}
 
 		if attachmentErr == nil {
 			attachmentErr = s.store.RecomputeMessageAttachmentStats(messageID)
+			if attachmentErr != nil && s.opts.SourceType == sourceTypeIMAP {
+				s.logger.Warn("failed to recompute attachment stats", "message", messageID, "error", attachmentErr)
+				attachmentErr = nil
+			}
 		}
 	}
 	if attachmentErr != nil {

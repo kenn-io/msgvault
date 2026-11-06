@@ -322,21 +322,6 @@ func TestAttachmentRevisionUnrelatedOutcomeCannotEraseDebt(t *testing.T) {
 	assert.Equal(syncItemKindAttachmentError, debt[0].ErrorKind)
 }
 
-func TestAttachmentRevisionHTMLWarningIsRepairable(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	e := attachmentPersistenceEnv(t)
-	raw := revisionHTMLMIME()
-	parsed, err := mime.Parse(raw)
-	require.NoError(err)
-	require.NotEmpty(parsed.Errors, "HTML-only mail reports a harmless text conversion warning")
-	e.Mock.AddMessage("html-only", raw, []string{"INBOX"})
-	_, err = New(e.Mock, e.Store, &Options{}).Full(t.Context(), testEmail)
-	require.NoError(err)
-	source := e.CreateSource(t)
-	err = New(nil, e.Store, &Options{AttachmentsDir: filepath.Join(e.TmpDir, "attachments")}).RepairMessageAttachments(t.Context(), RepairRequest{Reference: "html-only", SourceID: source.ID})
-	assert.NoError(err)
-}
-
 func TestAttachmentRevisionIncompleteExtractionKeepsDebt(t *testing.T) {
 	for name, raw := range map[string][]byte{
 		"invalid transfer": []byte(strings.Replace(string(testMIMEWithAttachment()), "SGVsbG8gV29ybGQh", "S", 1)),

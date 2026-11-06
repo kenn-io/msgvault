@@ -70,12 +70,14 @@ func (s *Store) RestoreMIMEAttachmentRecordsContext(ctx context.Context, expecte
 			if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			// Upgrade only the missing provenance on a matching legacy row.
+			// Upgrade only the missing provenance on one matching legacy row.
 			// Keep its ID, path, metadata and references intact.
 			result, err := tx.Exec(`UPDATE attachments SET source_part_key = ?
-				WHERE message_id = ? AND source_part_key IS NULL AND LOWER(content_hash) = ?
-				AND size = ? AND source_attachment_id IS NULL
-				AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id)`,
+				WHERE id = (SELECT legacy.id FROM attachments legacy
+				WHERE legacy.message_id = ? AND legacy.source_part_key IS NULL AND LOWER(legacy.content_hash) = ?
+				AND legacy.size = ? AND legacy.source_attachment_id IS NULL
+				AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = legacy.id)
+				ORDER BY legacy.id LIMIT 1)`,
 				write.SourcePartKey, expected.ID, strings.ToLower(write.ContentHash), write.Size)
 			if err != nil {
 				return err
