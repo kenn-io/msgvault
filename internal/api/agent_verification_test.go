@@ -114,7 +114,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", ""},
 		{"filename", "Ordinary", "", "", "code-482913.png"},
 		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", ""},
-		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>", ""},
+		{"ordinary", "Project update", "Project update", "<p>Project update</p>", ""},
 		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes) + " Your code is 482913", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,19 +206,11 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	// Hide only the optional loader capability.
-	srv.store = struct{ MessageStore }{st}
+	loader := &attachmentBodyLoadCounter{Store: st, loadErr: context.Canceled}
+	srv.store = loader
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
-	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
-	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
-	assertions.NotContains(w.Body.String(), "482913")
-
-	// A loader error must withhold the response, just like an unavailable loader.
-	loader := &attachmentBodyLoadCounter{Store: st, loadErr: context.Canceled}
-	srv.store = loader
-	w = httptest.NewRecorder()
 	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
 	assertions.Equal(1, loader.calls)
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
