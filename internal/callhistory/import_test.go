@@ -72,6 +72,13 @@ func TestNormalizedCancellationRequiresTime(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
+func TestNormalizedImportRejectsDifferentNativeCallID(t *testing.T) {
+	_, err := (ImportRequest{Format: "normalized", Account: "example",
+		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","precision":"instant","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
+	}).Observation()
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
