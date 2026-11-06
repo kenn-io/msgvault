@@ -216,7 +216,7 @@ Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
 one exact question.
 
-Schema 3.45.0 adds the owner-only `GET /people/{id}/fact-contests` report. For each fact the resolver left unsettled, it lists the current value, the competing claims with the resolver's decision, and their supported citations. Facts the owner has pinned or chosen are left out, and sensitive facts require `include_sensitive=true`.
+Schema 3.46.0 adds the owner-only `GET /people/{id}/fact-contests` report. For each fact the resolver left unsettled, it lists the current value, the competing claims with the resolver's decision, and their supported citations. Facts the owner has pinned or chosen are left out, and sensitive facts require `include_sensitive=true`.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
