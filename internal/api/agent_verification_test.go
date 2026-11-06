@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,10 +164,11 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						if strings.HasPrefix(path, "/attachments/") {
 							var attachment AttachmentInfo
 							requirements.NoError(json.Unmarshal(w.Body.Bytes(), &attachment))
-							assertions.Equal(tc.filename, attachment.Filename)
 							if mode == "masked" && tc.name != "ordinary" {
+								assertions.Equal(verification.Masked, attachment.Filename)
 								assertions.Empty(attachment.URL, "%s %s", mode, path)
 							} else {
+								assertions.Equal(tc.filename, attachment.Filename)
 								assertions.Equal(tc.url, attachment.URL, "%s %s", mode, path)
 							}
 							continue
@@ -324,6 +326,8 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		parent, shared   bool
 	}{
 		{"shared.png", "image/png", string(fakePNG), false, false, true},
+		{"parent.png", "image/png", "\x89PNG\r\n\x1a\n\x00Parent image", false, true, false},
+		{"ordinary.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false, false, false},
 		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
 		{"ordinary.html", "text/html", "<p>Hello</p>", false, false, false},
@@ -364,14 +368,14 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			backends := []bool{false}
 			endpoints := []string{"/attachments/" + hash + "/content"}
 			callers := []string{"masked"}
-			if tc.name == "code.txt" || tc.name == "ordinary.txt" || tc.name == "shared.png" {
+			if tc.name == "code.txt" || tc.name == "ordinary.txt" || strings.HasSuffix(tc.name, ".png") {
 				backends = append(backends, true)
 				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
 				switch tc.name {
-				case "shared.png":
-					callers = []string{"attachment-only"}
 				case "code.txt":
 					callers = append(callers, "reveal", "owner")
+				default:
+					callers = append(callers, "attachment-only", "reveal", "owner")
 				}
 			}
 			if tc.name == "code.txt" {
@@ -398,8 +402,12 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						counter.calls = 0
 						w := httptest.NewRecorder()
 						srv.Router().ServeHTTP(w, req)
-						if tc.name == "shared.png" {
-							assertions.Zero(counter.calls, "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
+						if strings.HasSuffix(tc.name, ".png") || tc.name == "ordinary.txt" {
+							loads := 0
+							if mode == "masked" || mode == "attachment-only" {
+								loads = 1
+							}
+							assertions.Equal(loads, counter.calls, "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
 						}
 						if mode == "masked" && tc.blocked {
 							requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
@@ -408,6 +416,14 @@ func TestAgentVerificationAttachments(t *testing.T) {
 							assertions.Equal(tc.body, w.Body.String())
 							if strings.HasPrefix(endpoint, "/cli/attachment?") {
 								assertions.Empty(w.Header().Get("Content-Disposition"))
+							} else {
+								_, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
+								requirements.NoError(err)
+								filename := tc.name
+								if (mode == "masked" || mode == "attachment-only") && (tc.parent || tc.shared || tc.name == "code-482913.png") {
+									filename = verification.Masked
+								}
+								assertions.Equal(filename, params["filename"], "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
 							}
 						}
 					}

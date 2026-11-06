@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 	"golang.org/x/oauth2"
 )
 
@@ -3597,6 +3598,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if withheld {
+		att.Filename = verification.Masked
 		att.URL = ""
 	}
 
@@ -3666,7 +3668,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := s.textAttachmentReader(w, r, content, attachments)
+	reader, withheld, apiErr := s.textAttachmentReader(w, r, content, attachments)
 	if reader == nil {
 		_ = content.Close()
 		if apiErr != nil {
@@ -3680,7 +3682,11 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
+	filename := att.Filename
+	if withheld {
+		filename = verification.Masked
+	}
+	w.Header().Set("Content-Disposition", contentDisposition(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 

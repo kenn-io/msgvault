@@ -158,10 +158,11 @@ func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, cand
 var nestedEncoding = regexp.MustCompile(`(?im)^content-transfer-encoding[ \t]*:`)
 
 // The caller owns content. Sniffing preserves the original download bytes.
+// The withheld result lets callers mask download filenames with the same parent check.
 // A nil reader with no error means classification already wrote the response.
-func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, content io.Reader, candidates []query.AttachmentInfo) (io.Reader, *apiHTTPError) {
+func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, content io.Reader, candidates []query.AttachmentInfo) (io.Reader, bool, *apiHTTPError) {
 	if !s.withholdsVerification(r) {
-		return content, nil
+		return content, false, nil
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
 	text := false
@@ -171,7 +172,7 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 		names[i] = att.Filename
 		declared := strings.ToLower(att.MimeType)
 		if strings.HasPrefix(declared, "message/") || strings.EqualFold(filepath.Ext(att.Filename), ".eml") {
-			return nil, denied
+			return nil, false, denied
 		}
 		text = text || strings.HasPrefix(declared, "text/")
 		html = html || strings.HasPrefix(declared, "text/html")
@@ -179,22 +180,22 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 	reader := bufio.NewReaderSize(content, 512)
 	prefix, err := reader.Peek(512)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
+		return nil, false, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
 	sniffed := http.DetectContentType(prefix)
-	if !text && !strings.HasPrefix(sniffed, "text/") {
-		return reader, nil
-	}
 	withheld, ok := s.attachmentWithheld(w, r, candidates)
 	if !ok {
-		return nil, nil
+		return nil, false, nil
+	}
+	if !text && !strings.HasPrefix(sniffed, "text/") {
+		return reader, withheld, nil
 	}
 	if withheld {
-		return nil, denied
+		return nil, true, denied
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, verification.MaxFieldBytes))
 	if err != nil {
-		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
+		return nil, false, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
 	body := string(data)
 	c := verification.Content{Filenames: names}
@@ -203,7 +204,7 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 		c.HTML = body
 	}
 	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || nestedEncoding.MatchString(body) || verification.Is(c) {
-		return nil, denied
+		return nil, false, denied
 	}
-	return bytes.NewReader(data), nil
+	return bytes.NewReader(data), false, nil
 }
