@@ -166,6 +166,8 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 	fixtureTranscript(t, dir)
 	v := Manifest{SchemaVersion: 1, ID: "titles", Status: "complete", CreatedAtMS: 1790000000123, App: "Zoom", Notes: &Notes{Title: " Notes title "}, ProvisionalTitle: "Provisional"}
 	v.Title = "Zoom call — " + time.UnixMilli(v.CreatedAtMS).In(zone).Format("3:04 PM")
+	var progress []string
+	opts.Progress = func(message string) { progress = append(progress, message) }
 	for _, source := range []string{"", "default", "user", "calendar", "call"} {
 		v.Notes.Title = " Notes title "
 		if source == "user" {
@@ -191,7 +193,10 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 		}
 		check.Equal(want, snapshot.Title)
 		check.Contains(snapshot.Body, "Provisional")
-		check.Contains(snapshot.Body, v.Title)
+		check.NotContains(snapshot.Body, snapshot.Title, "the archive subject already displays the meeting title")
+		if v.Title != snapshot.Title {
+			check.Contains(snapshot.Body, "Original: "+v.Title)
+		}
 		if source == "user" {
 			check.Equal(1, bytes.Count([]byte(snapshot.Body), []byte("Provisional title: Provisional")))
 			check.NotContains(snapshot.Body, "Notes title:", "a repeated title must be omitted")
@@ -211,6 +216,7 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 					sum, err = ScanRemote(t.Context(), opts, imp.ImportRemote)
 				} else {
 					sum, err = imp.Import(t.Context(), opts)
+					check.Equal([]string{"Processed Notes title"}, progress)
 				}
 				must.NoError(err)
 				check.Zero(sum.MeetingsUpdated, "timezone changes must not alter an archived legacy title")

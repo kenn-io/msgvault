@@ -175,7 +175,7 @@ func ValidID(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, "/\\\x00") && strings.IndexFunc(id, unicode.IsControl) < 0
 }
 func ValidEntry(e Entry) bool {
-	return (e.Source == "system" || e.Source == "microphone") && e.StartMS >= 0 && e.EndMS >= e.StartMS && e.EndMS <= 9223372036854
+	return (e.Source == "system" || e.Source == "microphone") && e.StartMS >= 0 && e.EndMS >= e.StartMS && e.EndMS <= 9223372036854 && strings.TrimSpace(e.Text) != ""
 }
 func (m Meeting) Validate() error {
 	v := m.Manifest

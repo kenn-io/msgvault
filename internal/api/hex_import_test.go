@@ -14,16 +14,22 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/hex"
+	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type fakeHexImportStore struct {
 	*mockStore
 
 	calls int
+	run   func(context.Context, hex.RemoteRequest) (hex.RemoteResult, error)
 }
 
-func (s *fakeHexImportStore) ImportHex(_ context.Context, _ hex.RemoteRequest) (hex.RemoteResult, error) {
+func (s *fakeHexImportStore) ImportHex(ctx context.Context, req hex.RemoteRequest) (hex.RemoteResult, error) {
 	s.calls++
+	if s.run != nil {
+		return s.run(ctx, req)
+	}
 	return hex.RemoteResult{Status: "registered", SourceID: 1}, nil
 }
 func TestHexImportBoundary(t *testing.T) {
@@ -76,6 +82,78 @@ func TestHexImportBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHexImportRejectsEmptyEntryTextAndAcceptsEmptyFinalTranscript(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	archive := testutil.NewTestStore(t)
+	importer := hex.NewImporter(archive)
+	source := meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}
+	_, err := importer.ImportRemote(t.Context(), hex.RemoteRequest{Action: "register", Source: source})
+	must.NoError(err)
+	meeting := hex.Meeting{
+		Manifest:        hex.Manifest{SchemaVersion: 1, ID: "http-transcript", Title: "Synthetic call", Status: "complete", CreatedAtMS: 1790000000123},
+		Entries:         []hex.Entry{{Source: "system", StartMS: 0, EndMS: 1000, Text: "Readable transcript"}},
+		TranscriptState: "final",
+	}
+	seed, err := importer.ImportRemote(t.Context(), hex.RemoteRequest{Action: "upsert", Source: source, Meeting: &meeting, Full: true})
+	must.NoError(err)
+	before, err := archive.GetMessage(seed.MessageID)
+	must.NoError(err)
+	beforeRaw, err := archive.GetMessageRaw(seed.MessageID)
+	must.NoError(err)
+
+	apiStore := &fakeHexImportStore{
+		mockStore: &mockStore{stats: &StoreStats{}},
+		run:       importer.ImportRemote,
+	}
+	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, apiStore, nil, testLogger())
+	const sourceJSON = `{"identifier":"recorder","account_email":"user@example.com"}`
+	const manifestJSON = `{"schema_version":1,"id":"http-transcript","title":"Synthetic call","status":"complete","created_at_ms":1790000000123}`
+	requestBody := func(entries string) string {
+		return `{"action":"upsert","full":true,"source":` + sourceJSON + `,"meeting":{"manifest":` + manifestJSON + `,"entries":` + entries + `,"transcript_state":"final"}}`
+	}
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(body))
+		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		server.Router().ServeHTTP(out, req)
+		return out
+	}
+	for _, entry := range []struct {
+		name  string
+		value string
+	}{
+		{"omitted", `{"source":"system","start_ms":0,"end_ms":1000}`},
+		{"null", `{"source":"system","start_ms":0,"end_ms":1000,"text":null}`},
+		{"blank", `{"source":"system","start_ms":0,"end_ms":1000,"text":" \t "}`},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			check := assert.New(t)
+			must := require.New(t)
+			apiStore.calls = 0
+			out := post(requestBody("[" + entry.value + "]"))
+			check.Equal(http.StatusUnprocessableEntity, out.Code)
+			check.Zero(apiStore.calls, "invalid transcript entries must not reach the importer")
+			after, err := archive.GetMessage(seed.MessageID)
+			must.NoError(err)
+			check.Equal(before.Body, after.Body)
+			afterRaw, err := archive.GetMessageRaw(seed.MessageID)
+			must.NoError(err)
+			check.Equal(beforeRaw, afterRaw)
+		})
+	}
+
+	apiStore.calls = 0
+	accepted := post(requestBody("[]"))
+	check.Equal(http.StatusOK, accepted.Code, accepted.Body.String())
+	check.Equal(1, apiStore.calls)
+	after, err := archive.GetMessage(seed.MessageID)
+	must.NoError(err)
+	check.NotContains(after.Body, "Readable transcript", "an explicit empty final transcript must be accepted")
 }
 
 func TestHexImportWaitsForOperationGate(t *testing.T) {

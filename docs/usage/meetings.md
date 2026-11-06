@@ -59,6 +59,8 @@ For one meeting, expand its message and choose **⋯ → Export meeting…**. Ch
 
 The downloaded file contains the server's context packet, including meeting
 references, participants, summary, notes, recorded actions, and coverage states.
+For Hex, it also preserves the recorded app as `meeting_platform`; Markdown
+shows the same value as `Platform`.
 The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 4096 through 1048576 bytes. Packets report truncation and omitted meeting IDs;
 check those fields before treating an export as complete. A missing summary
@@ -1000,7 +1002,10 @@ The searchable subject uses Hex's **base title**: user, call and calendar titles
 win; default titles yield to the notes title, then provisional title. Chapter
 titles remain separately searchable in the body; msgvault does not append Hex's
 chapter decoration to the subject. All title evidence, notes and chapters are
-preserved. Changing the recorder time zone does not retitle an unchanged archive.
+preserved. Hex's optional manifest `app` value is preserved verbatim as
+`meeting_platform` in archive metadata and meeting context, and as a searchable
+`Platform:` line in the archived body. An absent value stays absent. Changing
+the recorder time zone does not retitle an unchanged archive.
 
 Calendar attendee strings remain context evidence. Only explicit valid email
 strings become recipients; names never identify people. `account_email` is the

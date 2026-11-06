@@ -125,7 +125,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 		}
 		if err == nil && opts.Progress != nil {
-			opts.Progress("processed Hex meeting " + m.Manifest.ID)
+			opts.Progress("Processed " + m.Manifest.DisplayTitle())
 		}
 		if err != nil {
 			sum.Errors++

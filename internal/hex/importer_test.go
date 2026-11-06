@@ -39,6 +39,83 @@ func messageID(t *testing.T, st *store.Store, sourceID int64, id string) int64 {
 	require.Contains(t, rows, "meeting:"+id)
 	return rows["meeting:"+id].ID
 }
+
+func TestImportPreservesRecordedMeetingPlatformVerbatim(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	st, imp, opts := importFixture(t)
+	source := meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}
+	_, err := imp.ImportRemote(t.Context(), RemoteRequest{Action: "register", Source: source})
+	must.NoError(err)
+
+	importMeeting := func(id, title, app string) int64 {
+		meeting := Meeting{
+			Manifest: Manifest{
+				SchemaVersion: 1, ID: id, Title: title, Status: "complete",
+				CreatedAtMS: 1790000000123, App: app,
+			},
+			Entries:         []Entry{{Source: "system", StartMS: 0, EndMS: 1000, Text: "Synthetic transcript"}},
+			TranscriptState: "final",
+		}
+		wire, marshalErr := json.Marshal(RemoteRequest{Action: "upsert", Source: source, Meeting: &meeting, Full: true})
+		must.NoError(marshalErr)
+		request, decodeErr := DecodeRemoteRequest(bytes.NewReader(wire), MaxRemoteRequestBytes)
+		must.NoError(decodeErr)
+		result, importErr := imp.ImportRemote(t.Context(), request)
+		must.NoError(importErr)
+		return result.MessageID
+	}
+
+	const app = "Google Meet Preview"
+	messageID := importMeeting("with-platform", "Synthetic call", app)
+	body, err := st.GetMessageBodyText(messageID)
+	must.NoError(err)
+	check.Contains(body, "Platform: "+app)
+	metadata, err := st.GetMessageMetadata(messageID)
+	must.NoError(err)
+	var metadataObject map[string]any
+	must.NoError(json.Unmarshal([]byte(metadata.String), &metadataObject))
+	check.Equal(app, metadataObject["meeting_platform"])
+	raw, err := st.GetMessageRaw(messageID)
+	must.NoError(err)
+	content := meetingcontent.Decode(RawFormat, raw, []byte(metadata.String))
+	check.Equal(app, content.MeetingPlatform)
+
+	ids := []int64{messageID}
+	packetResult, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{
+		Format: meetingcontent.FormatJSON, MaxBytes: 8192,
+	})
+	must.NoError(err)
+	var packet meetingcontent.Packet
+	must.NoError(json.Unmarshal([]byte(packetResult.Content), &packet))
+	must.Len(packet.Meetings, 1)
+	check.Equal(app, packet.Meetings[0].Content.MeetingPlatform)
+	markdown, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{
+		Format: meetingcontent.FormatMarkdown, MaxBytes: 8192,
+	})
+	must.NoError(err)
+	check.Contains(markdown.Content, "Platform: "+app)
+
+	withoutAppID := importMeeting("without-platform", "FaceTime call", "")
+	withoutAppBody, err := st.GetMessageBodyText(withoutAppID)
+	must.NoError(err)
+	check.NotContains(withoutAppBody, "Platform:")
+	withoutAppMetadata, err := st.GetMessageMetadata(withoutAppID)
+	must.NoError(err)
+	check.NotContains(withoutAppMetadata.String, "meeting_platform")
+	withoutAppRaw, err := st.GetMessageRaw(withoutAppID)
+	must.NoError(err)
+	check.Empty(meetingcontent.Decode(RawFormat, withoutAppRaw, []byte(withoutAppMetadata.String)).MeetingPlatform)
+	ids = []int64{withoutAppID}
+	withoutAppContext, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{
+		Format: meetingcontent.FormatJSON, MaxBytes: 8192,
+	})
+	must.NoError(err)
+	must.NoError(json.Unmarshal([]byte(withoutAppContext.Content), &packet))
+	must.Len(packet.Meetings, 1)
+	check.Empty(packet.Meetings[0].Content.MeetingPlatform, "a title must not be used to infer the platform")
+}
+
 func TestImportIdempotencyEditsAndSourceExpiry(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)

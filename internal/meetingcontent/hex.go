@@ -18,6 +18,7 @@ func decodeHex(raw []byte) Content {
 	}
 	m := envelope.Meeting
 	content := baseRecognizedContent()
+	content.MeetingPlatform = m.Manifest.App
 	content.Summary = Section{State: StateEmpty}
 	content.Notes = Section{State: StateEmpty}
 	content.Transcript = Transcript{State: StateEmpty}

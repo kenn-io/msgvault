@@ -16,7 +16,7 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 		return meetingarchive.Snapshot{}, err
 	}
 	v := m.Manifest
-	lines := []string{v.DisplayTitle()}
+	lines := []string{}
 	shownTitles := map[string]bool{strings.TrimSpace(v.DisplayTitle()): true}
 	appendTitle := func(label, value string) {
 		title := strings.TrimSpace(value)
@@ -25,8 +25,11 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 			shownTitles[title] = true
 		}
 	}
-	appendTitle("Manifest title: ", v.Title)
+	appendTitle("Original: ", v.Title)
 	lines = append(lines, "Status: "+v.Status)
+	if v.App != "" {
+		lines = append(lines, "Platform: "+v.App)
+	}
 	if v.ProvisionalTitle != "" {
 		appendTitle("Provisional title: ", v.ProvisionalTitle)
 	}
@@ -50,7 +53,14 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 		lines = append(lines, meetingarchive.FormatTranscriptLine(time.Duration(e.StartMS)*time.Millisecond, e.Speaker(), e.Text))
 	}
 	body := strings.Join(lines, "\n")
-	metadata, err := json.Marshal(map[string]any{"hex_id": v.ID, "status": v.Status, "source_identifier": identifier})
+	metadata, err := json.Marshal(struct {
+		HexID            string `json:"hex_id"`
+		Status           string `json:"status"`
+		SourceIdentifier string `json:"source_identifier"`
+		MeetingPlatform  string `json:"meeting_platform,omitempty"`
+	}{
+		HexID: v.ID, Status: v.Status, SourceIdentifier: identifier, MeetingPlatform: v.App,
+	})
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
