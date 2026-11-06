@@ -240,7 +240,6 @@ const (
 
 // MessageFilter specifies which messages to retrieve.
 type MessageFilter struct {
-	IncludeHints  bool                  // compute retry hints for an empty first page of fast search
 	AccountScopes []search.AccountScope // picker account selections; intersect with source filters
 
 	// Filter by aggregate key

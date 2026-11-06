@@ -3922,11 +3922,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	filter.IncludeHints, _, err = queryBool(r, "include_hints")
-	if err != nil {
-		s.rejectBadParam(w, err)
-		return
-	}
 	q := search.ParseOR(queryStr)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())

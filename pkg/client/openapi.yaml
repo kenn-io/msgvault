@@ -32427,11 +32427,6 @@ paths:
     get:
       operationId: fastSearch
       parameters:
-        - description: Compute retry hints after an empty first page
-          in: query
-          name: include_hints
-          schema:
-            type: boolean
         - description: Search query; full text accepts standalone pipe-separated OR alternatives
           in: query
           name: q

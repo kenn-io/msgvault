@@ -4,10 +4,6 @@
 
 export type FastSearchParams = {
   /**
-   * Compute retry hints after an empty first page
-   */
-  include_hints?: boolean;
-  /**
    * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   q: string;

@@ -6134,13 +6134,7 @@ func TestFastSearchPreservesCompleteMessageFilter(t *testing.T) {
 	assertions.Equal("Alice", gotFilter.SenderName)
 	assertions.Equal("Bob", gotFilter.RecipientName)
 	assertions.Equal("email", gotFilter.MessageType)
-	assertions.False(gotFilter.IncludeHints)
 	assertions.True(gotFilter.MatchesEmpty(query.ViewLabels))
-	req = httptest.NewRequest(http.MethodGet, req.URL.String()+"&include_hints=true", nil)
-	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
-	assertions.True(gotFilter.IncludeHints)
 }
 
 func TestDeepBodySearchRejectsUnsupportedFilterParams(t *testing.T) {

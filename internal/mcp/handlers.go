@@ -775,7 +775,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		q.AccountIDs = []int64{*selection.sourceID}
 	}
 
-	filter := query.MessageFilter{IncludeHints: true}
+	var filter query.MessageFilter
 	selection.applyToFilter(&filter)
 
 	// Fetch one extra row so unknown totals still support reliable pagination.

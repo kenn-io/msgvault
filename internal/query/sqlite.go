@@ -23,8 +23,6 @@ type SQLiteEngine struct {
 	db      *sql.DB
 	dialect Dialect
 
-	senderHintTimeout time.Duration
-
 	// FTS availability cache - thread-safe with mutex.
 	// Only caches successful checks; errors cause retries on next call.
 	ftsMu      sync.Mutex
@@ -43,7 +41,7 @@ const archiveOnlyDeletionTargetGuard = `NOT EXISTS (
 
 // NewSQLiteEngine creates a new SQLite-backed query engine.
 func NewSQLiteEngine(db *sql.DB) *SQLiteEngine {
-	return &SQLiteEngine{db: db, dialect: SQLiteQueryDialect{}, senderHintTimeout: 5 * time.Second}
+	return &SQLiteEngine{db: db, dialect: SQLiteQueryDialect{}}
 }
 
 // NewEngineWithDialect creates a query engine with an explicit dialect.
@@ -51,7 +49,7 @@ func NewSQLiteEngine(db *sql.DB) *SQLiteEngine {
 //
 //	engine := query.NewEngineWithDialect(db, query.PostgreSQLQueryDialect{})
 func NewEngineWithDialect(db *sql.DB, d Dialect) *SQLiteEngine {
-	return &SQLiteEngine{db: db, dialect: d, senderHintTimeout: 5 * time.Second}
+	return &SQLiteEngine{db: db, dialect: d}
 }
 
 // hasFTSTable checks if the FTS index is available for this dialect.
@@ -2905,7 +2903,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		count = -1
 	}
 	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
-	if filter.IncludeHints && limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
+	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
 		result.Hints = e.matchSenderName(ctx, q, func(ctx context.Context, scoped *search.Query) ([]string, []any, string) {
 			return e.buildFilteredMetadataSearchQueryParts(ctx, scoped, filter)
 		})
