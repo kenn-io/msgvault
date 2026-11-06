@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -68,7 +69,7 @@ func (c *Client) fetchFlagsCommand(ctx context.Context, uids imap.UIDSet) ([]fet
 			}
 		}
 		if err := cmd.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("close flags fetch: %w", err)
 		}
 		return results, nil
 	})
