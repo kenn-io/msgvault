@@ -251,11 +251,13 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, identifier, job, outcome, reason, command string
 		next                                                  time.Duration
+		age                                                   time.Duration
 		never                                                 bool
 		errors                                                int64
 	}{
-		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, reason: "stale", command: "msgvault sync-calendar calendar@example.com"},
-		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, reason: "stale"},
+		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, age: 48 * time.Hour, reason: "stale", command: "msgvault sync-calendar calendar@example.com"},
+		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, age: 48 * time.Hour, reason: "stale"},
+		{name: "restarted scheduler stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 5 * time.Minute, age: 48 * time.Hour, reason: "stale"},
 		{name: "calendar not due", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 48 * time.Hour},
 		{name: "calendar never succeeded", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, never: true, reason: "never_synced"},
 		{name: "calendar failed", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "failed"},
@@ -273,7 +275,11 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 				run, err := st.StartSync(src.ID, "full")
 				requirements.NoError(err)
 				requirements.NoError(st.CompleteSync(run, ""))
-				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET started_at = ?, completed_at = ? WHERE id = ?"), srv.clockNow().Add(-49*time.Hour), srv.clockNow().Add(-48*time.Hour), run)
+				age := tc.age
+				if age == 0 {
+					age = time.Hour
+				}
+				_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET started_at = ?, completed_at = ? WHERE id = ?"), srv.clockNow().Add(-age-time.Hour), srv.clockNow().Add(-age), run)
 				requirements.NoError(err)
 			}
 			if tc.outcome != "" {

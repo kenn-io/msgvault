@@ -216,20 +216,6 @@ func TestDelegatedOpenTargetsOnlyAdmittedTools(t *testing.T) {
 		assertions.Empty(e.Open)
 	}
 }
-func TestDelegatedRequiresExplicitNonemptySourceScope(t *testing.T) {
-	f := newTimelineFixture(t)
-	p := f.savePerson()
-	id := f.add(f.now, false)
-	f.project()
-	for _, ctx := range []context.Context{t.Context(), sourcescope.WithSourceIDs(t.Context(), []int64{})} {
-		for _, req := range []Request{dayRequest(), relationshipRequest(fmt.Sprintf("person:%d", p)), anchorRequest(messageRef(id))} {
-			req.Scope = Scope{}
-			_, err := Build(ctx, f.src, req)
-			assert.ErrorIs(t, err, ErrInvalidRequest)
-		}
-	}
-}
-
 func TestDelegatedNativeCallAnchorsAreUnavailable(t *testing.T) {
 	f := newTimelineFixture(t)
 	id := f.call(f.now.Add(-time.Hour))

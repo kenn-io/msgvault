@@ -12,7 +12,7 @@ import (
 )
 
 func cursorBinding() CursorBinding {
-	return CursorBinding{ArchiveUID: "synthetic-archive", Request: Request{Mode: ModeDay, Format: "json", Scope: Scope{Owner: true}}, Window: Window{From: "2026-10-21", To: "2026-10-22"}, Timezone: "UTC", Now: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)}
+	return CursorBinding{ArchiveUID: "synthetic-archive", Request: Request{Mode: ModeDay, Format: "json", Before: 5, After: 5, Scope: Scope{Owner: true}}, Window: Window{From: "2026-10-21", To: "2026-10-22"}, Timezone: "UTC", Now: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)}
 }
 func TestCursorRoundTrip(t *testing.T) {
 	assertions := assert.New(t)
@@ -27,10 +27,6 @@ func TestCursorRoundTrip(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(int64(1792675800), c.Now.Unix())
 	assertions.Equal("2026-10-22T13:30:00Z|message|msg:31", c.Positions["history"])
-	b.Request.Mode = ""
-	c, err = DecodeCursor(encoded, b)
-	requirements.NoError(err)
-	assertions.Len(c.Positions, 1)
 	// Canonicalize unordered set-valued filters without changing the request.
 	b.Request.Tiers = []int{2, 1, 2}
 	b.Request.Scope.OpenTools = []string{"b", "a"}
@@ -140,6 +136,9 @@ func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
 	requirements := require.New(t)
 	b := cursorBinding()
 	b.Request = anchorRequest("msg:12")
+	normalized, err := normalizeRequest(b.Request)
+	requirements.NoError(err)
+	b.Request = normalized
 	omitted, err := EncodeCursor(b, map[string]string{"history": "key"})
 	requirements.NoError(err)
 	b.Request.Before, b.Request.After = 5, 5
@@ -153,6 +152,8 @@ func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
 		} else {
 			b.Request.AfterSet = true
 		}
+		b.Request, err = normalizeRequest(b.Request)
+		requirements.NoError(err)
 		_, err = DecodeCursor(omitted, b)
 		requirements.ErrorIs(err, ErrCursorExpired)
 		zero, err := EncodeCursor(b, map[string]string{"history": "key"})
@@ -165,6 +166,8 @@ func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
 		_, err = DecodeCursor(zero, b)
 		requirements.NoError(err, "Build's normalized request retains the same zero binding")
 		b.Request = anchorRequest("msg:12")
+		b.Request, err = normalizeRequest(b.Request)
+		requirements.NoError(err)
 		_, err = DecodeCursor(zero, b)
 		requirements.ErrorIs(err, ErrCursorExpired)
 	}

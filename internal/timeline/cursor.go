@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -124,31 +123,11 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 	req := b.Request
 	req.Budget = 0
 	req.Cursor = ""
-	req.With = strings.TrimSpace(req.With)
-	req.Around = ExpandShortRef(strings.TrimSpace(req.Around))
-	if req.Mode == "" {
-		req.Mode = ModeDay
-		if req.With != "" {
-			req.Mode = ModeRelationship
-		}
-		if req.Around != "" {
-			req.Mode = ModeAnchor
-		}
-	}
-	if req.Format == "" {
-		req.Format = "markdown"
-	}
 	// Effective dates are carried by Window; equivalent flag spellings bind alike.
 	req.Date = ""
 	req.From = ""
 	req.To = ""
 	req.Days = 0
-	if req.Before == 0 && !req.BeforeSet {
-		req.Before = 5
-	}
-	if req.After == 0 && !req.AfterSet {
-		req.After = 5
-	}
 	req.Tiers = slices.Compact(slices.Sorted(slices.Values(req.Tiers)))
 	req.Scope.OpenTools = slices.Compact(slices.Sorted(slices.Values(req.Scope.OpenTools)))
 	payload := struct {

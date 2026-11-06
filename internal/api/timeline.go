@@ -14,6 +14,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -234,12 +235,12 @@ func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline
 		}
 		if item.LastSuccessfulSyncAt == nil {
 			item.Reason = "never_synced"
-		} else if status.NextSyncAt != nil {
-			next, err := time.Parse(time.RFC3339, *status.NextSyncAt)
+		} else if status.Schedule != "" {
+			schedule, err := cronexpr.Parser.Parse(status.Schedule)
 			if err != nil {
-				return result, fmt.Errorf("parse timeline next sync: %w", err)
+				return result, fmt.Errorf("parse timeline sync schedule: %w", err)
 			}
-			if next.Before(now) && item.LastSuccessfulSyncAt.Before(next) {
+			if schedule.Next(*item.LastSuccessfulSyncAt).Before(now) {
 				item.Reason = "stale"
 			}
 		}

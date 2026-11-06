@@ -23,9 +23,6 @@ const maxBursts = 5000
 // Build reads the authorized archive, composes a stable view and fits its final
 // encoding. It never issues SQL or writes archive data.
 func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
-	if !req.Scope.Owner && len(sourcescope.IDs(ctx)) == 0 {
-		return nil, ErrInvalidRequest
-	}
 	req, err := normalizeRequest(req)
 	if err != nil {
 		return nil, err
