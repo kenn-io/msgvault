@@ -315,63 +315,6 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 	checks.Len(window.Changes, 1)
 }
 
-func TestLoadPersonSweepWindowOtherLaneChangesWithdrawOnlyDocumentEvidence(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		query  string
-		reason personfacts.EvidenceStatusReason
-	}{
-		{"deleted", `DELETE FROM messages WHERE id = ?`, personfacts.EvidenceStatusSourceDeleted},
-		{"sender reassigned", `UPDATE messages SET sender_id = ? WHERE id = ?`, personfacts.EvidenceStatusIdentityReassigned},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := newPersonSweepJournalFixture(t, true, false)
-			id := f.insertMessage(t, "other-lane", "email", f.aliceID, time.Now().UTC())
-			addSweepBody(t, f, id, "Conversation evidence")
-			input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id))
-			key, err := personfacts.EvidenceKey(input)
-			require.NoError(err)
-			persistSweepEvidence(t, f.store, key, input)
-			require.NoError(f.store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: "document"}))
-			var attachmentID int64
-			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id=?`), id).Scan(&attachmentID))
-			document := input
-			document.SourceVersion = "document/v1:chunk"
-			document.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(peoplesweep.EvidenceRef{
-				SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id,
-				AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4,
-			})
-			require.NoError(err)
-			documentKey, err := personfacts.EvidenceKey(document)
-			require.NoError(err)
-			persistSweepEvidence(t, f.store, documentKey, document)
-			before := latestPersonSweepSequence(t, f.store)
-			args := []any{id}
-			if tc.reason == personfacts.EvidenceStatusIdentityReassigned {
-				args = []any{f.bobID, id}
-			}
-			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
-			require.NoError(err)
-
-			window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
-				PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: before, Limit: 100,
-			})
-			require.NoError(err)
-			require.NotEmpty(window.Changes)
-			for _, change := range window.Changes {
-				assert.Equal(peoplesweep.SourceDocumentText, change.SourceLane)
-			}
-			changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, window.Changes)
-			require.NoError(err)
-			assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Supported: false, Reason: tc.reason}}, changes, "the other lane withdraws only document evidence")
-			assert.Empty(window.Seeds, "meeting windows must skip conversation changes and their tombstones")
-			assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
-		})
-	}
-}
-
 func TestLoadPersonSweepWindowBackstopCapturesFreshUpperKey(t *testing.T) {
 	checks := assert.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -801,15 +744,18 @@ func TestPersonSweepRetrievalHonorsTheJournalSequenceBound(t *testing.T) {
 func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
+		lane             peoplesweep.SourceClass
 		query            string
 		effect           peoplesweep.EvidenceChangeEffect
 		reason           personfacts.EvidenceStatusReason
 		withdrawDocument bool
 	}{
-		{"hard delete", `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
-		{"soft delete", `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
-		{"sender reassigned", `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
-		{"body edited", `UPDATE message_bodies SET body_text = 'Edited conversation evidence' WHERE message_id = ?`, peoplesweep.EvidenceEffectSourceEdited, personfacts.EvidenceStatusSourceEdited, false},
+		{"hard delete", peoplesweep.SourceConversationText, `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
+		{"soft delete", peoplesweep.SourceConversationText, `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
+		{"sender reassigned", peoplesweep.SourceConversationText, `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
+		{"body edited", peoplesweep.SourceConversationText, `UPDATE message_bodies SET body_text = 'Edited conversation evidence' WHERE message_id = ?`, peoplesweep.EvidenceEffectSourceEdited, personfacts.EvidenceStatusSourceEdited, false},
+		{"other lane hard delete", peoplesweep.SourceMeetingText, `DELETE FROM messages WHERE id = ?`, peoplesweep.EvidenceEffectSourceDeleted, personfacts.EvidenceStatusSourceDeleted, true},
+		{"other lane sender reassigned", peoplesweep.SourceMeetingText, `UPDATE messages SET sender_id = ? WHERE id = ?`, peoplesweep.EvidenceEffectIdentityReassigned, personfacts.EvidenceStatusIdentityReassigned, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -839,13 +785,21 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			}
 			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
 			require.NoError(err)
-			window := loadSweepWindow(t, f, peoplesweep.SourceConversationText, before)
+			window := loadSweepWindow(t, f, tc.lane, before)
 			require.NotEmpty(window.Changes)
 			assert.Equal([]peoplesweep.EvidenceChangeEffect{tc.effect}, archiveEffects(window.Changes))
 			changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, window.Changes)
 			require.NoError(err)
 			want := []personfacts.EvidenceStatusChange{
 				{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: tc.reason},
+			}
+			if tc.lane != peoplesweep.SourceConversationText {
+				want = nil
+				for _, change := range window.Changes {
+					assert.Equal(peoplesweep.SourceDocumentText, change.SourceLane)
+				}
+				assert.Empty(window.Seeds, "meeting windows must skip conversation changes and their tombstones")
+				assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
 			}
 			if tc.withdrawDocument {
 				want = append(want, personfacts.EvidenceStatusChange{

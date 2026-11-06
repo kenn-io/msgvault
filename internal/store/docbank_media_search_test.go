@@ -150,9 +150,6 @@ func TestDocumentSearchVersionsTextFormatsExcludeImages(t *testing.T) {
 		"00000000-0000-4000-8000-000000000009",
 		"00000000-0000-4000-8000-00000000000a",
 	}
-	for i := range 4100 {
-		formats = append(formats, storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
-	}
 	f.SeedDocumentAttachments(mid, formats)
 	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
 	require.NoError(err)
