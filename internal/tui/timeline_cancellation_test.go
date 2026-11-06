@@ -93,7 +93,6 @@ func TestTimelineInitialLoadCancellationIsVisible(t *testing.T) {
 	m, _ = sendKey(t, m, keyEsc())
 	view := stripANSI(m.renderView())
 	assertions.Contains(strings.ToLower(view), "cancelled")
-	assertions.Contains(view, "r to retry")
 	retry, cmd := sendKey(t, m, key('r'))
 	defer retry.cancelTimelineRequest()
 	requirements.NotNil(cmd)

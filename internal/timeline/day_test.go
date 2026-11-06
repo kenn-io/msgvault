@@ -381,7 +381,7 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	// test exercises continuation, independently of SQL throughput on the runner;
 	// every other activity method still uses the real store adapter.
 	realActivity := f.src.Activity
-	burstQuery := store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts}
+	burstQuery := store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts, Descending: true}
 	f.src = snapshotActivityBurstReads(t.Context(), t, f.src, burstQuery)
 	req := dayRequest()
 	req.Format = "markdown"
@@ -506,6 +506,8 @@ func TestReadActivityReportsBurstCap(t *testing.T) {
 	f.project()
 	req := dayRequest()
 	req.Date, req.Days = "", 3
+	burstQuery := store.BurstQuery{FromDate: "2026-10-20", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts, Descending: true}
+	f.src = snapshotActivityBurstReads(t.Context(), t, f.src, burstQuery)
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	requirements.NotEmpty(got.Days)

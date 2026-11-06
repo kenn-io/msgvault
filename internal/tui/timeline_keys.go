@@ -294,7 +294,7 @@ func (m Model) openTimelineReader(reader timelineReader, id int64) (tea.Model, t
 	return m, cmd
 }
 
-var errTimelineLoadCancelled = errors.New("timeline load cancelled · r to retry")
+var errTimelineLoadCancelled = errors.New("timeline load cancelled")
 
 // popTimelineHistory restores the previous request. Without one, a cancelled
 // load says so instead of leaving an empty list.
