@@ -4,6 +4,7 @@ package query
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,62 @@ func observedSearchEngine(t *testing.T) (*SQLiteEngine, *sqlobserve.Observer) {
 	fixture.SeedStandardDataSet()
 	observer.Reset()
 	return NewSQLiteEngine(db), observer
+}
+
+func TestSearchCommonWordUsesDateWindow(t *testing.T) {
+	t.Parallel()
+	engine, observer := observedSearchEngine(t)
+	_, err := engine.db.Exec(`WITH RECURSIVE seq(x) AS (
+		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3000
+	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
+	SELECT 100+x, 'window-' || x, 1, 1, 'email', datetime('2025-01-01', '+' || x || ' minutes'),
+		CASE WHEN x % 4 != 0 THEN 'invoice' ELSE 'budget' END ||
+		CASE WHEN x = 1 THEN ' rareword' ELSE '' END FROM seq`)
+	require.NoError(t, err)
+	(&dbtest.TestDB{DB: engine.db, T: t}).EnableFTS()
+	for _, tc := range []struct {
+		name, text                string
+		accounts                  []int64
+		scope                     search.DeletionScope
+		limit, offset, statements int
+		walk                      bool
+	}{
+		{name: "common", text: "invoice", limit: 100, statements: 1, walk: true},
+		{name: "default limit", text: "invoice", statements: 1, walk: true},
+		{name: "sender", text: "from:alice@example.com invoice", limit: 100, statements: 1},
+		{name: "account", text: "invoice", accounts: []int64{1}, limit: 100, statements: 1},
+		{name: "OR", text: "invoice | budget", limit: 100, statements: 1},
+		{name: "deleted", text: "invoice", scope: search.DeletionScopeDeleted, limit: 100, statements: 1},
+		{name: "deep page", text: "invoice", limit: 100, offset: 5000, statements: 1},
+		{name: "rare", text: "rareword", limit: 100, statements: 2},
+		{name: "no matches", text: "zzqx", limit: 100, statements: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			q := search.ParseOR(tc.text)
+			q.AccountIDs, q.DeletionScope = tc.accounts, tc.scope
+			observer.Reset()
+			_, err := engine.Search(t.Context(), q, tc.limit, tc.offset)
+			require.NoError(err)
+			var pages []string
+			for _, statement := range observer.Statements() {
+				if strings.Contains(statement, "LIMIT ? OFFSET ?") {
+					pages = append(pages, statement)
+				}
+			}
+			require.Len(pages, tc.statements)
+			statement := pages[len(pages)-1]
+			plan := dbtest.ExplainQueryPlan(t, engine.db, statement, make([]any, strings.Count(statement, "?"))...)
+			if tc.walk {
+				index := strings.Index(plan, "SEARCH m USING INDEX idx_messages_sent_at")
+				require.GreaterOrEqual(index, 0, plan)
+				assert.Less(index, strings.Index(plan, "SCAN page"), plan)
+			} else {
+				assert.NotContains(plan, "SEARCH m USING INDEX idx_messages_sent_at")
+			}
+		})
+	}
 }
 
 func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {

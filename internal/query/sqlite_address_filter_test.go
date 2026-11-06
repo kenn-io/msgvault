@@ -61,6 +61,45 @@ func TestSearchFTSPagingPreservesDetails(t *testing.T) {
 	}
 }
 
+func TestSearchCommonWordPreservesPages(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3000
+	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject, deleted_at, deleted_from_source_at)
+	SELECT 100+x, 'window-' || x, 1, 1, 'email',
+		CASE WHEN x <= 2997 THEN datetime('2025-01-01', '+' || (x/5) || ' minutes') END,
+		CASE WHEN x % 4 != 0 THEN 'dense ' ELSE '' END ||
+		CASE WHEN x <= 400 THEN 'oldest ' ELSE '' END ||
+		CASE WHEN x > 2400 THEN 'visibility ' ELSE '' END ||
+		CASE WHEN x > 2700 THEN 'ties' ELSE '' END,
+		CASE WHEN x > 2400 AND x % 10 BETWEEN 1 AND 4 THEN '2025-02-01' END,
+		CASE WHEN x > 2400 AND x % 10 BETWEEN 5 AND 9 THEN '2025-02-01' END
+	FROM seq`)
+	require.NoError(t, err)
+	env.EnableFTS()
+	for _, word := range []string{"dense", "oldest", "visibility", "ties"} {
+		for _, scope := range []search.DeletionScope{"", search.DeletionScopeActive, search.DeletionScopeAny} {
+			t.Run(word+"/"+string(scope), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				q := search.Parse(word)
+				q.DeletionScope = scope
+				conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
+				want, err := env.Engine.executeSearchQuery(env.Ctx, conditions, args, ftsJoin, 4000, 0)
+				require.NoError(err)
+				require.NotEmpty(want)
+				var pages []MessageSummary
+				for offset := 0; offset <= len(want)+7; offset += 7 {
+					pages = append(pages, env.MustSearch(q, 7, offset)...)
+				}
+				assert.Equal(want, pages)
+				assert.Equal(want[:min(100, len(want))], env.MustSearch(q, 100, 0))
+			})
+		}
+	}
+}
+
 // A rare address must look up matching messages by rowid instead of walking
 // every message newest-first and probing its recipients.
 func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
