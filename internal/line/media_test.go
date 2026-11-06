@@ -498,7 +498,7 @@ func TestMediaLocalFailureSurvivesYieldToWaiter(t *testing.T) {
 
 	passErr := f.processor.Process(ctx)
 	must.ErrorIs(passErr, jobctx.ErrYieldedToWaiter)
-	checks.ErrorContains(passErr, "store LINE media")
+	must.ErrorContains(passErr, "store LINE media")
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/2/content"))
 	run, err := f.st.GetLatestSync(f.source.ID)
