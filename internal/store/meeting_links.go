@@ -259,19 +259,14 @@ func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row
 	if set == nil || e.Original == nil || e.Original.AllDay != set.AllDay || bounded && !e.AllDay {
 		return o, nil
 	}
-	// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
-	var zone *time.Location
-	if e.EventTimeZone != "" || e.StartDate != "" || e.EndDate != "" {
-		var err error
-		zone, err = calendarEventZone(e)
-		if err != nil {
-			if bounded {
-				return o, nil
-			}
-			return o, err
+	exceptions, err := calendarRecurrenceExceptions([]CalendarEventRow{row})
+	if err != nil {
+		if bounded {
+			return o, nil
 		}
+		return o, err
 	}
-	resolved, err := calrecur.EffectiveException(*set, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: o.Cancelled, Ref: row.MessageID}, duration, days)
+	resolved, err := calrecur.EffectiveException(*set, exceptions[0], duration, days)
 	if bounded && errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 		return o, nil
 	}
@@ -343,6 +338,17 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 	if err != nil {
 		return nil, err
 	}
+	ownerRows := rows
+	if key.Kind == "google_event_id" {
+		if len(ownerRows) == 0 {
+			return nil, nil
+		}
+		// Other calendars can expose conflicting identities for a calendar-scoped ID.
+		rows, err = meetingEventRows(ctx, r, `e.provider_event_id IN (?, ?)`, []any{key.Value, base}, budget)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var out []linkOccurrence
 candidatesLoop:
 	for _, row := range rows {
@@ -390,6 +396,9 @@ candidatesLoop:
 			candidates = append(candidates, o)
 		}
 		for _, o := range candidates {
+			if key.Kind == "google_event_id" && len(out) > 0 && o.Identity != out[0].Identity {
+				return nil, nil
+			}
 			if key.Kind == "ical_uid" && row.Event.Kind != "single" {
 				if key.ScheduledAt == nil || !o.Start.Equal(*key.ScheduledAt) {
 					continue
@@ -397,6 +406,13 @@ candidatesLoop:
 			}
 			out = append(out, o)
 		}
+	}
+	if key.Kind == "google_event_id" {
+		out = slices.DeleteFunc(out, func(o linkOccurrence) bool {
+			return !slices.ContainsFunc(ownerRows, func(row CalendarEventRow) bool {
+				return row.MessageID == o.Ref.MessageID || row.MessageID == o.Row.MessageID
+			})
+		})
 	}
 	if key.ScheduledAt != nil {
 		matching := slices.Clone(out)
