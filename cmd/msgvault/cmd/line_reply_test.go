@@ -1,21 +1,17 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -40,35 +36,6 @@ func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *
 	cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true, AllowSend: true}}
 	require.NoError(t, cfg.Save())
 	return &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}, draft, fake
-}
-
-func TestSendLineReplyThroughLocalDaemonCLI(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	clearServerKeyEnvironment(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	a.config.Server.DaemonAutoStart = new(false)
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
-	mux.Handle("/", api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(a.config.Server.AuthenticationKey()))
-	_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
-	require.NoError(err)
-
-	cmd := &cobra.Command{Use: "send-line-reply"}
-	cmd.SetContext(withStoreResolverConfig(t, a.config))
-	var stdout, stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-	require.NoError(runDaemonCLICommandHTTPWithEnv(cmd, []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}, nil, false, false))
-	var sent line.ReplyReceipt
-	require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
-	assert.Equal("sent", sent.Status)
-	assert.True(sent.Accepted)
-	assert.Empty(stderr.String())
-	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestLineReplyOwnerAdmissionGuards(t *testing.T) {

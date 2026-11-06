@@ -307,88 +307,80 @@ func TestReplyResumesAdmittedAfterRestart(t *testing.T) {
 }
 
 func TestReplyExpiryPermanentlyStopsProviderIO(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", nil)
-	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-	_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	f.now = f.now.Add(23 * time.Hour)
-	sender := f.sender()
-	sender.Client = nil
-	expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal("remote_unknown_expired", expired.Status)
-	f.now = f.now.Add(2 * time.Hour)
-	repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(expired, repeated)
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-	assert.Equal(1, f.fake.AcceptedPushes())
+	t.Run("elapsed deadline", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+		_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		f.now = f.now.Add(23 * time.Hour)
+		sender := f.sender()
+		sender.Client = nil
+		expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal("remote_unknown_expired", expired.Status)
+		f.now = f.now.Add(2 * time.Hour)
+		repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(expired, repeated)
+		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+		assert.Equal(1, f.fake.AcceptedPushes())
+	})
+	t.Run("deleted admitted attempt", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.resetClient()
+		f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
+		sender := f.sender()
+		receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+		must.ErrorIs(err, line.ErrCredentialsUnavailable)
+		must.Equal(store.LineReplyAdmitted, receipt.Status)
+		must.NotNil(receipt.RetryAfter)
+		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+		_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
+		must.ErrorIs(err, store.ErrChatDraftNotFound)
+		f.now = receipt.RetryAfter.Add(time.Second)
+		repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+		must.NoError(err)
+		checks.Equal(store.LineReplyRemoteUnknownExpired, repeated.Status)
+		checks.False(repeated.Accepted)
+		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+		must.NoError(err)
+		checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
+		checks.Empty(attempt.Body)
+		checks.Empty(attempt.QuoteToken)
+		checks.Empty(attempt.SourceConversationID)
+	})
 }
 
 func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
-	for _, status := range []int{400, 429} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := newReplyFixture(t, "user", nil)
-			f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"180"}}})
-			rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			require.NoError(err)
-			if status == http.StatusTooManyRequests {
-				assert.Equal(store.LineReplyAdmitted, rejected.Status)
-				assert.False(rejected.Accepted)
-				require.NotNil(rejected.RetryAfter)
-				assert.Equal(f.now.Add(3*time.Minute), *rejected.RetryAfter)
-				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-				require.NoError(err)
-				assert.Equal(store.LineReplyAdmitted, attempt.State)
-				assert.Equal(*rejected.RetryAfter, attempt.NextRetryAt)
-				assert.Zero(f.fake.AcceptedPushes())
+	t.Run("Bad Request", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusBadRequest, Header: http.Header{"Retry-After": {"180"}}})
+		rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
 
-				f.now = rejected.RetryAfter.Add(-time.Second)
-				waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				require.NoError(err)
-				assert.Equal(rejected, waiting)
-				assert.Equal(1, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		assert.Equal("provider_rejected", rejected.Status)
+		assert.Nil(rejected.RetryAfter)
+		f.now = f.now.Add(3 * time.Minute)
+		require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+		sender := f.sender()
+		sender.Client = nil
+		repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(rejected, repeated)
+		_, err = sender.Send(t.Context(), f.draft.DraftID, 2)
+		require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
+		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+		assert.Zero(f.fake.AcceptedPushes())
+	})
 
-				f.resetClient()
-				f.now = f.now.Add(22 * time.Hour)
-				sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				require.NoError(err)
-				assert.Equal(store.LineReplySent, sent.Status)
-				assert.Equal(1, f.fake.AcceptedPushes())
-				completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-				require.NoError(err)
-				assert.Equal(attempt.RetryKey, completed.RetryKey)
-				assert.Equal(attempt.RetryUntil, completed.RetryUntil)
-				var keys []string
-				for _, request := range f.fake.Requests() {
-					if request.Path == "/v2/bot/message/push" {
-						keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
-					}
-				}
-				require.Len(keys, 2)
-				assert.Equal(attempt.RetryKey, keys[0])
-				assert.Equal(attempt.RetryKey, keys[1])
-				return
-			}
-			assert.Equal("provider_rejected", rejected.Status)
-			assert.Nil(rejected.RetryAfter)
-			f.now = f.now.Add(3 * time.Minute)
-			require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
-			sender := f.sender()
-			sender.Client = nil
-			repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-			require.NoError(err)
-			assert.Equal(rejected, repeated)
-			_, err = sender.Send(t.Context(), f.draft.DraftID, 2)
-			require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
-			assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-			assert.Zero(f.fake.AcceptedPushes())
-		})
-	}
 	t.Run("403 then 400", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)
@@ -480,6 +472,86 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
 		require.NoError(err)
 		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+	})
+	t.Run("first push", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
+		rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(store.LineReplyAdmitted, rejected.Status)
+		assert.False(rejected.Accepted)
+		require.NotNil(rejected.RetryAfter)
+		assert.Equal(f.now.Add(3*time.Minute), *rejected.RetryAfter)
+		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+		require.NoError(err)
+		assert.Equal(store.LineReplyAdmitted, attempt.State)
+		assert.Equal(*rejected.RetryAfter, attempt.NextRetryAt)
+		assert.Zero(f.fake.AcceptedPushes())
+
+		f.now = rejected.RetryAfter.Add(-time.Second)
+		waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(rejected, waiting)
+		assert.Equal(1, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+
+		f.resetClient()
+		f.now = f.now.Add(22 * time.Hour)
+		sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(store.LineReplySent, sent.Status)
+		assert.Equal(1, f.fake.AcceptedPushes())
+		completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+		require.NoError(err)
+		assert.Equal(attempt.RetryKey, completed.RetryKey)
+		assert.Equal(attempt.RetryUntil, completed.RetryUntil)
+		var keys []string
+		for _, request := range f.fake.Requests() {
+			if request.Path == "/v2/bot/message/push" {
+				keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
+			}
+		}
+		require.Len(keys, 2)
+		assert.Equal(attempt.RetryKey, keys[0])
+		assert.Equal(attempt.RetryKey, keys[1])
+	})
+	t.Run("admission deadline after refusal", func(t *testing.T) {
+		for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
+			t.Run(http.StatusText(status), func(t *testing.T) {
+				must := require.New(t)
+				checks := assert.New(t)
+				f := newReplyFixture(t, "user", nil)
+				admittedAt := f.now
+				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: status})
+				refused, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				if status == http.StatusForbidden {
+					must.ErrorIs(err, line.ErrCredentialsUnavailable)
+				} else {
+					must.NoError(err)
+				}
+				checks.Equal(store.LineReplyAdmitted, refused.Status)
+				checks.Zero(f.fake.AcceptedPushes())
+
+				f.now = admittedAt.Add(22 * time.Hour)
+				f.resetClient()
+				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+				uncertain, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(store.LineReplyRemoteUnknown, uncertain.Status)
+				checks.Equal(1, f.fake.AcceptedPushes())
+
+				f.now = admittedAt.Add(25 * time.Hour)
+				expired, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(store.LineReplyRemoteUnknownExpired, expired.Status)
+				checks.Equal(1, f.fake.AcceptedPushes(), "expiry must prevent a second accepted message")
+				checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+				must.NoError(err)
+				checks.Equal(admittedAt.Add(23*time.Hour), attempt.RetryUntil)
+			})
+		}
 	})
 }
 
@@ -870,35 +942,6 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			checks.True(active)
 		})
 	}
-}
-
-func TestProbeDeletedAdmittedStillSends(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newReplyFixture(t, "user", nil)
-	f.resetClient()
-	f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
-	sender := f.sender()
-	receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	must.ErrorIs(err, line.ErrCredentialsUnavailable)
-	must.Equal(store.LineReplyAdmitted, receipt.Status)
-	must.NotNil(receipt.RetryAfter)
-	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
-	_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
-	must.ErrorIs(err, store.ErrChatDraftNotFound)
-	f.now = receipt.RetryAfter.Add(time.Second)
-	repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	must.NoError(err)
-	checks.Equal(store.LineReplyRemoteUnknownExpired, repeated.Status)
-	checks.False(repeated.Accepted)
-	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	must.NoError(err)
-	checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
-	checks.Empty(attempt.Body)
-	checks.Empty(attempt.QuoteToken)
-	checks.Empty(attempt.SourceConversationID)
 }
 
 func TestReplyPendingAttemptRechecksPolicy(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
@@ -87,38 +88,68 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 }
 
 func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-	defer server.Close()
-	ctx := configureRemoteDaemonForTest(t, server.URL)
-	run := func(args ...string) (string, error) {
-		root := &cobra.Command{Use: "msgvault"}
-		root.SetContext(ctx)
-		root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
-		silenceUsageInRunE(root)
-		var output bytes.Buffer
-		root.SetOut(&output)
-		root.SetErr(&output)
-		root.SetArgs(args)
-		err := root.ExecuteContext(ctx)
-		return output.String(), err
-	}
-	parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
-	require.NoError(err)
-	createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
-	require.NoError(err)
-	var created chatDraftOutput
-	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
-	assert.Equal("line", created.SourceType)
-	out, err := run("send-line-reply", created.DraftID, "--revision", "1", "--json")
-	require.NoError(err)
-	var sent line.ReplyReceipt
-	require.NoError(json.Unmarshal([]byte(out), &sent))
-	assert.Equal("sent", sent.Status)
-	assert.True(sent.Accepted)
-	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
+	t.Run("remote daemon compose and send", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		a, draft, fake := lineReplyAdapterFixture(t)
+		server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
+		defer server.Close()
+		ctx := configureRemoteDaemonForTest(t, server.URL)
+		run := func(args ...string) (string, error) {
+			root := &cobra.Command{Use: "msgvault"}
+			root.SetContext(ctx)
+			root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
+			silenceUsageInRunE(root)
+			var output bytes.Buffer
+			root.SetOut(&output)
+			root.SetErr(&output)
+			root.SetArgs(args)
+			err := root.ExecuteContext(ctx)
+			return output.String(), err
+		}
+		parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
+		require.NoError(err)
+		createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
+		require.NoError(err)
+		var created chatDraftOutput
+		require.NoError(json.Unmarshal([]byte(createdJSON), &created))
+		assert.Equal("line", created.SourceType)
+		out, err := run("send-line-reply", created.DraftID, "--revision", "1", "--json")
+		require.NoError(err)
+		var sent line.ReplyReceipt
+		require.NoError(json.Unmarshal([]byte(out), &sent))
+		assert.Equal("sent", sent.Status)
+		assert.True(sent.Accepted)
+		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
+	})
+	t.Run("local daemon runtime send", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		clearServerKeyEnvironment(t)
+		a, draft, fake := lineReplyAdapterFixture(t)
+		a.config.Server.DaemonAutoStart = new(false)
+		mux := http.NewServeMux()
+		mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+		mux.Handle("/", api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
+		server := httptest.NewServer(mux)
+		t.Cleanup(server.Close)
+		rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(a.config.Server.AuthenticationKey()))
+		_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
+		require.NoError(err)
+
+		cmd := &cobra.Command{Use: "send-line-reply"}
+		cmd.SetContext(withStoreResolverConfig(t, a.config))
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		require.NoError(runDaemonCLICommandHTTPWithEnv(cmd, []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}, nil, false, false))
+		var sent line.ReplyReceipt
+		require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
+		assert.Equal("sent", sent.Status)
+		assert.True(sent.Accepted)
+		assert.Empty(stderr.String())
+		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
+	})
 }
 
 func TestDraftComposeHTTPPublishesManagedDraft(t *testing.T) {
