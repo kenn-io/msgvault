@@ -409,8 +409,8 @@ func (s *Server) searchCoverageActions(
 	if status == SearchCoverageUnavailable || (status == SearchCoverageStale && !fullBuildAvailable) {
 		actions = append(actions, SearchCoverageActionRetry)
 	}
-	if fullBuildAvailable {
-		if _, ok := s.store.(CLIRunner); ok && s.cfg != nil && s.currentVectorConfig().Enabled {
+	if _, _, cfg := s.vectorComponents(); fullBuildAvailable && cfg.Enabled && s.cfg != nil {
+		if _, ok := s.store.(CLIRunner); ok {
 			actions = append(actions, SearchCoverageActionBuildIndex)
 		}
 	}

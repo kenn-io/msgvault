@@ -109,7 +109,7 @@ func (s *Server) registerDocumentSearchRoute(api huma.API) {
 }
 
 func (s *Server) handleDocumentVectorStatus(w http.ResponseWriter, r *http.Request) {
-	vecCfg := s.currentVectorConfig()
+	_, _, vecCfg := s.vectorComponents()
 	if !vecCfg.Enabled || !s.cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		writeJSON(w, http.StatusOK, DocumentVectorOperationsResponse{Enabled: false})
 		return
