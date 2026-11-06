@@ -21,21 +21,22 @@ import (
 )
 
 func TestListLiveDaemonRuntimeRecordsEmptyDoesNotProbeOwnership(t *testing.T) {
+	require := require.New(t)
 	dataDir := t.TempDir()
 	// Denying read-write access makes an ownership probe observable without
 	// racing startup for the lock.
 	lockPath := daemonOwnerLockPath(dataDir)
-	require.NoError(t, os.WriteFile(lockPath, nil, 0o400))
-	t.Cleanup(func() { require.NoError(t, os.Chmod(lockPath, 0o600)) })
+	require.NoError(os.WriteFile(lockPath, nil, 0o400))
+	t.Cleanup(func() { require.NoError(os.Chmod(lockPath, 0o600)) })
 	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
 	if err == nil {
-		require.NoError(t, lock.Close())
+		require.NoError(lock.Close())
 		t.Skip("filesystem or user permits read-write access to a read-only lock file")
 	}
-	require.ErrorIs(t, err, os.ErrPermission)
+	require.ErrorIs(err, os.ErrPermission)
 
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, records)
 }
 
