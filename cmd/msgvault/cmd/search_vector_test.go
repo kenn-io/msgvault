@@ -287,9 +287,8 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 		{name: "complete", results: 1, mode: "vector"},
 		{name: "more", results: 50, mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "saturated_more", results: 50, mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
-		{name: "ranking_cap", results: 50, mode: "vector", hasMore: true, cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
-		{name: "pool_only", results: 1, mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"vector.search.k_per_signal"}},
-		{name: "dual_cap_pool", results: 50, mode: "hybrid", pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
+		{name: "ranking_cap", results: 50, mode: "vector", cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
+		{name: "pool_only", results: 1, mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"hybrid search may omit matches; raise vector.search.k_per_signal"}},
 		{name: "fts_complete", mode: "fts"},
 		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
 	} {

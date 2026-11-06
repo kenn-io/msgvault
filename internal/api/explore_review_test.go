@@ -544,16 +544,15 @@ func TestExploreHybridLexicalBranchResolvesWithFilters(t *testing.T) {
 type fakeFusingBackend struct {
 	*fakeVectorBackend
 
-	fusedHits     []vector.FusedHit
-	fusedCalls    int
-	fusedLast     *vector.FusedRequest
-	fusedMetadata vector.SearchMetadata
+	fusedHits  []vector.FusedHit
+	fusedCalls int
+	fusedLast  *vector.FusedRequest
 }
 
 func (f *fakeFusingBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	f.fusedCalls++
 	f.fusedLast = &req
-	return f.fusedHits, f.fusedMetadata, nil
+	return f.fusedHits, vector.SearchMetadata{}, nil
 }
 
 func TestExploreHybridLowercasesSubjectTermsForBoost(t *testing.T) {

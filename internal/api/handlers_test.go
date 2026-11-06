@@ -8005,33 +8005,25 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 		hits     []vector.Hit
 		wantCap  int
 		wantMore bool
-		pool     bool
 		mode     string
 	}{
 		{name: "complete", mode: "vector", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
-		{name: "overflow", mode: "vector", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2, wantMore: true},
-		{name: "hybrid_pool_at_cap", mode: "hybrid", pool: true, wantCap: 2},
+		{name: "overflow", mode: "vector", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			backend.searchHits = tc.hits
-			backend.fusedHits = []vector.FusedHit{{MessageID: 1}, {MessageID: 2}}
-			backend.fusedMetadata = vector.SearchMetadata{PoolSaturated: tc.pool}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode="+tc.mode+"&offset=1&page_size=1", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var page hybridSearchResponse
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
-			assert.Equal(tc.wantMore, page.HasMore, "report the measured extra hit even at the configured cap")
+			assert.Equal(tc.wantMore, page.HasMore, "stop pagination at the configured cap")
 			require.Len(page.Results, 1)
 			assert.Equal(int64(2), page.Results[0].ID)
 			if tc.mode == "vector" {
 				assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
-			}
-			if tc.mode == "hybrid" {
-				require.NotNil(backend.fusedLast)
-				assert.Equal(3, backend.fusedLast.Limit)
 			}
 			assert.Equal(tc.wantCap, page.RankingLimitReached)
 		})

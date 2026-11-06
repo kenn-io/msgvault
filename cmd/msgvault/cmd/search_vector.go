@@ -253,21 +253,20 @@ func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
 }
 
 func semanticMoreResultsHints(resp *daemonclient.CLIHybridSearch) []map[string]string {
-	if resp.HasMore && resp.RankingLimitReached == 0 {
+	if resp.HasMore {
 		return []map[string]string{{"code": "more_available", "message": "more messages match; raise --limit"}}
 	}
-	var hints []map[string]string
 	if resp.RankingLimitReached > 0 {
-		hints = append(hints, map[string]string{
+		return []map[string]string{{
 			"code":    "ranking_limit_reached",
 			"message": fmt.Sprintf("semantic result limit reached; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached),
-		})
+		}}
 	}
 	if resp.Mode == "hybrid" && resp.PoolSaturated {
-		hints = append(hints, map[string]string{
+		return []map[string]string{{
 			"code":    "candidate_pool_saturated",
-			"message": "hybrid candidate pool may omit matches; raise vector.search.k_per_signal on the server and restart it, then raise --limit, or narrow the query",
-		})
+			"message": "hybrid search may omit matches; raise vector.search.k_per_signal on the server and restart it, then raise --limit, or narrow the query",
+		}}
 	}
-	return hints
+	return nil
 }
