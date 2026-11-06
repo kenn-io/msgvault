@@ -6,12 +6,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/caldav"
 	"go.kenn.io/msgvault/internal/callhistory"
-	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
@@ -19,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
@@ -36,6 +34,7 @@ type configuredSource struct {
 	username                            string
 	accountID                           int64
 	accountSourceIDs                    []int64
+	calendars                           []string
 }
 
 // Build unions archive rows with configured accounts and provider sections.
@@ -170,23 +169,7 @@ func matches(source *store.Source, entry configuredSource) bool {
 		return true
 	}
 	if entry.kind == "caldav" {
-		username := entry.username
-		if email, err := search.ParseAccountAddress(username); err == nil {
-			username = email
-		}
-		var identity [2]string
-		if json.Unmarshal([]byte(source.Identifier), &identity) != nil || identity[0] != username {
-			return false
-		}
-		collection, err := url.Parse(identity[1])
-		if err != nil {
-			return false
-		}
-		account, err := url.Parse(entry.accountURL)
-		if err != nil {
-			return false
-		}
-		return carddav.CollectionURLIdentity(&url.URL{Scheme: collection.Scheme, Host: collection.Host}) == carddav.CollectionURLIdentity(&url.URL{Scheme: account.Scheme, Host: account.Host})
+		return caldav.SourceSelected(source.Identifier, entry.username, entry.accountURL, entry.calendars)
 	}
 	if entry.kind == "gcal" {
 		identifier := gcalmodel.NormalizeParticipantEmail(source.Identifier)
@@ -235,7 +218,7 @@ func configuration(cfg *config.Config) []configuredSource {
 	}
 	for _, s := range cfg.CalDAV.Sources {
 		entries = append(entries, configuredSource{kind: "caldav", identifier: s.Name, enabled: true,
-			command: "msgvault sync-caldav " + shellArgument(s.Name), username: s.Username, accountURL: s.URL})
+			command: "msgvault sync-caldav " + shellArgument(s.Name), username: s.Username, accountURL: s.URL, calendars: s.Calendars})
 	}
 	for _, s := range cfg.GCal {
 		name := s.Name
