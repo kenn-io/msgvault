@@ -139,11 +139,10 @@ func (m Model) timelineCalendarLines() []string {
 func (m Model) timelineCalendarView() string {
 	lines := m.timelineCalendarLines()
 	if lines == nil {
-		message := "Loading archived calendar occurrence…"
-		if !m.timelineState.loading {
-			message = "Could not load archived calendar occurrence."
+		if m.timelineState.loading {
+			return m.fillScreenDetail("Loading archived calendar occurrence…")
 		}
-		return m.fillScreenDetail(message)
+		return m.fillScreenDetail("")
 	}
 	size := m.detailPageSize()
 	start := min(max(m.timelineState.calendarScroll, 0), max(len(lines)-size, 0))
@@ -169,7 +168,7 @@ func (m Model) timelineNoteView() string {
 		if m.timelineState.loading {
 			return m.fillScreenDetail("Loading daily note…")
 		}
-		return m.fillScreenDetail("Could not load daily note.")
+		return m.fillScreenDetail("")
 	}
 	size := m.detailPageSize()
 	start := min(max(m.timelineState.noteScroll, 0), max(len(lines)-size, 0))
