@@ -278,7 +278,6 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
-  LocalEmbeddingsRequest,
   LocalEmbeddingsStatus,
   LoopDecisionResponse,
   LoopListResponse,
@@ -1667,16 +1666,10 @@ export const getLocalEmbeddings = (
  * @summary Turn on local search
  */
 export const enableLocalEmbeddings = (
-  localEmbeddingsRequest: LocalEmbeddingsRequest,
   options?: SecondParameter<typeof orvalFetch<LocalEmbeddingsStatus>>,
 ) => {
   return orvalFetch<LocalEmbeddingsStatus>(
-    {
-      url: `/api/v1/embeddings/local`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      data: localEmbeddingsRequest,
-    },
+    { url: `/api/v1/embeddings/local`, method: "POST" },
     options,
   );
 };

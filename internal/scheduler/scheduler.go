@@ -770,14 +770,14 @@ func (s *Scheduler) IsJobScheduled(name string) bool {
 // no gate held) and relies on running to completion before returning so
 // lastRun/lastErr are recorded synchronously.
 func (s *Scheduler) TriggerJob(name string) error {
-	disp, err := s.reserveGenericJob(name, false, false)
+	run, disp, err := s.reserveGenericJob(name, false, false)
 	if err != nil {
 		return err
 	}
 	if disp != JobStarted {
 		return nil
 	}
-	return s.runJob(name)
+	return s.runJob(name, run)
 }
 
 // JobDisposition says what a manual trigger of a generic job did.
@@ -806,7 +806,7 @@ const (
 // whether a run started, a follow-up was queued, or the request was merged
 // into one already pending.
 func (s *Scheduler) StartJob(name string, manual bool) (JobDisposition, error) {
-	disp, err := s.reserveGenericJob(name, true, manual)
+	run, disp, err := s.reserveGenericJob(name, true, manual)
 	if err != nil {
 		return "", err
 	}
@@ -814,7 +814,7 @@ func (s *Scheduler) StartJob(name string, manual bool) (JobDisposition, error) {
 		return disp, nil
 	}
 	go func() {
-		_ = s.runJob(name)
+		_ = s.runJob(name, run)
 	}()
 	return disp, nil
 }
@@ -822,11 +822,11 @@ func (s *Scheduler) StartJob(name string, manual bool) (JobDisposition, error) {
 // onJobTick handles one cron firing for a generic job, coalescing a tick
 // that arrives while the job is active like onAccountTick does.
 func (s *Scheduler) onJobTick(name string) {
-	disp, err := s.reserveGenericJob(name, true, false)
+	run, disp, err := s.reserveGenericJob(name, true, false)
 	if err != nil || disp != JobStarted {
 		return
 	}
-	_ = s.runJob(name)
+	_ = s.runJob(name, run)
 }
 
 // reserveGenericJob validates and reserves the named generic job under the
@@ -834,19 +834,20 @@ func (s *Scheduler) onJobTick(name string) {
 // disposition is JobStarted when the caller now owns a run. When the job is
 // already running it is JobPending or JobCoalesced if coalesce is set (one
 // follow-up run is remembered), and empty otherwise (a no-op, not an error).
-func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (JobDisposition, error) {
+func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (run func(context.Context) error, disp JobDisposition, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.genericFuncs[name] == nil {
-		return "", fmt.Errorf("job %q is not scheduled", name)
+	run = s.genericFuncs[name]
+	if run == nil {
+		return nil, "", fmt.Errorf("job %q is not scheduled", name)
 	}
 	if s.stopped {
-		return "", errors.New("scheduler is stopped")
+		return nil, "", errors.New("scheduler is stopped")
 	}
 	if s.genericRunning[name] {
 		if !coalesce {
-			return "", nil
+			return nil, "", nil
 		}
 		target := s.genericNextManual
 		if !s.genericQueuedAt[name].IsZero() {
@@ -854,21 +855,21 @@ func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (
 		}
 		target[name] = target[name] || manual
 		if s.coalesceTickLocked("job", name, s.genericQueuedAt, s.genericPending) {
-			return JobPending, nil
+			return nil, JobPending, nil
 		}
-		return JobCoalesced, nil
+		return nil, JobCoalesced, nil
 	}
 	s.genericRunning[name] = true
 	s.genericManual[name] = manual
 	s.genericQueuedAt[name] = time.Now()
 	s.wg.Add(1)
-	return JobStarted, nil
+	return run, JobStarted, nil
 }
 
 // runJob executes an already-reserved generic job and records the result.
 // The caller must have set genericRunning[name] = true and called
 // s.wg.Add(1) before invoking runJob.
-func (s *Scheduler) runJob(name string) error {
+func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	defer s.wg.Done()
 	defer s.finishGenericRun(name)
 
@@ -890,12 +891,6 @@ func (s *Scheduler) runJob(name string) error {
 	}
 	defer done()
 
-	s.mu.RLock()
-	run := s.genericFuncs[name]
-	s.mu.RUnlock()
-	if run == nil {
-		return nil
-	}
 	runCtx, endRun := s.jobContext(name, preemptible, cooperative, maxRuntime)
 	err := run(runCtx)
 	endRun()
@@ -980,7 +975,7 @@ func (s *Scheduler) finishGenericRun(name string) {
 		delete(s.genericNextManual, name)
 		s.genericQueuedAt[name] = time.Now()
 		s.wg.Add(1)
-		go func() { _ = s.runJob(name) }()
+		go func() { _ = s.runJob(name, current) }()
 		return
 	}
 	if s.genericPending[name] {

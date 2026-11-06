@@ -10344,13 +10344,11 @@ func (c *Client) GetLocalEmbeddingsWithResponse(ctx context.Context, reqEditors 
 }
 
 // EnableLocalEmbeddings Turn on local search
-func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResp, error) {
+func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
+		Method:     "POST",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -10386,11 +10384,11 @@ func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, options 
 			}
 		}
 		return out, nil
-	case 400:
-		out.JSON400 = new(EnableLocalEmbeddingsErrorResponse)
+	case 401:
+		out.JSON401 = new(EnableLocalEmbeddingsErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON401); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -10402,40 +10400,8 @@ func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, options 
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 401:
-		out.JSON401 = new(EnableLocalEmbeddingsErrorResponseJSON)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON401); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "EnableLocalEmbeddingsErrorResponseJSON",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 409:
-		out.JSON409 = new(EnableLocalEmbeddingsErrorResponseJSON409)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "EnableLocalEmbeddingsErrorResponseJSON409",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
-		out.JSON503 = new(EnableLocalEmbeddingsErrorResponseJSON503)
+		out.JSON503 = new(EnableLocalEmbeddingsErrorResponseJSON)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
@@ -10443,7 +10409,7 @@ func (c *Client) EnableLocalEmbeddingsWithResponse(ctx context.Context, options 
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "EnableLocalEmbeddingsErrorResponseJSON503",
+					TargetType:    "EnableLocalEmbeddingsErrorResponseJSON",
 					Body:          bodyBytes,
 					Err:           err,
 				}

@@ -27,21 +27,12 @@ func (s *Server) InstallMCPHandlers(read, write http.Handler, closeHandlers func
 		return errors.New("native MCP handlers closed")
 	}
 	previous := s.nativeMCP.close
-	s.nativeMCP.read, s.nativeMCP.write, s.nativeMCP.close = inheritMCP(read, s.nativeMCP.read), inheritMCP(write, s.nativeMCP.write), closeHandlers
+	s.nativeMCP.read, s.nativeMCP.write, s.nativeMCP.close = read, write, closeHandlers
 	s.nativeMCP.Unlock()
 	if previous != nil {
 		previous()
 	}
 	return nil
-}
-
-// inheritMCP lets a refreshed handler keep in-progress downloads and
-// confirmations; the last handler to close releases them.
-func inheritMCP(next, previous http.Handler) http.Handler {
-	if heir, ok := next.(interface{ Inherit(previous http.Handler) }); ok && previous != nil {
-		heir.Inherit(previous)
-	}
-	return next
 }
 
 func (s *Server) closeNativeMCP() {

@@ -1115,10 +1115,6 @@ type EnableLocalEmbeddingsErrorResponse = ErrorResponse
 
 type EnableLocalEmbeddingsErrorResponseJSON = ErrorResponse
 
-type EnableLocalEmbeddingsErrorResponseJSON409 = ErrorResponse
-
-type EnableLocalEmbeddingsErrorResponseJSON503 = ErrorResponse
-
 type EnableLocalEmbeddingsErrorResponseJSONDefault = ErrorResponse
 
 type GetEmbeddingStatusResponse = EmbeddingStatus
@@ -5322,10 +5318,8 @@ type EnableLocalEmbeddingsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON202      *EnableLocalEmbeddingsResponse
-	JSON400      *EnableLocalEmbeddingsErrorResponse
-	JSON401      *EnableLocalEmbeddingsErrorResponseJSON
-	JSON409      *EnableLocalEmbeddingsErrorResponseJSON409
-	JSON503      *EnableLocalEmbeddingsErrorResponseJSON503
+	JSON401      *EnableLocalEmbeddingsErrorResponse
+	JSON503      *EnableLocalEmbeddingsErrorResponseJSON
 	JSONDefault  *EnableLocalEmbeddingsErrorResponseJSONDefault
 }
 

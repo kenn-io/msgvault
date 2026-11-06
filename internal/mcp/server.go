@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -530,8 +529,11 @@ func NewHTTPHandler(opts ServeOptions, httpOpts HTTPOptions) (http.Handler, func
 }
 
 func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *invocationPolicy, daemonAuthenticated bool) (http.Handler, func()) {
-	handler := &httpHandler{}
-	handler.state.Store(&httpState{refs: 1, downloads: cmp.Or(opts.downloads, &downloadCache{}), confirmations: newConfirmationChallenges()})
+	if opts.downloads == nil {
+		opts.downloads = &downloadCache{}
+	}
+	confirmations := newConfirmationChallenges()
+	closeHandler := func() { opts.downloads.close(); confirmations.close() }
 	// HTTP is stateless: bind confirmations to this listener's authenticated
 	// principal, not the retired Mcp-Session-Id header. The challenge store is
 	// private to this listener, including when it intentionally has no API key.
@@ -539,7 +541,7 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 	confirmationKey := base64.RawURLEncoding.EncodeToString(key[:])
 	httpServer := sdkmcp.NewStreamableHTTPHandler(
 		func(r *http.Request) *sdkmcp.Server {
-			requestOpts, confirmations := handler.withState(opts)
+			requestOpts := opts
 			if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" {
 				// Stateless HTTP cannot initiate form elicitation on older protocols.
 				requestOpts.legacyHTTP = true
@@ -567,8 +569,7 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 		},
 	)
 	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, httpServer))
-	handler.Handler = noStoreHandler(protected)
-	return handler, handler.close
+	return noStoreHandler(protected), closeHandler
 }
 
 type noStoreResponseWriter struct {

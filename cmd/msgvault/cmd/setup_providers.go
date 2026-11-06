@@ -190,11 +190,6 @@ func commandStdinIsTerminal(command *cobra.Command) bool {
 // consulted only when no hosted embedding key is present; a failure simply
 // reports the server as unreachable.
 func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
-	return probeOllamaServerWithKey(ctx, server, "")
-}
-
-// probeOllamaServerWithKey sends key, when set, as the configured endpoint's bearer credential.
-func probeOllamaServerWithKey(ctx context.Context, server, key string) ollamaProbeResult {
 	server = strings.TrimRight(strings.TrimSpace(server), "/")
 	if server == "" {
 		return ollamaProbeResult{}
@@ -205,7 +200,7 @@ func probeOllamaServerWithKey(ctx context.Context, server, key string) ollamaPro
 	if err != nil {
 		return ollamaProbeResult{}
 	}
-	response, err := ollamaProbeClient(request, key).Do(request)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return ollamaProbeResult{}
 	}
@@ -230,24 +225,6 @@ func probeOllamaServerWithKey(ctx context.Context, server, key string) ollamaPro
 	return result
 }
 
-// A keyed probe refuses redirects so the key never leaves the endpoint's origin.
-func ollamaProbeClient(request *http.Request, key string) *http.Client {
-	if key == "" {
-		return http.DefaultClient
-	}
-	request.Header.Set("Authorization", "Bearer "+key)
-	return providerHTTPClientWithoutRedirects(nil)
-}
-
-func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
-	server = strings.TrimRight(strings.TrimSpace(server), "/")
-	if embeddingProviderName(server) == "local" && probe.Reachable &&
-		(slices.Contains(probe.Models, setupOllamaTextModel) || slices.Contains(probe.Models, setupOllamaTextModel+":latest")) {
-		return server + "/v1"
-	}
-	return ""
-}
-
 func (r ollamaProbeResult) hasModel(name string) bool {
 	for _, model := range r.Models {
 		if model == name || strings.HasPrefix(model, name+":") {
@@ -262,7 +239,6 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // and which vector backend the archive selects.
 type setupDetection struct {
 	localEmbeddings     bool
-	resumeLocalText     bool
 	embeddingEndpoint   string
 	embeddingError      error
 	configKeys          toml.MetaData
@@ -333,7 +309,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
 		skipOllama = skipOllama || server == "http://localhost:11434" || server == "http://127.0.0.1:11434"
 	}
-	if needsLocalText && !detection.localEmbeddings && ollamaTextEndpoint(loaded.Chat.Server, detection.ollama) != "" {
+	if needsLocalText && !detection.localEmbeddings && detection.ollamaLoopback && detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel) {
 		detection.embeddingEndpoint = detection.ollamaEndpoint
 	} else if detection.localEmbeddings || needsLocalText {
 		dir, err := localEmbeddingsDir()
@@ -556,17 +532,7 @@ func setupScheduleEdits(keys toml.MetaData, lane string) []config.TableEdit {
 func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
 	lane := setupLanePlan{Lane: laneTextSearch, Label: "Search by meaning"}
 	embeddings := loaded.Vector.Embeddings
-	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true}}
 	switch {
-	case detection.resumeLocalText:
-		if detection.backendUnavailable != "" {
-			lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
-			return lane
-		}
-		lane.Action, lane.Provider, lane.Model = planActionEnable, textEmbeddingProviderName(embeddings), embeddings.Model
-		lane.local = embeddings.LocalOnly
-		lane.edits = append([]config.TableEdit{vectorEdit}, setupScheduleEdits(detection.configKeys, "embed")...)
-		return lane
 	case loaded.Vector.Enabled && !detection.localEmbeddings:
 		lane.Action = planActionKeep
 		lane.Provider = textEmbeddingProviderName(embeddings)
@@ -586,7 +552,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 		lane.Action, lane.Reason = planActionPending, detection.backendUnavailable
 		return lane
 	}
-	vectorEdit.Values["backend"] = detection.backend
+	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true, "backend": detection.backend}}
 	switch {
 	case detection.voyageKey && !detection.localEmbeddings:
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionEnable, "voyage", setupVoyageTextModel, gateVoyage

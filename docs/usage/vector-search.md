@@ -54,10 +54,9 @@ builds the message index, and enables semantic search in the running daemon.
 The row shows download and indexing progress. You can close the page while it
 runs and keep using keyword search.
 
-If Ollama already serves `nomic-embed-text`, Turn on uses it. **Use built-in
-instead** switches an existing Ollama configuration to the shared server. A
-matching Nomic recipe keeps the message index; another model rebuilds it.
-When the daemon runs on another computer, the download line names that host.
+If Ollama already serves `nomic-embed-text`, Turn on uses it. An existing
+Ollama configuration stays on Ollama.
+When the browser uses a remote address, the download line names the daemon host.
 The **Turn on** hint below full-text search results starts the same setup and
 opens Settings to show progress.
 
@@ -131,8 +130,6 @@ Use `msgvault setup providers` to select defaults. Without a hosted key, setup u
 Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. This CLI switch changes document-vector and semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
 
 The CLI switch also changes the separate document-vector generation: renew its consents, restart the daemon, and build the matching generation to restore document semantic search.
-
-In Settings, Use built-in instead activates message search without a restart. Renew document-vector and semantic-person consents for the selected provider when their identities change, as with the CLI switch. Existing exact document consent allows its index to rebuild automatically.
 
 For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.

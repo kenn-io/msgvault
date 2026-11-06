@@ -84,8 +84,6 @@ Requires [vector] to be enabled and [vector.embeddings] to configure an
 OpenAI-compatible endpoint or local_only = true for the shared local server.`,
 		RunE: runEmbeddingsBuild,
 	}
-	cmd.Flags().String("person-policy-config", "", "Read live person authorization from this configuration")
-	_ = cmd.Flags().MarkHidden("person-policy-config")
 	cmd.Flags().BoolVar(&embedFullRebuild, "full-rebuild", false, "Create a new generation and rebuild from scratch")
 	cmd.Flags().BoolVar(&embedYes, "yes", false, "Skip confirmation prompts")
 	cmd.Flags().BoolVar(&embedBackstop, "backstop", false,
@@ -116,7 +114,6 @@ func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
 	if (!cfg.Vector.Embeddings.LocalOnly && cfg.Vector.Embeddings.Endpoint == "") || cfg.Vector.Embeddings.Model == "" {
 		return errors.New("[vector.embeddings] endpoint and model are required")
 	}
-	state.personPolicyConfig, _ = cmd.Flags().GetString("person-policy-config")
 	return runEmbed(cmd)
 }
 

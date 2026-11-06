@@ -323,8 +323,6 @@ type Server struct {
 	importWG                  sync.WaitGroup
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus
-	localSetupUseBuiltin      bool
-	localSetupBuildFailedAt   time.Time
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the

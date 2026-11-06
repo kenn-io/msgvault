@@ -566,7 +566,7 @@ func registerDocumentVectorJob(sched documentVectorJobRegistrar, vf *vectorFeatu
 		return runScheduledDocumentVectorGeneration(ctx, st, vf, limit)
 	})
 	if err := sched.SetDocumentVectorJob(job, cfg.Vector.Embed.Schedule.Cron, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
-		return errors.Join(fmt.Errorf("register document vector job: %w", err), sched.SetDocumentVectorJob(nil, "", false))
+		return fmt.Errorf("register document vector job: %w", err)
 	}
 	repairLogger(state.logger).Info("document vectors scheduled", "cron", cfg.Vector.Embed.Schedule.Cron,
 		"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync)
@@ -592,7 +592,7 @@ func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Stor
 	}
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
-		return errors.Join(fmt.Errorf("register embed job: %w", err), sched.SetEmbedJob(nil, "", false))
+		return fmt.Errorf("register embed job: %w", err)
 	}
 	repairLogger(logger).Info("embed scheduled",
 		"cron", schedule,

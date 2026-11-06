@@ -7344,24 +7344,16 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
-type LocalEmbeddingsRequest struct {
-	UseBuiltin bool `json:"use_builtin"`
-}
-
 type LocalEmbeddingsStatus struct {
-	Compatible      bool                       `json:"compatible"`
-	DocumentRebuild *bool                      `json:"document_rebuild,omitempty"`
-	DoneBytes       int64                      `json:"done_bytes"`
-	DownloadBytes   int64                      `json:"download_bytes"`
-	Enabled         bool                       `json:"enabled"`
-	ErrorData       *string                    `json:"error,omitzero"`
-	Host            string                     `json:"host" validate:"required"`
-	OllamaAvailable bool                       `json:"ollama_available"`
-	Phase           LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
-	Provider        string                     `json:"provider" validate:"required"`
-	RetryUseBuiltin *bool                      `json:"retry_use_builtin,omitempty"`
-	Running         *bool                      `json:"running,omitempty"`
-	TotalBytes      int64                      `json:"total_bytes"`
+	DoneBytes     int64                      `json:"done_bytes"`
+	DownloadBytes int64                      `json:"download_bytes"`
+	Enabled       bool                       `json:"enabled"`
+	ErrorData     *string                    `json:"error,omitzero"`
+	Host          string                     `json:"host" validate:"required"`
+	Phase         LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
+	Provider      string                     `json:"provider" validate:"required"`
+	Running       *bool                      `json:"running,omitempty"`
+	TotalBytes    int64                      `json:"total_bytes"`
 }
 
 func (l LocalEmbeddingsStatus) Validate() error {

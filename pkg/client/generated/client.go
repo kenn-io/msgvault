@@ -456,8 +456,8 @@ type ClientInterface interface {
 	GetLocalEmbeddingsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalEmbeddingsResp, error)
 
 	// EnableLocalEmbeddings Turn on local search
-	EnableLocalEmbeddings(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error)
-	EnableLocalEmbeddingsWithResponse(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResp, error)
+	EnableLocalEmbeddings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error)
+	EnableLocalEmbeddingsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResp, error)
 
 	// GetEmbeddingStatus Get message embedding coverage and live batch diagnostics
 	GetEmbeddingStatus(ctx context.Context, options *GetEmbeddingStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmbeddingStatusResponse, error)
@@ -7719,13 +7719,11 @@ func (c *Client) GetLocalEmbeddings(ctx context.Context, reqEditors ...runtime.R
 }
 
 // EnableLocalEmbeddings Turn on local search
-func (c *Client) EnableLocalEmbeddings(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error) {
+func (c *Client) EnableLocalEmbeddings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
+		Method:     "POST",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

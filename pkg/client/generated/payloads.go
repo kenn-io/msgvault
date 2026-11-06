@@ -90,8 +90,6 @@ type GetDomainContextSummaryBody = ExploreHTTPRequest
 
 type GetDomainTimelineBody = ExploreHTTPRequest
 
-type EnableLocalEmbeddingsBody = LocalEmbeddingsRequest
-
 type CreateEmploymentBody = EmploymentBody
 
 type PatchEmploymentBody = EmploymentBody

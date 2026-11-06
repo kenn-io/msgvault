@@ -195,26 +195,15 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	assert.Equal(1, cleanups)
 }
 
-type inheritingMCPHandler struct {
-	http.Handler
-
-	previous http.Handler
-}
-
-func (h *inheritingMCPHandler) Inherit(previous http.Handler) {
-	h.previous = previous
-}
-
 func TestNativeMCPReplacementClosesPreviousHandlers(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
 	closed := 0
-	previous := &inheritingMCPHandler{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}
-	next := &inheritingMCPHandler{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}
+	previous := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	require.NoError(server.InstallMCPHandlers(previous, nil, func() { closed++ }))
 	require.NoError(server.InstallMCPHandlers(next, nil, func() { closed++ }))
-	assert.Same(previous, next.previous)
 	assert.Equal(1, closed)
 	require.NoError(server.Shutdown(t.Context()))
 	assert.Equal(2, closed)

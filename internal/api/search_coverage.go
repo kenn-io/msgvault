@@ -296,7 +296,7 @@ func (s *Server) resolveSearchCoverageGeneration(
 		if expectedFingerprint != "" && building.Fingerprint != expectedFingerprint {
 			return SearchCoverageUnavailable, "A vector build is running for a different embedding configuration", nil, false
 		}
-		return SearchCoverageInitializing, "The first semantic index build is in progress", nil, !s.embeddingBuildRunning()
+		return SearchCoverageInitializing, "The first semantic index build is in progress", nil, false
 	case errors.Is(err, vector.ErrNotEnabled):
 		return SearchCoverageUnavailable, "No vector generation has been initialized", nil, true
 	default:
@@ -305,12 +305,6 @@ func (s *Server) resolveSearchCoverageGeneration(
 		}
 		return SearchCoverageUnavailable, detail, nil, false
 	}
-}
-
-func (s *Server) embeddingBuildRunning() bool {
-	var status vector.EmbeddingStatus
-	s.setEmbeddingSchedulerState(&status)
-	return status.Job.State == "running"
 }
 
 func sameCoverageGeneration(

@@ -7552,21 +7552,9 @@ components:
       required:
         - manifests
       type: object
-    LocalEmbeddingsRequest:
-      additionalProperties: false
-      properties:
-        use_builtin:
-          type: boolean
-      required:
-        - use_builtin
-      type: object
     LocalEmbeddingsStatus:
       additionalProperties: true
       properties:
-        compatible:
-          type: boolean
-        document_rebuild:
-          type: boolean
         done_bytes:
           format: int64
           type: integer
@@ -7579,8 +7567,6 @@ components:
           type: string
         host:
           type: string
-        ollama_available:
-          type: boolean
         phase:
           enum:
             - idle
@@ -7589,8 +7575,6 @@ components:
           type: string
         provider:
           type: string
-        retry_use_builtin:
-          type: boolean
         running:
           type: boolean
         total_bytes:
@@ -7600,8 +7584,6 @@ components:
         - host
         - enabled
         - provider
-        - compatible
-        - ollama_available
         - download_bytes
         - phase
         - done_bytes
@@ -22439,12 +22421,6 @@ paths:
         - API
     post:
       operationId: enableLocalEmbeddings
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LocalEmbeddingsRequest"
-        required: true
       responses:
         "202":
           content:
@@ -22452,19 +22428,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/LocalEmbeddingsStatus"
           description: Accepted
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
         "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
           content:
             application/json:
               schema:

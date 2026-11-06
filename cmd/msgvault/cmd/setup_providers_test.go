@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1391,17 +1390,6 @@ api_key_env = "STALE_PROVIDER_KEY"
 	assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
 }
 
-func TestSetupProvidersTaggedChatModelDiscovery(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[chat]\nserver = \"http://localhost:11435\"\n")
-	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:custom"}}
-	output, err := fixture.run(t, "providers", "--json", "--allow-sensitive")
-	require.NoError(err, output)
-	loaded := fixture.load(t)
-	require.True(loaded.People.Sweep.Enabled)
-	assert.Equal("gpt-oss-128k", loaded.People.Sweep.Providers[setupOllamaProfile].Model)
-}
-
 func TestSetupProvidersOllamaWithoutChatModelSkipsInference(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2072,73 +2060,25 @@ func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
 	}
 }
 
-func TestSetupProvidersSelectsDefaultOllamaEmbeddingEndpoint(t *testing.T) {
-	for _, tc := range []struct {
-		name, server string
-		models       []string
-		skipOllama   bool
-	}{
-		{name: "default localhost probe", server: "http://localhost:11434/", skipOllama: true},
-		{name: "default loopback probe", server: "http://127.0.0.1:11434", skipOllama: true},
-		{name: "non-default probe rejects custom embedding tag", server: "http://localhost:11435", models: []string{"nomic-embed-text:v2"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := tc.server
+func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
+	for _, server := range []string{"http://localhost:11434/", "http://127.0.0.1:11434", "http://localhost:11435"} {
+		t.Run(server, func(t *testing.T) {
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf("\n[chat]\nserver = %q\n", server))
 			deps := fixture.deps(t)
 			probes, discoveries := 0, 0
 			deps.probeOllama = func(_ context.Context, address string) ollamaProbeResult {
 				probes++
 				assert.Equal(t, strings.TrimRight(server, "/"), address)
-				return ollamaProbeResult{Reachable: len(tc.models) > 0, Models: tc.models}
+				return ollamaProbeResult{}
 			}
 			deps.localEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
 				discoveries++
-				assert.Equal(t, tc.skipOllama, opts.SkipOllama)
+				assert.Equal(t, server != "http://localhost:11435", opts.SkipOllama)
 				return "", embedlocal.ErrNotFound
 			}
 			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
 			assert.Equal(t, 1, probes)
 			assert.Equal(t, 1, discoveries)
-		})
-	}
-}
-
-func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *testing.T) {
-	for _, tc := range []struct {
-		name             string
-		fields           string
-		unavailable      string
-		wantCron         string
-		wantRunAfterSync bool
-	}{
-		{name: "unspecified schedule", fields: "", wantCron: setupEmbedCron, wantRunAfterSync: true},
-		{name: "cron disabled", fields: "cron = \"\"", wantCron: "", wantRunAfterSync: true},
-		{name: "sync disabled", fields: "run_after_sync = false", wantCron: setupEmbedCron, wantRunAfterSync: false},
-		{name: "unavailable backend", unavailable: "archive vector backend unavailable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+tc.fields)
-			cfg := fixture.load(t)
-			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
-			require.NoError(err)
-			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true, backendUnavailable: tc.unavailable})
-			snapshot, err := config.ReadConfigFile(fixture.path)
-			require.NoError(err)
-			next, err := config.PreviewConfigTableEdits(snapshot, resumed.edits)
-			require.NoError(err)
-			if tc.unavailable != "" {
-				assert.Equal(planActionPending, resumed.Action)
-				assert.Equal("archive vector backend unavailable", resumed.Reason)
-				return
-			}
-			assert.True(next.Vector.Enabled)
-			assert.Equal(cfg.Vector.Embeddings, next.Vector.Embeddings)
-			assert.Equal(cfg.Vector.Backend, next.Vector.Backend)
-			assert.Equal(tc.wantCron, next.Vector.Embed.Schedule.Cron)
-			assert.Equal(tc.wantRunAfterSync, next.Vector.Embed.Schedule.RunAfterSync)
 		})
 	}
 }

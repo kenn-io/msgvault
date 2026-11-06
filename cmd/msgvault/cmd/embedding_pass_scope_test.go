@@ -1,4 +1,4 @@
-//go:build sqlite_vec
+//go:build sqlite_vec || pgvector
 
 package cmd
 

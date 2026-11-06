@@ -533,7 +533,6 @@ export * from "./listSourceStatusParams";
 export * from "./listTextConversationMessagesParams";
 export * from "./listTextConversationMessagesPathParameters";
 export * from "./listTextConversationsParams";
-export * from "./localEmbeddingsRequest";
 export * from "./localEmbeddingsStatus";
 export * from "./localEmbeddingsStatusPhase";
 export * from "./loopCounterparty";
