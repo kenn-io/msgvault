@@ -124,6 +124,15 @@ func messageID(chatID, authorToken string, dateSent int64) string {
 	return chatID + ":" + authorToken + ":" + strconv.FormatInt(dateSent, 10)
 }
 
+// messageIDs returns the message IDs for each of an author's tokens.
+func messageIDs(chatID string, authorTokens []string, dateSent int64) []string {
+	ids := make([]string, len(authorTokens))
+	for i, token := range authorTokens {
+		ids[i] = messageID(chatID, token, dateSent)
+	}
+	return ids
+}
+
 // conversationIdentity maps a chat recipient to its source conversation ID
 // and type. ok is false for chats the importer does not read: MMS groups,
 // story distribution lists and call links.

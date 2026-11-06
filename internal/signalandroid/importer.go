@@ -291,22 +291,30 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 
 // token returns the identity token of a recipient for message IDs.
 func (r *run) token(recipientID int64, direct bool) string {
-	if recipientID == r.selfRecipientID {
-		return "self"
-	}
-	if direct {
-		return "peer"
-	}
-	recipient := r.recipients[recipientID]
-	switch {
-	case recipient.ACI != "":
-		return recipient.ACI
-	case recipient.PNI != "":
-		return "pni:" + recipient.PNI
-	case recipient.E164 != "":
-		return "tel:" + recipient.E164
+	if tokens := r.tokens(recipientID, direct); len(tokens) > 0 {
+		return tokens[0]
 	}
 	return ""
+}
+
+// tokens returns a recipient's identity tokens, preferred first, followed by
+// the PNI and phone tokens a message may have been archived under before the
+// recipient's ACI was known.
+func (r *run) tokens(recipientID int64, direct bool) []string {
+	if recipientID == r.selfRecipientID {
+		return []string{"self"}
+	}
+	if direct {
+		return []string{"peer"}
+	}
+	recipient := r.recipients[recipientID]
+	var tokens []string
+	for _, id := range [][2]string{{"", recipient.ACI}, {"pni:", recipient.PNI}, {"tel:", recipient.E164}} {
+		if id[1] != "" {
+			tokens = append(tokens, id[0]+id[1])
+		}
+	}
+	return tokens
 }
 
 func (r *run) displayName(recipientID int64) string {
@@ -449,6 +457,7 @@ type pendingMessage struct {
 	row      sigMessage
 	chatID   string
 	id       string
+	aliases  []string // older IDs the archive may hold the message under
 	rootID   int64
 	senderID int64
 }
@@ -467,8 +476,8 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if isOutgoing(m.Type) {
 			author = r.selfRecipientID
 		}
-		token := r.token(author, conversation.ConversationType == "direct_chat")
-		if token == "" || m.DateSent <= 0 {
+		tokens := r.tokens(author, conversation.ConversationType == "direct_chat")
+		if len(tokens) == 0 || m.DateSent <= 0 {
 			r.summary.MessagesSkipped++
 			continue
 		}
@@ -476,9 +485,9 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if m.OriginalRowID.Valid {
 			rootID = m.OriginalRowID.Int64
 		}
-		id := messageID(sourceConvID, token, m.DateSent)
-		pending = append(pending, pendingMessage{row: m, chatID: sourceConvID, id: id, rootID: rootID, senderID: author})
-		ids = append(ids, id)
+		candidates := messageIDs(sourceConvID, tokens, m.DateSent)
+		pending = append(pending, pendingMessage{row: m, chatID: sourceConvID, id: candidates[0], aliases: candidates[1:], rootID: rootID, senderID: author})
+		ids = append(ids, candidates...)
 		lookupRows = append(lookupRows, m.RowID)
 	}
 	if len(pending) == 0 {
@@ -518,7 +527,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			break
 		}
 		rowAttachments := attachments[p.row.RowID]
-		archivedID, isExisting := existing[p.id]
+		archivedID, isExisting := keepArchivedID(existing, &p)
 		var rowReactions []sigReaction
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
@@ -541,6 +550,18 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		}
 	}
 	return added, nil
+}
+
+// keepArchivedID resolves p to the ID the archive already holds it under,
+// keeping a PNI or phone ID the way conversationIdentity keeps a chat ID.
+func keepArchivedID(existing map[string]int64, p *pendingMessage) (int64, bool) {
+	for _, id := range append([]string{p.id}, p.aliases...) {
+		if archivedID, ok := existing[id]; ok {
+			p.id = id
+			return archivedID, true
+		}
+	}
+	return 0, false
 }
 
 func (r *run) writeMessage(
