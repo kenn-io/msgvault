@@ -122,7 +122,7 @@ type LoopMark struct {
 // at the source stays readable here, so it still anchors and settles loops.
 // Draft markers exclude a message unless Sent evidence confirms it went out.
 const loopMessageFilterSQL = `%[1]s.sent_at IS NOT NULL AND %[1]s.deleted_at IS NULL
-	AND COALESCE(%[1]s.message_type, '') NOT IN ('calendar_event', 'meeting_transcript', 'synctech_sms_call', 'call_record')
+	AND COALESCE(%[1]s.message_type, '') NOT IN ('calendar_event', 'meeting_transcript', 'synctech_sms_call')
 	AND COALESCE(%[1]s.is_sent, TRUE)
 	AND NOT ((%[1]s.draft_authored OR %[2]s) AND NOT %[3]s)`
 
