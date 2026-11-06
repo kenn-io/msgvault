@@ -187,8 +187,8 @@ func runRapidGmailSource(ctx context.Context, src *store.Source, st *store.Store
 	}
 	// Profile evidence must precede migrations, identity confirmation and sync runs.
 	defer rapidRefreshCache(ctx, src.Identifier, state)
-	confirmDefaultIdentity(io.Discard, st, src.ID, src.Identifier, src.Identifier, "account-identifier", state.logger)
-	if err = runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, st, src.ID, src.Identifier, src.Identifier, "account-identifier", state.logger)
+	if err = runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
 		return err
 	}
 	opts := msgsync.DefaultOptions()
@@ -224,8 +224,8 @@ func runRapidGraphSource(ctx context.Context, src *store.Source, st *store.Store
 		return err
 	}
 	defer rapidRefreshCache(ctx, src.Identifier, state)
-	confirmDefaultIdentity(io.Discard, st, src.ID, src.Identifier, src.Identifier, "account-identifier", state.logger)
-	if err = runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, st, src.ID, src.Identifier, src.Identifier, "account-identifier", state.logger)
+	if err = runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
 		return err
 	}
 	summary, err := msmail.ImportSource(ctx, st, client, src, msmail.Options{Email: src.Identifier, AttachmentsDir: state.cfg.AttachmentsDir()}, state.logger)
