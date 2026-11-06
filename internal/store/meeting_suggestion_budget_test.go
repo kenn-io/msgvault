@@ -39,6 +39,27 @@ func TestMeetingChosenLinkRejectsBroadTargetCopies(t *testing.T) {
 	assert.Zero(decisions, "a choice the reader cannot return must not be committed")
 }
 
+func TestMeetingSuggestionStillAllowsManualLink(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, crowded := calendarFixture(t, st, "copy-0", singleLinkRaw("copy-0", "crowded@example.org"))
+	for i := range 200 {
+		id := fmt.Sprintf("copy-%d", i+1)
+		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
+	}
+	_, readable := calendarFixture(t, st, "readable", singleLinkRaw("readable", "readable@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`)
+	require.ErrorIs(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: crowded}), ErrQueryTooBroad)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 100)
+	require.NoError(err)
+	var refs []string
+	for _, suggestion := range page.Suggestions {
+		refs = append(refs, suggestion.Ref)
+	}
+	assert.Equal([]string{fmt.Sprintf("evt:%d", readable)}, refs)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: readable}))
+}
+
 func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
