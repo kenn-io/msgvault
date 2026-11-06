@@ -66,6 +66,8 @@ func TestIs(t *testing.T) {
 		{"qualified code at window limit", Content{Text: "Verification code" + strings.Repeat("\u00a0", 60) + "K7MQPZ"}, true},
 		{"qualified code outside window", Content{Text: "Verification code" + strings.Repeat("\u00a0", 61) + "K7MQPZ"}, false},
 		{"distant qualified code", Content{Text: "Verification code" + strings.Repeat(" ", 150) + "K7MQPZ"}, false},
+		{"code after numeric report", Content{Text: "Report code. " + strings.Repeat("Order 1234567 shipped. ", 100) + "Your code is 482913"}, true},
+		{"long spaced number", Content{Text: "Your code is " + strings.Repeat("4 ", 600)}, false},
 		{"unqualified mixed code", Content{Text: "Your code: AB12CD"}, false},
 		{"separate qualified mixed code", Content{Subject: "Your verification code", Text: "AB12CD"}, false},
 		{"reverse qualified mixed code", Content{Text: "AB12CD is your verification code"}, false},
@@ -207,6 +209,17 @@ func BenchmarkIsCueDense(b *testing.B) {
 func BenchmarkIsLargeNumericText(b *testing.B) {
 	const size = 400 * 1024
 	body := "Report code\n" + strings.Repeat("id,1234567,2024\n", size/len("id,1234567,2024\n")+1)
+	content := Content{Text: body[:size]}
+	b.SetBytes(int64(len(content.Text)))
+	for b.Loop() {
+		assert.False(b, Is(content))
+	}
+}
+
+func BenchmarkIsLargeProse(b *testing.B) {
+	const size = 400 * 1024
+	const sentence = "The report recorded 1234567 items. Another 7654321 items shipped today. "
+	body := "The code review is complete. " + strings.Repeat(sentence, size/len(sentence)+1)
 	content := Content{Text: body[:size]}
 	b.SetBytes(int64(len(content.Text)))
 	for b.Loop() {

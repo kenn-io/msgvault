@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -90,7 +91,8 @@ func Is(c Content) bool {
 		if localizedFields[i] {
 			qualified = qualifiedCodeCue
 		}
-		cueFields[i] = (codeFields[i] || strings.Contains(lower, "2fa")) && trailingCue(field, qualified)
+		qualifiedPossible := localizedFields[i] || containsAny(lower, "verification", "security", "login", "sign", "confirmation", "authentication", "one", "temporary", "passcode", "otp", "2fa")
+		cueFields[i] = qualifiedPossible && trailingCue(field, qualified.FindAllStringIndex(field, -1))
 		if cueFields[i] {
 			cueCount++
 		}
@@ -105,10 +107,31 @@ func Is(c Content) bool {
 		if localizedFields[i] {
 			cue = codeCue
 		}
-		for _, loc := range codeToken.FindAllStringIndex(field, -1) {
-			start, end := loc[0], loc[1]
+		var cueMatches, credentialMatches [][]int
+		if codeFields[i] {
+			cueMatches = cue.FindAllStringIndex(field, -1)
+		}
+		credentialsScanned := false
+		for offset := 0; offset < len(field); {
+			if !separateCue && !useFields[i] && (len(cueMatches) == 0 || offset > cueMatches[len(cueMatches)-1][1]+120*utf8.UTFMax) {
+				break
+			}
+			loc := codeToken.FindStringIndex(field[offset:])
+			if loc == nil {
+				break
+			}
+			start, end := offset+loc[0], offset+loc[1]
+			offset = end
 			if start > 0 && asciiAlnum(field[start-1]) || end < len(field) && asciiAlnum(field[end]) {
 				continue
+			}
+			// A 120-rune window spans at most 120 * UTFMax bytes per side.
+			// Skip distant candidates before walking their rune boundaries.
+			if !separateCue && !useFields[i] {
+				first := sort.Search(len(cueMatches), func(i int) bool { return cueMatches[i][0] >= start-120*utf8.UTFMax })
+				if first == len(cueMatches) || cueMatches[first][0] > end+120*utf8.UTFMax {
+					continue
+				}
 			}
 			value := compactCode.Replace(field[start:end])
 			digits := 0
@@ -120,6 +143,10 @@ func Is(c Content) bool {
 			if len(value) < 4 || len(value) > 10 || digits == 0 || (digits != len(value) && len(value) < 5) {
 				continue
 			}
+			if digits != len(value) && !credentialsScanned {
+				credentialMatches = credentialCodeCue.FindAllStringIndex(field, -1)
+				credentialsScanned = true
+			}
 			left, right := start, end
 			for n := 0; n < 120 && left > 0; n++ {
 				_, n := utf8.DecodeLastRuneInString(field[:left])
@@ -129,15 +156,11 @@ func Is(c Content) bool {
 				_, n := utf8.DecodeRuneInString(field[right:])
 				right += n
 			}
-			// Every code cue contains one of these letters, including localized cues.
-			if !separateCue && !useFields[i] && !strings.ContainsAny(field[left:right], "cCpPoOfFкК验驗認인") {
-				continue
-			}
 			if len(value) == 4 && value >= "1900" && value <= "2099" {
-				if codeFields[i] && nearCue(field[left:start], true, cue) {
+				if codeFields[i] && nearCue(field, left, start, true, cueMatches) {
 					return true
 				}
-			} else if digits != len(value) && nearCue(field[left:start], true, credentialCodeCue) || (digits == len(value) || len(value) >= 6 && digits >= 3) && (separateCue || codeFields[i] && (nearCue(field[left:start], true, cue) || nearCue(field[end:right], false, cue)) || useFields[i] && useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right])) {
+			} else if digits != len(value) && nearCue(field, left, start, true, credentialMatches) || (digits == len(value) || len(value) >= 6 && digits >= 3) && (separateCue || codeFields[i] && (nearCue(field, left, start, true, cueMatches) || nearCue(field, end, right, false, cueMatches)) || useFields[i] && useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right])) {
 				return true
 			}
 		}
@@ -164,14 +187,21 @@ func containsAny(s string, words ...string) bool {
 	return false
 }
 
-func nearCue(window string, before bool, cue *regexp.Regexp) bool {
-	for _, loc := range cue.FindAllStringIndex(window, -1) {
-		if strings.EqualFold(window[loc[0]:loc[1]], "code") && ordinaryCodePrefix.MatchString(window[:loc[0]]) {
+func nearCue(field string, left, right int, before bool, matches [][]int) bool {
+	first := sort.Search(len(matches), func(i int) bool { return matches[i][0] >= left })
+	for _, loc := range matches[first:] {
+		if loc[0] >= right {
+			break
+		}
+		if loc[1] > right {
 			continue
 		}
-		gap, breaks := window[:loc[0]], 0
+		if strings.EqualFold(field[loc[0]:loc[1]], "code") && ordinaryCodePrefix.MatchString(field[left:loc[0]]) {
+			continue
+		}
+		gap, breaks := field[left:loc[0]], 0
 		if before {
-			gap = strings.Replace(window[loc[1]:], ".\n", "\n", 1) // the cue line may end a sentence
+			gap = strings.Replace(field[loc[1]:right], ".\n", "\n", 1) // the cue line may end a sentence
 			breaks = 4
 		}
 		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || before && introGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
@@ -182,8 +212,8 @@ func nearCue(window string, before bool, cue *regexp.Regexp) bool {
 }
 
 // Only qualified cues can describe a code in a separate field.
-func trailingCue(field string, cue *regexp.Regexp) bool {
-	for _, loc := range cue.FindAllStringIndex(field, -1) {
+func trailingCue(field string, matches [][]int) bool {
+	for _, loc := range matches {
 		if codeGap.MatchString(field[loc[1]:]) {
 			return true
 		}
