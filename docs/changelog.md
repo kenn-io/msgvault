@@ -28,6 +28,8 @@ All notable changes to msgvault, grouped by release.
   instead of skipping it.
 - [`import-imessage`](usage/text-messages.md#import-imessage) keeps the full text of messages of 256 bytes or more that macOS stores only in `attributedBody`. Before, it archived just part of that text. Rerun the import to repair messages still in `chat.db`. The import summary counts messages whose text can't be decoded under `Unreadable text`; their archived text is kept.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
+- A saved person's Details tab in People shows that person's open loops in a
+  read-only card, with a Check more action when coverage is incomplete.
 
 ## 0.23.0
 <small>2026-11-04</small>
