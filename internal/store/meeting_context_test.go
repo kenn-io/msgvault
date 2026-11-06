@@ -12,7 +12,6 @@ import (
 )
 
 func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
 	_, err := fixture.store.db.Exec(`UPDATE participants SET email_address = ? WHERE id = ?`,
@@ -22,49 +21,65 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 		"merged-organizer@example.test", fixture.organizer)
 	requirements.NoError(err)
 
-	result, err := fixture.store.GetMeetingContextContext(t.Context(),
-		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]})},
-		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
-	requirements.NoError(err)
-	assertions.Equal(len([]byte(result.Content)), result.ContentBytes)
-	assertions.NotContains(result.Content, "Start")
-	assertions.NotContains(result.Content, "Finish")
-	assertions.NotContains(result.Content, "signed.example.test")
-	assertions.NotContains(result.Content, "merged-organizer@example.test")
+	for _, tc := range []struct {
+		name         string
+		ids, wantIDs []int64
+	}{
+		{"compact evidence and archived participants", []int64{fixture.meetingIDs[2], fixture.meetingIDs[0], fixture.meetingIDs[0]}, []int64{fixture.meetingIDs[0], fixture.meetingIDs[2]}},
+		{"sender also recipient", []int64{fixture.meetingIDs[0]}, []int64{fixture.meetingIDs[0]}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			result, err := fixture.store.GetMeetingContextContext(t.Context(),
+				MeetingQueryScope{MessageIDs: &tc.ids},
+				meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+			requirements.NoError(err)
+			assertions.Equal(len([]byte(result.Content)), result.ContentBytes)
+			assertions.NotContains(result.Content, "Start")
+			assertions.NotContains(result.Content, "Finish")
+			assertions.NotContains(result.Content, "signed.example.test")
+			assertions.NotContains(result.Content, "merged-organizer@example.test")
 
-	var packet meetingcontent.Packet
-	requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
-	assertions.NotEmpty(packet.ArchiveUID)
-	assertions.Equal([]int64{fixture.meetingIDs[0], fixture.meetingIDs[2]}, packet.RequestedMessageIDs)
-	requirements.Len(packet.Meetings, 2)
-	entry := packet.Meetings[0]
-	assertions.Equal(fixture.meetingIDs[0], entry.Meeting.MessageID)
-	assertions.Equal(fixture.sourceOne, entry.Meeting.SourceID)
-	assertions.Equal("meeting_import", entry.Meeting.SourceType)
-	assertions.Equal("first@example.test", entry.Meeting.SourceIdentifier)
-	assertions.Equal("/api/v1/messages/"+jsonNumberForMeetingTest(fixture.meetingIDs[0]), entry.Meeting.ArchivePath)
-	assertions.Equal(meetingcontent.StateOmittedByRequest, entry.Content.Transcript.State)
+			var packet meetingcontent.Packet
+			requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+			assertions.NotEmpty(packet.ArchiveUID)
+			assertions.Equal(tc.wantIDs, packet.RequestedMessageIDs)
+			requirements.Len(packet.Meetings, len(tc.wantIDs))
+			entry := packet.Meetings[0]
+			assertions.Equal(fixture.meetingIDs[0], entry.Meeting.MessageID)
+			assertions.Equal(fixture.sourceOne, entry.Meeting.SourceID)
+			assertions.Equal("meeting_import", entry.Meeting.SourceType)
+			assertions.Equal("first@example.test", entry.Meeting.SourceIdentifier)
+			assertions.Equal("/api/v1/messages/"+jsonNumberForMeetingTest(fixture.meetingIDs[0]), entry.Meeting.ArchivePath)
+			assertions.Equal(meetingcontent.StateOmittedByRequest, entry.Content.Transcript.State)
 
-	var archivedAddress, archivedSender, unresolvedName bool
-	for _, participant := range entry.Participants {
-		if participant.Role == "to" && participant.Email == "Alias@Example.test" {
-			archivedAddress = true
-			assertions.Equal("Archived Attendee", participant.Name)
-			requirements.NotNil(participant.ParticipantID)
-			assertions.Equal(fixture.attendee, *participant.ParticipantID)
-		}
-		if participant.Role == "from" && participant.Email == "Archived-Organizer@Example.test" {
-			archivedSender = true
-		}
-		if participant.Role == "to" && participant.Name == "Unresolved guest" {
-			unresolvedName = true
-			assertions.Empty(participant.Email)
-			assertions.Nil(participant.ParticipantID)
-		}
+			var organizerRoles []string
+			var archivedAddress, archivedSender, unresolvedName bool
+			for _, participant := range entry.Participants {
+				if participant.ParticipantID != nil && *participant.ParticipantID == fixture.organizer {
+					organizerRoles = append(organizerRoles, participant.Role)
+				}
+				if participant.Role == "to" && participant.Email == "Alias@Example.test" {
+					archivedAddress = true
+					assertions.Equal("Archived Attendee", participant.Name)
+					requirements.NotNil(participant.ParticipantID)
+					assertions.Equal(fixture.attendee, *participant.ParticipantID)
+				}
+				if participant.Role == "from" && participant.Email == "Archived-Organizer@Example.test" {
+					archivedSender = true
+				}
+				if participant.Role == "to" && participant.Name == "Unresolved guest" {
+					unresolvedName = true
+					assertions.Empty(participant.Email)
+					assertions.Nil(participant.ParticipantID)
+				}
+			}
+			assertions.True(archivedAddress)
+			assertions.True(archivedSender)
+			assertions.True(unresolvedName)
+			assertions.ElementsMatch([]string{"from", "to"}, organizerRoles)
+		})
 	}
-	assertions.True(archivedAddress)
-	assertions.True(archivedSender)
-	assertions.True(unresolvedName)
 }
 
 func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
@@ -120,21 +135,4 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 
 func jsonNumberForMeetingTest(value int64) string {
 	return strconv.FormatInt(value, 10)
-}
-
-func TestMeetingContextSenderAlsoRecipient(t *testing.T) {
-	require := require.New(t)
-	fixture := newMeetingQueryFixture(t)
-	result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[0]})}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
-	require.NoError(err)
-	var packet meetingcontent.Packet
-	require.NoError(json.Unmarshal([]byte(result.Content), &packet))
-	require.Len(packet.Meetings, 1)
-	var roles []string
-	for _, participant := range packet.Meetings[0].Participants {
-		if participant.ParticipantID != nil && *participant.ParticipantID == fixture.organizer {
-			roles = append(roles, participant.Role)
-		}
-	}
-	assert.ElementsMatch(t, []string{"from", "to"}, roles)
 }

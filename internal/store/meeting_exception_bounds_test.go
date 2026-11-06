@@ -26,7 +26,6 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 		requirements.Len(suggestions.Suggestions, 1, "confirmed exception is suggested in both directions")
 		assertions.Equal(formatMeetingOccurrence(ref), suggestions.Suggestions[0].Ref)
 	}
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","status":"cancelled"}`), "gcal_json"))
 
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), start, end)
@@ -48,13 +47,16 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	assertions.Equal(ref, resolved.Ref)
 	assertions.True(start.Equal(resolved.Start))
 	assertions.True(end.Equal(resolved.End))
-	assertions.Equal(listed.Ref, linkedMeetingRefs(t, st, note)[note])
 
 	for _, target := range targets {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
 		assertions.Empty(suggestions.Suggestions, "cancelled exception is excluded for %s", target.Kind)
 	}
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(linkSeriesRaw), "gcal_json"))
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","status":"cancelled"}`), "gcal_json"))
+	assertions.Equal(listed.Ref, linkedMeetingRefs(t, st, note)[note])
 }
 
 func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T) {

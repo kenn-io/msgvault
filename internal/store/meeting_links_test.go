@@ -390,16 +390,6 @@ func TestMeetingLinksUpgradeFromSchema31(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 }
 
-func TestMeetingUnresolvableDecisions(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","recurrence":["RRULE:FREQ=WEEKLY"]}`), "gcal_json"))
-	assert.Empty(t, linkedMeetingRefs(t, st, note)[note])
-}
-
 func TestMeetingLinksReadDecisions(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

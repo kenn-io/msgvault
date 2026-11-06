@@ -134,6 +134,9 @@ func TestMeetingUnlinkUnavailableOccurrence(t *testing.T) {
 	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
 	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
+	t.Run("unavailable saved link", func(t *testing.T) {
+		assert.Empty(t, linkedMeetingRefs(t, st, note)[note])
+	})
 	require.Error(st.LinkMeetingContext(t.Context(), note, ref), "new links still require an available occurrence")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 	calendarFixture(t, st, "master", linkSeriesRaw)
