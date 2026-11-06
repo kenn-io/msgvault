@@ -142,9 +142,6 @@ func (s *Store) admitLineReplyTx(ctx context.Context, tx *loggedTx, sourceID int
 	if draft.Revision != revision {
 		return a, ErrChatDraftRevisionConflict
 	}
-	if draft.SourceType != lineSourceType {
-		return a, ErrChatDraftUnsupportedSource
-	}
 	if draft.SourceID != sourceID {
 		return a, ErrChatDraftInvalidDestination
 	}
