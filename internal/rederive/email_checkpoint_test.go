@@ -47,15 +47,15 @@ func failEmailCheckpointWrite(t *testing.T, st *store.Store, table, event, condi
 	query := fmt.Sprintf(`CREATE TRIGGER %s BEFORE %s ON %s WHEN %s BEGIN SELECT RAISE(ABORT, 'checkpoint fixture failure'); END`, name, event, table, condition)
 	drop := "DROP TRIGGER " + name
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF %s THEN RAISE EXCEPTION 'checkpoint fixture failure'; END IF; RETURN NEW; END $$`, name, condition))
+		_, err := st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF %s THEN RAISE EXCEPTION 'checkpoint fixture failure'; END IF; RETURN NEW; END $$`, name, condition))
 		require.NoError(err)
 		query = fmt.Sprintf(`CREATE TRIGGER %s BEFORE %s ON %s FOR EACH ROW EXECUTE FUNCTION %s()`, name, event, table, name)
 		drop += " ON " + table
 	}
-	_, err := st.DB().Exec(query)
+	_, err := st.DB().ExecContext(t.Context(), query)
 	require.NoError(err)
 	return func() {
-		_, err := st.DB().Exec(drop)
+		_, err := st.DB().ExecContext(t.Context(), drop)
 		require.NoError(err)
 	}
 }
@@ -96,14 +96,14 @@ func TestEmailResumePreservesOverflowFailures(t *testing.T) {
 	require.NoError(err)
 	assert.False(applied, "old failed rows keep an otherwise successful resumed tail pending")
 	var markers int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM applied_migrations WHERE name LIKE ?`), base+"#%").Scan(&markers))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM applied_migrations WHERE name LIKE ?`), base+"#%").Scan(&markers))
 	assert.LessOrEqual(markers, emailRetrySlots+3)
 	drop()
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Zero(sum.Errors)
 	for _, id := range append(failed, last) {
-		body, err := st.GetMessageBodyText(id)
+		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(err)
 		assert.Equal("Heizkörper", body)
 	}
@@ -127,7 +127,7 @@ func TestEmailCheckpointFailureReplaysSafely(t *testing.T) {
 	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(2), sum.MessagesScanned, "an unpersisted cursor must replay the safe prefix")
-	body, err := st.GetMessageBodyText(last)
+	body, err := st.GetMessageBodyText(t.Context(), last)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 }
@@ -230,7 +230,7 @@ func TestEmailProcessLossReplaysOnlyUncheckpointedBatch(t *testing.T) {
 			cancel()
 			require.ErrorIs(err, context.Canceled)
 			require.NoError(st.Close())
-			reopened, err := store.OpenForTest(path)
+			reopened, err := store.OpenForTest(t.Context(), path)
 			require.NoError(err)
 			defer func() { require.NoError(reopened.Close()) }()
 			sum, _, err := RunIfStale(t.Context(), reopened, src.SourceType, src.Identifier, src.ID, nil)
@@ -269,7 +269,7 @@ func TestEmailRemovedSourceCannotInheritCheckpoint(t *testing.T) {
 			require.NoError(err)
 			require.True(ran)
 			assert.Equal(int64(1), sum.MessagesScanned)
-			body, err := st.GetMessageBodyText(id)
+			body, err := st.GetMessageBodyText(t.Context(), id)
 			require.NoError(err)
 			assert.Equal("Heizkörper", body)
 		})
@@ -292,7 +292,7 @@ func TestEmailMergeRestartsCheckpointForEarlierMessages(t *testing.T) {
 	sum, _, err := RunIfStale(t.Context(), st, live.SourceType, live.Identifier, live.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(2), sum.MessagesScanned, "merged rows before the cursor require a new full walk")
-	body, err := st.GetMessageBodyText(earlier)
+	body, err := st.GetMessageBodyText(t.Context(), earlier)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 }
@@ -371,7 +371,7 @@ func TestEmailOverflowCommitBeforeCursorReplaysSafely(t *testing.T) {
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	for _, id := range ids {
-		body, err := st.GetMessageBodyText(id)
+		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(err)
 		assert.Equal("Heizkörper", body)
 	}
@@ -428,7 +428,7 @@ func TestEmailOverflowMarkerFailureKeepsOlderCheckpoint(t *testing.T) {
 		require.NoError(err)
 	}
 	for _, id := range failed {
-		body, err := st.GetMessageBodyText(id)
+		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(err)
 		assert.Equal("Heizkörper", body)
 	}
@@ -460,7 +460,7 @@ func TestEmailRetryPhaseFailureKeepsRetainedFailuresPending(t *testing.T) {
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MessagesScanned)
-	body, err := st.GetMessageBodyText(failed)
+	body, err := st.GetMessageBodyText(t.Context(), failed)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 }
@@ -500,7 +500,7 @@ func TestEmailInterruptedWalkMakesProgress(t *testing.T) {
 				require.NoError(err)
 				require.True(applied)
 				for _, id := range ids {
-					body, err := st.GetMessageBodyText(id)
+					body, err := st.GetMessageBodyText(t.Context(), id)
 					require.NoError(err)
 					assert.Equal("Heizkörper", body)
 				}

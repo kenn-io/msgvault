@@ -80,11 +80,11 @@ func TestSourceRemovalRollsBackRepairCleanup(t *testing.T) {
 			require.NoError(st.MarkMigrationApplied(key))
 			fault := `CREATE TRIGGER fail_source_removal BEFORE DELETE ON sources BEGIN SELECT RAISE(ABORT, 'removal fixture failure'); END`
 			if st.IsPostgreSQL() {
-				_, err := st.DB().Exec(`CREATE FUNCTION fail_source_removal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'removal fixture failure'; RETURN OLD; END $$`)
+				_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_source_removal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'removal fixture failure'; RETURN OLD; END $$`)
 				require.NoError(err)
 				fault = `CREATE TRIGGER fail_source_removal BEFORE DELETE ON sources FOR EACH ROW EXECUTE FUNCTION fail_source_removal()`
 			}
-			_, err = st.DB().Exec(fault)
+			_, err = st.DB().ExecContext(t.Context(), fault)
 			require.NoError(err)
 			require.ErrorContains(removeRepairFixtureSource(t.Context(), st, src.ID, serialized), "removal fixture failure")
 			_, err = st.GetSourceByID(src.ID)

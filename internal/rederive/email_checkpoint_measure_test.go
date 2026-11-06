@@ -36,7 +36,7 @@ func TestEmailFullWalkCheckpointWork(t *testing.T) {
 	start := time.Now()
 	var before int64
 	if !st.IsPostgreSQL() {
-		require.NoError(st.DB().QueryRow("SELECT total_changes()").Scan(&before))
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT total_changes()").Scan(&before))
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -57,7 +57,7 @@ func TestEmailFullWalkCheckpointWork(t *testing.T) {
 	assert.LessOrEqual(reads, 2*rows+16, "resume adds bounded ledger reads, not a prefix rescan")
 	if !st.IsPostgreSQL() {
 		var after int64
-		require.NoError(st.DB().QueryRow("SELECT total_changes()").Scan(&after))
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT total_changes()").Scan(&after))
 		t.Logf("SQLite row changes during current-text repair: %d", after-before)
 		assert.LessOrEqual(after-before, int64(4), "two batched cursor writes, one old-cursor deletion, and completion")
 	}
