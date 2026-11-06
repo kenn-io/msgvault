@@ -361,6 +361,14 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 	f.runner.beforeBuild = nil
 	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
 	require.Contains(f.localStatus(t).Error, "invalid embed cron", "a message build cannot repair rejected scheduling")
+	snapshot, err = config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": "*/15 * * * *"}}})
+	require.NoError(err)
+	f.enableThroughAPI(t)
+	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+	require.Empty(f.localStatus(t).Error)
+	require.NoError(f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel))
 }
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {

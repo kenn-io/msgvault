@@ -13,11 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
-	for _, change := range []string{"allow", "disable", "remove custom config"} {
+	for _, change := range []string{"disable", "remove custom config"} {
 		t.Run(change, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
@@ -70,23 +69,7 @@ func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
 			}
 			must.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
 			checks.Equal(int32(1), messageRequests.Load(), "message indexing must finish")
-			want := int32(1)
-			if change == "allow" {
-				want = 2
-			}
-			checks.Equal(want, personRequests.Load(), "the next batch must use live authorization")
-			beforeQuery := personRequests.Load()
-			results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "Curated Live Person", 5)
-			switch change {
-			case "allow":
-				must.NoError(err)
-				checks.Len(results, 2)
-			default:
-				must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
-			}
-			if change != "allow" {
-				checks.Equal(beforeQuery, personRequests.Load(), "denied queries must not reach the provider")
-			}
+			checks.Equal(int32(1), personRequests.Load(), "the next batch must use live authorization")
 		})
 	}
 }

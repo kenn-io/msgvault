@@ -815,6 +815,8 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Vector: vectorCfg}
+			// Local setup publishes the enabled recipe while startup settings stay pending.
+			cfg.Vector.Enabled = false
 			srv := NewServerWithOptions(ServerOptions{
 				Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Engine: newExploreDuckDBFixture(t),
 				Backend: tt.backend, VectorCfg: vectorCfg, VectorStatus: tt.status, Logger: testLogger(),

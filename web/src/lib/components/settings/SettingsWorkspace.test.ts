@@ -788,6 +788,28 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
 });
 
+it('retries setup after a publication failure without changing the selected provider', async () => {
+  let retried = false;
+  const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') {
+      if (request.method === 'POST') {
+        retried = true;
+        return Response.json({ phase: 'idle', running: true }, { status: 202 });
+      }
+      return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: retried ? undefined : 'invalid embed cron' });
+    }
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  expect((await screen.findByRole('alert')).textContent).toBe('invalid embed cron');
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
+  await waitFor(() => expect(seen.find(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')?.body).toEqual({ use_builtin: false }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
 it.each(['manual', 'scheduled'] as const)('clears the setup failure after a successful %s index recovery', async recovery => {
   let recovered = false;
   let running = false;

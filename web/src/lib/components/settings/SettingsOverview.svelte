@@ -33,9 +33,10 @@
 
 </script>
 
-{#snippet rowActions(action: OverviewAction | undefined, authority: OverviewRow['relatedStatus'], name: string)}
+{#snippet rowActions(action: OverviewAction | undefined, authority: OverviewRow['relatedStatus'], name: string, retry = false)}
       <span class="row__action">
         {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${name}`} onclick={() => onDetails(authority)} />{/if}
+        {#if retry}<Button size="sm" label="Retry setup" ariaLabel={`Retry setup, ${name}`} onclick={() => onLocalSearch(false)} />{/if}
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}
@@ -67,7 +68,9 @@
     {@const action = row.action}
     {@const authority = row.relatedStatus}
     {@const local = row.id === 'message_embedding' && localSearch}
-    {@const recovery = local && ['on', 'ollama', 'ollama-other'].includes(local.kind) && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
+    {@const enabled = local && ['on', 'ollama', 'ollama-other'].includes(local.kind)}
+    {@const recovery = enabled && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
+    {@const retry = Boolean(enabled && localError && action?.kind !== 'start')}
     <li class="row" data-feature={row.id}>
       {#if local}
         <div class="row__local">
@@ -76,13 +79,13 @@
             {#each [localLabels?.off ?? 'Off', localLabels?.on ?? 'On', localLabels?.ollama ?? 'On · Ollama', localLabels?.turningOn ?? 'Turning on'] as text}<Chip size="xs" uppercase={false}><span data-label={text}></span></Chip>{/each}
           </span>
         </div>
-        {#if recovery}
+        {#if recovery || retry}
           <div class="row__recovery">
             <div class="row__recovery-copy">
-              <span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+              {#if recovery}<span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>{/if}
               {#if localError}<p class="row__error" role="alert">{localError}</p>{/if}
             </div>
-            {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name)}
+            {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name, retry)}
           </div>
         {/if}
       {:else}
@@ -94,7 +97,7 @@
       {#if action?.kind === 'host'}<span class="row__consent">{action.text}</span>{/if}
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
       {/if}
-      {#if local && localError && !recovery}<p class="row__error" role="alert">{localError}</p>{/if}
+      {#if local && localError && !recovery && !retry}<p class="row__error" role="alert">{localError}</p>{/if}
     </li>
   {/each}
 </ul>

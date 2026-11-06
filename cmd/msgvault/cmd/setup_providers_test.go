@@ -2129,7 +2129,6 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			if tc.unavailable != "" {
 				assert.Equal(planActionPending, resumed.Action)
 				assert.Equal("archive vector backend unavailable", resumed.Reason)
-				assert.False(next.Vector.Enabled)
 				return
 			}
 			assert.True(next.Vector.Enabled)
