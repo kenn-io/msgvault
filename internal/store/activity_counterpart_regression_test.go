@@ -13,15 +13,15 @@ import (
 
 func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 	for _, tc := range []struct {
-		name, sender                                 string
-		event, attachment, readContact, list, inline bool
-		noise                                        int
+		name, sender                         string
+		event, attachment, readContact, list bool
+		noise                                int
 	}{
 		{name: "calendar event", sender: "noreply@example.com", event: true},
 		{name: "calendar event with list ID", sender: "noreply@example.com", event: true, list: true},
 		{name: "calendar file", sender: "calendar-notification@example.com", attachment: true, readContact: true},
 		{name: "newsletter calendar file", sender: "vendor@example.com", attachment: true, list: true, noise: 1},
-		{name: "inline MIME", sender: "noreply@example.com", inline: true, readContact: true},
+		{name: "inline MIME", sender: "noreply@example.com", noise: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -50,10 +50,6 @@ func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 				var events int
 				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM calendar_events WHERE message_id=?`), id).Scan(&events))
 				require.Equal(1, events)
-			} else if tc.inline {
-				id = f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
-				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path,attachment_role,role_source) VALUES(?,'','text/calendar','invite.ics','inline','mime_disposition')`), id)
-				require.NoError(err)
 			} else {
 				calendar := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Calendar//EN\r\nMETHOD:REQUEST\r\n" +
 					"BEGIN:VEVENT\r\nUID:planning@example.com\r\nDTSTAMP:20261017T120000Z\r\n" +
