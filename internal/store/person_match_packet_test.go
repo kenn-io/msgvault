@@ -14,16 +14,12 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
-	left, err := st.EnsureParticipantByIdentifier("beeper", "pair-left", "Pair Left")
+	left, err := st.EnsureParticipantByIdentifier("signal_aci", "00000000-0000-4000-8000-000000000001", "Pair Left")
 	require.NoError(err)
-	right, err := st.EnsureParticipantByIdentifier("beeper", "pair-right", "Pair Right")
+	right, err := st.EnsureParticipantByIdentifier("signal_aci", "00000000-0000-4000-8000-000000000002", "Pair Right")
 	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
-		(participant_id, identifier_type, identifier_value, display_value, is_primary)
-		VALUES (?, 'signal_aci', ?, ?, FALSE), (?, 'signal_aci', ?, ?, FALSE)`),
-		left, "00000000-0000-4000-8000-000000000001", "Left Signal account",
-		right, "00000000-0000-4000-8000-000000000002", "Right Signal account")
-	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(left, "beeper", "pair-left"))
+	require.NoError(st.SetParticipantIdentifier(right, "beeper", "pair-right"))
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
 	assert.Equal("Pair Left", summaries.Left.DisplayName)
@@ -35,9 +31,11 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	assert.Equal("pair-right", summaries.Right.Identifiers[0].Value)
 	require.Len(summaries.LeftGuardIdentifiers, 1)
 	assert.Equal("signal_aci", summaries.LeftGuardIdentifiers[0].Type)
+	assert.Equal("signal", summaries.LeftGuardIdentifiers[0].ServiceSlug)
 	assert.Equal("00000000-0000-4000-8000-000000000001", summaries.LeftGuardIdentifiers[0].Value)
 	require.Len(summaries.RightGuardIdentifiers, 1)
 	assert.Equal("signal_aci", summaries.RightGuardIdentifiers[0].Type)
+	assert.Equal("signal", summaries.RightGuardIdentifiers[0].ServiceSlug)
 	assert.Equal("00000000-0000-4000-8000-000000000002", summaries.RightGuardIdentifiers[0].Value)
 }
 

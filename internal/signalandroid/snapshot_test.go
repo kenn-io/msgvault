@@ -42,7 +42,7 @@ func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			_, err := NewImporter(st, longTextReadFailureProgress{onStart: func() {
+			_, err := NewImporter(st, onStartProgress{onStart: func() {
 				changeFixture(t, dir, tc.change)
 			}}).Import(t.Context(), path, opts)
 			require.ErrorContains(err, tc.wantError)

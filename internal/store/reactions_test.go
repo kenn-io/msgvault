@@ -34,6 +34,15 @@ func TestReplaceReactionsPreservesKnownTimestampAndStoresUnknownAsNull(t *testin
 	requires.True(gotKnown.Valid)
 	assertions.Equal(known, gotKnown.Time.UTC())
 	assertions.False(gotUnknown.Valid, "a source without reaction time must not fabricate one")
+
+	updated := known.Add(24 * time.Hour)
+	requires.NoError(st.ReplaceReactions(messageID, []store.ReactionRef{
+		{ParticipantID: participantID, Type: "emoji", Value: "👍", CreatedAt: updated},
+		{ParticipantID: participantID, Type: "emoji", Value: "👀"},
+	}))
+	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), messageID, "👍").Scan(&gotKnown))
+	requires.True(gotKnown.Valid)
+	assertions.Equal(updated, gotKnown.Time.UTC())
 }
 
 func TestReplaceReactionsRestoresRemovedReaction(t *testing.T) {

@@ -41,7 +41,7 @@ func TestResolveSignalInput(t *testing.T) {
 	assert.Contains(err.Error(), "attachments directory not found")
 }
 
-func TestImportSignalForwardsPhone(t *testing.T) {
+func TestImportSignalRegistersSourceAndDefaultIdentity(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	markDaemonCLISubprocessForTest(t)
 	home := t.TempDir()

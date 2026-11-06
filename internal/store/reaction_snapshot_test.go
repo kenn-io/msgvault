@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestReactionSnapshotUpdates(t *testing.T) {
+func TestReplaceReactionsWritesOnlyChanges(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("signal", "reaction-changes")
@@ -17,7 +17,7 @@ func TestReactionSnapshotUpdates(t *testing.T) {
 	conversationID, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Example group")
 	require.NoError(err)
 	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "message")
-	participantID, err := st.EnsureParticipantByIdentifier("signal", "reactor", "Example participant")
+	participantID, err := st.EnsureParticipantByIdentifier("signal_aci", "00000000-0000-4000-8000-000000000001", "Example participant")
 	require.NoError(err)
 	reactions := []store.ReactionRef{
 		{ParticipantID: participantID, Type: "emoji", Value: "👍"},

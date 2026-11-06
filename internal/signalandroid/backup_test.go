@@ -132,7 +132,7 @@ func TestLongTextHandling(t *testing.T) {
 			case "empty":
 				require.NoError(os.WriteFile(file, nil, 0o600))
 			case "unreadable":
-				progress = longTextReadFailureProgress{onStart: func() {
+				progress = onStartProgress{onStart: func() {
 					// Discovery must see a file before reading it fails.
 					require.NoError(os.Remove(file))
 					require.NoError(os.Mkdir(file, 0o700))
@@ -312,10 +312,10 @@ func TestNegativeLimit(t *testing.T) {
 	require.ErrorContains(t, err, "limit must be non-negative")
 }
 
-type longTextReadFailureProgress struct {
+type onStartProgress struct {
 	NullProgress
 
 	onStart func()
 }
 
-func (p longTextReadFailureProgress) OnStart() { p.onStart() }
+func (p onStartProgress) OnStart() { p.onStart() }

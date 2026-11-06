@@ -230,7 +230,7 @@ func conflictingStableID(left, right []personmatch.PairIdentifier) bool {
 	leftStable := map[string]map[string]bool{}
 	for _, identifier := range left {
 		switch identifier.Type {
-		case "beeper", "apple_id", "whatsapp", "signal", "signal_aci", "imessage":
+		case "beeper", "apple_id", "whatsapp", "signal_aci", "imessage":
 			key := identifier.Type + "\x00" + identifier.ServiceSlug + "\x00" + identifier.ScopeKind + "\x00" + identifier.ScopeValue
 			if leftStable[key] == nil {
 				leftStable[key] = map[string]bool{}

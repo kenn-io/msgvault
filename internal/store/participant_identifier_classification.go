@@ -24,7 +24,7 @@ func classifyParticipantIdentifier(
 		classification.ServiceSlug = "telegram"
 	case kind == "whatsapp":
 		classification.ServiceSlug = "whatsapp"
-	case kind == "signal" || kind == "signal_aci":
+	case kind == "signal_aci":
 		classification.ServiceSlug = "signal"
 	case kind == "matrix":
 		classification.ServiceSlug = "matrix"

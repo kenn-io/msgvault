@@ -48,14 +48,11 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 		return values
 	}
 	assert.Equal([]string{"👍"}, readReactions())
-	// Updating a timestamp keeps the reaction's identity and addition count.
+	// A new timestamp must not count the same reaction as newly added.
 	reactions[0].CreatedAt = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(err)
 	assert.Zero(data.ReactionsAdded)
-	var createdAt time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = '👍'`), id).Scan(&createdAt))
-	assert.True(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).Equal(createdAt))
 
 	// A reaction failure must roll back text and attachment additions together.
 	data.BodyText.String = "Failed replacement"

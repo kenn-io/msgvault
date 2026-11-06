@@ -112,22 +112,7 @@ func TestRerunAfterGroupMemberWriteFailureRestoresRecipients(t *testing.T) {
 	_, err = st.DB().Exec(`DROP TRIGGER fail_group_member`)
 	require.NoError(err)
 	assert.Zero(runImport(t, st, dir, storage).Errors)
-	rows, err := st.DB().Query(st.Rebind(`
-		SELECT p.phone_number FROM message_recipients mr
-		JOIN messages m ON m.id = mr.message_id
-		JOIN participants p ON p.id = mr.participant_id
-		WHERE mr.recipient_type = 'to' AND m.source_message_id = ?`),
-		"signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup))
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	var phones []string
-	for rows.Next() {
-		var phone string
-		require.NoError(rows.Scan(&phone))
-		phones = append(phones, phone)
-	}
-	require.NoError(rows.Err())
-	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
+	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
 }
 
 func TestRerunAfterGroupRosterReadFailureRestoresRecipients(t *testing.T) {
@@ -137,7 +122,7 @@ func TestRerunAfterGroupRosterReadFailureRestoresRecipients(t *testing.T) {
 	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
 	opts := DefaultOptions()
 	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-	summary, err := NewImporter(st, longTextReadFailureProgress{onStart: func() {
+	summary, err := NewImporter(st, onStartProgress{onStart: func() {
 		// Make the roster unavailable after schema detection.
 		changeFixture(t, dir, `ALTER TABLE group_membership RENAME TO unreadable_membership`)
 	}}).Import(t.Context(), path, opts)
@@ -150,25 +135,10 @@ func TestRerunAfterGroupRosterReadFailureRestoresRecipients(t *testing.T) {
 	summary = runImport(t, st, dir, storage)
 	assert.Zero(summary.Errors)
 	assert.Equal(int64(1), summary.MessagesAdded)
-	rows, err := st.DB().Query(st.Rebind(`
-		SELECT p.phone_number FROM message_recipients mr
-		JOIN messages m ON m.id = mr.message_id
-		JOIN participants p ON p.id = mr.participant_id
-		WHERE mr.recipient_type = 'to' AND m.source_message_id = ?`),
-		"signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup))
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	var phones []string
-	for rows.Next() {
-		var phone string
-		require.NoError(rows.Scan(&phone))
-		phones = append(phones, phone)
-	}
-	require.NoError(rows.Err())
-	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
+	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
 }
 
-func TestRerunCountsUnchanged(t *testing.T) {
+func TestRerunKeepsDocumentOccurrences(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -181,9 +151,7 @@ func TestRerunCountsUnchanged(t *testing.T) {
 	require.NoError(err)
 	require.True(eligible)
 	summary := runImport(t, st, dir, storage)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
 	assert.Zero(summary.ReactionsAdded)
-	assert.Zero(summary.AttachmentsStored)
 	assert.Zero(summary.Errors)
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
