@@ -357,24 +357,39 @@ func (c *composer) tierPeople(people []Person) []Person {
 	return people
 }
 
+// participationOrder ranks call participation from weakest to strongest.
+var participationOrder = []string{"invited", "joined"}
+
+// uniquePeople merges people by identity, keeping the strongest participation and its credit.
 func uniquePeople(people []Person) []Person {
-	seen := map[string]bool{}
-	return slices.DeleteFunc(people, func(p Person) bool {
-		var key string
+	seen := map[string]int{}
+	unique := people[:0]
+	for _, p := range people {
+		key := personKey(p)
+		i, duplicate := seen[key]
 		switch {
-		case p.PersonID > 0:
-			key = fmt.Sprintf("person:%d", p.PersonID)
-		case p.ParticipantID > 0:
-			key = fmt.Sprintf("participant:%d", p.ParticipantID)
-		case strings.TrimSpace(p.email) != "":
-			key = "email:" + strings.ToLower(strings.TrimSpace(p.email))
-		default:
-			return false
+		case key == "":
+			unique = append(unique, p)
+		case !duplicate:
+			seen[key] = len(unique)
+			unique = append(unique, p)
+		case slices.Index(participationOrder, p.Participation) > slices.Index(participationOrder, unique[i].Participation):
+			unique[i].Participation, unique[i].Credited = p.Participation, p.Credited
 		}
-		duplicate := seen[key]
-		seen[key] = true
-		return duplicate
-	})
+	}
+	return unique
+}
+
+func personKey(p Person) string {
+	switch {
+	case p.PersonID > 0:
+		return fmt.Sprintf("person:%d", p.PersonID)
+	case p.ParticipantID > 0:
+		return fmt.Sprintf("participant:%d", p.ParticipantID)
+	case strings.TrimSpace(p.email) != "":
+		return "email:" + strings.ToLower(strings.TrimSpace(p.email))
+	}
+	return ""
 }
 
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
