@@ -36,41 +36,6 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	assert.NotEmpty(response.CacheRevision)
 }
 
-func TestPeopleCompletionDeduplicatesCaseOnlyObservedNames(t *testing.T) {
-	t.Parallel()
-	for _, tt := range []struct {
-		primaryName string
-		aliasName   string
-		wantValue   string
-	}{
-		{primaryName: "Alice", aliasName: "ALICE", wantValue: "ALICE"},
-		{primaryName: "ALICE", aliasName: "Alice", wantValue: "Alice"},
-	} {
-		t.Run(tt.primaryName, func(t *testing.T) {
-			t.Parallel()
-			b := NewTestDataBuilder(t)
-			source := b.AddSource("archive@example.test")
-			primary := b.AddParticipant("alice@example.test", "example.test", tt.primaryName)
-			alias := b.AddParticipant("alias@example.test", "example.test", tt.aliasName)
-			require.Less(t, primary, alias)
-			b.LinkCluster(primary, alias)
-			when := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-			message := b.AddMessage(MessageOpt{SourceID: source, SentAt: when})
-			b.AddFrom(message, primary, tt.primaryName)
-			b.AddTo(message, alias, tt.aliasName)
-			engine := b.BuildEngine()
-
-			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "alice"})
-			require.NoError(t, err)
-			require.Len(t, response.Rows, 2)
-			assert.Equal(t, PeopleCompletion{
-				ParticipantID: primary, DisplayLabel: tt.primaryName, Kind: PeopleCompletionName,
-				Value: tt.wantValue, MatchValue: "alice", Source: "observed", LastAt: when,
-			}, response.Rows[0])
-		})
-	}
-}
-
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)

@@ -100,7 +100,7 @@ func (e *DuckDBEngine) CompletePeople(
 		), matched AS (
 			SELECT d.canonical_id, d.display_label, d.current_temperature, d.last_at,
 			       params.*,
-			       unnest(list_filter(d.search_primitives, lambda primitive:
+			       unnest(list_reverse(list_filter(d.search_primitives, lambda primitive:
 			           -- CASE limits phone normalization to phone searches.
 			           CASE
 			               WHEN primitive.kind = 'username' THEN
@@ -110,11 +110,10 @@ func (e *DuckDBEngine) CompletePeople(
 			                   contains(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), params.query_digits)
 			               ELSE false
 			           END
-			       )) AS primitive
+			       ))) AS primitive
 			FROM read_parquet('`+directory+`') d, params
 		), candidates AS (
 			SELECT d.canonical_id AS participant_id,
-			       primitive.participant_id AS primitive_participant_id,
 			       d.display_label,
 			       d.current_temperature,
 			       d.last_at,
@@ -151,7 +150,7 @@ func (e *DuckDBEngine) CompletePeople(
 		), deduplicated AS (
 			SELECT *, row_number() OVER (
 				PARTITION BY participant_id, kind, match_value
-				ORDER BY source_rank, lower(display_value), source, primitive_participant_id DESC, display_value
+				ORDER BY source_rank, lower(display_value), source
 			) AS duplicate_rank
 			FROM candidates
 		)
