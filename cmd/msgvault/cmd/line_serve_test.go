@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,6 +122,68 @@ func TestLineServeWebhookAckDoesNotWaitForEnrichment(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		must.FailNow("wake did not start processor")
 	}
+}
+
+func TestLineServeSecondReceiptDuringEnrichment(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	cfg, st, fake := lineWiringFixture(t)
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	must.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	started := make(chan struct{}, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/profile/") {
+			select {
+			case started <- struct{}{}:
+			case <-r.Context().Done():
+				return
+			}
+			<-r.Context().Done()
+			return
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	defer provider.Close()
+	lineClientFactory = func(id, secret string) *line.Client {
+		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
+	}
+	gate := api.NewSerialOperationGate()
+	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "LINE inbox")).WithLogger(testLoggerValue())
+	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+	must.NoError(err)
+	sched.Start()
+	defer func() { <-sched.Stop().Done() }()
+	server := api.NewServerWithOptions(api.ServerOptions{Config: loaded, Logger: testLoggerValue(), LineWebhook: runtime.receiver, OperationGate: gate})
+	defer func() { must.NoError(server.Shutdown(context.Background())) }()
+	listener := httptest.NewServer(server.Router())
+	defer listener.Close()
+	client := &http.Client{Timeout: 2 * time.Second} //nolint:kennlint // deadlinetest: LINE requires webhook acknowledgement within two seconds
+	for id := range 2 {
+		if id == 1 {
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				must.FailNow("scheduled profile lookup did not begin")
+			}
+			_, _, held := gate.Holder()
+			must.True(held, "enrichment must hold the operation gate during the second receipt")
+		}
+		body := fmt.Sprintf(`{"destination":"%s","events":[{"type":"message","webhookEventId":"deadline-%d","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"%d","type":"text","text":"synthetic"}}]}`, wiringBot, id, id)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, listener.URL+"/webhooks/line/2000000001", strings.NewReader(body))
+		must.NoError(err)
+		request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
+		response, err := client.Do(request)
+		must.NoError(err, "signed receipt must be acknowledged within LINE's two-second deadline")
+		_, err = io.Copy(io.Discard, response.Body)
+		must.NoError(response.Body.Close())
+		must.NoError(err)
+		must.Equal(http.StatusOK, response.StatusCode)
+	}
+	var receipts int
+	must.NoError(st.DB().QueryRow("SELECT count(*) FROM line_webhook_events WHERE webhook_event_id IN ('deadline-0', 'deadline-1')").Scan(&receipts))
+	checks.Equal(2, receipts, "both acknowledged receipts must be durable while enrichment is blocked")
 }
 
 func TestLineServeStartupDrainsPendingWork(t *testing.T) {
