@@ -124,6 +124,40 @@ func TestReplySendAndReceiptReplay(t *testing.T) {
 	}
 }
 
+func TestReplyDelayedAfterRateLimitBecomesLatestMessage(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), f.now.Add(-time.Hour), f.parent)
+	must.NoError(err)
+	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests})
+	pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	must.Equal(store.LineReplyAdmitted, pending.Status)
+
+	f.now = f.now.Add(21 * time.Hour)
+	_, err = f.st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:  &store.Message{SourceID: f.draft.SourceID, ConversationID: f.draft.ConversationID, SourceMessageID: "101", MessageType: "line", SentAt: sql.NullTime{Time: f.now, Valid: true}, Snippet: sql.NullString{String: "A newer incoming message", Valid: true}},
+		BodyText: sql.NullString{String: "A newer incoming message", Valid: true},
+	})
+	must.NoError(err)
+	f.now = f.now.Add(time.Hour)
+	f.resetClient()
+	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	must.Equal(store.LineReplySent, sent.Status)
+	engine := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL())
+	message, err := engine.GetMessage(t.Context(), sent.MessageID)
+	must.NoError(err)
+	checks.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), message.SentAt.UTC())
+	var lastMessageAt time.Time
+	var preview string
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT last_message_at,last_message_preview FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&lastMessageAt, &preview))
+	checks.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), lastMessageAt.UTC())
+	checks.Equal("Thanks!", preview)
+	checks.Equal(1, f.fake.AcceptedPushes())
+}
+
 func TestReplyLostResponseThenRejectionKeepsOriginalKey(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
