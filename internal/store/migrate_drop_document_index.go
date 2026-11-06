@@ -44,17 +44,11 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			"DROP TRIGGER IF EXISTS trg_document_message_type_revision",
 			"DROP TABLE IF EXISTS document_chunks_fts",
 		}
-		columnExists := `SELECT COUNT(*) FROM pragma_table_info('person_sweep_cursors') WHERE name = ?`
 		if postgres {
 			statements = []string{
 				"DROP FUNCTION IF EXISTS msgvault_append_person_sweep_document_changes(BIGINT, BIGINT, BIGINT, TEXT, TEXT)",
 				"DROP TRIGGER IF EXISTS trg_document_message_type_revision ON messages",
 			}
-		}
-		present := func(query, name string) (bool, error) {
-			var n int
-			err := tx.QueryRowContext(ctx, query, name).Scan(&n)
-			return n > 0, err
 		}
 		statements = append(statements,
 			"DELETE FROM attachment_change_consumers WHERE consumer_key = 'document-index/v1'",
@@ -85,7 +79,7 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 			if postgres {
 				drop += "IF EXISTS "
 			} else {
-				exists, err := present(columnExists, column)
+				exists, err := sqliteColumnPresent(ctx, tx, "person_sweep_cursors", column)
 				if err != nil {
 					return fmt.Errorf("find retired cursor column %s: %w", column, err)
 				}
