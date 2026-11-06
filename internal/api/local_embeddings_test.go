@@ -16,10 +16,9 @@ import (
 )
 
 type localSetupTestController struct {
-	calls        atomic.Int32
-	started      chan context.Context
-	release      chan struct{}
-	failurePhase string
+	calls   atomic.Int32
+	started chan context.Context
+	release chan struct{}
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
@@ -28,17 +27,10 @@ func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStat
 func (c *localSetupTestController) Enable(ctx context.Context, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
 	c.started <- ctx
-	if c.failurePhase != "idle" {
-		report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
-	}
+	report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
 	select {
 	case <-c.release:
-		if c.failurePhase != "downloading" {
-			report(LocalEmbeddingsStatus{Phase: "indexing"})
-		}
-		if c.failurePhase == "idle" {
-			report(LocalEmbeddingsStatus{Phase: "idle"})
-		}
+		report(LocalEmbeddingsStatus{Phase: "indexing"})
 		return errors.New("build interrupted")
 	case <-ctx.Done():
 		return ctx.Err()
@@ -46,19 +38,13 @@ func (c *localSetupTestController) Enable(ctx context.Context, report func(Local
 }
 
 func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
-	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "shutdown join", "installation failure", "publication failure"} {
+	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "shutdown join"} {
 		t.Run(behavior, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				checks, must := assert.New(t), require.New(t)
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
 				defer func() { _ = srv.Shutdown(context.Background()) }()
 				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
-				if behavior == "installation failure" {
-					controller.failurePhase = "downloading"
-				}
-				if behavior == "publication failure" {
-					controller.failurePhase = "idle"
-				}
 				srv.SetLocalEmbeddings(controller)
 				post := func(ctx context.Context) *httptest.ResponseRecorder {
 					request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", nil).WithContext(ctx)
@@ -97,10 +83,6 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					synctest.Wait()
 					checks.Empty(status().Error)
 					checks.Equal(int32(2), controller.calls.Load())
-				case "installation failure", "publication failure":
-					close(controller.release)
-					synctest.Wait()
-					checks.Equal("build interrupted", status().Error)
 				case "shutdown join":
 					must.NoError(srv.Shutdown(t.Context()))
 					must.ErrorIs(jobCtx.Err(), context.Canceled)

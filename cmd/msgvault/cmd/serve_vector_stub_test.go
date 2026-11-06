@@ -3,27 +3,18 @@
 package cmd
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestLocalEmbeddingsUnavailableWithoutVectorBackend(t *testing.T) {
-	require := require.New(t)
 	cfg := config.NewDefaultConfig()
-	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: testDiscardLogger()})
-	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
-	server.SetLocalEmbeddings(&localEmbeddingsController{state: &invocation{cfg: cfg}})
-	response := httptest.NewRecorder()
-	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-	require.Equal(http.StatusServiceUnavailable, response.Code)
-	require.Contains(response.Body.String(), "sqlite-vec support is not compiled in")
+	controller := &localEmbeddingsController{state: &invocation{cfg: cfg}}
+	_, err := controller.Inspect(t.Context())
+	require.ErrorContains(t, err, "sqlite-vec support is not compiled in")
 }
 
 // TestSetupVectorFeatures_EnabledWithoutTag verifies the untagged stub

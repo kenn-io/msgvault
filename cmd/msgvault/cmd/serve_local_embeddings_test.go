@@ -448,39 +448,30 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 }
 
 func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
-	for _, model := range []string{""} {
-		t.Run("startup model="+model, func(t *testing.T) {
-			require := require.New(t)
-			f := newLocalActivationFixture(t, model, "")
-			f.start(t)
-			f.enableThroughAPI(t)
-			require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-			require.Empty(f.localStatus(t).Error)
-			vf := f.handle.vf
-			generation, err := vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
-			require.NoError(err)
-			result, err := vf.Runner.RunOnce(f.ctx, generation, testCLIEmbeddingPassScope())
-			require.NoError(err)
-			require.Equal(1, result.Succeeded)
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "", "")
+	f.start(t)
+	f.enableThroughAPI(t)
+	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+	require.Empty(f.localStatus(t).Error)
+	vf := f.handle.vf
+	generation, err := vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
+	require.NoError(err)
+	result, err := vf.Runner.RunOnce(f.ctx, generation, testCLIEmbeddingPassScope())
+	require.NoError(err)
+	require.Equal(1, result.Succeeded)
 
-			// Saved edits remain pending until their runtime is explicitly activated.
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"document_prefix": "pending-prefix: "}}})
-			require.NoError(err)
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
-			request.Header.Set("Authorization", "Bearer owner")
-			request.Header.Set("Content-Type", "application/json")
-			request.RemoteAddr = "127.0.0.1:1234"
-			response := httptest.NewRecorder()
-			f.server.Router().ServeHTTP(response, request)
-			require.Equal(http.StatusOK, response.Code, response.Body.String())
-			var plan api.CLIEmbeddingsPlanResponse
-			require.NoError(json.Unmarshal(response.Body.Bytes(), &plan))
-			require.True(plan.NeedsConfirmation)
-			require.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
-		})
-	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
+	request.Header.Set("Authorization", "Bearer owner")
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var plan api.CLIEmbeddingsPlanResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &plan))
+	require.True(plan.NeedsConfirmation)
+	require.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
 }
 
 func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
@@ -583,9 +574,13 @@ func (f *localActivationFixture) useBuiltin(t *testing.T) {
 }
 
 func TestLocalEmbeddingsPublishesScheduledBuild(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
 	f := newLocalActivationFixture(t, "", "")
 	f.start(t)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	assert.Equal(t, 1, f.installs)
+	assert.True(t, f.handle.vf.Cfg.Embeddings.LocalOnly)
+	assert.Contains(t, f.runner.calls[0], "--full-rebuild")
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 	require.NoError(t, err)
 	require.NoError(t, f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel))
@@ -635,6 +630,13 @@ func TestLocalEmbeddingsFirstSetupUsesOllama(t *testing.T) {
 	f := newLocalActivationFixture(t, "", "")
 	f.ollamaTags = true
 	f.start(t)
+	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+		return embedlocal.Status{OllamaAvailable: true}, nil
+	}
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", status.Provider)
+	assert.False(t, status.Enabled)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	assert.Zero(t, f.installs)
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
@@ -649,24 +651,26 @@ func TestLocalEmbeddingsFirstSetupUsesOllama(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-func TestLocalEmbeddingsFreshSetupIgnoresHostedKey(t *testing.T) {
-	t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
-	f := newLocalActivationFixture(t, "", "")
-	f.start(t)
-	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	assert.Equal(t, 1, f.installs)
-	assert.True(t, f.handle.vf.Cfg.Embeddings.LocalOnly)
-	assert.Contains(t, f.runner.calls[0], "--full-rebuild")
-}
-
-func TestLocalEmbeddingsInspectAvailableOllama(t *testing.T) {
-	f := newLocalActivationFixture(t, "", "")
-	f.start(t)
-	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-		return embedlocal.Status{OllamaAvailable: true}, nil
+func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
+	for _, setting := range []string{"preprocessing", "account scope"} {
+		t.Run(setting, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, "", "")
+			f.start(t)
+			edit := config.TableEdit{Path: []string{"vector", "preprocess"}, Values: map[string]any{"strip_quotes": false}}
+			if setting == "account scope" {
+				_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "excluded@example.test", "excluded", "Excluded orchard", "Another orchard message.")
+				require.NoError(err)
+				edit = config.TableEdit{Path: []string{"vector", "embed", "scope"}, Values: map[string]any{"accounts": []string{"archive@example.test"}}}
+			}
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{edit})
+			require.NoError(err)
+			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+			results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
+			require.NoError(err, "activation must publish the same text settings used by its index build")
+			assert.Len(t, results, 1)
+		})
 	}
-	status, err := f.controller.Inspect(f.ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "ollama", status.Provider)
-	assert.False(t, status.Enabled)
 }

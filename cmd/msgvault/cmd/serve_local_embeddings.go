@@ -191,17 +191,16 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		}
 		defer release()
 	}
-	// Apply only this lane to the running daemon; other saved changes remain pending.
+	// Apply saved text settings together while preserving the live image lane.
 	runtimeConfig := *c.state.cfg
 	c.handle.mu.Lock()
 	if c.handle.vf != nil {
 		runtimeConfig.Vector = c.handle.vf.Cfg
 	}
 	c.handle.mu.Unlock()
-	runtimeConfig.Vector.Enabled = true
-	runtimeConfig.Vector.Backend = nextConfig.Vector.Backend
-	runtimeConfig.Vector.Embeddings = nextConfig.Vector.Embeddings
-	runtimeConfig.Vector.Embed.Schedule = nextConfig.Vector.Embed.Schedule
+	multimodal := runtimeConfig.Vector.Multimodal
+	runtimeConfig.Vector = nextConfig.Vector
+	runtimeConfig.Vector.Multimodal = multimodal
 	state := *c.state
 	state.cfg = &runtimeConfig
 	nextCtx := withInvocation(runtimeCtx, &state)
