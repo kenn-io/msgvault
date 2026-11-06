@@ -966,7 +966,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				defer cancel()
 				migrate := func(readCtx context.Context) {
 					assertions.Same(st.DB(), store.ReadDBContext(readCtx, st.DB()), "placement uses a connection outside the authorization snapshot")
-					if tc.caller == "owner" && route != "cid" {
+					if tc.caller == "owner" {
 						assertions.Zero(st.DB().Stats().InUse, "owner placement holds no authorization connection")
 					} else if route == "cid" {
 						assertions.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone) //nolint:testifylint // Snapshot lifetime is under test.
@@ -1042,8 +1042,8 @@ func testAgentPackingSnapshot(t *testing.T) {
 					}
 					assertions.Equal(expectedCalls, resolver.calls)
 				}
-				if transition == "cancel" {
-					// Cancellation can return the snapshot connection asynchronously.
+				if transition == "cancel" && (route == "content" || route == "cli") {
+					// Masked downloads retain the snapshot until classification; cancellation can release it asynchronously.
 					assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 				} else {
 					assertions.Zero(st.DB().Stats().InUse)

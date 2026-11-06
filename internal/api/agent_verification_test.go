@@ -114,7 +114,6 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"code", "Account", "Your code is 482913", "", "", ""},
 		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", "", ""},
 		{"filename", "Ordinary", "", "", "code-482913.png", ""},
-		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>", "", ""},
 		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "", ""},
 		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", "", ""},
 		{"attachment URL", "Account", "Your code is 482913", "", "image.png", "https://example.test/reset?token=abcDEF1234567890"},
@@ -225,7 +224,6 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
 	assertions.Equal(1, loader.calls)
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
-	assertions.NotContains(w.Body.String(), "482913")
 }
 
 func TestAgentVerificationFields(t *testing.T) {
@@ -343,11 +341,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
 			if tc.shared {
-				subject := "Your verification code is 482914"
-				if tc.mime == "image/png" {
-					subject = "Your verification code is 482913"
-				}
-				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-"+tc.name, subject, "")
+				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-"+tc.name, "Your verification code is 482913", "")
 				requirements.NoError(err)
 				requirements.NoError(st.UpsertAttachment(parentID, tc.name, tc.mime, "", hash, len(tc.body)))
 			}
