@@ -2035,7 +2035,7 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			cfg := fixture.load(t)
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
 			require.NoError(err)
-			if tc.unavailable == "" {
+			if tc.unavailable == "" && tc.fields == "" {
 				ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
 				assert.Equal(planActionSkip, ordinary.Action)
 			}

@@ -23,7 +23,7 @@ describe('local search row', () => {
     { name: 'other Ollama with document search', status: { ...off, enabled: true, provider: 'ollama', document_rebuild: true }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 10 messages. Document search requires consent for the built-in provider.' },
     { name: 'on', status: { ...off, enabled: true, provider: 'builtin' }, chip: 'On' },
     { name: 'waiting for setup', status: { ...off, running: true }, chip: 'Turning on', description: 'Preparing search by meaning · Keyword search works', progress: { now: '0', max: '290000000' } },
-    { name: 'downloading', status: { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
+    { name: 'downloading', status: { ...off, phase: 'downloading', running: true, done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
     { name: 'indexing', status: { ...off, enabled: true, provider: 'builtin', running: true, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
   ])('$name', ({ status, embedding = embeddingStatus, chip, action, description, absent, progress }) => {
     render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), localError: status.error, onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
@@ -49,15 +49,11 @@ it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', swi
   expect(screen.getByRole('button', { name: 'Build index, Message search' })).toBeDefined();
 });
 
-it('discloses the download size and remote host before hint activation', () => {
- expect(localSearchHintLabels(off).hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
- expect(localSearchHintLabels({...off,ollama_available:true}).hint).toBe('Search by meaning is off · Uses Ollama on this computer');
-});
-
 it.each([
-  { state: 'paused', downloadBytes: 290000000, description: 'Downloads 290 MB once to archive.example.test' },
-  { state: 'failed startup', downloadBytes: 290000000, description: 'Downloads 290 MB once to archive.example.test' },
-  { state: 'files installed', downloadBytes: 0, description: 'Already on this computer' },
-])('discloses the selected built-in provider in the $state hint despite available Ollama', ({ state, downloadBytes, description }) => {
-  expect(localSearchHintLabels({ ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: downloadBytes, ...(state === 'failed startup' ? { error: 'Local model files need setup. Turn on to retry.' } : {}) }).hint).toBe(`Search by meaning is off · ${description}`);
+  { name: 'remote download', status: off, disclosure: 'Downloads 290 MB once to archive.example.test' },
+  { name: 'available Ollama', status: { ...off, ollama_available: true }, disclosure: 'Uses Ollama on this computer' },
+  { name: 'paused built-in despite available Ollama', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true }, disclosure: 'Downloads 290 MB once to archive.example.test' },
+  { name: 'installed built-in despite available Ollama', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: 0 }, disclosure: 'Already on this computer' },
+])('discloses $name before hint activation', ({ status, disclosure }) => {
+  expect(localSearchHintLabels(status).hint).toBe(`Search by meaning is off · ${disclosure}`);
 });

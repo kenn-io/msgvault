@@ -1,17 +1,13 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json/v2"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestNativeMCPRefreshPreservesConfirmation(t *testing.T) {
@@ -19,15 +15,10 @@ func TestNativeMCPRefreshPreservesConfirmation(t *testing.T) {
 	must := require.New(t)
 	backend := &countingOperationalBackend{}
 	opts := ServeOptions{Operations: backend, OperationCapabilities: []string{"sync_source"}, OperationWriteFamilies: []OperationFamily{OperationFamilySources}}
-	server := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { checks.NoError(server.Shutdown(context.Background())) })
-	var latest http.Handler
-	install := func() {
-		read, closeRead := NewHTTPHandler(opts, HTTPOptions{})
-		write, closeWrite := NewHTTPHandler(opts, HTTPOptions{AllowWrites: true})
-		must.NoError(server.InstallMCPHandlers(read, write, func() { closeRead(); closeWrite() }))
-		latest = write
-	}
+	previous, closePrevious := NewHTTPHandler(opts, HTTPOptions{AllowWrites: true})
+	t.Cleanup(closePrevious)
+	next, closeNext := NewHTTPHandler(opts, HTTPOptions{AllowWrites: true})
+	t.Cleanup(closeNext)
 	call := func(handler http.Handler, state any) task3RPCResponse {
 		t.Helper()
 		params := map[string]any{"name": "sync_source", "arguments": map[string]any{"account": "sender@example.com", "source_type": "gmail"}, "_meta": modernRequestMeta()}
@@ -38,24 +29,24 @@ func TestNativeMCPRefreshPreservesConfirmation(t *testing.T) {
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
 		must.NoError(err)
 		request := task3ModernRequest("tools/call", "sync_source", string(body))
-		request.URL.Path = "/mcp/writes"
-		request.Header.Set("Authorization", "Bearer owner")
 		response, result := task3Serve(handler, request)
 		task3RequireSuccess(t, response, result)
 		return result
 	}
-	install()
-	pending := call(server.Router(), nil)
+	pending := call(previous, nil)
 	must.NotEmpty(pending.Result["requestState"])
 	checks.Zero(backend.calls.Load())
-	install()
-	accepted := call(server.Router(), pending.Result["requestState"])
+	nextHandler, ok := next.(*httpHandler)
+	must.True(ok)
+	nextHandler.Inherit(previous)
+	closePrevious()
+	accepted := call(next, pending.Result["requestState"])
 	checks.NotEqual(true, accepted.Result["isError"])
 	checks.Equal(int32(1), backend.calls.Load())
-	pending = call(server.Router(), nil)
+	pending = call(next, nil)
 	must.NotEmpty(pending.Result["requestState"])
-	must.NoError(server.Shutdown(t.Context()))
-	refused := call(latest, pending.Result["requestState"])
+	closeNext()
+	refused := call(next, pending.Result["requestState"])
 	checks.Equal(true, refused.Result["isError"], "shutdown releases pending confirmation challenges")
 	checks.Equal(int32(1), backend.calls.Load())
 }
@@ -65,21 +56,11 @@ func TestNativeMCPRefreshPreservesDownload(t *testing.T) {
 	must := require.New(t)
 	fixture := newExportFixture(t)
 	opts := ServeOptions{Engine: fixture.engine}
-	server := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { checks.NoError(server.Shutdown(context.Background())) })
-	var latest http.Handler
-	install := func() {
-		read, closeRead := NewHTTPHandler(opts, HTTPOptions{})
-		write, closeWrite := NewHTTPHandler(opts, HTTPOptions{AllowWrites: true})
-		must.NoError(server.InstallMCPHandlers(read, write, func() { closeRead(); closeWrite() }))
-		latest = read
-	}
-	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("Authorization", "Bearer owner")
-		server.Router().ServeHTTP(w, r)
-	})
-	install()
-	response, raw := task4RawRequest(t, router, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 0, "length": 100}}, nil)
+	previous, closePrevious := NewHTTPHandler(opts, HTTPOptions{})
+	t.Cleanup(closePrevious)
+	next, closeNext := NewHTTPHandler(opts, HTTPOptions{})
+	t.Cleanup(closeNext)
+	response, raw := task4RawRequest(t, previous, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 0, "length": 100}}, nil)
 	must.Empty(response.Error, "%s", raw)
 	must.NotEqual(true, response.Result["isError"], "%s", raw)
 	encoded, err := json.Marshal(response.Result["structuredContent"])
@@ -87,12 +68,15 @@ func TestNativeMCPRefreshPreservesDownload(t *testing.T) {
 	var first exportChunkResp
 	must.NoError(json.Unmarshal(encoded, &first))
 	must.False(first.Complete)
-	install()
-	response, raw = task4RawRequest(t, router, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": first.Length, "length": 100, "sha256": first.SHA256}}, nil)
+	nextHandler, ok := next.(*httpHandler)
+	must.True(ok)
+	nextHandler.Inherit(previous)
+	closePrevious()
+	response, raw = task4RawRequest(t, next, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": first.Length, "length": 100, "sha256": first.SHA256}}, nil)
 	must.Empty(response.Error, "%s", raw)
 	must.NotEqual(true, response.Result["isError"], "%s", raw)
-	must.NoError(server.Shutdown(t.Context()))
-	response, raw = task4RawRequest(t, latest, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 200, "length": 100, "sha256": first.SHA256}}, nil)
+	closeNext()
+	response, raw = task4RawRequest(t, next, "tools/call", map[string]any{"name": ToolExportEML, "arguments": map[string]any{"id": fixture.withRaw, "offset": 200, "length": 100, "sha256": first.SHA256}}, nil)
 	must.Empty(response.Error, "%s", raw)
 	checks.Equal(true, response.Result["isError"], "shutdown releases the retained download snapshot")
 }

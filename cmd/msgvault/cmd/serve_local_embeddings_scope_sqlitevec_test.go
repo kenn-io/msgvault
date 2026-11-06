@@ -57,9 +57,6 @@ enabled = false
 endpoint = %q
 model = "my-model"
 dimension = 4
-document_prefix = "passage: "
-query_prefix = "question: "
-max_input_chars = 777
 [chat]
 server = %q
 `, endpoint.URL+"/v1", endpoint.URL)+extra)

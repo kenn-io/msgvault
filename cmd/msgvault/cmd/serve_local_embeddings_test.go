@@ -442,6 +442,7 @@ func TestLocalEmbeddingsBuildsDespiteDocumentJobFailure(t *testing.T) {
 	require.NoError(err)
 	_, _, err = f.store.RecordDocumentVectorConsent(f.ctx, consent, time.Now())
 	require.NoError(err)
+	// Publication registers jobs again; reject that replacement to exercise admission failure.
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})

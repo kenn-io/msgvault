@@ -71,7 +71,6 @@ for (const width of [1280, 390]) {
       expect(spacing.firstGap).toBeGreaterThan(spacing.errorGap);
       expect(spacing.firstGap).toBeLessThanOrEqual(spacing.rowPadding + (provider === 'ollama' ? spacing.rowGap : 0));
       expect(spacing.errorGap).toBeGreaterThanOrEqual(0);
-      expect(spacing.errorGap).toBeLessThan(spacing.firstGap);
       if (width === 1280 && provider === 'ollama') {
         const chip = await row.locator('.row__local .kit-chip').boundingBox();
         const switchAction = await row.getByRole('button', { name: 'Use built-in instead' }).boundingBox();
