@@ -188,7 +188,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 	if s.IsPostgreSQL() {
 		sentKey = "m.sent_at"
 	}
-	statement := `WITH eligible AS (
+	statement := `WITH eligible AS MATERIALIZED (
 		SELECT c.id, c.source_id, c.source_conversation_id, c.title,
 			c.conversation_type, anchor.id AS message_id, anchor.sent_at AS last_at
 		FROM conversations c
@@ -211,7 +211,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 		UNION
 		SELECT cm.conversation_id, cm.participant_id
 		FROM chat_members cm JOIN eligible e ON e.id = cm.conversation_id
-	), members AS (
+	), members AS MATERIALIZED (
 		SELECT b.conversation_id, b.participant_id, e.source_id FROM raw_members b
 		JOIN eligible e ON e.id = b.conversation_id
 		WHERE NOT (` + senderOwnerFallback("b.participant_id", "e.source_id") + `)

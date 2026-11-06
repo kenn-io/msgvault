@@ -1333,11 +1333,13 @@
           <PageHeader title="Files">
             {#snippet actions()}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
           </PageHeader>
-          {#snippet filesToolbar(controls: Snippet | undefined)}
+          {#snippet filesToolbar(controls: Snippet | undefined, clearVisualSearch: (() => void) | undefined, visualActive: boolean)}
           <ContextBar
             {client}
             messages
             extraControls={controls}
+            extraActive={visualActive}
+            onClearExtra={clearVisualSearch}
             query={exploreState.current.query}
             searchMode={exploreState.current.searchMode}
             filters={exploreState.current.filters}
@@ -1390,7 +1392,7 @@
             {#snippet filterExtra()}{#key fileFiltersReset}<FileFilters filenameQuery={exploreState.current.fileFilenameQuery} mimeFamilies={exploreState.current.fileMIMEFamilies} onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({ fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null })} onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({ fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null })} />{/key}{/snippet}
           </ContextBar>
           {/snippet}
-          {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined)}{/if}
+          {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined, undefined, false)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { Button, MEDIA, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import { getLocalEmbeddings, enableLocalEmbeddings } from '../../api/generated/api/api';
   import type { LocalEmbeddingsStatus } from '../../api/generated/models';
@@ -130,6 +131,23 @@
     onSaveView,
     onStatusChange = () => undefined,
   }: Props = $props();
+
+  const compact = new MediaQuery(MEDIA.compact);
+  const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
+  let resultsSplit: HTMLDivElement | undefined = $state();
+  let previousSolo: boolean | undefined;
+  $effect(() => {
+    const currentSolo = solo;
+    const changed = previousSolo !== undefined && previousSolo !== currentSolo;
+    previousSolo = currentSolo;
+    if (!changed || !untrack(() => readingTargetKey)) return;
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body &&
+        (focused.checkVisibility?.({ visibilityProperty: true }) ?? !resultsSplit?.querySelector('[data-pane="primary"]')?.contains(focused))) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[data-reader-dismiss]')?.focus();
+    });
+  });
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
@@ -761,7 +779,9 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
-    style:min-height={scope && readingTargetKey && !previewRight ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    class:results-split--solo={solo}
+    style:min-height={scope && readingTargetKey && !previewRight && !solo ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
     <SplitPane
@@ -896,6 +916,7 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            back={solo}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
@@ -972,6 +993,23 @@
     min-height: 200px;
     flex: 1;
     overflow: hidden;
+  }
+
+  .results-split--solo :global([data-split-pane]) { position: relative; }
+  .results-split--solo :global([data-pane='primary']) {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+  }
+  .results-split--solo :global(.handle-reset) { display: none; }
+  .results-split.results-split--solo :global([data-pane='secondary']) {
+    flex-grow: 1;
+    flex-shrink: 1;
+    border: 0;
+  }
+  .results-split--solo :global(.reading-pane) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
 
   .results-primary {
