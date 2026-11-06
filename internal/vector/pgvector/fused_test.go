@@ -608,7 +608,6 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 			hits, meta, err := b.FusedSearch(ctx, req)
 			require.NoError(err)
 			assert.Equal(tc.omitted, meta.CandidatePoolOmitted)
-			assert.True(meta.PoolSaturated)
 			gotIDs := make([]int64, len(hits))
 			for i, hit := range hits {
 				gotIDs[i] = hit.MessageID

@@ -141,7 +141,7 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 		assert.Equal("alice@example.com", r.URL.Query().Get("account"), "account")
 		assert.Equal("sms", r.URL.Query().Get("message_type"), "message_type")
 		assert.Equal("50", r.URL.Query().Get("page_size"), "page_size")
-		writeVectorSearchResponse(t, w, 1, "", 0)
+		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
@@ -186,7 +186,7 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		assert.Equal("Important", r.URL.Query().Get("collection"), "collection")
-		writeVectorSearchResponse(t, w, 1, "Important", 2)
+		writeVectorSearchResponse(t, w, "alice@example.com", "Important", 2)
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
@@ -254,7 +254,7 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		assert.Equal("hybrid", r.URL.Query().Get("mode"), "mode")
-		writeVectorSearchResponse(t, w, 1, "", 0)
+		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
 	})
 
 	testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
@@ -382,29 +382,14 @@ func configureVectorSearchHTTPTest(t *testing.T, dataDir string, local bool, rem
 func writeVectorSearchResponse(
 	t *testing.T,
 	w http.ResponseWriter,
-	resultCount int,
+	from string,
 	scopeLabel string,
 	scopeSourceCount int,
 ) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
-	rows := make([]map[string]any, resultCount)
-	for i := range rows {
-		rows[i] = map[string]any{
-			"id":      42 + i,
-			"subject": "Lunch",
-			"from":    "alice@example.com",
-			"sent_at": "2024-01-02T03:04:05Z",
-			"score": map[string]any{
-				"rrf":             0.5,
-				"bm25":            1.25,
-				"vector":          0.9,
-				"subject_boosted": true,
-			},
-		}
-	}
-	response := map[string]any{
-		"returned":       resultCount,
+	err := json.NewEncoder(w).Encode(map[string]any{
+		"returned":       1,
 		"pool_saturated": false,
 		"accelerator":    "vec1_ivf_opq",
 		"took_ms":        12,
@@ -422,8 +407,18 @@ func writeVectorSearchResponse(
 			"fingerprint": "fake:4",
 			"state":       "active",
 		},
-		"results": rows,
-	}
-	err := json.NewEncoder(w).Encode(response)
+		"results": []map[string]any{{
+			"id":      42,
+			"subject": "Lunch",
+			"from":    from,
+			"sent_at": "2024-01-02T03:04:05Z",
+			"score": map[string]any{
+				"rrf":             0.5,
+				"bm25":            1.25,
+				"vector":          0.9,
+				"subject_boosted": true,
+			},
+		}},
+	})
 	require.NoError(t, err, "write vector search response")
 }

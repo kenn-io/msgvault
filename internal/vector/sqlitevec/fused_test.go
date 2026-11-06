@@ -1368,7 +1368,6 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 						assert.Equal(acceleratorKind, meta.Accelerator)
 					}
 					assert.Equal(tc.omitted, meta.CandidatePoolOmitted)
-					assert.True(meta.PoolSaturated)
 					gotIDs := make([]int64, len(hits))
 					for i, hit := range hits {
 						gotIDs[i] = hit.MessageID

@@ -4003,7 +4003,7 @@ msgvault list-senders [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
-The command prints a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
+`list-senders`, `list-domains`, and `list-labels` print a stderr hint to raise `-n` when more rows match, including with `--json`. Their JSON stdout stays a bare array.
 
 ---
 
@@ -4022,8 +4022,6 @@ msgvault list-domains [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
-The command prints a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
-
 ---
 
 ## list-labels
@@ -4040,8 +4038,6 @@ msgvault list-labels [flags]
 | `--after YYYY-MM-DD` | Only messages after this date |
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
-
-The command prints a stderr hint to raise `-n` when more rows match, including with `--json`. JSON stdout stays a bare array.
 
 ---
 
