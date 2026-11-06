@@ -58,6 +58,10 @@ func Is(c Content) bool {
 	fields[3] = mime.StripHTML(c.HTML)
 	for i, field := range fields {
 		fields[i] = strings.Map(func(r rune) rune {
+			switch r {
+			case '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff', '\u00ad':
+				return -1
+			}
 			if r >= '０' && r <= '９' {
 				return '0' + r - '０'
 			}
