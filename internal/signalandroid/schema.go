@@ -163,7 +163,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	if err != nil {
 		return nil, err
 	}
-	if !reaction["message_id"] || !reaction["author_id"] || !reaction["emoji"] {
+	if !reaction["message_id"] || !reaction["author_id"] || !reaction["emoji"] || !reaction["date_sent"] {
 		return nil, fmt.Errorf("%w: reaction details are missing", ErrUnsupportedDatabase)
 	}
 	mention, err := sqliteutil.TableColumns(ctx, db, "mention")

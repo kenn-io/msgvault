@@ -813,13 +813,17 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		key := fmt.Sprintf("signal:attachment:%s:%d", contentHash, occurrences[contentHash])
 		occurrences[contentHash]++
 		mediaType := attachmentMediaType(a)
-		if ref, ok := archived[key]; ok && ref.Filename == a.FileName && ref.MimeType == a.ContentType &&
-			ref.Width == a.Width && ref.Height == a.Height && ref.MediaType == mediaType {
-			continue
+		role, roleSource := a.Role, store.AttachmentRoleSourceImporterSemantics
+		if role != store.AttachmentRoleStandalone {
+			roleSource = store.AttachmentRoleSourceProviderExplicit
 		}
-		role, roleSource := store.AttachmentRoleStandalone, store.AttachmentRoleSourceImporterSemantics
 		if mediaType == "sticker" {
 			role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
+		}
+		if ref, ok := archived[key]; ok && ref.Filename == a.FileName && ref.MimeType == a.ContentType &&
+			ref.Width == a.Width && ref.Height == a.Height && ref.MediaType == mediaType &&
+			ref.Role == role && ref.RoleSource == roleSource {
+			continue
 		}
 		writes = append(writes, store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
 			ContentHash: contentHash, Size: size, MediaType: mediaType, Width: a.Width, Height: a.Height,

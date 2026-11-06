@@ -3,12 +3,14 @@ package signalandroid
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json/v2"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -54,7 +56,7 @@ func skipReason(m sigMessage) string {
 	case m.Type&specialTypesMask != 0:
 		// Payments, gift badges, story reactions, pins and similar.
 		return "event"
-	case m.StoryType != 0 || m.ParentStoryID != 0:
+	case m.StoryType != 0 || m.ParentStoryID > 0:
 		return "story"
 	case m.RemoteDeleted != 0:
 		return "deleted"
@@ -215,4 +217,35 @@ func attachmentMediaType(a sigAttachment) string {
 		return "gif"
 	}
 	return attachmentpolicy.MediaType(strings.ToLower(a.ContentType))
+}
+
+// attachmentRole follows MessageTable's link-preview and shared-contact
+// references. Signal ignores malformed reference JSON when reading a message.
+func attachmentRole(id int64, previews, contacts string) store.AttachmentRole {
+	type attachmentID struct {
+		RowID int64 `json:"rowId"`
+	}
+	var links []struct {
+		AttachmentID *attachmentID `json:"attachmentId"`
+	}
+	if json.Unmarshal([]byte(previews), &links) == nil {
+		for _, link := range links {
+			if link.AttachmentID != nil && link.AttachmentID.RowID == id {
+				return store.AttachmentRolePreview
+			}
+		}
+	}
+	var shares []struct {
+		Avatar *struct {
+			AttachmentID *attachmentID `json:"attachmentId"`
+		} `json:"avatar"`
+	}
+	if json.Unmarshal([]byte(contacts), &shares) == nil {
+		for _, share := range shares {
+			if share.Avatar != nil && share.Avatar.AttachmentID != nil && share.Avatar.AttachmentID.RowID == id {
+				return store.AttachmentRoleAvatar
+			}
+		}
+	}
+	return store.AttachmentRoleStandalone
 }

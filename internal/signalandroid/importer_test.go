@@ -268,6 +268,7 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 		{"reaction message", `ALTER TABLE reaction DROP COLUMN message_id`, "reaction details are missing"},
 		{"reaction author", `ALTER TABLE reaction DROP COLUMN author_id`, "reaction details are missing"},
 		{"reaction emoji", `ALTER TABLE reaction DROP COLUMN emoji`, "reaction details are missing"},
+		{"reaction sent date", `ALTER TABLE reaction DROP COLUMN date_sent`, "reaction details are missing"},
 		{"mention table", `DROP TABLE mention`, "mention details are missing"},
 		{"mention message", `ALTER TABLE mention DROP COLUMN message_id`, "mention details are missing"},
 		{"mention recipient", `ALTER TABLE mention DROP COLUMN recipient_id`, "mention details are missing"},
@@ -330,7 +331,8 @@ func TestSkipReason(t *testing.T) {
 		{"payment notification", sigMessage{Type: signalfixture.TypeIncoming | 0x300000000}, "event"},
 		{"draft", sigMessage{Type: 27 | secureMessageBit}, "event"},
 		{"story", sigMessage{Type: signalfixture.TypeIncoming, StoryType: 1}, "story"},
-		{"story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: 9}, "story"},
+		{"group story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: 9}, "story"},
+		{"direct story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: -9}, ""},
 		{"deleted for everyone", sigMessage{Type: signalfixture.TypeIncoming, RemoteDeleted: 1}, "deleted"},
 		{"scheduled", sigMessage{Type: signalfixture.TypeOutgoing, ScheduledDate: 1}, "scheduled"},
 	}

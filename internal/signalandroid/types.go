@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"time"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -132,6 +133,7 @@ type sigMessage struct {
 
 // sigAttachment is one attachment row.
 type sigAttachment struct {
+	Role          store.AttachmentRole
 	ID            int64
 	MessageID     int64
 	ContentType   string

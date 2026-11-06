@@ -215,6 +215,42 @@ func TestRerunLongTextRemovalKeepsMediaOccurrence(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestImportAttachmentReferenceRoles(t *testing.T) {
+	for _, tc := range []struct {
+		name, column, reference string
+		role                    store.AttachmentRole
+	}{
+		{"link preview", "link_previews", `[{"url":"https://example.com/","attachmentId":{"rowId":500}}]`, store.AttachmentRolePreview},
+		{"contact avatar", "shared_contacts", `[{"avatar":{"attachmentId":{"rowId":500},"isProfile":false}}]`, store.AttachmentRoleAvatar},
+		{"unrelated preview", "link_previews", `[{"attachmentId":{"rowId":999}}]`, store.AttachmentRoleStandalone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, `ALTER TABLE message ADD COLUMN `+tc.column+` TEXT`,
+				`UPDATE message SET `+tc.column+` = '`+tc.reference+`' WHERE _id = 200`)
+			runImport(t, st, dir, storage)
+			var attachmentID, messageID int64
+			require.NoError(st.DB().QueryRow(`SELECT id, message_id FROM attachments`).Scan(&attachmentID, &messageID))
+			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
+			require.NoError(err)
+			require.Len(refs, 1)
+			assert.Equal(tc.role, refs[0].Role)
+
+			// Reruns also correct roles written by an earlier importer.
+			_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_role = ?, role_source = ? WHERE id = ?`),
+				store.AttachmentRoleStandalone, store.AttachmentRoleSourceImporterSemantics, attachmentID)
+			require.NoError(err)
+			runImport(t, st, dir, storage)
+			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), messageID)
+			require.NoError(err)
+			require.Len(refs, 1)
+			assert.Equal(tc.role, refs[0].Role)
+		})
+	}
+}
+
 func TestRerunRefreshesAttachmentMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name, change, filename, mime, media string

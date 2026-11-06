@@ -65,6 +65,18 @@ func TestImportPrefersContactNickname(t *testing.T) {
 	assert.Equal(t, "Hi @Example nickname, look\n\nBeach", importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body)
 }
 
+func TestImportDirectStoryReply(t *testing.T) {
+	st, dir := testutil.NewTestStore(t), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `UPDATE message SET parent_story_id = -9 WHERE _id = 100`)
+	runImport(t, st, dir, t.TempDir())
+	id := "signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1)
+	message, ok := importedMessages(t, st)[id]
+	require.True(t, ok)
+	assert.Equal(t, "Hello from Alice", message.body)
+	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI, message.conversation)
+}
+
 func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()

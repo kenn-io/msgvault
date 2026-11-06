@@ -209,8 +209,8 @@ The attachment and reaction additions in the summary count committed additions.
 The message summary separates new messages from those already archived, including unchanged messages.
 The unresolved reply count covers messages written in that run.
 
-Messages deleted in Signal, including messages later deleted for everyone, stay
-in your archive.
+Messages deleted in Signal stay in your archive. If a later backup marks a message
+as deleted for everyone, rerunning the import keeps its earlier archived text.
 
 ### Format limits
 
@@ -224,7 +224,7 @@ These are left out:
 - SMS and MMS that Signal stored as the phone's SMS app, and calls. Import those
   from an SMS backup with [`import-synctech-sms`](#import-synctech-sms).
 - Group and safety-number updates, timer changes, payments, and other events.
-- Stories and story replies, messages deleted for everyone, scheduled messages
+- Stories and group story replies, messages deleted for everyone, scheduled messages
   that were not sent yet, and earlier versions of edited messages.
 - MMS groups, story distribution lists, and call links.
 - Signal Desktop and iOS databases.

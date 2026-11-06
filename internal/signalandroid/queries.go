@@ -179,8 +179,10 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 	query := fmt.Sprintf(`
 		SELECT a._id, a.%s, COALESCE(a.%s, ''), COALESCE(%s, ''), COALESCE(%s, ''),
 		       COALESCE(%s, 0), COALESCE(%s, 0),
-		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, '')
+		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, ''),
+		       COALESCE(%s, ''), COALESCE(%s, '')
 		FROM %s a
+		JOIN message m ON m._id = a.%s
 		WHERE a.%s IN (%s) AND COALESCE(%s, 0) = 0
 		ORDER BY a.%s, COALESCE(%s, 0), a._id`,
 		s.attachmentMessage, s.attachmentType,
@@ -188,7 +190,8 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 		s.attachmentColumn("width", "0"),
 		s.attachmentColumn("height", "0"), s.attachmentColumn("voice_note", "0"),
 		s.attachmentColumn("video_gif", "0"), s.attachmentColumn("sticker_pack_id", "''"),
-		s.attachmentTable, s.attachmentMessage, placeholders(len(messageIDs)),
+		s.messageColumn("link_previews", "''"), s.messageColumn("shared_contacts", "''"),
+		s.attachmentTable, s.attachmentMessage, s.attachmentMessage, placeholders(len(messageIDs)),
 		s.attachmentColumn("quote", "0"),
 		s.attachmentMessage, s.attachmentColumn("display_order", "0"),
 	)
@@ -200,12 +203,14 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 	for rows.Next() {
 		var a sigAttachment
 		var voiceNote, videoGIF int64
+		var previews, contacts string
 		if err := rows.Scan(&a.ID, &a.MessageID, &a.ContentType, &a.FileName, &a.Caption,
-			&a.Width, &a.Height, &voiceNote, &videoGIF, &a.StickerPackID); err != nil {
+			&a.Width, &a.Height, &voiceNote, &videoGIF, &a.StickerPackID, &previews, &contacts); err != nil {
 			return nil, fmt.Errorf("scan attachment: %w", err)
 		}
 		a.VoiceNote = voiceNote != 0
 		a.VideoGIF = videoGIF != 0
+		a.Role = attachmentRole(a.ID, previews, contacts)
 		out[a.MessageID] = append(out[a.MessageID], a)
 	}
 	if err := rows.Err(); err != nil {
