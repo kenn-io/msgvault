@@ -66,10 +66,11 @@ func TestAttachmentPersistenceFailureAndFullRetry(t *testing.T) {
 
 	dir := filepath.Join(e.TmpDir, "attachments")
 	e.Syncer = New(e.Mock, e.Store, &Options{AttachmentsDir: dir})
+	e.Mock.GetMessageCalls = nil
 	sum, err = e.Syncer.Full(t.Context(), testEmail)
 	require.NoError(err)
 	assert.Zero(sum.Errors)
-	assert.Equal([]string{"attachment-failure"}, e.Mock.GetMessageCalls, "retry must use retained MIME")
+	assert.Empty(e.Mock.GetMessageCalls, "retry must use retained MIME")
 	refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(err)
 	require.Len(refs, 1)

@@ -196,7 +196,7 @@ func TestAttachmentRevisionDebtWriteFailureRollsBackRAW(t *testing.T) {
 	e.Mock.AddMessage("atomic-debt", testMIMEWithAttachment(), []string{"INBOX"})
 	allow := acquisitionWriteFault(t, e, "sync_run_items", "INSERT", "NEW.status = 'error'")
 	_, err := e.Syncer.Full(t.Context(), testEmail)
-	require.Error(err)
+	require.ErrorIs(err, errAcquisitionFailureRecord)
 	reopenAcquisitionStore(t, e)
 	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"atomic-debt"})
 	require.NoError(err)
