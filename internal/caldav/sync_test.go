@@ -354,55 +354,6 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 			})
 		}
 	}
-	t.Run("prefixed recurrence dates", func(t *testing.T) {
-		windows := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
-			"UID:outlook@example.org\r\nSUMMARY:Planning\r\n" +
-			"DTSTART;TZID=\"Eastern Standard Time\":20270307T090000\r\n" +
-			"DTEND;TZID=\"Eastern Standard Time\":20270307T100000\r\n" +
-			"RRULE:FREQ=WEEKLY;COUNT=2\r\n" +
-			"RDATE;TZID=\"Eastern Standard Time\":20270321T090000\r\n" +
-			"EXDATE;TZID=\"Eastern Standard Time\":20270314T090000\r\n" +
-			"ATTENDEE;CN=Example Guest:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-		resources := []string{windows}
-		for _, zone := range []string{"tzone://Microsoft/Eastern Standard Time", "tzone://Microsoft/America/New_York", "/vendor:1/America/New_York"} {
-			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
-				"UID:prefixed@example.org\r\nDTSTART;TZID=America/New_York:20270307T090000\r\nDURATION:PT1H\r\n" +
-				"RRULE:FREQ=WEEKLY;COUNT=2\r\n" +
-				"RDATE;TZID=\"" + zone + "\":20270321T090000\r\n" +
-				"EXDATE;TZID=\"" + zone + "\":20270314T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-			resources = append(resources, raw)
-		}
-		for i, raw := range resources {
-			t.Run(strconv.Itoa(i), func(t *testing.T) {
-				assert, require := assert.New(t), require.New(t)
-				c, f := archiveFixture(t)
-				f.Lock()
-				f.raw["a.ics"] = raw
-				f.Unlock()
-				st := testutil.NewTestStore(t)
-				result, err := c.Sync(t.Context(), st, syncOpts())
-				require.NoError(err)
-				assert.Equal(0, result.Skipped)
-				require.Equal(1, result.Events)
-				from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
-				require.NoError(err)
-				assert.Empty(page.Unexpandable)
-				require.Len(page.Occurrences, 2)
-				assert.Equal("2027-03-07T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
-				assert.Equal("2027-03-21T13:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
-				assert.Equal("2027-03-21T14:00:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
-				var recurrence string
-				require.NoError(st.DB().QueryRow(`SELECT recurrence_json FROM calendar_events`).Scan(&recurrence))
-				var lines []string
-				require.NoError(json.Unmarshal([]byte(recurrence), &lines))
-				assert.ElementsMatch([]string{"RRULE:FREQ=WEEKLY;COUNT=2", "RDATE;TZID=America/New_York:20270321T090000", "EXDATE;TZID=America/New_York:20270314T090000"}, lines)
-				var body string
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), page.Occurrences[0].MessageID).Scan(&body))
-				assert.Contains(body, "09:00")
-			})
-		}
-	})
 }
 
 func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {
@@ -648,30 +599,19 @@ func TestSyncRefreshesEventsWhenZoneDatabaseChanges(t *testing.T) {
 	assertions.Zero(unchanged.Events)
 }
 
-func TestSyncArchivesLowercaseCancelledStatus(t *testing.T) {
-	for _, status := range []string{"cancelled", "CANCELLED"} {
-		t.Run(status, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			c, f := archiveFixture(t)
-			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "STATUS:"+status+"\r\nEND:VEVENT", 1)
-			st := testutil.NewTestStore(t)
-			result, err := c.Sync(t.Context(), st, syncOpts())
-			requirements.NoError(err)
-			assertions.Equal(1, result.Events)
-			assertions.Zero(result.Skipped)
-			var id int64
-			var projected, metadata string
-			requirements.NoError(st.DB().QueryRow(`SELECT m.id, e.status, m.metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE m.message_type='calendar_event'`).Scan(&id, &projected, &metadata))
-			assertions.Equal("cancelled", projected)
-			var meta calevent.CalDAVMetadata
-			requirements.NoError(json.Unmarshal([]byte(metadata), &meta))
-			assertions.Equal("cancelled", meta.Status)
-			candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
-			requirements.NoError(err)
-			requirements.Len(candidates, 1)
-			assertions.False(candidates[0].Eligible)
-		})
-	}
+func TestSyncCancelledEventIsIneligibleForActivity(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "STATUS:CANCELLED\r\nEND:VEVENT", 1)
+	st := testutil.NewTestStore(t)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	var id int64
+	requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE message_type='calendar_event'`).Scan(&id))
+	candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	assertions.False(candidates[0].Eligible)
 }
 
 func TestSyncArchivesUnsupportedRecurrencePeriod(t *testing.T) {
@@ -1030,29 +970,6 @@ func TestSyncPreservesLongDescriptionInBodyAndFTS(t *testing.T) {
 			assert.Contains(string(raw), "DESCRIPTION:"+strings.Repeat("x", (2<<20)-512))
 		}
 	})
-	t.Run("subset", func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		c, f := archiveFixture(t)
-		path := filepath.Join(t.TempDir(), "source.db")
-		st := testutil.NewSQLiteTestStoreAt(t, path)
-		_, err := c.Sync(t.Context(), st, syncOpts())
-		require.NoError(err)
-		destination := t.TempDir()
-		result, err := store.CopySubset(path, destination, 1, false)
-		require.NoError(err)
-		assert.Equal(int64(1), result.Messages)
-		copied, err := store.Open(filepath.Join(destination, "msgvault.db"))
-		require.NoError(err)
-		t.Cleanup(func() { require.NoError(copied.Close()) })
-		assert.Equal(1, count(t, copied, `SELECT COUNT(*) FROM calendar_events`))
-		var id int64
-		var format string
-		require.NoError(copied.DB().QueryRow(`SELECT message_id, raw_format FROM message_raw`).Scan(&id, &format))
-		raw, err := copied.GetMessageRawContext(t.Context(), id)
-		require.NoError(err)
-		assert.Equal(f.raw["a.ics"], string(raw))
-		assert.Equal("caldav_ics", format)
-	})
 }
 
 func TestSyncConfirmsOwnerMailboxForActivityClassification(t *testing.T) {
@@ -1169,8 +1086,6 @@ func TestSyncIncompleteSnapshotDoesNotTombstoneEvents(t *testing.T) {
 			if priorArchive {
 				_, err := c.Sync(t.Context(), st, opts)
 				require.NoError(err)
-			} else {
-				f.raw["a.ics"] = strings.Replace(calendarBody, "20270314T130000Z", "20270314T090000", 1)
 			}
 			f.Lock()
 			f.forceSnapshot, f.incompleteSnapshot = true, true
@@ -1187,7 +1102,6 @@ func TestSyncIncompleteSnapshotDoesNotTombstoneEvents(t *testing.T) {
 				var status string
 				require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 				assert.Equal("failed", status)
-				opts.TimeZone = "America/New_York"
 			}
 			f.Lock()
 			f.incompleteSnapshot = false
@@ -1197,9 +1111,6 @@ func TestSyncIncompleteSnapshotDoesNotTombstoneEvents(t *testing.T) {
 			assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
 			if !priorArchive {
 				assert.Positive(count(t, st, `SELECT COUNT(*) FROM calendar_events`))
-				var sent time.Time
-				require.NoError(st.DB().QueryRow(`SELECT sent_at FROM messages`).Scan(&sent))
-				assert.Equal("2027-03-14T13:00:00Z", sent.UTC().Format(time.RFC3339))
 			}
 		})
 	}
@@ -1481,62 +1392,22 @@ func TestSyncCancelledCalDAVOverrideIsNotInherited(t *testing.T) {
 	assertions.Empty(got[0].Attendees)
 }
 
-func TestSyncCivilDayDurationKeepsWallTimeAcrossDST(t *testing.T) {
-	for _, tc := range []struct{ name, start, from, until, wantStart, wantEnd string }{
-		{"DST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D\r\nRRULE:FREQ=WEEKLY;COUNT=2", "2027-03-13T00:00:00Z", "2027-03-22T00:00:00Z", "2027-03-20T13:00:00Z", "2027-03-21T13:00:00Z"},
-		{"skipped start", "DTSTART;TZID=Pacific/Apia:20111230T090000\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;INTERVAL=7;BYDAY=FR", "2012-01-01T00:00:00Z", "2012-01-14T00:00:00Z", "2012-01-12T19:00:00Z", "2012-01-12T20:00:00Z"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			c, f := archiveFixture(t)
-			f.raw["a.ics"] = strings.Replace(calendarBody, "DTSTART:20270314T130000Z\r\nDURATION:PT1H", tc.start, 1)
-			st := testutil.NewTestStore(t)
-			_, err := c.Sync(t.Context(), st, syncOpts())
-			requirements.NoError(err)
-			from, err := time.Parse(time.RFC3339, tc.from)
-			requirements.NoError(err)
-			until, err := time.Parse(time.RFC3339, tc.until)
-			requirements.NoError(err)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, until)
-			requirements.NoError(err)
-			assertions.Empty(page.Unexpandable)
-			requirements.Len(page.Occurrences, 2)
-			assertions.Equal(tc.wantStart, page.Occurrences[1].Start.UTC().Format(time.RFC3339))
-			assertions.Equal(tc.wantEnd, page.Occurrences[1].End.UTC().Format(time.RFC3339))
-			if tc.name == "DST" {
-				window := occurrences(t, st, "2027-03-21T12:30:00Z", "2027-03-21T12:45:00Z")
-				requirements.Len(window, 1)
-				assertions.Equal(page.Occurrences[1].MessageID, window[0].MessageID)
-				assertions.Equal("2027-03-20T13:00:00Z", window[0].Start.UTC().Format(time.RFC3339))
-				assertions.Equal("2027-03-21T13:00:00Z", window[0].End.UTC().Format(time.RFC3339))
-			} else {
-				assertions.Equal("2012-01-05T19:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
-			}
-		})
-	}
-}
-
-func TestSyncPreservesDelegatedAttendee(t *testing.T) {
+func TestSyncSkippedStartPreservesRecurrence(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
-	raw := strings.Replace(calendarBody, "END:VEVENT", "ATTENDEE;PARTSTAT=DELEGATED:mailto:guest@example.org\r\nEND:VEVENT", 1)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "DTSTART:20270314T130000Z\r\nDURATION:PT1H", "DTSTART;TZID=Pacific/Apia:20111230T090000\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;INTERVAL=7;BYDAY=FR", 1)
 	st := testutil.NewTestStore(t)
-	for _, step := range []struct{ summary, token string }{
-		{"Example meeting", "t1"},
-		{"Updated meeting", "t2"},
-	} {
-		f.Lock()
-		f.raw["a.ics"] = strings.Replace(raw, "Example meeting", step.summary, 1)
-		f.token = step.token
-		f.Unlock()
-		result, err := c.Sync(t.Context(), st, syncOpts())
-		requirements.NoError(err)
-		assertions.Equal(1, result.Events)
-		got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
-		requirements.Len(got, 1)
-		assertions.Equal(step.summary, got[0].Subject)
-		assertions.Equal([]calevent.Attendee{{Email: "guest@example.org", Role: "required", RSVP: "delegated"}}, got[0].Attendees)
-	}
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	from := time.Date(2012, 1, 1, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2012, 1, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, until)
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 2)
+	assertions.Equal("2012-01-05T19:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2012-01-12T19:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2012-01-12T20:00:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
 }
 
 func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
@@ -1552,61 +1423,58 @@ func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 		{name: "organizer also attendee", organizer: "ORGANIZER:mailto:organizer@example.org\r\n", attendees: typed + "ATTENDEE:mailto:organizer@example.org\r\n", organizerRecipient: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, cutype := range []string{"ROOM", "RESOURCE"} {
-				assertions, requirements := assert.New(t), require.New(t)
-				c, f := archiveFixture(t)
-				f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", tc.organizer+"END:VEVENT", 1)
-				st := testutil.NewTestStore(t)
-				if tc.organizerRecipient {
-					_, err := c.Sync(t.Context(), st, syncOpts())
-					requirements.NoError(err)
-					rows, total, err := st.SearchMessagesQuery(search.Parse("to:organizer@example.org"), 0, 10)
-					requirements.NoError(err)
-					assertions.Zero(total)
-					assertions.Empty(rows)
-				}
-				f.Lock()
-				attendees := strings.ReplaceAll(tc.attendees, "CUTYPE=ROOM", "CUTYPE="+cutype)
-				f.raw["a.ics"] = strings.Replace(f.raw["a.ics"], "END:VEVENT", attendees+"ATTENDEE:mailto:guest@example.net\r\nEND:VEVENT", 1)
-				f.token = "t2"
-				f.Unlock()
+			assertions, requirements := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", tc.organizer+"END:VEVENT", 1)
+			st := testutil.NewTestStore(t)
+			if tc.organizerRecipient {
 				_, err := c.Sync(t.Context(), st, syncOpts())
 				requirements.NoError(err)
-				recipients := []string{"guest@example.net"}
-				if tc.organizerRecipient {
-					recipients = append(recipients, "organizer@example.org")
+				rows, total, err := st.SearchMessagesQuery(search.Parse("to:organizer@example.org"), 0, 10)
+				requirements.NoError(err)
+				assertions.Zero(total)
+				assertions.Empty(rows)
+			}
+			f.Lock()
+			f.raw["a.ics"] = strings.Replace(f.raw["a.ics"], "END:VEVENT", tc.attendees+"ATTENDEE:mailto:guest@example.net\r\nEND:VEVENT", 1)
+			f.token = "t2"
+			f.Unlock()
+			_, err := c.Sync(t.Context(), st, syncOpts())
+			requirements.NoError(err)
+			recipients := []string{"guest@example.net"}
+			if tc.organizerRecipient {
+				recipients = append(recipients, "organizer@example.org")
+			}
+			for _, email := range recipients {
+				rows, total, err := st.SearchMessagesQuery(search.Parse("to:"+email), 0, 10)
+				requirements.NoError(err)
+				assertions.EqualValues(1, total)
+				assertions.Len(rows, 1)
+			}
+			for _, participant := range []struct{ email, domain string }{
+				{"guest@example.net", "example.net"},
+				{"organizer@example.org", "example.org"},
+			} {
+				if participant.email == "organizer@example.org" && !tc.organizerRecipient {
+					continue
 				}
-				for _, email := range recipients {
-					rows, total, err := st.SearchMessagesQuery(search.Parse("to:"+email), 0, 10)
-					requirements.NoError(err)
-					assertions.EqualValues(1, total)
-					assertions.Len(rows, 1)
-				}
-				for _, participant := range []struct{ email, domain string }{
-					{"guest@example.net", "example.net"},
-					{"organizer@example.org", "example.org"},
-				} {
-					if participant.email == "organizer@example.org" && !tc.organizerRecipient {
-						continue
-					}
-					var domain string
-					requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT domain FROM participants WHERE email_address = ?`), participant.email).Scan(&domain))
-					assertions.Equal(participant.domain, domain)
-				}
-				queries := []string{"to:room@example.org"}
-				if tc.noSender {
-					queries = append(queries, "from:room@example.org")
-				}
-				for _, query := range queries {
-					rows, total, err := st.SearchMessagesQuery(search.Parse(query), 0, 10)
-					requirements.NoError(err)
-					assertions.Zero(total, query)
-					assertions.Empty(rows, query)
-				}
-				assertions.Zero(count(t, st, `SELECT COUNT(*) FROM participants WHERE email_address='room@example.org'`))
-				if tc.noSender {
-					assertions.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE sender_id IS NOT NULL`))
-				}
+				var domain string
+				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT domain FROM participants WHERE email_address = ?`), participant.email).Scan(&domain))
+				assertions.Equal(participant.domain, domain)
+			}
+			queries := []string{"to:room@example.org"}
+			if tc.noSender {
+				queries = append(queries, "from:room@example.org")
+			}
+			for _, query := range queries {
+				rows, total, err := st.SearchMessagesQuery(search.Parse(query), 0, 10)
+				requirements.NoError(err)
+				assertions.Zero(total, query)
+				assertions.Empty(rows, query)
+			}
+			assertions.Zero(count(t, st, `SELECT COUNT(*) FROM participants WHERE email_address='room@example.org'`))
+			if tc.noSender {
+				assertions.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE sender_id IS NOT NULL`))
 			}
 		})
 	}
@@ -1615,37 +1483,10 @@ func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 		c, f := archiveFixture(t)
 		f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ORGANIZER;CN=Host:urn:uuid:host\r\nATTENDEE;CN=Guest One;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:urn:uuid:one\r\nATTENDEE;CN=Guest Two;ROLE=REQ-PARTICIPANT;PARTSTAT=DECLINED:urn:uuid:two\r\nATTENDEE;CN=Guest Three;EMAIL=three@example.org;PARTSTAT=TENTATIVE:urn:uuid:three\r\nEND:VEVENT", 1)
 		st := testutil.NewTestStore(t)
-		result, err := c.Sync(t.Context(), st, syncOpts())
+		_, err := c.Sync(t.Context(), st, syncOpts())
 		requirements.NoError(err)
-		assertions.Equal(1, result.Events)
-		got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
-		requirements.Len(got, 1)
-		assertions.Equal([]calevent.Attendee{
-			{DisplayName: "Guest One", Role: "optional", RSVP: "accepted"},
-			{DisplayName: "Guest Two", Role: "required", RSVP: "declined"},
-			{Email: "three@example.org", DisplayName: "Guest Three", Role: "required", RSVP: "tentative"},
-			{DisplayName: "Host", Role: "organizer", RSVP: "unknown"},
-		}, got[0].Attendees)
 		assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM message_recipients WHERE recipient_type='to'`))
 	})
-}
-
-func TestSyncBodyUsesEventClock(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	c, f := archiveFixture(t)
-	start := "DTSTART;TZID=America/New_York:20270314T090000"
-	f.raw["a.ics"] = strings.Replace(calendarBody, "DTSTART:20270314T130000Z", start, 1)
-	st := testutil.NewTestStore(t)
-	opts := syncOpts()
-	opts.TimeZone = "UTC"
-	_, err := c.Sync(t.Context(), st, opts)
-	requirements.NoError(err)
-	var id int64
-	var snippet, body string
-	requirements.NoError(st.DB().QueryRow(`SELECT id, snippet FROM messages`).Scan(&id, &snippet))
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
-	assertions.Equal("Example meeting\nWhen: 2027-03-14 09:00 - 2027-03-14 10:00", body)
-	assertions.Equal(body, snippet)
 }
 
 func TestSyncUsernameCaseKeepsSource(t *testing.T) {

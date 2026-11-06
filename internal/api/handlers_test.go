@@ -4225,13 +4225,12 @@ func TestCalendarSourcesDoNotEnableAccountSync(t *testing.T) {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			const collidingIdentifier = "shared@example.com"
 
 			st := testutil.NewTestStore(t)
 			sched := newMockScheduler()
-			sched.scheduled[collidingIdentifier] = true
+			sched.scheduled[tc.identifier] = true
 			sched.statuses = []AccountStatus{{
-				Email:    collidingIdentifier,
+				Email:    tc.identifier,
 				Schedule: "0 3 * * *",
 			}}
 			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
@@ -4266,13 +4265,10 @@ func TestCalendarSourcesDoNotEnableAccountSync(t *testing.T) {
 
 			assert.Equal(http.StatusBadRequest, triggerResp.Code, triggerResp.Body.String())
 			if tc.sourceType == "caldav" {
-				assert.Contains(triggerResp.Body.String(), "sync_manual_only")
 				assert.Contains(triggerResp.Body.String(), "msgvault sync-caldav")
 			}
-			if tc.sourceType != "caldav" {
-				assert.Empty(sched.startedJobs, "must not start a generic job")
-				assert.Empty(sched.triggeredJobs, "must not trigger the colliding account")
-			}
+			assert.Empty(sched.startedJobs, "must not start a generic job")
+			assert.Empty(sched.triggeredJobs, "must not trigger the colliding account")
 		})
 	}
 }

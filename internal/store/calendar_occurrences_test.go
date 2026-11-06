@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -56,6 +57,31 @@ func TestListCalendarOccurrences(t *testing.T) {
 	page, err = st.ListCalendarOccurrencesContext(t.Context(), start.Add(-time.Second), start)
 	requirements.NoError(err)
 	assertions.Empty(page.Occurrences)
+
+	t.Run("civil day duration across DST", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
+		requirements.NoError(err)
+		const raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+			"UID:example@example.org\r\nDTSTART;TZID=America/New_York:20270313T090000\r\n" +
+			"DURATION:P1D\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+		id, err := st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: "civil-duration", MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: "civil-duration", ConversationType: "calendar"},
+			RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: `{"event_id":"[\"example@example.org\",\"\"]"}`, Valid: true},
+		})
+		requirements.NoError(err)
+		from := time.Date(2027, 3, 21, 12, 30, 0, 0, time.UTC)
+		until := time.Date(2027, 3, 21, 12, 45, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, until)
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 1)
+		assertions.Equal(id, page.Occurrences[0].MessageID)
+		assertions.Equal("2027-03-20T13:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+		assertions.Equal("2027-03-21T13:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+	})
 }
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
