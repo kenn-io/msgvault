@@ -41,7 +41,7 @@ var (
 	reverseGap  = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
 	signInAfter = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your (?:account|identity|email))\b`)
 	useBefore   = regexp.MustCompile(`(?i)\b(?:use|enter|type)\s+$`)
-	link        = regexp.MustCompile(`https?://[^\s<>"']+`)
+	link        = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 	textAngle   = regexp.MustCompile(`<([^a-zA-Z/!?])`)
 )
 
