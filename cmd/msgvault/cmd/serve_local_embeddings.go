@@ -59,7 +59,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		switch {
 		case cfg.Embeddings.LocalOnly:
 			provider = "builtin"
-		case isOllamaEmbeddingEndpoint(ctx, cfg.Embeddings.Endpoint, c.state.cfg.Chat.Server):
+		case isOllamaEmbeddingEndpoint(ctx, cfg.Embeddings.Endpoint):
 			provider = "ollama"
 		default:
 			provider = "configured"
@@ -81,9 +81,9 @@ func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir st
 	return status, endpoint, err
 }
 
-func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint, configuredServer string) bool {
+func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
-	return embeddingProviderName(endpoint) == "local" && (server == "http://127.0.0.1:11434" || server == "http://localhost:11434" || (configuredServer != "" && server == strings.TrimRight(configuredServer, "/")) || len(probeOllamaServer(ctx, server).Models) > 0)
+	return embeddingProviderName(endpoint) == "local" && len(probeOllamaServer(ctx, server).Models) > 0
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {
@@ -104,7 +104,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	// A configured lane changes provider only through Use built-in instead.
-	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(ctx, loaded.Vector.Embeddings.Endpoint, loaded.Chat.Server) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
+	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(ctx, loaded.Vector.Embeddings.Endpoint) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
 		return errors.New("search by meaning already uses a configured provider; change its settings before selecting local search")
 	}
 	dir, err := localEmbeddingsDir()
@@ -296,10 +296,5 @@ func (c *localEmbeddingsController) localDocumentRebuildConsented(ctx context.Co
 	if err != nil {
 		return false, err
 	}
-	expected, err := configuredDocumentVectorConsentSpec(spec, state, "document_embedding")
-	if err != nil {
-		return false, err
-	}
-	consent, err := c.store.GetDocumentVectorConsent(ctx, expected.EgressFingerprint)
-	return consent != nil && consent.DocumentVectorConsentSpec == expected, err
+	return hasDocumentVectorConsent(ctx, c.store, spec)
 }

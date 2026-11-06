@@ -30,6 +30,10 @@ import (
 func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syncAccount func(*store.Store) error) (*localActivationFixture, int64) {
 	t.Helper()
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": []map[string]string{{"name": "my-model"}}}))
+			return
+		}
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
 		var body struct {
 			Model string   `json:"model"`

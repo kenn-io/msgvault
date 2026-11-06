@@ -119,7 +119,7 @@ func writeFakeEmbeddingResponse(w http.ResponseWriter, inputs, dimension int) er
 
 func newLocalActivationFixture(t *testing.T, model, extra string) *localActivationFixture {
 	t.Helper()
-	f := &localActivationFixture{}
+	f := &localActivationFixture{ollamaTags: model != ""}
 	dir := t.TempDir()
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
@@ -293,6 +293,27 @@ func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 			status, err = f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			require.Equal("builtin", status.Provider)
+		})
+	}
+}
+
+func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
+	for _, builtin := range []bool{false, true} {
+		t.Run(strconv.FormatBool(builtin), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newLocalActivationFixture(t, "custom-model", "")
+			f.ollamaTags = false
+			before, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			f.start(t)
+			status, err := f.controller.Inspect(f.ctx)
+			require.NoError(err)
+			assert.Equal("configured", status.Provider)
+			require.ErrorContains(f.controller.Enable(f.ctx, builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
+			after, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			assert.Equal(before, after)
 		})
 	}
 }

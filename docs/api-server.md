@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.44.0**.
+it is separate from the binary release version. The current schema is **3.45.0**.
+
+Schema 3.45.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
@@ -3274,6 +3276,14 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Local embedding setup
+
+`GET /api/v1/embeddings/local` reports the daemon host, selected provider, compatibility with the built-in message recipe, Ollama availability, download size, and setup progress. `running` identifies an active setup; `phase` is `idle`, `downloading`, or `indexing`. `done_bytes` and `total_bytes` describe download progress, and `error` preserves a failed setup's explanation. `document_rebuild` indicates that switching an Ollama provider also affects configured document search; its new destination requires exact document-vector consent.
+
+`POST /api/v1/embeddings/local` accepts `{"use_builtin": false}` to turn on local message search, reusing an available Ollama provider when suitable. Set `use_builtin` to `true` to select the built-in provider. Other configured providers require an explicit configuration change before activation. Setup downloads the local model when needed, saves the message-search configuration, publishes it to the running daemon, and builds the message index. Poll `GET` for completion; the accepted request continues after its HTTP connection closes. Document and people consent remain separate from message activation.
+
+Both routes require owner access. `POST` returns `202` for a new setup or an already-running setup with the same provider choice, `400` for an invalid request, `409 operation_in_progress` for a different choice during setup, or `503 unavailable` when setup cannot be admitted. `GET` returns `503 unavailable` when inspection fails or local setup is unavailable. Failures after admission appear in the polled `error` field. Use the separate [message embedding status](#message-embedding-status) for index coverage and throughput.
 
 ## Message embedding status
 
