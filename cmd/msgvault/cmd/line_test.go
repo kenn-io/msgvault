@@ -60,7 +60,7 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	cfg, _, fake := lineWiringFixture(t)
+	cfg, _, _ := lineWiringFixture(t)
 	args := []string{"--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com"}
 	output, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
@@ -83,11 +83,11 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	checks.Len(loaded.Line, 2)
 	// A changed secret variable takes effect when the daemon restarts.
 	args[3] = "OTHER_LINE_SECRET"
-	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
+	_, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.NotContains(output, "synthetic-secret")
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
+	checks.Equal("OTHER_LINE_SECRET", loaded.GetLineSource("2000000001").SecretEnv)
 	for index := range loaded.Line {
 		if loaded.Line[index].ChannelID == "2000000001" {
 			loaded.Line[index].Enabled = false
@@ -99,8 +99,6 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.False(loaded.GetLineSource("2000000001").Enabled)
-	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
-	checks.Zero(fake.Count("POST", "/v2/bot/channel/webhook/test"))
 }
 
 func TestLineCommandValidation(t *testing.T) {

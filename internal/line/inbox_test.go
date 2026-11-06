@@ -1016,63 +1016,47 @@ func TestProcessorExistingChatRecordsOwner(t *testing.T) {
 }
 
 func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
-	t.Run("archive write", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-
-		f := newInboxFixture(t)
-		if f.st.IsPostgreSQL() {
-			t.Skip("SQLite trigger injects a real failed archive write; normal processor contracts run on both backends")
-		}
-		f.enqueue(t, f.message("1", "text must survive a storage failure", f.now.UnixMilli()), f.now.Add(-25*time.Hour))
-		_, err := f.st.DB().Exec(`CREATE TRIGGER fail_line_write BEFORE INSERT ON messages WHEN NEW.message_type='line' BEGIN SELECT RAISE(FAIL,'synthetic archive write failure'); END`)
-		must.NoError(err)
-		must.Error(f.processor.Process(context.Background()))
-		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-		checks.Equal("pending", state)
-		_, err = f.st.DB().Exec(`DROP TRIGGER fail_line_write`)
-		must.NoError(err)
-		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&f.now))
-		f.run(t)
-		body := f.archived(t, "1").body
-		checks.Equal("text must survive a storage failure", body)
-	})
-	t.Run("membership write", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newInboxFixture(t)
-		if f.st.IsPostgreSQL() {
-			t.Skip("SQLite trigger injects membership failure; ordinary membership contracts run on both backends")
-		}
-		_, err := f.st.DB().Exec(`CREATE TRIGGER line_membership_write_fails BEFORE INSERT ON line_memberships
- BEGIN SELECT RAISE(ABORT,'synthetic membership failure'); END`)
-		must.NoError(err)
-		message := f.message("membership-write", "text survives a failed membership write", f.now.UnixMilli())
-		f.enqueue(t, message, f.now.Add(-25*time.Hour))
-		must.ErrorContains(f.processor.Process(context.Background()), "synthetic membership failure")
-		var messages, members int
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=?`), f.source.ID).Scan(&messages))
-		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants`).Scan(&members))
-		checks.Zero(messages, "message and inferred clock commit together")
-		checks.Zero(members, "a failed clock write cannot expose a clockless active membership")
-		var raw string
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&raw))
-		checks.Contains(raw, message.Message.Text, "the durable inbox retains text when message persistence rolls back")
-		var state string
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
-		checks.Equal("pending", state, "archive write failures never become expiring provider retries")
-		checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser))
-		_, err = f.st.DB().Exec(`DROP TRIGGER line_membership_write_fails`)
-		must.NoError(err)
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT next_attempt_at FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&f.now))
-		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-		f.run(t)
-		checks.Equal(message.Message.Text, f.archived(t, message.Message.ID).body)
-		var clocks int
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
-		checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
-	})
+	for _, tc := range []struct {
+		name, trigger, messageID, text, failure string
+	}{
+		{"archive write", `CREATE TRIGGER line_write_fails BEFORE INSERT ON messages WHEN NEW.message_type='line' BEGIN SELECT RAISE(FAIL,'synthetic archive write failure'); END`, "1", "text must survive a storage failure", "synthetic archive write failure"},
+		{"membership write", `CREATE TRIGGER line_write_fails BEFORE INSERT ON line_memberships BEGIN SELECT RAISE(ABORT,'synthetic membership failure'); END`, "membership-write", "text survives a failed membership write", "synthetic membership failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			if f.st.IsPostgreSQL() {
+				t.Skip("SQLite triggers inject storage failures; ordinary processor contracts run on both backends")
+			}
+			_, err := f.st.DB().Exec(tc.trigger)
+			must.NoError(err)
+			message := f.message(tc.messageID, tc.text, f.now.UnixMilli())
+			f.enqueue(t, message, f.now.Add(-25*time.Hour))
+			must.ErrorContains(f.processor.Process(context.Background()), tc.failure)
+			var messages, members int
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=?`), f.source.ID).Scan(&messages))
+			must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants`).Scan(&members))
+			checks.Zero(messages, "message and inferred clock commit together")
+			checks.Zero(members, "a failed clock write cannot expose a clockless active membership")
+			var raw string
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&raw))
+			checks.Contains(raw, message.Message.Text, "the durable inbox retains text when message persistence rolls back")
+			var state string
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
+			checks.Equal("pending", state, "archive write failures never become expiring provider retries")
+			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser))
+			_, err = f.st.DB().Exec(`DROP TRIGGER line_write_fails`)
+			must.NoError(err)
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT next_attempt_at FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&f.now))
+			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+			f.run(t)
+			checks.Equal(message.Message.Text, f.archived(t, message.Message.ID).body)
+			var clocks int
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
+			checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
+		})
+	}
 }
 
 func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
@@ -1085,6 +1069,7 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		var count int
 		require.NoError(t, f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&count))
 		assert.Equal(t, 2, count)
+		assert.Equal(t, 1, f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/U00000000000000000000000000000003"))
 	})
 	t.Run("missing profile allows other members", func(t *testing.T) {
 		must := require.New(t)
@@ -1135,6 +1120,7 @@ func TestProcessorAnonymousIdentityIsChannelScoped(t *testing.T) {
 
 	f := newInboxFixture(t)
 	otherClient := NewClient("2000000002", "synthetic-secret", WithBaseURLs(f.client.apiURL, f.client.dataURL))
+	f.api.Enqueue(http.MethodGet, "/v2/bot/info", lineapi.Response{Status: http.StatusOK, Body: `{"userId":"U00000000000000000000000000000004","basicId":"@other","displayName":"Other Bot"}`})
 	other, err := Register(context.Background(), f.st, otherClient, "2000000002")
 	must.NoError(err)
 	e := f.message("1", "anonymous", f.now.UnixMilli())
@@ -1276,9 +1262,12 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	checks := assert.New(t)
 	f := newInboxFixture(t)
 	f.enqueue(t, f.fileEvent(), time.Time{})
-	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	for i := range 501 {
+		f.enqueue(t, f.message(fmt.Sprintf("batch-%03d", i), "synthetic", f.now.UnixMilli()), time.Time{})
+	}
+	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 503)
 	must.NoError(err)
-	must.Len(rows, 1)
+	must.Len(rows, 502)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/bot/message/1/content" {
@@ -1291,6 +1280,9 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	must.NoError(processor.Drain(t.Context()))
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	var archived int
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id LIKE 'batch-%'"), f.source.ID).Scan(&archived))
+	checks.Equal(501, archived)
 	var laterMessages int
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
 	checks.Zero(laterMessages)
