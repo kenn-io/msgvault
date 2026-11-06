@@ -19,6 +19,26 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestSchemaVersionMainArchiveRequiresLINEUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+	for _, table := range []string{"line_webhook_events", "line_profiles", "line_memberships"} {
+		_, err := s.DB().ExecContext(ctx, "DROP TABLE "+table)
+		require.NoError(err)
+	}
+	_, err := s.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='32' WHERE key='schema_version'")
+	require.NoError(err)
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+	var count int
+	require.Error(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_webhook_events").Scan(&count))
+	require.NoError(s.InitSchemaContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM line_webhook_events").Scan(&count))
+	assert.Zero(count)
+}
+
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
@@ -282,7 +302,7 @@ var (
 		30: "41d1794a318cda45f41e498843ee7f7bff6d96ab206b4ed9dfc4d52dc52ea270",
 		31: "cad2b896394a3b1df1cb8b71cc2db52e893623272d87e1ede64ad757e6aba500",
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
-		33: "f6a5440b3c1adb698e9fe8894ffe5adccdd0f17c63bef3bed9db2379dbbb98ff",
+		33: "d7aa8759674d1178721e0326dc7f5f298e9afe860ba3f37148516537dfef67ec",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -312,7 +332,7 @@ var (
 		30: "9b5dde3f88bebb178ad918e86607113f312fdda56bd859b72450286e1a1f6182",
 		31: "f4b83986f7def2d4f1f49dce1074b828bb0bb2a3ff042ced1a512b8443407c90",
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
-		33: "bf863e6c9b0d675aaf91b624c787c9b07fca753563ff1ed2a3c38e66410d5e77",
+		33: "f6ac153b2a02890f63120516a4d8894fb8ff5e6bef107e627d72776741df277f",
 	}
 )
 
