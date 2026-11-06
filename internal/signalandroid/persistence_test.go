@@ -130,6 +130,44 @@ func TestRerunAfterGroupMemberWriteFailureRestoresRecipients(t *testing.T) {
 	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
 }
 
+func TestRerunAfterGroupRosterReadFailureRestoresRecipients(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
+	opts := DefaultOptions()
+	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+	summary, err := NewImporter(st, longTextReadFailureProgress{onStart: func() {
+		// Make the roster unavailable after schema detection.
+		changeFixture(t, dir, `ALTER TABLE group_membership RENAME TO unreadable_membership`)
+	}}).Import(t.Context(), path, opts)
+	require.NoError(err)
+
+	assert.Equal(int64(1), summary.Errors)
+	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the chat's messages unarchived until its roster can be read")
+
+	changeFixture(t, dir, `ALTER TABLE unreadable_membership RENAME TO group_membership`)
+	summary = runImport(t, st, dir, storage)
+	assert.Zero(summary.Errors)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT p.phone_number FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		JOIN participants p ON p.id = mr.participant_id
+		WHERE mr.recipient_type = 'to' AND m.source_message_id = ?`),
+		"signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup))
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var phones []string
+	for rows.Next() {
+		var phone string
+		require.NoError(rows.Scan(&phone))
+		phones = append(phones, phone)
+	}
+	require.NoError(rows.Err())
+	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, phones)
+}
+
 func TestRerunCountsUnchanged(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewTestStore(t), t.TempDir()

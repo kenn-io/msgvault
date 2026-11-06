@@ -48,8 +48,7 @@ type schema struct {
 	attachmentType    string
 	attachmentColumns map[string]bool
 
-	hasGroups          bool
-	hasGroupMembership bool
+	hasGroups bool
 
 	messageColumns map[string]bool
 }
@@ -158,7 +157,9 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	if err != nil {
 		return nil, err
 	}
-	s.hasGroupMembership = membership["group_id"] && membership["recipient_id"]
+	if !membership["group_id"] || !membership["recipient_id"] {
+		return nil, fmt.Errorf("%w: group membership details are missing", ErrUnsupportedDatabase)
+	}
 	reaction, err := sqliteutil.TableColumns(ctx, db, "reaction")
 	if err != nil {
 		return nil, err

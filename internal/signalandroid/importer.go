@@ -405,13 +405,12 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 	r.imp.progress.OnChatStart(sourceConvID, progressTitle, 0)
 
 	members := []int64{r.selfRecipientID}
-	membersRead := true
 	if convType == "group_chat" {
-		groupMembers, err := fetchGroupMembers(ctx, r.db, r.schema, chat.GroupID)
+		groupMembers, err := fetchGroupMembers(ctx, r.db, chat.GroupID)
 		if err != nil {
-			membersRead = false
 			r.summary.Errors++
 			r.imp.progress.OnError(fmt.Errorf("group members of %s: %w", sourceConvID, err))
+			return nil
 		}
 		members = append(members, groupMembers...)
 	} else {
@@ -421,9 +420,6 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 		if pid, ok, _ := r.participant(ctx, member); ok {
 			_ = r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, pid, "member")
 		}
-	}
-	if !membersRead {
-		members = nil
 	}
 
 	var chatAdded int64

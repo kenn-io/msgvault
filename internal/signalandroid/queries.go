@@ -68,28 +68,25 @@ func fetchGroupTitles(ctx context.Context, db *sql.DB, s *schema) (map[string]st
 
 // fetchGroupMembers returns the recipient IDs of a group's current members,
 // from group_membership.
-func fetchGroupMembers(ctx context.Context, db *sql.DB, s *schema, groupID string) ([]int64, error) {
-	if s.hasGroupMembership {
-		rows, err := db.QueryContext(ctx,
-			`SELECT recipient_id FROM group_membership WHERE group_id = ? ORDER BY recipient_id`, groupID)
-		if err != nil {
-			return nil, fmt.Errorf("query group membership: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		var members []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, fmt.Errorf("scan group member: %w", err)
-			}
-			members = append(members, id)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate group membership: %w", err)
-		}
-		return members, nil
+func fetchGroupMembers(ctx context.Context, db *sql.DB, groupID string) ([]int64, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT recipient_id FROM group_membership WHERE group_id = ? ORDER BY recipient_id`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("query group membership: %w", err)
 	}
-	return nil, nil
+	defer func() { _ = rows.Close() }()
+	var members []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan group member: %w", err)
+		}
+		members = append(members, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate group membership: %w", err)
+	}
+	return members, nil
 }
 
 // fetchThreads lists the chats that hold at least one message.

@@ -205,7 +205,6 @@ Each message commits with its text, attachments, reactions, and sender membershi
 If a reaction's author conflicts with existing people, that message keeps its previous snapshot and the import reports an error.
 Missing, oversized, or failed attachment files leave message text available and count as missing or skipped attachments. File storage failures also count as errors. Reruns store files that become available later.
 If the import fails or is interrupted, rerun it to finish and repair conversation counts.
-The reaction additions in the summary count committed additions.
 The message summary separates new messages from those already archived, including unchanged messages.
 The unresolved reply count covers messages written in that run.
 
