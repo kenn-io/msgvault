@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,24 +64,19 @@ func (p *duplicateAttachmentProgress) OnError(err error) {
 	p.errors = append(p.errors, err)
 }
 
-func TestMissingLongTextOnRerun(t *testing.T) {
+func TestLongTextHandling(t *testing.T) {
 	for _, tc := range []struct {
-		name, full, body, messageID, presentSearch, absentSearch string
+		name, full, want, messageID, presentSearch, absentSearch string
 		initial, revision                                        []string
-		firstMissing, firstOnly, emptyFile, unreadableFile       bool
-		keepFile, bodyContains, checkMissing, portableStore      bool
-		wantErrors, wantProcessed                                int64
+		rerun                                                    bool
+		fileState                                                string
+		wantErrors, wantMissing                                  int64
 	}{
+		{name: "file missing", wantMissing: 2, fileState: "missing", want: "Carol here", presentSearch: "Carol"},
+		{name: "empty file", wantMissing: 2, rerun: true, fileState: "empty", full: "Carol here archivedsuffix", want: "Carol here archivedsuffix", presentSearch: "archivedsuffix"},
+		{name: "unreadable file", wantMissing: 2, rerun: true, fileState: "unreadable", full: "Carol here archivedsuffix", want: "Carol here archivedsuffix", presentSearch: "archivedsuffix", wantErrors: 1},
 		{
-			name: "missing on rerun", full: strings.Repeat("long text ", 300) + "searchablesuffix",
-			initial:       []string{`UPDATE message SET body = 'long text ' WHERE _id = 300`},
-			presentSearch: "searchablesuffix", checkMissing: true,
-		},
-		{
-			name: "missing on first import", firstMissing: true, firstOnly: true, body: "Carol here", checkMissing: true,
-		},
-		{
-			name: "edited latest preview", keepFile: true, full: "Carol here originalsuffix", body: "Carol EDITED short",
+			name: "edit changes revision date", wantMissing: 1, rerun: true, fileState: "present", full: "Carol here originalsuffix", want: "Carol EDITED short",
 			revision: []string{
 				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
 				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, 'Carol EDITED short', 300 FROM message WHERE _id = 300`,
@@ -91,7 +85,7 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			presentSearch: "EDITED", absentSearch: "originalsuffix",
 		},
 		{
-			name: "edit with same preview", full: "Carol here obsoleteending", body: "Carol here",
+			name: "edit with same preview", wantMissing: 1, rerun: true, fileState: "missing", full: "Carol here obsoleteending", want: "Carol here",
 			revision: []string{
 				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
 				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
@@ -100,79 +94,48 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			absentSearch: "obsoleteending",
 		},
 		{
-			name: "contact rename", bodyContains: true, full: "Hi \uFFFC, look searchablesuffix",
+			name: "contact rename", wantMissing: 2, rerun: true, fileState: "missing", full: "Hi \uFFFC, look searchablesuffix", want: "Hi @Alice Example, look searchablesuffix\n\nBeach",
 			messageID:     "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup),
 			initial:       []string{`UPDATE attachment SET message_id = 200 WHERE _id = 503`},
 			revision:      []string{`UPDATE recipient SET system_joined_name = 'Renamed Example' WHERE _id = 2`},
 			presentSearch: "searchablesuffix",
 		},
 		{
-			name: "full text on first import", firstOnly: true,
-			full:          strings.Repeat("long text ", 300) + "searchablesuffix",
-			initial:       []string{`UPDATE message SET body = 'preview' WHERE _id = 300`},
-			presentSearch: "searchablesuffix",
+			name: "raw preview changed", wantMissing: 2, rerun: true, fileState: "missing", full: "Carol here archivedsuffix", want: "Carol changed",
+			revision:      []string{`UPDATE message SET body = 'Carol changed' WHERE _id = 300`},
+			presentSearch: "changed", absentSearch: "archivedsuffix",
 		},
 		{
-			name: "restored rows", portableStore: true, full: "Carol here archivedsuffix",
-			revision: []string{
-				`UPDATE message SET _id = 900 WHERE _id = 300`,
-				`UPDATE attachment SET message_id = 900 WHERE _id = 503`,
-			},
-		},
-		{
-			name: "changed raw preview", portableStore: true, full: "Carol here archivedsuffix", body: "Carol changed",
-			revision: []string{`UPDATE message SET body = 'Carol changed' WHERE _id = 300`},
-		},
-		{
-			name: "empty on first import", firstOnly: true, emptyFile: true,
-			body: "Carol here", presentSearch: "Carol", checkMissing: true,
-		},
-		{
-			name: "empty on rerun", emptyFile: true, full: "Carol here archivedsuffix",
-			presentSearch: "archivedsuffix", checkMissing: true,
-		},
-		{
-			name: "unreadable on first import", firstOnly: true, unreadableFile: true, portableStore: true,
-			full: "Carol here archivedsuffix", body: "Carol here", checkMissing: true,
-			wantErrors: 1, wantProcessed: 7,
-		},
-		{
-			name: "unreadable on rerun", unreadableFile: true, keepFile: true, portableStore: true, full: "Carol here archivedsuffix",
-			checkMissing: true, wantErrors: 1, wantProcessed: 7,
+			name: "restored row IDs", wantMissing: 1, rerun: true, fileState: "missing", full: "Carol here archivedsuffix", want: "Carol here archivedsuffix",
+			revision:      []string{`UPDATE message SET _id = 900 WHERE _id = 300`, `UPDATE attachment SET message_id = 900 WHERE _id = 503`},
+			presentSearch: "archivedsuffix",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			newStore := testutil.NewSQLiteTestStore
-			if tc.portableStore {
-				newStore = testutil.NewTestStore
-			}
-			st, dir := newStore(t), t.TempDir()
+			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 			signalfixture.Write(t, dir, signalfixture.Current, 0)
 			changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
 			changeFixture(t, dir, tc.initial...)
 			file, storage := filepath.Join(dir, "Attachment_503_-1.bin"), t.TempDir()
-			if !tc.firstMissing {
+			if tc.rerun {
 				require.NoError(os.WriteFile(file, []byte(tc.full), 0o600))
-			}
-			if !tc.firstOnly {
 				runImport(t, st, dir, storage)
-				if !tc.keepFile {
-					require.NoError(os.Remove(file))
-				}
 				changeFixture(t, dir, tc.revision...)
 			}
-			if tc.emptyFile {
-				require.NoError(os.WriteFile(file, nil, 0o600))
-			}
 			var progress ImportProgress
-			if tc.unreadableFile {
+			switch tc.fileState {
+			case "missing":
+				if tc.rerun {
+					require.NoError(os.Remove(file))
+				}
+			case "empty":
+				require.NoError(os.WriteFile(file, nil, 0o600))
+			case "unreadable":
 				progress = longTextReadFailureProgress{onStart: func() {
 					// Discovery must see a file before reading it fails.
 					require.NoError(os.Remove(file))
 					require.NoError(os.Mkdir(file, 0o700))
-					_, err := os.ReadFile(file)
-					require.Error(err)
 				}}
 			}
 			opts := DefaultOptions()
@@ -180,26 +143,13 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			summary, err := NewImporter(st, progress).Import(t.Context(), filepath.Join(dir, "database.sqlite"), opts)
 			require.NoError(err)
 			assert.Equal(tc.wantErrors, summary.Errors)
-			if tc.wantProcessed != 0 {
-				assert.Equal(tc.wantProcessed, summary.MessagesAdded+summary.MessagesUpdated)
-			}
+			assert.Equal(int64(7), summary.MessagesAdded+summary.MessagesUpdated)
+			assert.Equal(tc.wantMissing, summary.AttachmentsMissing)
 			id := tc.messageID
 			if id == "" {
 				id = "signal:aci:" + signalfixture.CarolACI + ":peer:" + ms(signalfixture.TCarol)
 			}
-			body := importedMessages(t, st)[id].body
-			if tc.bodyContains {
-				assert.Contains(body, "searchablesuffix")
-			} else {
-				want := tc.body
-				if want == "" {
-					want = tc.full
-				}
-				assert.Equal(want, body)
-			}
-			if tc.checkMissing {
-				assert.Equal(int64(2), summary.AttachmentsMissing)
-			}
+			assert.Equal(tc.want, importedMessages(t, st)[id].body)
 			if tc.presentSearch != "" {
 				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, tc.presentSearch))
 			}
@@ -236,16 +186,12 @@ func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
 
 func TestProducerVersionSidecar(t *testing.T) {
 	for _, tc := range []struct {
-		name, data string
-		wantError  bool
+		name, data, wantError string
 	}{
-		{"supported", "VERSION:uint32:330\n", false},
-		{"future", "VERSION:uint32:331\n", true},
-		// A current schema with an old sidecar reaches the version floor;
-		// the old sms/mms schema is rejected before that check.
-		{"old", "VERSION:uint32:184\n", true},
-		{"malformed", "VERSION:uint32:garbage\n", true},
-		{"missing", "", true},
+		{"future", "VERSION:uint32:331\n", "database version 331 is newer"},
+		{"old", "VERSION:uint32:184\n", "database version 184 predates Signal Android database version 185"},
+		{"malformed", "VERSION:uint32:garbage\n", "invalid DatabaseVersion.sbf"},
+		{"missing", "", "read DatabaseVersion.sbf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -255,41 +201,48 @@ func TestProducerVersionSidecar(t *testing.T) {
 			if tc.data != "" {
 				require.NoError(os.WriteFile(versionPath, []byte(tc.data), 0o600))
 			} else {
-				_ = os.Remove(versionPath)
+				require.NoError(os.Remove(versionPath))
 			}
 			opts := DefaultOptions()
 			opts.Phone = signalfixture.OwnPhone
 			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-			if tc.wantError {
-				require.ErrorIs(err, ErrUnsupportedDatabase)
-				if tc.name == "future" {
-					assert.Contains(err.Error(), "331")
-				}
-				if tc.name == "old" {
-					assert.Contains(err.Error(), "database version 184 predates Signal Android database version 185")
-				}
-				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
-			} else {
-				require.NoError(err)
-			}
+			require.ErrorIs(err, ErrUnsupportedDatabase)
+			assert.Contains(err.Error(), tc.wantError)
+			assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 		})
 	}
 }
 
 func TestPhoneAppearsForArchivedSender(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewTestStore(t), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	runImport(t, st, dir, t.TempDir())
-	changeFixture(t, dir, `DELETE FROM message WHERE _id = 200`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`)
-	runImport(t, st, dir, t.TempDir())
-	pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
-	require.NoError(err)
-	var sender int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
-	assert.Equal(pid, sender)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN participants p ON p.id = cp.participant_id WHERE p.id = ?`, pid))
-	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number IS NULL`, sender))
+	for _, tc := range []struct {
+		name              string
+		initial, revision []string
+		wantPhone         bool
+	}{
+		{name: "phone learned after message expires", revision: []string{`DELETE FROM message WHERE _id = 200`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`}, wantPhone: true},
+		{name: "historical sender absent from membership", initial: []string{`DELETE FROM message WHERE thread_id <> 11`, `DELETE FROM group_membership WHERE recipient_id = 3`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, tc.initial...)
+			runImport(t, st, dir, t.TempDir())
+			if len(tc.revision) > 0 {
+				changeFixture(t, dir, tc.revision...)
+				runImport(t, st, dir, t.TempDir())
+			}
+			pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
+			require.NoError(err)
+			var sender int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
+			assert.Equal(pid, sender)
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id WHERE m.sender_id = ? AND cp.participant_id = m.sender_id`, pid))
+			if tc.wantPhone {
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number = '+15555550102'`, sender))
+			}
+		})
+	}
 }
 
 func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {

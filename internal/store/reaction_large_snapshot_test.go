@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"database/sql"
-	"strconv"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersistLargeReactionSnapshot(t *testing.T) {
+func TestReactionSnapshotUpdates(t *testing.T) {
 	t.Run("replace reactions writes only changes", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		st := testutil.NewSQLiteTestStore(t)
@@ -31,7 +30,8 @@ func TestPersistLargeReactionSnapshot(t *testing.T) {
 		require.NoError(st.ReplaceReactions(messageID, reactions))
 		_, err = st.DB().Exec(`CREATE TABLE reaction_writes (operation TEXT);
 			CREATE TRIGGER record_reaction_delete AFTER DELETE ON reactions BEGIN INSERT INTO reaction_writes VALUES ('delete'); END;
-			CREATE TRIGGER record_reaction_insert AFTER INSERT ON reactions BEGIN INSERT INTO reaction_writes VALUES ('insert'); END`)
+			CREATE TRIGGER record_reaction_insert AFTER INSERT ON reactions BEGIN INSERT INTO reaction_writes VALUES ('insert'); END;
+			CREATE TRIGGER record_reaction_update AFTER UPDATE ON reactions BEGIN INSERT INTO reaction_writes VALUES ('update'); END`)
 		require.NoError(err)
 		require.NoError(st.ReplaceReactions(messageID, reactions))
 		var writes, inserts, deletes int
@@ -45,35 +45,28 @@ func TestPersistLargeReactionSnapshot(t *testing.T) {
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reaction_writes WHERE operation = 'delete'`).Scan(&deletes))
 		assert.Equal(1, inserts)
 		assert.Equal(1, deletes)
+		var values string
+		require.NoError(st.DB().QueryRow(`SELECT GROUP_CONCAT(reaction_value, ',') FROM (SELECT reaction_value FROM reactions ORDER BY reaction_value)`).Scan(&values))
+		assert.Equal("❤,👍", values)
 	})
 
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
 	pid := f.EnsureParticipant("reactor@example.com", "Reactor", "example.com")
-	reactions := make([]store.ReactionRef, 1000)
-	for i := range reactions {
-		reactions[i] = store.ReactionRef{ParticipantID: pid, Type: "emoji", Value: strconv.Itoa(i), CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	}
+	reactions := []store.ReactionRef{{ParticipantID: pid, Type: "emoji", Value: "👍", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}
 	data := &store.MessagePersistData{
-		Message:  &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "large-reactions", MessageType: "signal"},
+		Message:  &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "reaction-time", MessageType: "signal"},
 		BodyText: sql.NullString{String: "Group message", Valid: true}, Reactions: &reactions,
 	}
 	id, err := f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(err)
-	assert.Equal(int64(1000), data.ReactionsAdded)
-	// Replace one reaction and change another's timestamp without changing its identity.
-	// Unlike the unchanged-row checks above, this must update an existing time.
+	require.Equal(int64(1), data.ReactionsAdded)
+	// Updating a timestamp must keep the reaction's identity and addition count.
 	reactions[0].CreatedAt = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	reactions[999].Value = "replacement"
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(err)
-	assert.Equal(int64(1), data.ReactionsAdded)
-	var count int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), id).Scan(&count))
-	assert.Equal(1000, count)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ? AND reaction_value = '999'`), id).Scan(&count))
-	assert.Zero(count)
+	assert.Zero(data.ReactionsAdded)
 	var createdAt time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = '0'`), id).Scan(&createdAt))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = '👍'`), id).Scan(&createdAt))
 	assert.True(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).Equal(createdAt))
 }

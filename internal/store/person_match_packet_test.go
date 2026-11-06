@@ -20,15 +20,17 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, display_value, is_primary)
-		VALUES (?, 'signal_aci', ?, ?, FALSE)`), left, "00000000-0000-4000-8000-000000000001", "Signal account")
+		VALUES (?, 'signal', ?, ?, FALSE), (?, 'signal_aci', ?, ?, FALSE)`),
+		left, "00000000-0000-4000-8000-000000000001", "Signal account",
+		left, "00000000-0000-4000-8000-000000000002", "Unscored account")
 	require.NoError(err)
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
 	assert.Equal("Pair Left", summaries.Left.DisplayName)
 	assert.Equal("Pair Right", summaries.Right.DisplayName)
 	assert.Equal("participant", summaries.Left.Kind)
-	assert.Len(summaries.Left.Identifiers, 1)
-	assert.Equal("pair-left", summaries.Left.Identifiers[0].Value)
+	require.Len(summaries.Left.Identifiers, 2)
+	assert.ElementsMatch([]string{"pair-left", "00000000-0000-4000-8000-000000000001"}, []string{summaries.Left.Identifiers[0].Value, summaries.Left.Identifiers[1].Value})
 }
 
 func TestPersonMatchPairSummariesFlagClippedFields(t *testing.T) {

@@ -182,11 +182,12 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 }
 
 func TestImportSenderSharedName(t *testing.T) {
-	for _, tc := range []struct{ name, given, family, profile, want string }{
+	for _, tc := range []struct{ name, given, family, system, profile, nickname, want string }{
 		{name: "given only", given: "Bob", want: "Bob"},
 		{name: "family only", family: "Example", want: "Example"},
 		{name: "full name", given: "Bob", family: "Example", want: "Bob Example"},
 		{name: "profile takes precedence", given: "Shared", family: "Name", profile: "Bob Example", want: "Bob Example"},
+		{name: "nickname takes precedence", given: "Shared", family: "Name", system: "System name", profile: "Bob Example", nickname: "Example nickname", want: "Example nickname"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -195,7 +196,7 @@ func TestImportSenderSharedName(t *testing.T) {
 			changeFixture(t, dir,
 				`ALTER TABLE recipient ADD COLUMN shared_given_name TEXT DEFAULT NULL`,
 				`ALTER TABLE recipient ADD COLUMN shared_family_name TEXT DEFAULT NULL`,
-				`UPDATE recipient SET system_joined_name = NULL, profile_joined_name = '`+tc.profile+`', shared_given_name = '`+tc.given+`', shared_family_name = '`+tc.family+`' WHERE aci = '`+signalfixture.BobACI+`'`,
+				`UPDATE recipient SET system_joined_name = '`+tc.system+`', profile_joined_name = '`+tc.profile+`', nickname_joined_name = '`+tc.nickname+`', shared_given_name = '`+tc.given+`', shared_family_name = '`+tc.family+`' WHERE aci = '`+signalfixture.BobACI+`'`,
 			)
 			st := testutil.NewTestStore(t)
 			runImport(t, st, dir, t.TempDir())
@@ -246,7 +247,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 	}{
 		{
 			name: "not signal", version: 215,
-			ddl:  []string{`CREATE TABLE message (_id INTEGER PRIMARY KEY)`},
+			ddl:  nil,
 			want: "chat details are missing; use database.sqlite from a Signal Android backup",
 		},
 		{
@@ -260,7 +261,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			want: "predates Signal Android database version 185",
 		},
 		{
-			// A damaged schema exercises the defensive column check.
+			// Missing authorship must fail schema validation before an import starts.
 			name: "damaged message authorship columns", version: 215,
 			ddl: []string{
 				`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, uuid TEXT, phone TEXT, group_id TEXT)`,
@@ -278,15 +279,18 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			path := writeTablesFixture(t, tt.version, tt.ddl...)
 			opts := DefaultOptions()
 			opts.Phone = signalfixture.OwnPhone
-			_, err := NewImporter(testutil.NewTestStore(t), nil).Import(context.Background(), path, opts)
+			st := testutil.NewTestStore(t)
+			_, err := NewImporter(st, nil).Import(context.Background(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tt.want)
+			assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 		})
 	}
 }
 
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
-	// Deliberately damaged exports must fail before changing an archive.
+	// Each missing column guards its own schema check. Reject it before
+	// creating a source or updating an existing archive.
 	for _, tc := range []struct{ name, change, want string }{
 		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
 		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
@@ -312,19 +316,19 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 			runImport(t, st, dir, storage)
 			before := importedMessages(t, st)
 			reactions := countRows(t, st, `SELECT COUNT(*) FROM reactions`)
-			changeFixture(t, dir, tc.change)
+			changeFixture(t, dir, tc.change, `UPDATE message SET body = 'Changed text' WHERE _id = 300`)
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			fresh := testutil.NewSQLiteTestStore(t)
+			_, err := NewImporter(fresh, nil).Import(t.Context(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tc.want)
+			assert.Zero(countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
+
+			_, err = NewImporter(st, nil).Import(t.Context(), path, opts)
+			require.Error(err)
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
-
-			fresh := testutil.NewSQLiteTestStore(t)
-			_, err = NewImporter(fresh, nil).Import(t.Context(), path, opts)
-			require.ErrorIs(err, ErrUnsupportedDatabase)
-			assert.Zero(countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
 		})
 	}
 }
@@ -384,6 +388,7 @@ func TestSkipReason(t *testing.T) {
 	}{
 		{"incoming signal message", sigMessage{Type: signalfixture.TypeIncoming}, ""},
 		{"outgoing signal message", sigMessage{Type: signalfixture.TypeOutgoing}, ""},
+		{"sending skipped", sigMessage{Type: 28 | pushMessageBit | secureMessageBit}, ""},
 		{"plain sms", sigMessage{Type: signalfixture.TypeSMSIncoming}, "sms"},
 		{"call", sigMessage{Type: signalfixture.TypeCallIncoming}, "event"},
 		{"group update", sigMessage{Type: signalfixture.TypeGroupUpdate}, "event"},
@@ -392,6 +397,7 @@ func TestSkipReason(t *testing.T) {
 		{"draft", sigMessage{Type: 27 | secureMessageBit}, "event"},
 		{"story", sigMessage{Type: signalfixture.TypeIncoming, StoryType: 1}, "story"},
 		{"group story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: 9}, "story"},
+		{"direct story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: -9}, ""},
 		{"deleted for everyone", sigMessage{Type: signalfixture.TypeIncoming, RemoteDeleted: 1}, "deleted"},
 		{"scheduled", sigMessage{Type: signalfixture.TypeOutgoing, ScheduledDate: 1}, "scheduled"},
 	}

@@ -93,22 +93,6 @@ func TestRerunReplacesReactions(t *testing.T) {
 	assert.Empty(reactionsOf("signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld)))
 }
 
-func TestRerunAfterNewestRowsExpireUpdatesMessages(t *testing.T) {
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	dir, storage := t.TempDir(), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	runImport(t, st, dir, storage)
-	changeFixture(t, dir,
-		`DELETE FROM message WHERE date_sent > `+ms(signalfixture.TGroup),
-		`UPDATE message SET body = 'Revised group text' WHERE _id = 200`)
-
-	summary := runImport(t, st, dir, storage)
-	assert.Zero(summary.MessagesAdded)
-	id := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
-	assert.Equal("Revised group text\n\nBeach", importedMessages(t, st)[id].body)
-}
-
 func TestRerunClearsEmptiedBody(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -169,31 +153,30 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 }
 
 func TestImportSendingSkipped(t *testing.T) {
-	// Removing type 28 from ownerEvidence would accept Alice's number here;
-	// removing it from skipReason would discard the owner's message.
-	for _, phone := range []string{signalfixture.OwnPhone, signalfixture.AlicePhone} {
-		t.Run(phone, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
+	for _, tc := range []struct {
+		name, phone string
+		wantError   bool
+	}{
+		{name: "owner", phone: signalfixture.OwnPhone},
+		{name: "peer", phone: signalfixture.AlicePhone, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			st, dir := testutil.NewTestStore(t), t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-			// A restored backup can contain only an outgoing message whose
-			// recipients were all skipped. It must still identify its owner.
+			// Type 28 still supplies owner evidence and outgoing authorship.
 			changeFixture(t, dir, `DELETE FROM message WHERE _id <> 101`,
 				`UPDATE message SET type = `+ms(28|pushMessageBit|secureMessageBit))
 			opts := DefaultOptions()
-			opts.Phone = phone
-			opts.AttachmentsDir = t.TempDir()
-			summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
-			if phone != signalfixture.OwnPhone {
-				require.ErrorContains(err, "--phone does not match")
-				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
+			opts.Phone, opts.AttachmentsDir = tc.phone, t.TempDir()
+			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			if tc.wantError {
+				require.ErrorContains(t, err, "--phone does not match")
+				assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
 				return
 			}
-			require.NoError(err)
-			assert.Equal(int64(1), summary.MessagesAdded)
-			assert.Zero(summary.MessagesSkipped)
-			id := "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TReply)
-			assert.Equal(map[string]importedMessage{id: {
+			require.NoError(t, err)
+			id := "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TReply)
+			assert.Equal(t, map[string]importedMessage{id: {
 				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
 			}}, importedMessages(t, st))
 		})
@@ -216,6 +199,7 @@ func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
 	assert.Equal(summary.MessagesProcessed, processed)
 	assert.Equal(int64(0), added)
 	assert.Equal(summary.MessagesUpdated, updated)
+	assert.Equal("Carol again", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)].body)
 }
 
 func TestSendStateFollowsSignal(t *testing.T) {

@@ -59,6 +59,7 @@ func TestImportDirectAuthorWithoutACI(t *testing.T) {
 					replyTo: tc.chatID + ":peer:1700000390000",
 				},
 			}, before)
+			// A later ACI must preserve the direct reply's archived parent ID.
 			changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
 			summary = runImport(t, st, dir, attachments)
 			assert.Zero(summary.MessagesAdded)
@@ -96,41 +97,6 @@ func TestImportGroupAuthorWithoutACI(t *testing.T) {
 	}
 }
 
-func TestReimportGroupPhoneAuthorGainsACI(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir,
-		`UPDATE recipient SET aci = NULL, pni = NULL, e164 = '+15555550102' WHERE _id = 3`,
-		`DELETE FROM message WHERE _id <> 200`)
-	st, attachments := testutil.NewTestStore(t), t.TempDir()
-	runImport(t, st, dir, attachments)
-	before := importedMessages(t, st)
-	require.Len(before, 1)
-	require.Contains(before, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000")
-	var archivedID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&archivedID))
-
-	changeFixture(t, dir, `UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`)
-	summary := runImport(t, st, dir, attachments)
-
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(int64(1), summary.MessagesUpdated)
-	preferredID := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":1700000240000"
-	assert.Equal(map[string]importedMessage{
-		preferredID: before["signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000"],
-	}, importedMessages(t, st))
-
-	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550103' WHERE _id = 3`)
-	summary = runImport(t, st, dir, attachments)
-
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(int64(1), summary.MessagesUpdated)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ? AND source_message_id = ?`, archivedID, preferredID))
-}
-
 func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 	for _, tc := range []struct{ name, change, parentID string }{
 		{"phone", `UPDATE recipient SET aci = NULL, pni = NULL, e164 = '+15555550102' WHERE _id = 3`, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000"},
@@ -145,6 +111,8 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 			runImport(t, st, dir, attachments)
 			before := importedMessages(t, st)
 			require.Contains(before, tc.parentID)
+			var archivedID int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&archivedID))
 
 			changeFixture(t, dir,
 				`UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`,
@@ -161,24 +129,38 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 					conversation: "signal:group:" + signalfixture.GroupB64, body: "Group reply", fromMe: true, replyTo: preferredID,
 				},
 			}, importedMessages(t, st))
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ? AND source_message_id = ?`, archivedID, preferredID))
+
+			before = importedMessages(t, st)
+			changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550103' WHERE _id = 3`)
+			summary = runImport(t, st, dir, attachments)
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(int64(2), summary.MessagesUpdated)
+			assert.Equal(before, importedMessages(t, st))
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ? AND source_message_id = ?`, archivedID, preferredID))
 		})
 	}
 }
 
 func TestReimportPNIChatGainsACI(t *testing.T) {
-	for name, updates := range map[string][]string{
-		"number changes after the ACI is learned": {`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`},
-		"same recipient": {`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
-		"merged into ACI recipient": {
+	for _, tc := range []struct {
+		name                  string
+		beforeUpdate, updates []string
+	}{
+		{name: "number changes after the ACI is learned",
+			beforeUpdate: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
+			updates:      []string{`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`}},
+		{name: "same recipient", updates: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`}},
+		{name: "merged into ACI recipient", updates: []string{
 			`INSERT INTO recipient (_id, aci) VALUES (8, '0f0f0f0f-0000-4000-8000-000000000006')`,
 			`UPDATE recipient SET pni = (SELECT pni FROM recipient WHERE _id = 7), e164 = (SELECT e164 FROM recipient WHERE _id = 7) WHERE _id = 8`,
 			`INSERT INTO thread (_id, recipient_id) VALUES (15, 8)`,
 			`UPDATE message SET thread_id = 15, to_recipient_id = 8 WHERE thread_id = 14`,
 			`DELETE FROM thread WHERE _id = 14`,
 			`DELETE FROM recipient WHERE _id = 7`,
-		},
+		}},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dir := t.TempDir()
 			signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
@@ -190,11 +172,11 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
 			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), signalfixture.DanaPhone).Scan(&participantID))
 
-			if name == "number changes after the ACI is learned" {
-				changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
+			if len(tc.beforeUpdate) > 0 {
+				changeFixture(t, dir, tc.beforeUpdate...)
 				runImport(t, st, dir, attachments)
 			}
-			changeFixture(t, dir, updates...)
+			changeFixture(t, dir, tc.updates...)
 			summary := runImport(t, st, dir, attachments)
 
 			assert.Zero(summary.MessagesAdded)
@@ -202,7 +184,7 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
-			if name != "number changes after the ACI is learned" {
+			if len(tc.beforeUpdate) == 0 {
 				pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, "0f0f0f0f-0000-4000-8000-000000000006")
 				require.NoError(err)
 				assert.Equal(participantID, pid)

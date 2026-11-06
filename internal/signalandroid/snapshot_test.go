@@ -23,8 +23,8 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 }
 
 func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
-	// Corrupt SQLite values exercise defensive scan-error handling. These
-	// aren't layouts emitted by Signal; triggers can't reject a SELECT.
+	// Inject scan failures to guard the importer's attachment and mention
+	// error returns. SQLite SELECTs cannot be rejected by triggers.
 	for _, tc := range []struct{ name, change, wantError string }{
 		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
 		{"mentions", `UPDATE mention SET range_start = 'invalid' WHERE message_id = 200`, "read Signal mentions"},
@@ -72,40 +72,21 @@ type cancelProgress struct {
 func (p cancelProgress) OnProgress(_, _, _ int64) { p.cancel() }
 
 func TestInterruptedImportKeepsConversationState(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		changes   []string
-		batchSize int
-	}{
-		{name: "conversation count", batchSize: 2},
-		{name: "historical sender", batchSize: 1, changes: []string{
-			`DELETE FROM message WHERE thread_id <> 11`,
-			`DELETE FROM group_membership WHERE recipient_id = 3`,
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st, dir := testutil.NewTestStore(t), t.TempDir()
-			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-			changeFixture(t, dir, tc.changes...)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			opts := DefaultOptions()
-			opts.Phone, opts.BatchSize = signalfixture.OwnPhone, tc.batchSize
-			summary, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
-			require.ErrorIs(err, context.Canceled)
-			require.NotNil(summary)
-			assert.Equal(int64(tc.batchSize), summary.MessagesAdded)
-			assert.Equal(tc.batchSize, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-			if tc.name == "historical sender" {
-				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
-			} else {
-				var count int
-				require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
-				assert.Equal(2, count)
-			}
-		})
-	}
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewTestStore(t), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	opts := DefaultOptions()
+	opts.Phone, opts.BatchSize = signalfixture.OwnPhone, 2
+	summary, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
+	require.ErrorIs(err, context.Canceled)
+	require.NotNil(summary)
+	assert.Equal(int64(2), summary.MessagesAdded)
+	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
+	assert.Equal(2, count)
 }
 
 func TestImportSnapshotReportsWriteFailures(t *testing.T) {
