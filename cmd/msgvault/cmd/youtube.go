@@ -17,7 +17,7 @@ import (
 
 // Slice 3 installs the separately budgeted caption drain. Existing video roots
 // form its durable queue, so comment-budget exhaustion cannot starve captions.
-var youtubeCaptionSync func(context.Context, *store.Store, *youtube.Client, config.YouTubeSource, *config.Config) error
+var youtubeCaptionSync func(context.Context, *store.Store, *youtube.Client, config.YouTubeSource, *config.Config) (youtube.CaptionSummary, error)
 
 func configuredYouTubeClient(src config.YouTubeSource) (*youtube.Client, error) {
 	for _, key := range []string{src.ClientIDEnv, src.ClientSecretEnv, src.TokenEnv} {
@@ -51,7 +51,9 @@ func syncYouTubeProfile(ctx context.Context, st *store.Store, src config.YouTube
 	// Channel-wide failures stop additional network work. Resource-specific
 	// gaps and ordinary budget stops still allow the independent caption queue.
 	if youtubeCaptionSync != nil && shouldSyncYouTubeCaptions(err) && sum != nil {
-		err = errors.Join(err, youtubeCaptionSync(ctx, st, client, src, cfg))
+		captions, captionErr := youtubeCaptionSync(ctx, st, client, src, cfg)
+		sum.Partial = sum.Partial || captions.Partial
+		err = errors.Join(err, captionErr)
 	}
 	return sum, err
 }
@@ -98,6 +100,9 @@ func newAddYouTubeCmd() *cobra.Command {
 func newSyncYouTubeCmd() *cobra.Command {
 	budget := 1000
 	cmd := &cobra.Command{Use: "sync-youtube [identifier]", Short: "Poll registered YouTube videos, comments and replies", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := applyYouTubeCaptionFlags(cmd, nil); err != nil {
+			return usageErr(cmd, err)
+		}
 		if budget < 2 || budget > 100000 {
 			return usageErr(cmd, errors.New("--max-requests must be between 2 and 100000"))
 		}
@@ -111,6 +116,10 @@ func newSyncYouTubeCmd() *cobra.Command {
 		profiles, err := resolveYouTubeProfiles(args, state.cfg)
 		if err != nil {
 			return err
+		}
+		profiles, err = applyYouTubeCaptionFlags(cmd, profiles)
+		if err != nil {
+			return usageErr(cmd, err)
 		}
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
@@ -134,6 +143,8 @@ func newSyncYouTubeCmd() *cobra.Command {
 		return errors.Join(errs...)
 	}}
 	cmd.Flags().IntVar(&budget, "max-requests", 1000, "maximum Data API requests including channel verification (minimum 2)")
+	cmd.Flags().Bool("captions", false, "attach an official non-ASR transcript (overrides this run's profile setting)")
+	cmd.Flags().Int("caption-units", youtube.DefaultCaptionUnits, "separate caption quota units for this run (list 50, download 200)")
 	return cmd
 }
 

@@ -17,6 +17,8 @@ type YouTubeSource struct {
 	ClientSecretEnv string `toml:"client_secret_env"`
 	Enabled         bool   `toml:"enabled"`
 	Schedule        string `toml:"schedule"`
+	Captions        bool   `toml:"captions"`
+	CaptionUnits    int    `toml:"caption_units"`
 }
 
 func (c *Config) GetYouTubeSource(identifier string) *YouTubeSource {
@@ -41,6 +43,9 @@ func (c *Config) validateYouTubeSources() error {
 	channels := map[string]bool{}
 	for i := range c.YouTube {
 		src := &c.YouTube[i]
+		if src.CaptionUnits < 0 {
+			return fmt.Errorf("youtube[%d].caption_units must be nonnegative", i)
+		}
 		src.Identifier = strings.TrimSpace(src.Identifier)
 		src.ChannelID = strings.TrimSpace(src.ChannelID)
 		name := src.Identifier

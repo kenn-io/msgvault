@@ -124,7 +124,7 @@ func safeReason(body []byte) string {
 	}
 	for _, e := range value.Error.Errors {
 		switch e.Reason {
-		case "quotaExceeded", "dailyLimitExceeded", "commentsDisabled", "commentNotFound", "videoNotFound", "invalidPageToken", "forbidden":
+		case "quotaExceeded", "dailyLimitExceeded", "commentsDisabled", "commentNotFound", "videoNotFound", "invalidPageToken", "forbidden", "couldNotConvert":
 			return e.Reason
 		}
 	}

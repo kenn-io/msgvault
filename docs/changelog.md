@@ -16,6 +16,9 @@ All notable changes to msgvault, grouped by release.
 - [YouTube comments](usage/youtube.md) archive one configured owned channel's
   videos, moderated comments and replies with resumable scheduled polling.
   Later cycles append comments on older videos.
+- [YouTube transcripts](usage/youtube-captions.md) optionally attach official
+  non-ASR caption text with independent saved progress and quota. The existing
+  consented attachment mirror can submit the text to Docbank.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and

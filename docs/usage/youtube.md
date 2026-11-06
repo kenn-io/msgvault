@@ -81,5 +81,12 @@ refresh requests do not count against the Data API request budget. No live
 YouTube account or archive was used to verify this adapter: tests use synthetic
 HTTP responses and temporary stores.
 
-This archive slice does not send replies, download captions, download video
-files, scrape pages, or consume a Takeout export.
+## Attach transcripts
+
+[Enable optional captions](youtube-captions.md) to attach official non-ASR
+transcript text to archived video roots. Manual and scheduled runs use a
+separate caption quota budget and saved cursor. Existing Docbank attachment
+consent controls whether those transcripts are mirrored.
+
+This integration does not send public replies, download video files, scrape
+pages, or consume a Takeout export.

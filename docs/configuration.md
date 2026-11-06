@@ -13,6 +13,11 @@ Duplicate profile identifiers or channel IDs fail validation; unknown keys
 and credential values in place of variable names are rejected. See
 [YouTube setup and progress](usage/youtube.md) for a complete example.
 
+`captions = true` enables optional transcript attachments, including scheduled
+syncs. `caption_units` defaults to 2,000 when omitted or zero and must be
+nonnegative. See [YouTube transcripts](usage/youtube-captions.md) for quota,
+progress and attachment behavior.
+
 ## Config File
 
 Default location:
