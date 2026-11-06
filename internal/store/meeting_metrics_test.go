@@ -91,6 +91,25 @@ func TestReviewMeetingMetricsCountsLinkedCopiesOnce(t *testing.T) {
 	}
 }
 
+func TestIndependentMetricsPartialOverlap(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newMeetingQueryFixture(t)
+	_, event := calendarFixture(t, f.store, "series", linkSeriesRaw)
+	ids := f.meetingIDs[:2]
+	for i, id := range ids {
+		for _, key := range [][]string{{"20270307T100000Z", "20270314T100000Z"}, {"20270314T100000Z", "20270321T100000Z"}}[i] {
+			requirements.NoError(f.store.LinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: event, Key: key}))
+		}
+	}
+	metrics, err := f.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
+	requirements.NoError(err)
+	assertions.Equal(meetingcontent.DurationTotals{
+		MeetingCount: 2, KnownDurationCount: 2, TotalKnownSeconds: 5400, AverageKnownSeconds: new(float64(2700)),
+	}, metrics.Totals)
+	requirements.Len(metrics.Months, 1)
+	assertions.Equal(metrics.Totals, metrics.Months[0].Totals)
+}
+
 func TestMeetingMetricsDurationTiesKeepLowestID(t *testing.T) {
 	for _, known := range []bool{true, false} {
 		t.Run(fmt.Sprintf("known=%t", known), func(t *testing.T) {

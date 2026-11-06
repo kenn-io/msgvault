@@ -286,9 +286,10 @@ Transcripts count as attended meetings. Calendar events without a transcript
 don't count. Transcripts linked to the same occurrence count once, including
 across selected sources. In People counts, each transcribed occurrence counts
 once, by transcript date. A transcript linked to two occurrences counts once
-for each. The meeting panel counts copies of one occurrence once, using the
-longest known duration and that copy's transcript date. Each transcript counts
-at most once in the panel.
+for each. The meeting panel leaves out a transcript only when every occurrence
+it covers is already counted. It considers the longest known duration first
+and uses that copy's transcript date. Each transcript counts at most once in
+the panel.
 Counts update on the next scheduled cache refresh or when you run
 `msgvault build-cache`.
 

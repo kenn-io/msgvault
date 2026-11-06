@@ -87,7 +87,7 @@ func (s *Store) GetMeetingMetricsContext(
 					return fmt.Errorf("resolve meeting count member %d: %w", item.id, err)
 				}
 			}
-			if slices.ContainsFunc(occurrences, func(o linkOccurrence) bool { return taken[o.Identity.countKey()] }) {
+			if len(occurrences) > 0 && !slices.ContainsFunc(occurrences, func(o linkOccurrence) bool { return !taken[o.Identity.countKey()] }) {
 				continue
 			}
 			kept = append(kept, item.id)
