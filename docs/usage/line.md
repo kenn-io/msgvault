@@ -208,7 +208,7 @@ The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
 | `remote_unknown_expired` | Provider retries have stopped without acceptance evidence. The draft can be deleted; its receipt is retained. Sending a replacement could duplicate a message already accepted by LINE. |
 | `accepted_unresolved_expired` | Provider retries have stopped after known acceptance. The draft can be deleted; its receipt is kept. |
 | `credentials_unavailable` error | LINE returned HTTP 401 or 403, or local credentials are unavailable. Fix credentials or channel permissions, then repeat the same reviewed send with its original retry key. |
-| HTTP 429 | A rate limit on the first submission produces `provider_rejected`. A rate limit during recovery keeps the attempt retryable with the same key after `retry_after`. |
+| HTTP 429 | A rate limit on the first submission returns the attempt to `admitted`; retry after `retry_after` with the same key, even after the original cutoff. A rate limit during recovery keeps the attempt retryable with the same key after `retry_after`. |
 
 Every admitted LINE draft can be deleted, even after sending is disabled.
 Deletion cancels an unsent `admitted` attempt and keeps its receipt. A request

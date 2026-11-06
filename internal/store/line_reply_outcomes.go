@@ -35,7 +35,7 @@ func lineReplyRefusalState(state string, outcome LineReplyOutcome) string {
 	switch {
 	case !outcome.DefiniteRejection:
 		return state
-	case outcome.StatusCode == 0 && !lineReplyExpired(state):
+	case (outcome.StatusCode == 0 || outcome.StatusCode == http.StatusTooManyRequests) && !lineReplyExpired(state):
 		return LineReplyAdmitted
 	case outcome.StatusCode >= 400 && outcome.StatusCode < 500 && outcome.StatusCode != http.StatusConflict:
 		return LineReplyProviderRejected
@@ -150,7 +150,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 }
 
 // RecordLineReplyOutcomeContext preserves known acceptance on later failures.
-// A first-request rejection is terminal; a credential refusal leaves it unsent.
+// A first-request rejection is terminal; credential refusals and rate limits leave it unsent.
 func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, outcome LineReplyOutcome) (LineReplyAttempt, error) {
 	prior, err := s.GetLineReplyAttemptContext(ctx, id)
 	if err != nil || lineReplyTerminal(prior.State) {
