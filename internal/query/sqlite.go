@@ -2903,7 +2903,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		count = -1
 	}
 	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
-	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
+	if filter.IncludeHints && limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
 		if hint := e.matchSenderName(ctx, q, filter, true); hint != nil {
 			result.Hints = []SearchHint{*hint}
 		}

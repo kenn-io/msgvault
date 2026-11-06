@@ -1451,6 +1451,9 @@ func (s SearchMessagesByDomainsQuery) Validate() error {
 }
 
 type FastSearchQuery struct {
+	// IncludeHints Compute retry hints after an empty first page
+	IncludeHints *bool `json:"include_hints,omitempty"`
+
 	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 

@@ -251,7 +251,9 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
 	for _, handler := range []toolHandler{h.searchMetadata, h.searchMessages} {
 		for _, term := range []string{"alex", "alex@exam"} {
+			before := requests.Load()
 			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": "from:" + term + " subject:first account:reader@example.test"})
+			assert.Equal(before+1, requests.Load(), "hints must ride the single fast-search request")
 			assert.Empty(response.Data)
 			require.Len(response.Hints, 1)
 			assert.Equal("sender_name_requires_address", response.Hints[0].Code)
@@ -267,7 +269,8 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 
 func TestSearchMetadataSenderNameHintUnknownTotal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+		assert.True(filter.IncludeHints)
 		hint := query.SearchHint{Code: "sender_name_requires_address", Message: "try from:alex@example.com"}
 		hint.RetryWith.Query = "from:alex@example.com"
 		return &query.SearchFastResult{TotalCount: -1, Hints: []query.SearchHint{hint}}, nil

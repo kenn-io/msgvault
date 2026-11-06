@@ -32,20 +32,22 @@ func TestSenderNameHints(t *testing.T) {
 	assertions.Len(results, 4)
 	for _, tc := range []struct {
 		q             string
+		opt           bool
 		limit, offset int
 		want          bool
 	}{
-		{"from:alex subject:hintfixture", 10, 0, true},
-		{"from:alex subject:hintfixture", 0, 0, false},
-		{"from:alex subject:hintfixture", 10, 10, false},
-		{"from:sender3@example.com subject:hintfixture", 10, 0, false},
-		{"from:alex from:kim", 10, 0, false},
-		{"from:alex | from:kim", 10, 0, false},
-		{"from:alex subject:absent", 10, 0, false},
+		{"from:alex subject:hintfixture", true, 10, 0, true},
+		{"from:alex subject:hintfixture", false, 10, 0, false},
+		{"from:alex subject:hintfixture", true, 0, 0, false},
+		{"from:alex subject:hintfixture", true, 10, 10, false},
+		{"from:sender3@example.com subject:hintfixture", true, 10, 0, false},
+		{"from:alex from:kim", true, 10, 0, false},
+		{"from:alex | from:kim", true, 10, 0, false},
+		{"from:alex subject:absent", true, 10, 0, false},
 	} {
-		t.Run(fmt.Sprintf("%s/%d/%d", tc.q, tc.limit, tc.offset), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%t/%d/%d", tc.q, tc.opt, tc.limit, tc.offset), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			result, err := env.Engine.SearchFastWithStats(env.Ctx, search.ParseOR(tc.q), tc.q, MessageFilter{}, ViewNoStats, tc.limit, tc.offset)
+			result, err := env.Engine.SearchFastWithStats(env.Ctx, search.ParseOR(tc.q), tc.q, MessageFilter{IncludeHints: tc.opt}, ViewNoStats, tc.limit, tc.offset)
 			requirements.NoError(err)
 			assertions.Equal(tc.want, len(result.Hints) > 0)
 		})
@@ -88,7 +90,7 @@ func TestSenderHintCandidatesRespectScope(t *testing.T) {
 	overridden := env.AddParticipant(dbtest.ParticipantOpts{Email: new("overridden@example.com"), DisplayName: new("Alex")})
 	id := env.AddMessage(dbtest.MessageOpts{FromID: overridden, Subject: "hintfixture", SourceID: source, ConversationID: conv})
 	env.SetFromName(id, "Jordan")
-	filter := MessageFilter{SourceID: &source}
+	filter := MessageFilter{SourceID: &source, IncludeHints: true}
 	q := search.Parse("from:alex subject:hintfixture")
 	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "", filter, ViewNoStats, 10, 0)
 	requirements.NoError(err)
