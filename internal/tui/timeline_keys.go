@@ -66,8 +66,9 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.timelineState.reader = timelineReaderNone
 			return m, nil
 		}
-		if wasLoading && m.timelineState.result != nil {
+		if (wasLoading || m.timelineState.needsLoad) && m.timelineState.result != nil {
 			m.timelineState.needsLoad = false
+			m.timelineState.err = nil
 			return m, nil
 		}
 		m.popTimelineHistory()

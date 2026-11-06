@@ -197,6 +197,11 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 	if e1 != nil || e2 != nil || end.Before(start) {
 		return Window{}, ErrInvalidRequest
 	}
+	for _, date := range []string{from, to} {
+		if _, err := ParseAnchor(date, loc); err != nil {
+			return Window{}, err
+		}
+	}
 	if !end.Before(start.AddDate(0, 0, 31)) {
 		return Window{}, ErrWindowTooLarge
 	}

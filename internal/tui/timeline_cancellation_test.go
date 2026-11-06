@@ -83,6 +83,41 @@ func TestTimelineInitialLoadFailureKeepsErrorAfterEscape(t *testing.T) {
 	assert.Contains(stripANSI(m.renderView()), failure.Error())
 }
 
+func TestTimelineFailedNavigationEscapeKeepsPageAndHistory(t *testing.T) {
+	for _, cancelKey := range []tea.KeyPressMsg{keyEsc(), {Code: tea.KeyBackspace}} {
+		t.Run(cancelKey.String(), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			m := timelineModeModel()
+			previous, previousRequest := m.timelineState.result, m.timelineState.request
+			m.timelineState.result.Cursor = "second-page"
+			m, cmd := sendKey(t, m, key('n'))
+			requirements.NotNil(cmd)
+			m = sendMsg(t, m, cmd())
+			requirements.Len(m.timelineState.history, 1)
+			displayed, displayedRequest := m.timelineState.result, m.timelineState.request
+			m.timelineState.scroll = 1
+			m, cmd = sendKey(t, m, key(']'))
+			defer m.cancelTimelineRequest()
+			requirements.NotNil(cmd)
+			msg, ok := cmd().(timelineLoadedMsg)
+			requirements.True(ok)
+			msg.result, msg.err = nil, errors.New("day unavailable")
+			m = sendMsg(t, m, msg)
+			m, _ = sendKey(t, m, cancelKey)
+			assertions.Same(displayed, m.timelineState.result)
+			assertions.Equal(displayedRequest, m.timelineState.request)
+			assertions.Equal(1, m.timelineState.scroll)
+			assertions.Len(m.timelineState.history, 1)
+			assertions.False(m.timelineState.needsLoad)
+			requirements.NoError(m.timelineState.err)
+			m, _ = sendKey(t, m, cancelKey)
+			assertions.Same(previous, m.timelineState.result)
+			assertions.Equal(previousRequest, m.timelineState.request)
+			assertions.Empty(m.timelineState.history)
+		})
+	}
+}
+
 func TestTimelineInitialLoadCancellationIsVisible(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	m := timelineModeModel()

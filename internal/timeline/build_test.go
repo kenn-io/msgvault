@@ -8,11 +8,32 @@ import (
 	"slices"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestBuildRejectsSkippedCivilDate(t *testing.T) {
+	f := newTimelineFixture(t)
+	loc, err := time.LoadLocation("Pacific/Apia")
+	require.NoError(t, err)
+	f.src.Location = loc
+	for _, req := range []Request{
+		{Date: "2011-12-30"},
+		{From: "2011-12-30", To: "2011-12-31"},
+		{From: "2011-12-29", To: "2011-12-30"},
+	} {
+		t.Run(fmt.Sprintf("%s/%s/%s", req.Date, req.From, req.To), func(t *testing.T) {
+			req.Scope = Scope{Owner: true}
+			got, err := Build(t.Context(), f.src, req)
+			require.ErrorIs(t, err, ErrInvalidRequest)
+			assert.Nil(t, got)
+			assert.Contains(t, err.Error(), "civil date does not exist")
+		})
+	}
+}
 
 func TestBuildRejectsInvalidRequests(t *testing.T) {
 	f := newTimelineFixture(t)
