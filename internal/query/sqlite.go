@@ -23,6 +23,8 @@ type SQLiteEngine struct {
 	db      *sql.DB
 	dialect Dialect
 
+	senderHintTimeout time.Duration
+
 	// FTS availability cache - thread-safe with mutex.
 	// Only caches successful checks; errors cause retries on next call.
 	ftsMu      sync.Mutex
@@ -41,7 +43,7 @@ const archiveOnlyDeletionTargetGuard = `NOT EXISTS (
 
 // NewSQLiteEngine creates a new SQLite-backed query engine.
 func NewSQLiteEngine(db *sql.DB) *SQLiteEngine {
-	return &SQLiteEngine{db: db, dialect: SQLiteQueryDialect{}}
+	return &SQLiteEngine{db: db, dialect: SQLiteQueryDialect{}, senderHintTimeout: 5 * time.Second}
 }
 
 // NewEngineWithDialect creates a query engine with an explicit dialect.
@@ -49,7 +51,7 @@ func NewSQLiteEngine(db *sql.DB) *SQLiteEngine {
 //
 //	engine := query.NewEngineWithDialect(db, query.PostgreSQLQueryDialect{})
 func NewEngineWithDialect(db *sql.DB, d Dialect) *SQLiteEngine {
-	return &SQLiteEngine{db: db, dialect: d}
+	return &SQLiteEngine{db: db, dialect: d, senderHintTimeout: 5 * time.Second}
 }
 
 // hasFTSTable checks if the FTS index is available for this dialect.

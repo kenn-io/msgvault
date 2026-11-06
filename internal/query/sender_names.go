@@ -27,13 +27,15 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	if !ok {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, e.senderHintTimeout)
+	defer cancel()
 	knownConditions, knownArgs := appendSourceFilter([]string{"LOWER(p.email_address) = LOWER(?)"}, []any{sender}, "m.", nil, q.AccountIDs)
 	knownConditions, knownArgs = appendSourceFilter(knownConditions, knownArgs, "m.", nil, sourcescope.IDs(ctx))
 	var known bool
 	if err := e.queryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants p
  CROSS JOIN message_recipients mr CROSS JOIN messages m
  WHERE mr.participant_id = p.id AND mr.recipient_type = 'from' AND m.id = mr.message_id AND `+strings.Join(knownConditions, " AND ")+`)`, knownArgs...).Scan(&known); err != nil {
-		return senderHintFailure(err)
+		return senderHintFailure(ctx, err)
 	}
 	if known {
 		return nil
@@ -90,7 +92,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
 	if err != nil {
-		return senderHintFailure(err)
+		return senderHintFailure(ctx, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var labels []string
@@ -99,7 +101,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		var address string
 		var count int64
 		if err := rows.Scan(&address, &count); err != nil {
-			return senderHintFailure(err)
+			return senderHintFailure(ctx, err)
 		}
 		if labels == nil {
 			retry = search.Format(withSender(*q, address))
@@ -112,7 +114,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		labels = append(labels, fmt.Sprintf("%s (%d %s)", address, count, unit))
 	}
 	if err := rows.Err(); err != nil || labels == nil {
-		return senderHintFailure(err)
+		return senderHintFailure(ctx, err)
 	}
 	message := fmt.Sprintf("from: matches addresses; senders matching %q: %s", senderText, labels[0])
 	if len(labels) > 1 {
@@ -167,9 +169,9 @@ func withSender(q search.Query, address string) *search.Query {
 	return &q
 }
 
-// senderHintFailure logs a suppressed lookup error, if any, and returns no hint.
-func senderHintFailure(err error) []SearchHint {
-	if err != nil {
+// senderHintFailure logs unexpected lookup errors and returns no hint.
+func senderHintFailure(ctx context.Context, err error) []SearchHint {
+	if err != nil && ctx.Err() == nil {
 		log.Printf("warning: sender hint query failed: %v", err)
 	}
 	return nil
