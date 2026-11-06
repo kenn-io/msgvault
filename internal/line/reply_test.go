@@ -836,6 +836,35 @@ func TestReplyFromIngestedChat(t *testing.T) {
 	}
 }
 
+func TestProbeDeletedAdmittedStillSends(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newReplyFixture(t, "user", nil)
+	f.resetClient()
+	f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
+	sender := f.sender()
+	receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+	must.ErrorIs(err, line.ErrCredentialsUnavailable)
+	must.Equal(store.LineReplyAdmitted, receipt.Status)
+	must.NotNil(receipt.RetryAfter)
+	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+	_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
+	checks.ErrorIs(err, store.ErrChatDraftNotFound)
+	f.now = receipt.RetryAfter.Add(time.Second)
+	repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+	must.NoError(err)
+	checks.Equal(store.LineReplyRemoteUnknownExpired, repeated.Status)
+	checks.False(repeated.Accepted)
+	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	must.NoError(err)
+	checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
+	checks.Empty(attempt.Body)
+	checks.Empty(attempt.QuoteToken)
+	checks.Empty(attempt.SourceConversationID)
+}
+
 func TestReplyUnsubmittedDeletedDraftRechecksPolicy(t *testing.T) {
 	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown} {
 		t.Run(state, func(t *testing.T) {
