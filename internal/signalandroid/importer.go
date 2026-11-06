@@ -550,26 +550,17 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			break
 		}
 		rowAttachments := attachments[p.row.RowID]
-		preferredID := p.id
-		archivedID, isExisting := keepArchivedID(existing, &p)
-		if isExisting && p.id != preferredID {
-			rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
-			if err != nil {
-				return added, fmt.Errorf("rekey archived Signal message: %w", err)
-			}
-			if !rekeyed {
-				return added, fmt.Errorf("rekey archived Signal message %s: archived ID changed", p.id)
-			}
-			delete(existing, p.id)
-			existing[preferredID] = archivedID
-			p.id = preferredID
+		archivedID, isExisting, err := r.resolveArchivedID(existing, &p)
+		if err != nil {
+			return added, err
 		}
 		var rowReactions []sigReaction
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
 		}
-		if err := r.writeMessage(ctx, conversationID, archivedID, conversation, p, rowAttachments,
-			reactionsRead, rowReactions, mentions[p.row.RowID]); err != nil {
+		messageID, err := r.writeMessage(ctx, conversationID, archivedID, conversation, p, rowAttachments,
+			reactionsRead, rowReactions, mentions[p.row.RowID])
+		if err != nil {
 			if ctx.Err() != nil {
 				return added, ctx.Err()
 			}
@@ -580,12 +571,35 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if isExisting {
 			r.summary.MessagesUpdated++
 		} else {
+			// Pre-191 backups can repeat a message; a later copy is an update.
+			existing[p.id] = messageID
 			r.written++
 			r.summary.MessagesAdded++
 			added++
 		}
 	}
 	return added, nil
+}
+
+// resolveArchivedID finds p in the archive and moves an archived alias to
+// p's preferred ID.
+func (r *run) resolveArchivedID(existing map[string]int64, p *pendingMessage) (int64, bool, error) {
+	preferredID := p.id
+	archivedID, isExisting := keepArchivedID(existing, p)
+	if !isExisting || p.id == preferredID {
+		return archivedID, isExisting, nil
+	}
+	rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
+	if err != nil {
+		return 0, false, fmt.Errorf("rekey archived Signal message: %w", err)
+	}
+	if !rekeyed {
+		return 0, false, fmt.Errorf("rekey archived Signal message %s: archived ID changed", p.id)
+	}
+	delete(existing, p.id)
+	existing[preferredID] = archivedID
+	p.id = preferredID
+	return archivedID, true, nil
 }
 
 // keepArchivedID resolves p to the ID the archive already holds it under,
@@ -603,7 +617,7 @@ func keepArchivedID(existing map[string]int64, p *pendingMessage) (int64, bool) 
 func (r *run) writeMessage(
 	ctx context.Context, conversationID, archivedID int64, conversation store.ConversationPersistData, p pendingMessage,
 	attachments []sigAttachment, reactionsRead bool, reactions []sigReaction, mentions []sigMention,
-) error {
+) (int64, error) {
 	m := p.row
 	st := r.imp.store
 	var previous sigMessage
@@ -614,7 +628,7 @@ func (r *run) writeMessage(
 		var err error
 		archivedBody, archivedRaw, err = st.GetMessageBodyAndRawContext(ctx, archivedID)
 		if err != nil {
-			return fmt.Errorf("read archived Signal revision: %w", err)
+			return 0, fmt.Errorf("read archived Signal revision: %w", err)
 		}
 		previousValid = json.Unmarshal(archivedRaw, &previous) == nil
 	}
@@ -658,7 +672,7 @@ func (r *run) writeMessage(
 	pid, ok, err := r.participant(ctx, p.senderID)
 	if err != nil {
 		// Writing now would clear the archived sender; leave the message as is.
-		return err
+		return 0, err
 	}
 	if ok {
 		senderID = sql.NullInt64{Int64: pid, Valid: true}
@@ -682,11 +696,11 @@ func (r *run) writeMessage(
 	}
 	raw, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	writes, mediaFound, mediaMissing, err := r.prepareAttachments(ctx, archivedID, attachments)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	senderAddr := r.recipients[p.senderID].E164
 	if p.senderID == r.selfRecipientID {
@@ -704,17 +718,17 @@ func (r *run) writeMessage(
 	}
 	parentID, err := r.quotedMessageID(ctx, p.chatID, conversation.ConversationType == "direct_chat", m)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if parentID != "" {
 		metadata, err := json.Marshal(map[string]string{"referenced_message_id": parentID})
 		if err != nil {
-			return err
+			return 0, err
 		}
 		data.Metadata = &sql.NullString{String: string(metadata), Valid: true}
 		existing, err := st.MessageExistsBatchContext(ctx, r.sourceID, []string{parentID})
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if id, ok := existing[parentID]; ok {
 			msg.ReplyToMessageID = sql.NullInt64{Int64: id, Valid: true}
@@ -728,7 +742,7 @@ func (r *run) writeMessage(
 		for _, reaction := range reactions {
 			pid, ok, err := r.participant(ctx, reaction.AuthorID)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if !ok || reaction.Emoji == "" {
 				continue
@@ -740,9 +754,9 @@ func (r *run) writeMessage(
 		}
 		data.Reactions = &refs
 	}
-	_, err = st.PersistMessageContext(ctx, &data)
+	messageID, err := st.PersistMessageContext(ctx, &data)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	r.summary.AttachmentsFound += found + mediaFound
 	r.summary.AttachmentsMissing += missing + mediaMissing
@@ -760,7 +774,7 @@ func (r *run) writeMessage(
 	} else if m.QuoteID > 0 && m.QuoteAuthor > 0 && parentID == "" {
 		r.summary.RepliesUnresolved++
 	}
-	return nil
+	return messageID, nil
 }
 
 // quotedMessageID resolves quotes to an edit's original identity before writing.
