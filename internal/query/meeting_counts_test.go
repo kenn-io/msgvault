@@ -49,6 +49,83 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 	}
 }
 
+func TestIndependentReviewLinkedCopiesDateScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name, zone string
+		at         time.Time
+	}{
+		{"midnight", "UTC", time.Date(2026, 8, 1, 23, 59, 0, 0, time.UTC)},
+		{"year boundary", "UTC", time.Date(2024, 12, 31, 23, 59, 0, 0, time.UTC)},
+		{"local midnight", "America/Chicago", time.Date(2026, 8, 2, 4, 59, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			b := NewTestDataBuilder(t)
+			first := b.AddSourceWithType("owner@example.org", "granola")
+			second := b.AddSourceWithType("owner@example.org", "twenty")
+			owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
+			person := b.AddParticipant("person@example.org", "example.org", "Person")
+			for i, source := range []int64{first, second} {
+				b.AddOwnerParticipant(source, owner)
+				id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: tc.at.Add(time.Duration(i) * 2 * time.Minute)})
+				b.AddTo(id, owner, "Owner")
+				b.AddTo(id, person, "Person")
+				b.AddAttachment(id, 100, "notes.txt")
+				b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+			}
+			engine := b.BuildEngine()
+			zone, err := time.LoadLocation(tc.zone)
+			requirements.NoError(err)
+			local := tc.at.In(zone)
+			start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, zone)
+			for day, want := range []int64{1, 0} {
+				after, before := start.AddDate(0, 0, day), start.AddDate(0, 0, day+1)
+				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: after.Year(), Timezone: tc.zone})
+				requirements.NoError(err)
+				found := false
+				for _, item := range calendar.Days {
+					if item.Date == after.Format("2006-01-02") {
+						found = true
+						assertions.Equal(want, item.Meetings)
+					}
+				}
+				requirements.True(found, "calendar includes the requested day")
+				for _, sources := range [][]int64{nil, {first, second}, {second}} {
+					scope := Context{SourceIDs: sources, After: &after, Before: &before}
+					wantScoped := want
+					if len(sources) == 1 {
+						wantScoped = int64(day)
+					}
+					relationships, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, ShowAll: true, Now: before})
+					requirements.NoError(err)
+					var meetings int64
+					for _, row := range relationships.Rows {
+						if row.CanonicalID == person {
+							meetings = row.Signals.MeetingCount
+						}
+					}
+					assertions.Equal(wantScoped, meetings, "Relationships day %d sources %v", day, sources)
+					if day == 0 && len(sources) == 1 {
+						continue
+					}
+					detail, err := engine.GetPerson(t.Context(), person, scope, nil)
+					requirements.NoError(err)
+					requirements.NotNil(detail)
+					assertions.Equal(wantScoped, detail.MeetingCount, "GetPerson day %d sources %v", day, sources)
+					people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: scope}})
+					requirements.NoError(err)
+					requirements.Len(people.Rows, 1)
+					assertions.Equal(wantScoped, people.Rows[0].MeetingCount, "SearchPeople day %d sources %v", day, sources)
+					assertions.Equal(int64(1), people.Rows[0].ActivityCount)
+					assertions.Equal(int64(1), people.Rows[0].FileCount)
+					assertions.Equal(int64(1), detail.ActivityCount)
+					assertions.Equal(int64(1), detail.FileCount)
+				}
+			}
+		})
+	}
+}
+
 func TestMeetingCountsOneTranscriptTwoOccurrences(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)

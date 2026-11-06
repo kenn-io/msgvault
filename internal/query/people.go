@@ -352,7 +352,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildExploreConditions(request.Explore)
+	conditions, args := buildIdentityHistoryConditions(request.Explore)
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return nil, err
@@ -363,6 +363,8 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
+	dates, dateArgs := identityDateConditions(request.Explore.Context)
+	args = append(args, dateArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
 	// every member of the row's cluster (resolved through the canon CTE that
@@ -395,9 +397,9 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
 	personWhere := []string{"true"}
-	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
+	populationFrom := "FROM dated_person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
-		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
+		populationFrom = "FROM participants p LEFT JOIN dated_person_entries pe ON pe.person_id = p.id"
 	}
 	if exactID != nil {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
@@ -469,6 +471,9 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	args = append(args, limit, request.Page.Offset)
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
+), dated_person_entries AS (
+	SELECT * FROM (` + e.selectedMeetingKeysSQL("(SELECT *, person_id AS canonical_id, "+identityindex.EntryKindSQL("message_type")+" AS entry_kind FROM person_entries)", "anchor_message_id") + `)
+	WHERE ` + dates + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
@@ -476,11 +481,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		len(list_distinct(flatten(list(` + identityindex.MeetingKeysSQL("mk", "pe.message_type", "pe.anchor_message_id") + `))))::BIGINT AS meeting_count,
+		len(list_distinct(flatten(list(pe.meeting_keys))))::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
-	` + e.meetingKeysJoin("pe") + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,
