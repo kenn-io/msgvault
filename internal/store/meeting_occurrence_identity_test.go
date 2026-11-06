@@ -22,6 +22,16 @@ func TestMeetingSparseCancelledMasterPreservesExceptionUID(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
 }
 
+func TestMeetingSparseCancelledExceptionPreservesRecordUID(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, `"iCalUID":"weekly@example.org",`, "", 1))
+	calendarFixture(t, st, "exception", `{"id":"series_20270314T100000Z","iCalUID":"weekly@example.org","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
+
 func TestMeetingDecisionUsesResolvedOrphanIdentity(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
