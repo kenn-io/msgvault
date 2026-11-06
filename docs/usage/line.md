@@ -150,7 +150,8 @@ empty LINE webhook verification request does not count as a received event.
 The invalid-signature count resets when the daemon restarts. Rejected
 signatures produce a warning at most once per minute per channel.
 
-**Process inbox** drains due events. It cannot fetch earlier LINE history.
+**Process inbox** processes up to 500 due events per pass. The daemon continues
+the remaining work on its 30-second tick. It cannot fetch earlier LINE history.
 If the receiver is inactive, check the channel configuration and secret
 environment variable, then restart the daemon.
 
@@ -180,9 +181,10 @@ msgvault sync-line
 msgvault sync-line --channel-id 2000000001
 ```
 
-These commands drain due work; they never fetch history or make a delayed retry
-due immediately. Review pending work separately from failed work when checking
-source health.
+Each command drains due work across as many 500-event passes as needed.
+**Process inbox** runs one pass; the daemon continues the remaining work on its
+30-second tick. Neither fetches history or makes a delayed retry due immediately.
+Review pending work separately from failed work when checking source health.
 
 ## Privacy and retention
 

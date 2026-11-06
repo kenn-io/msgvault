@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -42,7 +41,7 @@ func (c *Config) validateLineSources() error {
 		if seen[source.ChannelID] {
 			return fmt.Errorf("line[%d].channel_id is duplicate", index)
 		}
-		if source.MaxMediaMB < 0 || source.MaxMediaMB > math.MaxInt64/(1<<20) {
+		if !validMaxMediaMB(source.MaxMediaMB) {
 			return fmt.Errorf("line[%d].max_media_mb must fit a nonnegative byte limit", index)
 		}
 		seen[source.ChannelID] = true

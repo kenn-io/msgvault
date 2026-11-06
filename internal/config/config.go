@@ -2011,14 +2011,14 @@ func (c *Config) validateMediaPolicies() error {
 		{name: "imessage", policy: c.IMessage.MediaPolicy(), providerMaxMB: c.IMessage.MaxMediaMB},
 	}
 	for _, provider := range providers {
-		if !validMaxMediaMB(provider.providerMaxMB) {
+		if !validMaxMediaMB(int64(provider.providerMaxMB)) {
 			return fmt.Errorf("invalid [%s] max_media_mb %d: must be between 0 and %d", provider.name, provider.providerMaxMB, maxMediaMBLimit)
 		}
 		if err := provider.policy.Validate(); err != nil {
 			return fmt.Errorf("invalid [%s] attachment policy: %w", provider.name, err)
 		}
 		for account, maxMediaMB := range provider.accountMaxMedia {
-			if !validMaxMediaMB(maxMediaMB) {
+			if !validMaxMediaMB(int64(maxMediaMB)) {
 				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be between 0 and %d",
 					provider.name, account, maxMediaMB, maxMediaMBLimit)
 			}
@@ -2030,8 +2030,8 @@ func (c *Config) validateMediaPolicies() error {
 // maxMediaMBLimit is the largest max_media_mb whose byte count fits in an int64.
 const maxMediaMBLimit = math.MaxInt64 >> 20
 
-func validMaxMediaMB(mb int) bool {
-	return mb >= 0 && int64(mb) <= maxMediaMBLimit
+func validMaxMediaMB(mb int64) bool {
+	return mb >= 0 && mb <= maxMediaMBLimit
 }
 
 func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {
