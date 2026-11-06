@@ -10,14 +10,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 type localSetupTestController struct {
 	calls   atomic.Int32
+	builtin atomic.Bool
 	started chan context.Context
 	release chan struct{}
 }
@@ -25,13 +28,15 @@ type localSetupTestController struct {
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
 	return LocalEmbeddingsStatus{Phase: "idle", DownloadBytes: 290000000}, nil
 }
-func (c *localSetupTestController) Enable(ctx context.Context, _ bool, report func(LocalEmbeddingsStatus)) error {
+func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
+	c.builtin.Store(builtin)
 	c.started <- ctx
 	report(LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: 5, TotalBytes: 10})
 	select {
 	case <-c.release:
-		return errors.New("download interrupted")
+		report(LocalEmbeddingsStatus{Phase: "indexing"})
+		return errors.New("build interrupted")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -53,6 +58,7 @@ func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T)
 		require.Equal(http.StatusAccepted, response.Code)
 		cancel()
 		jobCtx := <-controller.started
+		assert.False(controller.builtin.Load())
 		require.NoError(jobCtx.Err())
 		duplicate := httptest.NewRecorder()
 		duplicateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{}`))
@@ -77,14 +83,27 @@ func TestLocalEmbeddingsAcceptedJobSurvivesRequestAndJoinsShutdown(t *testing.T)
 		statusResponse = httptest.NewRecorder()
 		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
 		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &status))
-		assert.Equal("download interrupted", status.Error)
+		assert.Equal("build interrupted", status.Error)
+		finished := time.Now().Add(time.Minute)
+		srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
+			return vector.EmbeddingStatus{
+				Generation: vector.EmbeddingGenerationStatus{ID: 1}, ActiveGeneration: &vector.EmbeddingGenerationStatus{ID: 1}, Current: 1,
+				Diagnostics: &vector.EmbeddingDiagnostics{StartedAt: finished.Add(-time.Second), FinishedAt: &finished},
+			}, nil
+		}, 10)
+		statusResponse = httptest.NewRecorder()
+		srv.Router().ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+		var recovered LocalEmbeddingsStatus
+		require.NoError(json.Unmarshal(statusResponse.Body.Bytes(), &recovered))
+		assert.Empty(recovered.Error, "a later successful build resolves the setup build error")
 		controller.release = make(chan struct{})
 		retry := httptest.NewRecorder()
-		retryRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{}`))
+		retryRequest := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
 		retryRequest.Header.Set("Content-Type", "application/json")
 		srv.Router().ServeHTTP(retry, retryRequest)
 		require.Equal(http.StatusAccepted, retry.Code)
 		secondCtx := <-controller.started
+		assert.True(controller.builtin.Load())
 		require.NoError(srv.Shutdown(t.Context()))
 		require.ErrorIs(secondCtx.Err(), context.Canceled)
 		assert.Equal(int32(2), controller.calls.Load())

@@ -788,6 +788,22 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
 
+it('refreshes local setup after a network interruption and explains activation refusal', async () => {
+  let reads = 0;
+  const { client, operationsController } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') return Response.json({ error: 'unavailable', message: 'The archive is stopping' }, { status: 503 });
+    if (++reads === 1) throw new TypeError('Network interrupted');
+    return Response.json({ enabled: false, provider: '', phase: 'idle', download_bytes: 290000000 });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('button', { name: 'Set up Message search' });
+  expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The archive is stopping');
+});
+
 it('turns on local search once and keeps unrelated drafts when setup finishes', async () => {
   let phase = 'idle';
   let enabled = false;

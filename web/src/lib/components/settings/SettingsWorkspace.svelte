@@ -134,6 +134,7 @@
       }
     } catch { /* Keep observing an active setup after a temporary request failure. */ }
     finally {
+      clearTimeout(localTimer);
       if (!localController.signal.aborted && localStatus && (localStatus.running || localStatus.phase !== 'idle')) {
         localTimer = setTimeout(() => void loadLocalSearch(), 1000);
       }
@@ -144,8 +145,8 @@
     localPosting = true;
     localError = '';
     try {
-      const { data, response } = await enableLocalEmbeddings({ use_builtin: builtin }, client);
-      if (!response.ok || !data) throw new Error('Could not turn on search by meaning.');
+      const { data, response, error } = await enableLocalEmbeddings({ use_builtin: builtin }, client);
+      if (!response.ok || !data) throw new Error(error?.message || 'Could not turn on search by meaning.');
       localStatus = data;
       clearTimeout(localTimer);
       void loadLocalSearch();
@@ -237,6 +238,7 @@
   function refreshFeatureStatus(): void {
     statusRevision += 1;
     void operationsController.refreshStatus();
+    void loadLocalSearch();
   }
 
   async function build(id: string, run: () => Promise<void>): Promise<void> {

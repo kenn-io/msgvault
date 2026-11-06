@@ -56,7 +56,8 @@ func (s *Server) registerLocalEmbeddingsRoutes(api huma.API) {
 
 func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request) {
 	s.importMu.Lock()
-	controller, progress, running := s.localEmbeddings, s.localSetup, s.localSetupRunning
+	controller, progress := s.localEmbeddings, s.localSetup
+	running := progress.Running
 	failedAt := s.localSetupBuildFailedAt
 	s.importMu.Unlock()
 	if controller == nil {
@@ -75,7 +76,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		d := index.Diagnostics
 		if err == nil && d != nil && d.StartedAt.After(failedAt) && d.FinishedAt != nil && d.LastError == nil && index.Pending == 0 && index.Failed == 0 && index.Current > 0 && index.ActiveGeneration != nil && index.ActiveGeneration.ID == index.Generation.ID {
 			s.importMu.Lock()
-			if !s.localSetupRunning && s.localSetupBuildFailedAt.Equal(failedAt) {
+			if !s.localSetup.Running && s.localSetupBuildFailedAt.Equal(failedAt) {
 				s.localSetup.Error = ""
 				s.localSetupBuildFailedAt = time.Time{}
 				progress.Error = ""
@@ -103,7 +104,7 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "Local search setup is unavailable")
 		return
 	}
-	if s.localSetupRunning {
+	if s.localSetup.Running {
 		if s.localSetupUseBuiltin != req.UseBuiltIn {
 			s.importMu.Unlock()
 			writeError(w, http.StatusConflict, "operation_in_progress", "Local search setup is already running with a different provider choice")
@@ -122,7 +123,6 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 	}
 	controller := s.localEmbeddings
 	s.localSetup = LocalEmbeddingsStatus{Phase: "idle", Running: true}
-	s.localSetupRunning = true
 	s.localSetupUseBuiltin = req.UseBuiltIn
 	s.localSetupBuildFailedAt = time.Time{}
 	status := s.localSetup
@@ -139,7 +139,6 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		}
 		err := controller.Enable(s.importContext, req.UseBuiltIn, report)
 		s.importMu.Lock()
-		s.localSetupRunning = false
 		s.localSetup.Running = false
 		if err != nil && s.localSetup.Phase == "indexing" {
 			s.localSetupBuildFailedAt = time.Now()

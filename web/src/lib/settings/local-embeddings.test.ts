@@ -9,39 +9,40 @@ const off: LocalEmbeddingsStatus = { host: 'archive.example.test', enabled: fals
 const row = { id: 'message_embedding', name: 'Message search', chip: { text: 'Off', tone: 'muted' as const } };
 
 describe('local search row', () => {
-  it.each([
-    ['off', off, 'Off', 'Turn on'],
-    ['downloaded', { ...off, download_bytes: 0 }, 'Off', 'Turn on'],
-    ['available Ollama', { ...off, ollama_available: true }, 'Off', 'Turn on'],
-    ['matching Ollama', { ...off, enabled: true, provider: 'ollama', compatible: true }, 'On · Ollama', 'Use built-in instead'],
-    ['other Ollama', { ...off, enabled: true, provider: 'ollama' }, 'On · Ollama', 'Use built-in instead'],
-    ['on', { ...off, enabled: true, provider: 'builtin' }, 'On', undefined],
-    ['waiting for setup', { ...off, running: true }, 'Turning on', undefined],
-    ['downloading', { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, 'Turning on', undefined],
-    ['indexing', { ...off, phase: 'indexing' }, 'Turning on', undefined],
-  ] as const)('%s', (_name, status, chip, action) => {
-    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: 'On' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+  it.each<{ name: string; status: LocalEmbeddingsStatus; chip: string; action?: string; description?: string; absent?: RegExp; progress?: { now: string; max: string } }>([
+    { name: 'off', status: off, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
+    { name: 'downloaded', status: { ...off, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
+    { name: 'available Ollama', status: { ...off, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Uses Ollama on this computer' },
+    { name: 'matching Ollama', status: { ...off, enabled: true, provider: 'ollama', compatible: true }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching keeps your index', absent: /Switching rebuilds/ },
+    { name: 'other Ollama', status: { ...off, enabled: true, provider: 'ollama' }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 10 messages.' },
+    { name: 'on', status: { ...off, enabled: true, provider: 'builtin' }, chip: 'On' },
+    { name: 'waiting for setup', status: { ...off, running: true }, chip: 'Turning on', description: 'Preparing search by meaning · Keyword search works', progress: { now: '0', max: '290000000' } },
+    { name: 'downloading', status: { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
+    { name: 'indexing', status: { ...off, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
+  ])('$name', ({ status, chip, action, description, absent, progress }) => {
+    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
-    if (status === off) expect(screen.getByText('Downloads 290 MB once to archive.example.test')).toBeDefined();
-    if (_name === 'downloaded') expect(screen.queryByText(/Downloads /)).toBeNull();
-    if (_name === 'available Ollama') expect(screen.getByText('Uses Ollama on this computer')).toBeDefined();
-    if (status.phase === 'indexing') expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('10');
-    if (_name === 'other Ollama') expect(screen.getByText('Switching rebuilds the index for 10 messages.')).toBeDefined();
+    if (description) expect(screen.getByText(description)).toBeDefined();
+    if (absent) expect(screen.queryByText(absent)).toBeNull();
+    if (progress) {
+      expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe(progress.now);
+      expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe(progress.max);
+    }
   });
 });
 
-it.each([['on', 'builtin'], ['ollama', 'ollama']] as const)('keeps rebuild for a stale %s index', async (kind, provider) => {
+it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', switchAction: true }])('keeps rebuild for a stale $provider index', async ({ provider, switchAction }) => {
   const calls: string[] = [];
   const status = { ...off, enabled: true, provider, compatible: true, error: 'Build interrupted' };
   render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState(status, embeddingStatus), localLabels: localSearchLabels(status, embeddingStatus), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
   expect(screen.getByText('Stale')).toBeDefined();
   expect(screen.getByRole('alert').textContent).toBe('Build interrupted');
+  expect(Boolean(screen.queryByRole('button', { name: 'Use built-in instead' }))).toBe(switchAction);
   await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   expect(calls).toEqual(['build']);
-  if (kind === 'ollama') expect(screen.getByRole('button', { name: 'Use built-in instead' })).toBeDefined();
 });
 
 it('discloses the download size and remote host before hint activation', () => {

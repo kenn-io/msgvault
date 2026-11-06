@@ -3774,7 +3774,7 @@ func TestQueuedJobUsesCurrentCallableAfterGate(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		for _, removed := range []bool{false, true} {
-			gate := &serialWorkTracker{sem: make(chan struct{}, 1)}
+			gate := newSerialWorkTracker()
 			release, ok := gate.BeginWork()
 			require.True(ok)
 			s := New(nil).WithWorkTracker(gate)

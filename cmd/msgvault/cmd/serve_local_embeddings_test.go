@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,12 +28,10 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
-	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 type localBuildTestRunner struct {
@@ -42,7 +39,6 @@ type localBuildTestRunner struct {
 	home        string
 	calls       [][]string
 	contexts    []context.Context
-	inspectOnly bool
 	failBuild   bool
 	beforeBuild func()
 }
@@ -63,9 +59,6 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	require.Equal(r.t, r.home, cfg.HomeDir)
 	if r.beforeBuild != nil {
 		r.beforeBuild()
-	}
-	if r.inspectOnly {
-		return nil
 	}
 	if r.failBuild && req.Args[1] == "build" {
 		r.failBuild = false
@@ -95,369 +88,361 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	return nil
 }
 
-func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) {
-	for _, initialModel := range []string{"", "nomic-embed-text", "different-model", "available-ollama", "configured-ollama", "matching-build", "other-build", "documents", "documents-conflict", "people", "people-unconsented", "build-failure"} {
-		t.Run("initial="+initialModel, func(t *testing.T) {
-			pendingKind := initialModel
-			if strings.HasPrefix(pendingKind, "documents") || strings.HasPrefix(pendingKind, "people") {
-				initialModel = "different-model"
+type localActivationFixture struct {
+	cfg        *config.Config
+	store      *store.Store
+	state      *invocation
+	ctx        context.Context
+	handle     *vectorInitHandle
+	server     *api.Server
+	scheduler  *scheduler.Scheduler
+	controller *localEmbeddingsController
+	runner     *localBuildTestRunner
+	inputs     atomic.Int32
+	installs   int
+	refreshes  int
+	runtimeCtx context.Context
+	ollamaTags bool
+}
+
+func newLocalActivationFixture(t *testing.T, model, extra string) *localActivationFixture {
+	t.Helper()
+	f := &localActivationFixture{}
+	dir := t.TempDir()
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			models := []map[string]string{}
+			if f.ollamaTags {
+				models = append(models, map[string]string{"name": "nomic-embed-text:latest"})
 			}
-			if pendingKind == "build-failure" {
-				initialModel = ""
-			}
-			if pendingKind == "matching-build" {
-				initialModel = "nomic-embed-text"
-			}
-			if pendingKind == "other-build" {
-				initialModel = "different-model"
-			}
-			useOllama := initialModel == "available-ollama" || initialModel == "configured-ollama"
-			if useOllama {
-				initialModel = ""
-			}
-			dir := t.TempDir()
-			var inputs atomic.Int32
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/tags" {
-					models := []map[string]string{}
-					if pendingKind == "configured-ollama" {
-						models = append(models, map[string]string{"name": "nomic-embed-text:latest"})
-					}
-					assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": models}))
-					return
-				}
-				assert.Equal(t, "/v1/embeddings", r.URL.Path)
-				var body struct {
-					Input []string `json:"input"`
-				}
-				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-					http.Error(w, "invalid embedding request", http.StatusBadRequest)
-					return
-				}
-				inputs.Add(int32(len(body.Input)))
-				data := make([]map[string]any, len(body.Input))
-				for i := range data {
-					vec := make([]float32, 768)
-					vec[0] = 1
-					data[i] = map[string]any{"index": i, "embedding": vec}
-				}
-				assert.NoError(t, json.MarshalWrite(w, map[string]any{"data": data}))
-			}))
-			defer endpoint.Close()
-			oldEndpoint, oldDir := localEmbeddingEndpoint, localEmbeddingsDir
-			localEmbeddingEndpoint = func(context.Context, embedlocal.Options) (string, error) { return endpoint.URL + "/v1", nil }
-			localEmbeddingsDir = func() (string, error) { return filepath.Join(dir, "shared"), nil }
-			t.Cleanup(func() { localEmbeddingEndpoint, localEmbeddingsDir = oldEndpoint, oldDir })
-			content := "[data]\ndata_dir = " + strconv.Quote(dir) + "\n[vector]\nenabled = false\n"
-			if initialModel != "" {
-				content = "[data]\ndata_dir = " + strconv.Quote(dir) + "\n[vector]\nenabled = true\n[vector.embeddings]\nmodel = " + strconv.Quote(initialModel) + "\ndimension = 768\nendpoint = " + strconv.Quote(endpoint.URL+"/v1") + "\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\nmax_input_chars = 1000\n"
-			}
-			content += "\n[chat]\nserver = " + strconv.Quote(endpoint.URL) + "\n"
-			if strings.HasPrefix(pendingKind, "documents") {
-				content += "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n"
-			}
-			if strings.HasPrefix(pendingKind, "people") {
-				content += "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n"
-			}
-			path := filepath.Join(dir, "config.toml")
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-			snapshot, err := config.ReadConfigFile(path)
+			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": models}))
+			return
+		}
+		assert.Equal(t, "/v1/embeddings", r.URL.Path)
+		var body struct {
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			http.Error(w, "invalid embedding request", http.StatusBadRequest)
+			return
+		}
+		f.inputs.Add(int32(len(body.Input)))
+		data := make([]map[string]any, len(body.Input))
+		for i := range data {
+			vec := make([]float32, 768)
+			vec[0] = 1
+			data[i] = map[string]any{"index": i, "embedding": vec}
+		}
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{"data": data}))
+	}))
+	t.Cleanup(endpoint.Close)
+	oldEndpoint, oldDir := localEmbeddingEndpoint, localEmbeddingsDir
+	localEmbeddingEndpoint = func(context.Context, embedlocal.Options) (string, error) { return endpoint.URL + "/v1", nil }
+	localEmbeddingsDir = func() (string, error) { return filepath.Join(dir, "shared"), nil }
+	t.Cleanup(func() { localEmbeddingEndpoint, localEmbeddingsDir = oldEndpoint, oldDir })
+	content := "[data]\ndata_dir = " + strconv.Quote(dir) + "\n[vector]\nenabled = false\n"
+	if model != "" {
+		content = "[data]\ndata_dir = " + strconv.Quote(dir) + "\n[vector]\nenabled = true\n[vector.embeddings]\nmodel = " + strconv.Quote(model) + "\ndimension = 768\nendpoint = " + strconv.Quote(endpoint.URL+"/v1") + "\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\nmax_input_chars = 1000\n"
+	}
+	content += "\n[chat]\nserver = " + strconv.Quote(endpoint.URL) + "\n" + extra
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(t, err)
+	f.cfg, err = config.LoadConfigFile(snapshot, dir)
+	require.NoError(t, err)
+	f.cfg.Server.APIKey = "owner"
+	f.store, err = store.Open(f.cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.store.Close() })
+	require.NoError(t, f.store.InitSchema())
+	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "first", "Orchard", "The orchard has apples.")
+	require.NoError(t, err)
+	f.state = &invocation{cfg: f.cfg, logger: testDiscardLogger()}
+	f.ctx = withInvocation(t.Context(), f.state)
+	f.runner = &localBuildTestRunner{t: t, home: dir}
+	f.scheduler = scheduler.New(nil)
+	gate := api.NewSerialOperationGate()
+	f.server = api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: f.cfg, Store: &storeAPIAdapter{store: f.store, config: f.cfg}, Logger: f.state.logger, VectorCfg: f.cfg.Vector})
+	t.Cleanup(func() {
+		<-f.scheduler.Stop().Done()
+		_ = f.server.Shutdown(context.Background())
+		if f.handle != nil {
+			f.handle.CloseFeatures(f.state.logger)
+		}
+	})
+	f.controller = &localEmbeddingsController{gate: gate, state: f.state, store: f.store, dbPath: f.cfg.DatabaseDSN(), server: f.server, scheduler: f.scheduler, runner: f.runner,
+		refreshMCP: func(ctx context.Context, state *invocation) error {
+			f.refreshes++
+			f.runtimeCtx = ctx
+			require.NoError(t, ctx.Err())
+			assert.True(t, state.cfg.Vector.Enabled)
+			return nil
+		},
+		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+			return embedlocal.Status{DownloadBytes: 290000000}, nil
+		},
+		install: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+			f.installs++
+			_, _, held := gate.Holder()
+			require.False(t, held, "installation leaves the archive available to sync")
+			release, ok := gate.BeginLabeledWorkContext(ctx, "scheduled sync")
+			require.True(t, ok)
+			release()
+			yes, err := opts.Confirm(ctx, 290000000)
 			require.NoError(t, err)
-			cfg, err := config.LoadConfigFile(snapshot, dir)
-			require.NoError(t, err)
-			cfg.Server.APIKey = "owner"
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(t, err)
-			defer func() { _ = st.Close() }()
-			require.NoError(t, st.InitSchema())
-			_, messageID, err := testutil.CreateIndexedSourceMessage(st, "archive@example.test", "first", "Orchard", "The orchard has apples.")
-			require.NoError(t, err)
-			state := &invocation{cfg: cfg, logger: slog.New(slog.DiscardHandler)}
-			runner := &localBuildTestRunner{t: t, home: dir}
-			ctx := withInvocation(t.Context(), state)
-			if strings.HasPrefix(pendingKind, "people") {
-				participant, err := st.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
-				require.NoError(t, err)
-				_, _, err = st.CreatePersonFromParticipantContext(ctx, participant)
-				require.NoError(t, err)
-				if pendingKind == "people" {
-					profile, err := cfg.Vector.SemanticPersonEmbeddingProfile()
-					require.NoError(t, err)
-					_, err = st.EnsurePersonSemanticEmbeddingProfile(ctx, profile)
-					require.NoError(t, err)
-					_, _, err = st.GrantPersonSemanticEmbeddingConsent(ctx, profile.Fingerprint, "test")
-					require.NoError(t, err)
+			require.True(t, yes)
+			opts.Progress(5, 10)
+			return embedlocal.Installation{DataDir: dir}, nil
+		},
+	}
+	f.runner.beforeBuild = func() {
+		label, _, held := gate.Holder()
+		assert.True(t, held)
+		assert.Equal(t, "msgvault embeddings build", label)
+	}
+	return f
+}
+
+func (f *localActivationFixture) start(t *testing.T) {
+	t.Helper()
+	if f.cfg.Vector.Enabled {
+		hook := f.runner.beforeBuild
+		f.runner.beforeBuild = nil
+		require.NoError(t, f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", f.cfg.ConfigFilePath()}}, nil))
+		f.runner.beforeBuild = hook
+	}
+	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
+	require.True(t, f.handle.WaitTimeout(5*time.Second))
+	f.controller.handle = f.handle
+}
+
+func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		kit, configured, builtin bool
+		installs                 int
+	}{
+		{name: "built-in", builtin: true, installs: 1},
+		{name: "available Ollama", kit: true},
+		{name: "configured Ollama", configured: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLocalActivationFixture(t, "", "")
+			f.ollamaTags = tc.configured
+			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+				return embedlocal.Status{OllamaAvailable: tc.kit}, nil
+			}
+			mcp := &cobra.Command{Use: "serve"}
+			if tc.builtin {
+				addServeConfigFlags(mcp)
+				require.NoError(t, installServeMCP(f.ctx, mcp, f.server, f.state))
+				assert.NotContains(t, f.mcpCall("tools/list", `{}`).Body.String(), `"find_similar_messages"`)
+				refresh := f.controller.refreshMCP
+				f.controller.refreshMCP = func(ctx context.Context, state *invocation) error {
+					require.NoError(t, refresh(ctx, state))
+					return installServeMCP(ctx, mcp, f.server, state)
 				}
 			}
-			if strings.HasPrefix(pendingKind, "documents") {
-				seedLocalSearchDocument(t, st, messageID)
-				spec, err := configuredDocumentVectorSpec(ctx, st)
-				require.NoError(t, err)
-				for _, purpose := range []string{"document_embedding", "query_embedding"} {
-					consent, err := configuredDocumentVectorConsentSpec(spec, state, purpose)
-					require.NoError(t, err)
-					_, _, err = st.RecordDocumentVectorConsent(ctx, consent, time.Now())
-					require.NoError(t, err)
+			f.start(t)
+			availability, err := f.controller.Inspect(f.ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tc.kit || tc.configured, availability.OllamaAvailable)
+			assert.NotEmpty(t, availability.Host)
+			require.NoError(t, f.controller.Enable(f.ctx, tc.builtin, func(api.LocalEmbeddingsStatus) {}))
+			assert.Equal(t, tc.installs, f.installs)
+			assert.Equal(t, 1, f.refreshes)
+			generation, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "nomic-embed-text", generation.Model)
+			require.NoError(t, f.runtimeCtx.Err())
+			for _, ctx := range f.runner.contexts {
+				_, bounded := ctx.Deadline()
+				assert.True(t, bounded)
+				require.ErrorIs(t, ctx.Err(), context.Canceled)
+			}
+			if tc.builtin {
+				assert.Contains(t, f.mcpCall("tools/list", `{}`).Body.String(), `"find_similar_messages"`)
+				semantic := f.mcpCall("tools/call", `{"name":"semantic_search_messages","arguments":{"query":"orchard","mode":"vector"}}`)
+				require.Equal(t, http.StatusOK, semantic.Code, semantic.Body.String())
+				assert.Contains(t, semantic.Body.String(), "Orchard")
+				assert.NotContains(t, semantic.Body.String(), `"isError":true`)
+			}
+		})
+	}
+}
+
+func (f *localActivationFixture) mcpCall(method, params string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
+	request.Header.Set("Authorization", "Bearer owner")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	return response
+}
+
+func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, building string
+		reuse                 bool
+	}{
+		{name: "matching active", model: "nomic-embed-text", reuse: true},
+		{name: "different active", model: "different-model"},
+		{name: "matching build", model: "nomic-embed-text", building: "matching"},
+		{name: "different build", model: "different-model", building: "obsolete-build"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLocalActivationFixture(t, tc.model, "")
+			f.start(t)
+			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(t, err)
+			var id int64
+			require.NoError(t, f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			oldVector, err := f.handle.vf.Backend.LoadVector(f.ctx, id)
+			require.NoError(t, err)
+			_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "second", "Pear", "A pear tree is growing.")
+			require.NoError(t, err)
+			var building vector.GenerationID
+			if tc.building != "" {
+				fingerprint := tc.building
+				if tc.building == "matching" {
+					fingerprint = f.handle.vf.Cfg.GenerationFingerprint()
 				}
-			}
-			if initialModel != "" {
-				file, err := os.CreateTemp(dir, "initial-*.toml")
+				building, err = f.handle.vf.Backend.CreateGeneration(f.ctx, tc.model, 768, fingerprint)
 				require.NoError(t, err)
-				require.NoError(t, os.WriteFile(file.Name(), []byte(content), 0o600))
-				require.NoError(t, file.Close())
-				require.NoError(t, runner.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", file.Name()}}, nil))
 			}
-			gate := api.NewSerialOperationGate()
-			srv := api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: state.logger, VectorCfg: cfg.Vector})
-			defer func() { _ = srv.Shutdown(context.Background()) }()
-			mcpCommand := &cobra.Command{Use: "serve"}
-			addServeConfigFlags(mcpCommand)
-			require.NoError(t, installServeMCP(ctx, mcpCommand, srv, state))
-			serve := func(w http.ResponseWriter, request *http.Request) {
-				request.Header.Set("Authorization", "Bearer owner")
-				srv.Router().ServeHTTP(w, request)
+			before := f.inputs.Load()
+			require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(t, err)
+			if tc.reuse {
+				assert.Equal(t, old.ID, active.ID)
+				after, err := f.handle.vf.Backend.LoadVector(f.ctx, id)
+				require.NoError(t, err)
+				assert.Equal(t, oldVector, after)
+				assert.Equal(t, int32(1), f.inputs.Load()-before)
+			} else {
+				assert.NotEqual(t, old.ID, active.ID)
 			}
-			mcpCall := func(method, params string) *httptest.ResponseRecorder {
-				r := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
-				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("Accept", "application/json, text/event-stream")
-				r.Header.Set("Mcp-Protocol-Version", "2025-11-25")
-				w := httptest.NewRecorder()
-				serve(w, r)
-				return w
+			if tc.building == "matching" {
+				assert.Equal(t, building, active.ID)
 			}
-			if initialModel == "" {
-				assert.NotContains(t, mcpCall("tools/list", `{}`).Body.String(), `"find_similar_messages"`)
+			if tc.building == "obsolete-build" {
+				require.GreaterOrEqual(t, len(f.runner.calls), 3)
+				assert.Equal(t, "retire", f.runner.calls[len(f.runner.calls)-2][1])
+				assert.Contains(t, f.runner.calls[len(f.runner.calls)-1], "--full-rebuild")
 			}
-			sched := scheduler.New(nil)
-			defer func() { <-sched.Stop().Done() }()
-			handle := startVectorInit(ctx, st, cfg.DatabaseDSN(), nil, srv, sched)
-			require.True(t, handle.WaitTimeout(5*time.Second))
-			if pendingKind == "people" {
-				results, err := handle.vf.PersonSearchEngine.Search(ctx, "orchard", 5)
+		})
+	}
+}
+
+func TestLocalEmbeddingsRetainsPeopleConsent(t *testing.T) {
+	for _, consented := range []bool{true, false} {
+		t.Run(strconv.FormatBool(consented), func(t *testing.T) {
+			f := newLocalActivationFixture(t, "different-model", "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n")
+			participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
+			require.NoError(t, err)
+			_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
+			require.NoError(t, err)
+			if consented {
+				profile, err := f.cfg.Vector.SemanticPersonEmbeddingProfile()
+				require.NoError(t, err)
+				_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
+				require.NoError(t, err)
+				_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
+				require.NoError(t, err)
+			}
+			f.start(t)
+			require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+			if consented {
 				require.NoError(t, err)
 				require.Len(t, results, 1)
+			} else {
+				require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 			}
-			var oldDocumentID int64
-			if strings.HasPrefix(pendingKind, "documents") {
-				require.NoError(t, runScheduledDocumentVectorGeneration(jobctx.WithProgress(ctx), st, handle.vf, 100))
-				generation, err := st.GetActiveDocumentVectorGeneration(ctx)
-				require.NoError(t, err)
-				require.NotNil(t, generation)
-				oldDocumentID = generation.ID
-			}
-			defer func() { _ = srv.Shutdown(context.Background()); handle.CloseFeatures(state.logger) }()
-			var oldGen vector.Generation
-			var oldVector []float32
-			if handle.vf != nil {
-				oldGen, err = handle.vf.Backend.ActiveGeneration(ctx)
-				require.NoError(t, err)
-				oldVector, err = handle.vf.Backend.LoadVector(ctx, messageID)
-				require.NoError(t, err)
-			}
-			_, _, err = testutil.CreateIndexedSourceMessage(st, "archive@example.test", "second", "Pear", "A pear tree is growing.")
+		})
+	}
+}
+
+func TestLocalEmbeddingsRetainsDocumentConsentAfterConfigWrite(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
+			f := newLocalActivationFixture(t, "different-model", "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n")
+			var id int64
+			require.NoError(t, f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			seedLocalSearchDocument(t, f.store, id)
+			spec, err := configuredDocumentVectorSpec(f.ctx, f.store)
 			require.NoError(t, err)
-			var matchingBuild vector.GenerationID
-			if pendingKind == "matching-build" || pendingKind == "other-build" {
-				fingerprint := handle.vf.Cfg.GenerationFingerprint()
-				if pendingKind == "other-build" {
-					fingerprint = "obsolete-build"
-				}
-				matchingBuild, err = handle.vf.Backend.CreateGeneration(ctx, initialModel, 768, fingerprint)
+			for _, purpose := range []string{"document_embedding", "query_embedding"} {
+				consent, err := configuredDocumentVectorConsentSpec(spec, f.state, purpose)
+				require.NoError(t, err)
+				_, _, err = f.store.RecordDocumentVectorConsent(f.ctx, consent, time.Now())
 				require.NoError(t, err)
 			}
-			before := inputs.Load()
-			installs := 0
-			var runtimeContext context.Context
-			controller := &localEmbeddingsController{gate: gate, state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: srv, scheduler: sched, runner: runner,
-				refreshMCP: func(ctx context.Context, active *invocation) error {
-					runtimeContext = ctx
-					return installServeMCP(ctx, mcpCommand, srv, active)
-				},
-				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-					return embedlocal.Status{DownloadBytes: 290000000, OllamaAvailable: pendingKind == "available-ollama"}, nil
-				},
-				install: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-					installs++
-					_, _, held := gate.Holder()
-					if assert.False(t, held, "shared installation must leave the archive available to sync") {
-						release, ok := gate.BeginLabeledWorkContext(ctx, "scheduled sync")
-						assert.True(t, ok)
-						if ok {
-							release()
-						}
-					}
-
-					if pendingKind == "documents-conflict" {
-						require.NoError(t, os.WriteFile(path, []byte(content+"\n[web]\ntheme = \"dark\"\n"), 0o600))
-					}
-					yes, err := opts.Confirm(ctx, 290000000)
-					require.True(t, yes)
+			f.start(t)
+			require.NoError(t, runScheduledDocumentVectorGeneration(jobctx.WithProgress(f.ctx), f.store, f.handle.vf, 100))
+			old, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
+			require.NoError(t, err)
+			require.NotNil(t, old)
+			if conflict {
+				install := f.controller.install
+				f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+					file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0o600)
 					require.NoError(t, err)
-					opts.Progress(5, 10)
-					return embedlocal.Installation{DataDir: dir}, nil
-				},
-			}
-			srv.SetLocalEmbeddings(controller)
-			initialStatus := httptest.NewRecorder()
-			serve(initialStatus, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-			var availability api.LocalEmbeddingsStatus
-			require.NoError(t, json.Unmarshal(initialStatus.Body.Bytes(), &availability))
-			assert.NotEmpty(t, availability.Host, "the daemon supplies the download destination independently of the request host")
-			if useOllama {
-				assert.Contains(t, initialStatus.Body.String(), `"ollama_available":true`)
-			}
-			runner.beforeBuild = func() {
-				progress := httptest.NewRecorder()
-				serve(progress, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/status", nil))
-				require.Equal(t, http.StatusOK, progress.Code, progress.Body.String())
-				var status vector.EmbeddingStatus
-				require.NoError(t, json.Unmarshal(progress.Body.Bytes(), &status))
-				assert.Equal(t, "running", status.Job.State)
-				assert.Equal(t, "embeddings", status.Scheduler.SlotHolder)
-				if pendingKind == "build-failure" {
-					_, err := handle.vf.Backend.CreateGeneration(ctx, handle.vf.Cfg.Embeddings.Model, handle.vf.Cfg.Embeddings.Dimension, handle.vf.Cfg.GenerationFingerprint())
+					_, err = file.WriteString("\n[web]\ntheme = \"dark\"\n")
 					require.NoError(t, err)
+					require.NoError(t, file.Close())
+					return install(ctx, opts)
 				}
 			}
-
-			contextsBefore := len(runner.contexts)
-			runner.failBuild = pendingKind == "build-failure"
-			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":`+strconv.FormatBool(!useOllama)+`}`))
-			request.Header.Set("Content-Type", "application/json")
-			serve(response, request)
-			require.Equal(t, http.StatusAccepted, response.Code)
-			require.Eventually(t, func() bool {
-				status := httptest.NewRecorder()
-				serve(status, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-				var value api.LocalEmbeddingsStatus
-				require.NoError(t, json.Unmarshal(status.Body.Bytes(), &value))
-				return value.Phase == "idle" && !value.Running
-			}, 10*time.Second, 100*time.Millisecond)
-			status := httptest.NewRecorder()
-			serve(status, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-			if pendingKind == "documents-conflict" {
-				var failure api.LocalEmbeddingsStatus
-				require.NoError(t, json.Unmarshal(status.Body.Bytes(), &failure))
-				require.NotEmpty(t, failure.Error)
+			err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+			if conflict {
+				require.Error(t, err)
 				var consents int
-				require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
+				require.NoError(t, f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
 				assert.Equal(t, 2, consents)
-				snapshot, err := config.ReadConfigFile(path)
+				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(t, err)
-				saved, err := config.LoadConfigFile(snapshot, dir)
+				saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
 				require.NoError(t, err)
 				assert.Equal(t, "different-model", saved.Vector.Embeddings.Model)
 				return
 			}
-			require.NotNil(t, runtimeContext)
-			require.NoError(t, runtimeContext.Err())
-			for _, buildContext := range runner.contexts[contextsBefore:] {
-				_, bounded := buildContext.Deadline()
-				assert.True(t, bounded)
-				require.ErrorIs(t, buildContext.Err(), context.Canceled)
-			}
-			if pendingKind == "build-failure" {
-				var failure api.LocalEmbeddingsStatus
-				require.NoError(t, json.Unmarshal(status.Body.Bytes(), &failure))
-				assert.Contains(t, failure.Error, "embedding scope matched 0 live messages; sync the scoped account(s) first")
-				assert.LessOrEqual(t, len(failure.Error), len(cliSubprocessExitSentinel)+2+8192)
-				// The saved provider survives a daemon restart, and the existing CLI
-				// recovery command can finish the same index.
-				persisted, err := config.ReadConfigFile(path)
-				require.NoError(t, err)
-				reopened, err := config.LoadConfigFile(persisted, dir)
-				require.NoError(t, err)
-				assert.True(t, reopened.Vector.Enabled)
-				restartedState := *state
-				restartedState.cfg = reopened
-				_, err = buildCache(reopened.DatabaseDSN(), reopened.AnalyticsDir(), true)
-				require.NoError(t, err)
-				engine, err := query.NewDuckDBEngine(reopened.AnalyticsDir(), reopened.DatabaseDSN(), st.DB())
-				require.NoError(t, err)
-				defer func() { _ = engine.Close() }()
-				restartedServer := api.NewServerWithOptions(api.ServerOptions{Config: reopened, Engine: engine, Store: &storeAPIAdapter{store: st, config: reopened}, Logger: state.logger, VectorCfg: reopened.Vector})
-				restarted := startVectorInit(withInvocation(ctx, &restartedState), st, cfg.DatabaseDSN(), nil, restartedServer, sched)
-				require.True(t, restarted.WaitTimeout(5*time.Second))
-				coverage := httptest.NewRecorder()
-				coverageRequest := httptest.NewRequest(http.MethodPost, "/api/v1/search/coverage", strings.NewReader(`{}`))
-				coverageRequest.Header.Set("Content-Type", "application/json")
-				restartedServer.Router().ServeHTTP(coverage, coverageRequest)
-				require.Equal(t, http.StatusOK, coverage.Code, coverage.Body.String())
-				assert.Contains(t, coverage.Body.String(), "build_index")
-				require.NoError(t, restartedServer.Shutdown(ctx))
-				restarted.CloseFeatures(state.logger)
-				runner.beforeBuild = nil
-				require.NoError(t, runner.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", path}}, nil))
-				require.Eventually(t, func() bool {
-					recovered := httptest.NewRecorder()
-					serve(recovered, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
-					var recoveredStatus api.LocalEmbeddingsStatus
-					require.NoError(t, json.Unmarshal(recovered.Body.Bytes(), &recoveredStatus))
-					return recoveredStatus.Error == ""
-				}, 20*time.Second, 100*time.Millisecond, "a separate successful build resolves the setup build failure after cached coverage refreshes")
-			} else {
-				assert.NotContains(t, status.Body.String(), `"error"`, status.Body.String())
-			}
-			if useOllama {
-				require.Zero(t, installs)
-			} else {
-				require.Equal(t, 1, installs)
-			}
-			active, err := handle.vf.Backend.ActiveGeneration(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, "nomic-embed-text", active.Model)
-			if initialModel == "nomic-embed-text" && pendingKind != "matching-build" {
-				assert.Equal(t, oldGen.ID, active.ID)
-				after, err := handle.vf.Backend.LoadVector(ctx, messageID)
-				require.NoError(t, err)
-				assert.Equal(t, oldVector, after)
-				assert.Equal(t, int32(1), inputs.Load()-before)
-			} else {
-				assert.NotEqual(t, oldGen.ID, active.ID)
-			}
-			if pendingKind == "matching-build" {
-				assert.Equal(t, matchingBuild, active.ID)
-			}
-			if pendingKind == "other-build" {
-				require.GreaterOrEqual(t, len(runner.calls), 3)
-				assert.Equal(t, "retire", runner.calls[len(runner.calls)-2][1])
-				assert.Contains(t, runner.calls[len(runner.calls)-1], "--full-rebuild")
-			}
-			search := httptest.NewRecorder()
-			serve(search, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=orchard&mode=vector", nil))
-			require.Equal(t, http.StatusOK, search.Code, search.Body.String())
-			assert.Contains(t, search.Body.String(), "Orchard")
-			if strings.HasPrefix(pendingKind, "people") {
-				results, err := handle.vf.PersonSearchEngine.Search(ctx, "orchard", 5)
-				if pendingKind == "people" {
-					require.NoError(t, err)
-					require.Len(t, results, 1)
-				} else {
-					require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
-				}
-			}
-			catalog := mcpCall("tools/list", `{}`)
-			require.Equal(t, http.StatusOK, catalog.Code, catalog.Body.String())
-			assert.Contains(t, catalog.Body.String(), `"find_similar_messages"`)
-			semantic := mcpCall("tools/call", `{"name":"semantic_search_messages","arguments":{"query":"orchard","mode":"vector"}}`)
-			require.Equal(t, http.StatusOK, semantic.Code, semantic.Body.String())
-			assert.Contains(t, semantic.Body.String(), "Orchard")
-			assert.NotContains(t, semantic.Body.String(), `"isError":true`)
-			if strings.HasPrefix(pendingKind, "documents") {
-				require.Eventually(t, func() bool {
-					generation, err := st.GetActiveDocumentVectorGeneration(ctx)
-					return err == nil && generation != nil && generation.ID != oldDocumentID
-				}, 10*time.Second, 50*time.Millisecond)
-				result := httptest.NewRecorder()
-				serve(result, httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil))
-				require.Equal(t, http.StatusOK, result.Code, result.Body.String())
-				assert.Contains(t, result.Body.String(), "orchard.pdf")
-				assert.Contains(t, result.Body.String(), "orchard document evidence")
-			}
+			require.Eventually(t, func() bool {
+				generation, err := f.store.GetActiveDocumentVectorGeneration(f.ctx)
+				return err == nil && generation != nil && generation.ID != old.ID
+			}, 10*time.Second, 50*time.Millisecond)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
+			request.Header.Set("Authorization", "Bearer owner")
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "orchard.pdf")
+			assert.Contains(t, response.Body.String(), "orchard document evidence")
 		})
 	}
+}
+
+func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
+	f := newLocalActivationFixture(t, "", "")
+	f.start(t)
+	f.runner.failBuild = true
+	f.runner.beforeBuild = func() {
+		_, err := f.handle.vf.Backend.CreateGeneration(f.ctx, f.handle.vf.Cfg.Embeddings.Model, f.handle.vf.Cfg.Embeddings.Dimension, f.handle.vf.Cfg.GenerationFingerprint())
+		require.NoError(t, err)
+	}
+	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
+	require.ErrorContains(t, err, "embedding scope matched 0 live messages; sync the scoped account(s) first")
+	assert.LessOrEqual(t, len(err.Error()), len(cliSubprocessExitSentinel)+2+8192)
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
+	require.NoError(t, err)
+	assert.True(t, saved.Vector.Enabled)
 }
 
 func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
@@ -474,27 +459,19 @@ func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
 
 func TestLocalEmbeddingsDownloadFailureKeepsSavedSettings(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	oldEndpoint := localEmbeddingEndpoint
-	localEmbeddingEndpoint = func(context.Context, embedlocal.Options) (string, error) { return "http://127.0.0.1:9999/v1", nil }
-	t.Cleanup(func() { localEmbeddingEndpoint = oldEndpoint })
 	cfg := fixture.load(t)
-	require.NoError(t, os.MkdirAll(filepath.Dir(cfg.DatabaseDSN()), 0o700))
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	defer func() { _ = st.Close() }()
-	require.NoError(t, st.InitSchema())
 	before, err := os.ReadFile(fixture.path)
 	require.NoError(t, err)
 	handle := &vectorInitHandle{done: make(chan struct{})}
 	close(handle.done)
-	controller := &localEmbeddingsController{state: &invocation{cfg: cfg, logger: testDiscardLogger()}, store: st, dbPath: cfg.DatabaseDSN(), handle: handle,
+	controller := &localEmbeddingsController{state: &invocation{cfg: cfg, logger: testDiscardLogger()}, handle: handle,
 		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil },
 		install: func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 			return embedlocal.Installation{}, errors.New("connection interrupted")
 		},
 	}
 	err = controller.Enable(t.Context(), true, func(api.LocalEmbeddingsStatus) {})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "connection interrupted")
 	after := fixture.load(t)
 	assert.False(t, after.Vector.Enabled)
 	actual, err := os.ReadFile(fixture.path)
@@ -537,70 +514,6 @@ api_key_env = "EXAMPLE_EMBEDDING_KEY"
 			assert.Equal(t, before, after)
 		})
 	}
-}
-
-func TestLocalEmbeddingsReenablesPausedOllamaRecipe(t *testing.T) {
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v1/embeddings", r.URL.Path)
-		var body struct {
-			Model string   `json:"model"`
-			Input []string `json:"input"`
-		}
-		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) || !assert.Len(t, body.Input, 1) {
-			http.Error(w, "invalid embedding request", http.StatusBadRequest)
-			return
-		}
-		assert.Equal(t, "my-model", body.Model)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
-	}))
-	defer endpoint.Close()
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
-[vector]
-enabled = false
-[vector.embeddings]
-endpoint = %q
-model = "my-model"
-dimension = 4
-document_prefix = "passage: "
-query_prefix = "question: "
-max_input_chars = 777
-[chat]
-server = %q
-`, endpoint.URL+"/v1", endpoint.URL))
-	cfg := fixture.load(t)
-	before := cfg.Vector.Embeddings
-	require.NoError(t, os.MkdirAll(filepath.Dir(cfg.DatabaseDSN()), 0o700))
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	defer func() { _ = st.Close() }()
-	require.NoError(t, st.InitSchema())
-	_, _, err = testutil.CreateIndexedSourceMessage(st, "archive@example.test", "first", "Orchard", "The orchard has apples.")
-	require.NoError(t, err)
-	state := &invocation{cfg: cfg, logger: testDiscardLogger()}
-	ctx := withInvocation(t.Context(), state)
-	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: state.logger})
-	defer func() { _ = server.Shutdown(context.Background()) }()
-	handle := &vectorInitHandle{done: make(chan struct{})}
-	close(handle.done)
-	defer handle.CloseFeatures(state.logger)
-	runner := &localBuildTestRunner{t: t, home: cfg.HomeDir}
-	sched := scheduler.New(func(context.Context, string) error {
-		_, _, err := testutil.CreateIndexedSourceMessage(st, "archive@example.test", "later", "Later orchard", "Another orchard message.")
-		return err
-	})
-	defer func() { <-sched.Stop().Done() }()
-	require.NoError(t, sched.AddAccount("archive@example.test", "0 0 * * *"))
-	controller := &localEmbeddingsController{state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: server, scheduler: sched, runner: runner, inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }}
-	require.NoError(t, controller.Enable(ctx, false, func(api.LocalEmbeddingsStatus) {}))
-	after := fixture.load(t)
-	assert.True(t, after.Vector.Enabled)
-	assert.Equal(t, before, after.Vector.Embeddings)
-	require.NoError(t, sched.TriggerSync("archive@example.test", true))
-	require.Eventually(t, func() bool {
-		results, _, err := handle.vf.HybridEngine.Search(ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
-		return err == nil && len(results) == 2
-	}, 10*time.Second, 50*time.Millisecond)
 }
 
 func seedLocalSearchDocument(t *testing.T, st *store.Store, messageID int64) {
