@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +33,35 @@ func TestCallQueryIntegerParameterErrors(t *testing.T) {
 			var paramErr *paramError
 			require.ErrorAs(t, err, &paramErr)
 			assert.Equal(t, name, paramErr.param)
+		})
+	}
+}
+
+func TestCallQueryDateParameters(t *testing.T) {
+	for _, name := range []string{"after", "before"} {
+		t.Run(name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			for _, tc := range []struct {
+				value string
+				want  *time.Time
+			}{
+				{"", nil},
+				{"2026-10-01", new(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))},
+				{"2026-10-01T09:00:00.123456789-04:00", new(time.Date(2026, 10, 1, 13, 0, 0, 123456789, time.UTC))},
+			} {
+				q, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"="+url.QueryEscape(tc.value), nil))
+				requirements.NoError(err)
+				got := q.After
+				if name == "before" {
+					got = q.Before
+				}
+				assertions.Equal(tc.want, got)
+			}
+			_, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
+			var paramErr *paramError
+			requirements.ErrorAs(err, &paramErr)
+			assertions.Equal(name, paramErr.param)
 		})
 	}
 }

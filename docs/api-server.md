@@ -169,7 +169,7 @@ record for the same provider and account replaces its evidence.
 | `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
 
 Read results use an `items` array. Limits default to 50 and are capped at 100.
-Times are RFC3339, with inclusive `after` and exclusive `before`.
+Times accept RFC3339 timestamps or `YYYY-MM-DD` dates at midnight UTC, with inclusive `after` and exclusive `before`.
 Invalid queries return 400; malformed imports 400, invalid observations 422,
 oversized imports 413, unsupported media 415, retired-source
 conflicts 409, and unavailable or busy service 503.

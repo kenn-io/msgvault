@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"mime"
 	"net/http"
 	"reflect"
@@ -128,7 +127,6 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 
 func callQueryFromRequest(r *http.Request) (store.CallQuery, error) {
 	var q store.CallQuery
-	values := r.URL.Query()
 	for name, target := range map[string]*int64{"person_id": &q.PersonID, "after_id": &q.AfterID} {
 		n, _, err := queryInt64(r, name)
 		if err != nil {
@@ -144,11 +142,11 @@ func callQueryFromRequest(r *http.Request) (store.CallQuery, error) {
 		*target = n
 	}
 	for name, target := range map[string]**time.Time{"after": &q.After, "before": &q.Before} {
-		if value := values.Get(name); value != "" {
-			at, err := time.Parse(time.RFC3339Nano, value)
-			if err != nil {
-				return q, fmt.Errorf("parse %s: %w", name, err)
-			}
+		at, ok, err := queryDate(r, name)
+		if err != nil {
+			return q, err
+		}
+		if ok {
 			*target = &at
 		}
 	}
