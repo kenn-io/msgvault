@@ -125,6 +125,7 @@ func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
 	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
 	for i := range msg.Attachments {
 		msg.Attachments[i].Filename = verification.Masked
+		msg.Attachments[i].URL = ""
 	}
 }
 
@@ -135,6 +136,7 @@ func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
 	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
 	for i := range msg.Attachments {
 		msg.Attachments[i].Filename = verification.Masked
+		msg.Attachments[i].URL = ""
 	}
 }
 
