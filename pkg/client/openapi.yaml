@@ -1723,8 +1723,6 @@ components:
           items:
             $ref: "#/components/schemas/CallParticipant"
           type: array
-        precision:
-          type: string
         provider:
           type: string
         record_id:
@@ -1732,8 +1730,6 @@ components:
         source_id:
           format: int64
           type: integer
-        timezone:
-          type: string
         version:
           format: int64
           type: integer
@@ -1751,7 +1747,6 @@ components:
         - owner_participation
         - occurred_at
         - duration_seconds
-        - precision
       type: object
     CallParticipant:
       properties:

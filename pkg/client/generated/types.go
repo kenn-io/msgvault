@@ -1580,11 +1580,9 @@ type CallObservationView struct {
 	Outcome            string            `json:"outcome" validate:"required"`
 	OwnerParticipation string            `json:"owner_participation" validate:"required"`
 	Participants       []CallParticipant `json:"participants" validate:"required"`
-	Precision          string            `json:"precision" validate:"required"`
 	Provider           string            `json:"provider" validate:"required"`
 	RecordID           string            `json:"record_id" validate:"required"`
 	SourceID           int64             `json:"source_id"`
-	Timezone           *string           `json:"timezone,omitzero"`
 	Version            int64             `json:"version"`
 }
 
@@ -1622,9 +1620,6 @@ func (c CallObservationView) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
 			}
 		}
-	}
-	if err := typesValidator.Var(c.Precision, "required"); err != nil {
-		errors = errors.Append("Precision", err)
 	}
 	if err := typesValidator.Var(c.Provider, "required"); err != nil {
 		errors = errors.Append("Provider", err)

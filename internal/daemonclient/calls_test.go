@@ -48,7 +48,7 @@ func TestImportCallObservationPreservesRawInteger(t *testing.T) {
 	client, err := New(Config{URL: server.URL, APIKey: "example-key", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	result, err := client.ImportCallObservation(t.Context(), []byte(`{"format":"normalized","account":"a","record":{"version":1,"provider":"signal","account":"a","record_id":"7","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","precision":"instant","raw":{"sequence":9007199254740993}}}`))
+	result, err := client.ImportCallObservation(t.Context(), []byte(`{"format":"normalized","account":"a","record":{"version":1,"provider":"signal","account":"a","record_id":"7","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","raw":{"sequence":9007199254740993}}}`))
 	requirements.NoError(err)
 	requirements.NoError(readErr)
 	assertions.Contains(string(captured), `9007199254740993`)

@@ -71,8 +71,7 @@ func (s *Store) refreshCallConversationStatsWith(ctx context.Context, tx *logged
 
 // Scalar projections share the message lock and transaction of their metadata.
 // Original provider data remains in message_raw; participant IDs never appear
-// in scalar metadata and follow the existing recipient lifecycle. Persistence
-// clears the projection when it rewrites a call as another message type.
+// in scalar metadata and follow the existing recipient lifecycle.
 func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id int64, metadata string) error {
 	var e callhistory.Evidence
 	if err := json.Unmarshal([]byte(metadata), &e); err != nil {

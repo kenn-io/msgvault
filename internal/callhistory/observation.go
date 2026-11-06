@@ -35,8 +35,6 @@ type Evidence struct {
 	OccurredAt         time.Time  `json:"occurred_at"`
 	EndedAt            *time.Time `json:"ended_at,omitempty"`
 	DurationSeconds    *float64   `json:"duration_seconds"`
-	Timezone           string     `json:"timezone,omitempty"`
-	Precision          string     `json:"precision"`
 }
 
 type Participant struct {
@@ -74,8 +72,7 @@ func (e Evidence) Validate() error {
 	if e.Kind != "call" ||
 		!slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
 		!slices.Contains([]string{"answered", "missed", "declined", "cancelled", unknown}, e.Outcome) ||
-		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) ||
-		!slices.Contains([]string{"instant", "day"}, e.Precision) {
+		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) {
 		return invalid("evidence classification")
 	}
 	if e.OccurredAt.IsZero() || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
@@ -84,14 +81,6 @@ func (e Evidence) Validate() error {
 	}
 	if e.DurationSeconds != nil && *e.DurationSeconds < 0 {
 		return invalid("duration_seconds")
-	}
-	if e.Timezone != "" {
-		if len(e.Timezone) > 256 {
-			return invalid("timezone")
-		}
-		if _, err := time.LoadLocation(e.Timezone); err != nil {
-			return invalid("timezone")
-		}
 	}
 	return nil
 }
@@ -103,9 +92,8 @@ func (o Observation) Validate() error {
 	if o.NativeCallID != "" && o.RecordID != o.NativeCallID {
 		return invalid("record_id must equal native_call_id")
 	}
-	if !validID(o.RecordID) || len(o.Participants) > 100 ||
-		len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes {
-		return invalid("record_id, participants or raw")
+	if !validID(o.RecordID) || len(o.Raw) == 0 || len(o.Raw) > MaxRawBytes {
+		return invalid("record_id or raw")
 	}
 	seen := make(map[int64]string, len(o.Participants))
 	for _, p := range o.Participants {
