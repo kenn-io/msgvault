@@ -334,6 +334,8 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"encoding-notes.txt", "text/plain", "Set the Content-Transfer-Encoding header to base64 for binary parts.\n", false, false, false},
 		{"nested-lf.txt", "text/plain", "Content-Type: text/plain\ncontent-transfer-encoding:base64\n\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
+		{"crlf-digits.txt", "text/plain", "Your code:\r\n4\r\n8\r\n2\r\n9\r\n1\r\n3\r\n", true, false, false},
+		{"crlf-counts.txt", "text/plain", "Order quantities:\r\n4\r\n8\r\n2\r\n9\r\n1\r\n3\r\n", false, false, false},
 		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
