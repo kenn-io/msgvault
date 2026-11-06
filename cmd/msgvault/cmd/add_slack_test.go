@@ -42,8 +42,8 @@ func TestAddSlackContinuesWhenDisplayNameConflictsWithAlias(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := newAddSlackCmdWithClientFactory(func(token string) *slack.Client {
-		return slack.NewClient(server.URL, token)
+	cmd := newAddSlackCmdWithClientFactory(func(credentials slack.Credentials) (*slack.Client, error) {
+		return slack.NewClientWithCredentials(server.URL, credentials)
 	})
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cmd.SetContext(ctx)

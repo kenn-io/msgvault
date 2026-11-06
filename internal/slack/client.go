@@ -96,6 +96,7 @@ var authAPIErrors = map[string]bool{
 type Client struct {
 	baseURL string
 	token   string
+	cookie  string // optional d cookie, paired with an xoxc browser token
 	http    *http.Client
 	// scopes is refreshed from Slack's X-OAuth-Scopes response header.
 	scopes []string
@@ -118,7 +119,14 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		http:    &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{
+			Timeout: 60 * time.Second,
+			// API methods have no legitimate redirects. Refuse them before
+			// bearer credentials or browser cookies can leave the API host.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		limiters: map[int]*rate.Limiter{
 			2: perMinute(18),
 			3: perMinute(45),
@@ -151,6 +159,9 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 	if !ok {
 		return fmt.Errorf("slack client: method %q is not allowlisted", method)
 	}
+	if err := (Credentials{Token: c.token, Cookie: c.cookie}).Validate(); err != nil {
+		return err
+	}
 	reqURL := c.baseURL + "/" + method
 	body := params.Encode()
 	for attempt := range maxRetries {
@@ -165,7 +176,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		c.authenticate(req)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := c.http.Do(req) // #nosec G704 -- see reqURL above
 		if err != nil {
@@ -262,7 +273,7 @@ func (c *Client) AllConversations(ctx context.Context, fn func(Conversation) err
 		{"channels:read", "public_channel"}, {"groups:read", "private_channel"},
 		{"mpim:read", "mpim"}, {"im:read", "im"},
 	} {
-		if slices.Contains(c.scopes, scope.read) {
+		if c.canRead(scope.read) {
 			types = append(types, scope.kind)
 		}
 	}

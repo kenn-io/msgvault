@@ -279,7 +279,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	if err = imp.res.loadUsers(ctx, imp.client); err != nil {
 		return sum, fmt.Errorf("refresh slack users: %w", err)
 	}
-	searchReplies := slices.Contains(imp.client.scopes, "search:read")
+	searchReplies := imp.client.canRead("search:read")
 	if searchReplies {
 		state.HistoryPass = nil
 	} else if state.HistoryPass == nil || state.HistoryPass.NoThreads != opts.NoThreads ||
@@ -291,7 +291,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	}
 	// File metadata still arrives with channel messages. Without files:read,
 	// keep it pending rather than attempting downloads the token cannot make.
-	if !slices.Contains(imp.client.scopes, "files:read") {
+	if !imp.client.canRead("files:read") {
 		opts.NoMedia = true
 		imp.opts.NoMedia = true
 	}
