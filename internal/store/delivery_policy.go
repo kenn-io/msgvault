@@ -350,7 +350,7 @@ func (s *Store) deliveryActiveFromComparison(at string) string {
 
 // deliveryPlainHoldersTx finds the points saved exactly as the mailbox. A plain
 // lower-case value parses to itself, so it can only hold a mailbox it equals,
-// and the equality is served by idx_person_contact_points_current_lookup.
+// and the equality is served by idx_person_contact_points_email_mailbox.
 func (s *Store) deliveryPlainHoldersTx(ctx context.Context, tx *loggedTx, mailbox string) ([]deliveryHolder, error) {
 	holders, err := s.deliveryHoldersTx(ctx, tx, `SELECT id, person_id, source, normalized_value, service_id IS NULL AND scope_kind IS NULL AND scope_value IS NULL FROM person_contact_points
 		WHERE `+deliveryActiveEmailSQL+` AND (active_from IS NULL OR `+s.deliveryActiveFromComparison("?")+`) AND normalized_value=?

@@ -3198,6 +3198,9 @@ CREATE TABLE IF NOT EXISTS person_contact_points (
 CREATE INDEX IF NOT EXISTS idx_person_contact_points_current_lookup
     ON person_contact_points(address_kind, service_id, scope_kind, scope_value, normalized_value)
     WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_email_mailbox
+    ON person_contact_points(normalized_value)
+    WHERE address_kind = 'email' AND active_until IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_contact_points_email_spelling
     ON person_contact_points(normalized_value)
     WHERE address_kind = 'email'
