@@ -183,6 +183,7 @@ func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64,
 }
 
 func (p *Processor) edit(ctx context.Context, e Event) error {
+	// LINE limits messageEdited to groups: https://github.com/line/line-openapi/blob/master/webhook.yml
 	if e.Source.Type != "group" || e.Message.Type != "text" {
 		return invalidEvent("invalid LINE text edit")
 	}
