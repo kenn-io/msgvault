@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -83,7 +84,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		switch {
 		case cfg.Embeddings.LocalOnly:
 			provider = "builtin"
-		case isOllamaEmbeddingEndpoint(ctx, cfg.Embeddings.Endpoint):
+		case isOllamaEmbeddingEndpoint(ctx, cfg.Embeddings.Endpoint, textEmbeddingKey(c.state.cfg.TokensDir(), cfg)):
 			provider = "ollama"
 		default:
 			provider = "configured"
@@ -119,15 +120,25 @@ func (c *localEmbeddingsController) inspectAvailable(ctx context.Context, dir st
 	return status, endpoint, err
 }
 
-func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
+func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint, key string) bool {
 	server := strings.TrimSuffix(strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/embeddings"), "/v1")
-	return embeddingProviderName(endpoint) == "local" && probeOllamaServer(ctx, server).Catalog
+	return embeddingProviderName(endpoint) == "local" && probeOllamaServerWithKey(ctx, server, key).Catalog
+}
+
+// textEmbeddingKey resolves the key indexing uses; a store or origin error probes without one.
+func textEmbeddingKey(tokensDir string, cfg vector.Config) string {
+	snapshot, err := providercredentials.Read(tokensDir)
+	if err != nil {
+		return ""
+	}
+	key, _ := resolveTextEmbeddingCredential(snapshot, cfg)
+	return key
 }
 
 // Kit falls back to the shared server when Ollama stops after inspection; never save that as Ollama.
 func discoverOllamaEmbeddingEndpoint(ctx context.Context, dir string) (string, error) {
 	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
-	if err == nil && !isOllamaEmbeddingEndpoint(ctx, endpoint) {
+	if err == nil && !isOllamaEmbeddingEndpoint(ctx, endpoint, "") {
 		return "", errors.New("Ollama stopped during setup. Turn on to retry.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
 	return endpoint, err
@@ -151,7 +162,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	// A configured lane changes provider only through Use built-in instead.
-	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(ctx, loaded.Vector.Embeddings.Endpoint) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
+	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(ctx, loaded.Vector.Embeddings.Endpoint, textEmbeddingKey(c.state.cfg.TokensDir(), loaded.Vector)) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
 		return errors.New("search by meaning already uses a configured provider; change its settings before selecting local search")
 	}
 	dir, err := localEmbeddingsDir()

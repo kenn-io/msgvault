@@ -35,7 +35,6 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 
 export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): Partial<SearchByMeaningLabels> {
   return {
-    meanwhile: 'Keyword search works',
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing search by meaning' } : {}),
     ...(!status.enabled && status.provider !== 'builtin' && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
     rebuild: sentences('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : ''), builtinDownload(status), status.document_rebuild ? documentConsent : ''),

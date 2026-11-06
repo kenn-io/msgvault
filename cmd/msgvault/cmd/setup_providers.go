@@ -190,6 +190,11 @@ func commandStdinIsTerminal(command *cobra.Command) bool {
 // consulted only when no hosted embedding key is present; a failure simply
 // reports the server as unreachable.
 func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
+	return probeOllamaServerWithKey(ctx, server, "")
+}
+
+// probeOllamaServerWithKey sends key, when set, as the configured endpoint's bearer credential.
+func probeOllamaServerWithKey(ctx context.Context, server, key string) ollamaProbeResult {
 	server = strings.TrimRight(strings.TrimSpace(server), "/")
 	if server == "" {
 		return ollamaProbeResult{}
@@ -200,7 +205,7 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 	if err != nil {
 		return ollamaProbeResult{}
 	}
-	response, err := http.DefaultClient.Do(request)
+	response, err := ollamaProbeClient(request, key).Do(request)
 	if err != nil {
 		return ollamaProbeResult{}
 	}
@@ -223,6 +228,15 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 		}
 	}
 	return result
+}
+
+// A keyed probe refuses redirects so the key never leaves the endpoint's origin.
+func ollamaProbeClient(request *http.Request, key string) *http.Client {
+	if key == "" {
+		return http.DefaultClient
+	}
+	request.Header.Set("Authorization", "Bearer "+key)
+	return providerHTTPClientWithoutRedirects(nil)
 }
 
 func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
