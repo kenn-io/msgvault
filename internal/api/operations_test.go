@@ -192,7 +192,7 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 		Config: cfg, Store: st, OperationHistoryReader: reader, Logger: testLogger(),
 	})
 
-	w := doGet(srv, "/api/v1/operations/status")
+	w := doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -310,7 +310,7 @@ func TestOperationStatusDocumentExtractionConfigurationUsesDurableSelectedScope(
 				return "private-selected-document-profile", []string{"application/pdf"}, test.scopeErr
 			}
 
-			response := doGet(server, "/api/v1/operations/status")
+			response := doGet(t.Context(), server, "/api/v1/operations/status")
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 			var body OperationStatusResponse
 			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
@@ -371,7 +371,7 @@ func TestOperationStatusPersonEnrichmentConfiguredRequiresEnabledProviderRuntime
 				OperationHistoryReader: &operationHistoryStub{}, Logger: testLogger(),
 			})
 
-			w := doGet(srv, "/api/v1/operations/status")
+			w := doGet(t.Context(), srv, "/api/v1/operations/status")
 			require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 			var body OperationStatusResponse
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -408,7 +408,7 @@ func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T
 	srv := NewServerWithOptions(ServerOptions{
 		Config: config.NewDefaultConfig(), Store: st, OperationHistoryReader: st, Logger: testLogger(),
 	})
-	w := doGet(srv, "/api/v1/operations/status")
+	w := doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -430,7 +430,7 @@ func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T
 	degraded := NewServerWithOptions(ServerOptions{
 		Config: config.NewDefaultConfig(), Store: st, OperationHistoryReader: reader, Logger: testLogger(),
 	})
-	w = doGet(degraded, "/api/v1/operations/status")
+	w = doGet(t.Context(), degraded, "/api/v1/operations/status")
 	require.Equal(http.StatusOK, w.Code)
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(operations.HistoryAvailable, body.Lanes[0].HistoryAvailability)
@@ -461,7 +461,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 			}, nil
 		}, nil)
 
-	w := doGet(srv, "/api/v1/operations/status")
+	w := doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -479,13 +479,13 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 				State: store.VisualGenerationBuilding, Consented: true,
 			}}, nil
 		}, nil)
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[8].SupportedActions)
 	controller.mu.Lock()
 	controller.cfg.CardDAV.Username = "mismatched-user"
 	controller.mu.Unlock()
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.False(body.Lanes[0].Configured)
 	assert.Empty(body.Lanes[0].SupportedActions)
@@ -500,7 +500,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 				ReconciliationComplete: true, JournalLag: 1,
 			}, nil
 		}, nil)
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal([]operations.ActionID{operations.ActionVisualResume}, body.Lanes[8].SupportedActions)
 
@@ -511,7 +511,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 				ReconciliationComplete: true, Converged: 2, ConvergenceTotal: 2,
 			}, nil
 		}, nil)
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Empty(body.Lanes[8].SupportedActions)
 
@@ -519,7 +519,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		nil, func(context.Context, bool) (visual.Status, error) {
 			return visual.Status{}, errors.New("private visual provider failure")
 		}, nil)
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.True(body.Lanes[8].Configured)
 	assert.Empty(body.Lanes[8].SupportedActions)
@@ -534,7 +534,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 		},
 	}}
 	srv.operationHistoryReader = reader
-	w = doGet(srv, "/api/v1/operations/status")
+	w = doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Empty(body.Lanes[0].SupportedActions, "active CardDAV sync is not eligible for another sync")
 
@@ -562,7 +562,7 @@ func TestOperationStatusBypassesGateAndHandlesNilDependencies(t *testing.T) {
 		Config: config.NewDefaultConfig(), Store: &mockStore{}, OperationGate: gate, Logger: testLogger(),
 	})
 
-	w := doGet(srv, "/api/v1/operations/status")
+	w := doGet(t.Context(), srv, "/api/v1/operations/status")
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationStatusResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -602,7 +602,7 @@ func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
 	}}
 	srv := newOperationTestServer(reader, &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
 
-	w := doGet(srv, "/api/v1/operations/runs?limit=1")
+	w := doGet(t.Context(), srv, "/api/v1/operations/runs?limit=1")
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var body OperationRunsResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &body))
@@ -618,7 +618,7 @@ func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
 	assert.NotNil(body.Runs[0].Counters)
 	assert.NotContains(w.Body.String(), operationTestArchiveUID)
 
-	w = doGet(srv, "/api/v1/operations/runs?limit=1&cursor="+body.NextCursor)
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs?limit=1&cursor="+body.NextCursor)
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var next OperationRunsResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &next))
@@ -661,7 +661,7 @@ func TestOperationRunsPaginatesSQLiteEnrichmentAtNanosecondPrecision(t *testing.
 		if cursor != "" {
 			target += "&cursor=" + cursor
 		}
-		response := doGet(srv, target)
+		response := doGet(t.Context(), srv, target)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var page OperationRunsResponse
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &page))
@@ -694,7 +694,7 @@ func TestOperationRunsRejectsInvalidQueriesAndUnavailableKinds(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			w := doGet(srv, test.target)
+			w := doGet(t.Context(), srv, test.target)
 			assert.Equal(t, test.status, w.Code)
 			assert.Equal(t, test.code, decodeErrorEnvelope(t, w).Error)
 		})
@@ -709,7 +709,7 @@ func TestOperationRunsRejectsSingleDynamicallyUnavailableKind(t *testing.T) {
 	}}}
 	srv := newOperationTestServer(reader,
 		&operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
-	w := doGet(srv, "/api/v1/operations/runs?kind=message_embedding")
+	w := doGet(t.Context(), srv, "/api/v1/operations/runs?kind=message_embedding")
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Equal(t, "operation_history_unavailable", decodeErrorEnvelope(t, w).Error)
 }
@@ -752,13 +752,13 @@ func TestOperationRunsRejectsCursorSnapshotDrift(t *testing.T) {
 			reader := &operationHistoryStub{snapshots: []operations.HistorySnapshot{first, test.next}}
 			srv := newOperationTestServer(reader,
 				&operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
-			pageOne := doGet(srv, "/api/v1/operations/runs?limit=1")
+			pageOne := doGet(t.Context(), srv, "/api/v1/operations/runs?limit=1")
 			require.Equalf(http.StatusOK, pageOne.Code, "body: %s", pageOne.Body.String())
 			var body OperationRunsResponse
 			require.NoError(json.Unmarshal(pageOne.Body.Bytes(), &body))
 			require.NotEmpty(body.NextCursor)
 
-			pageTwo := doGet(srv, "/api/v1/operations/runs?limit=1&cursor="+body.NextCursor)
+			pageTwo := doGet(t.Context(), srv, "/api/v1/operations/runs?limit=1&cursor="+body.NextCursor)
 			assert.Equal(http.StatusConflict, pageTwo.Code)
 			assert.Equal("operation_history_conflict", decodeErrorEnvelope(t, pageTwo).Error)
 		})
@@ -777,12 +777,12 @@ func TestOperationRunsRejectsCursorSnapshotDrift(t *testing.T) {
 		reader := &operationHistoryStub{snapshots: []operations.HistorySnapshot{firstForKind, secondForKind}}
 		srv := newOperationTestServer(reader,
 			&operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
-		pageOne := doGet(srv, "/api/v1/operations/runs?kind=source_sync&limit=1")
+		pageOne := doGet(t.Context(), srv, "/api/v1/operations/runs?kind=source_sync&limit=1")
 		require.Equalf(http.StatusOK, pageOne.Code, "body: %s", pageOne.Body.String())
 		var body OperationRunsResponse
 		require.NoError(json.Unmarshal(pageOne.Body.Bytes(), &body))
 
-		pageTwo := doGet(srv, "/api/v1/operations/runs?kind=source_sync&limit=1&cursor="+body.NextCursor)
+		pageTwo := doGet(t.Context(), srv, "/api/v1/operations/runs?kind=source_sync&limit=1&cursor="+body.NextCursor)
 		assert.Equal(http.StatusConflict, pageTwo.Code)
 		assert.Equal("operation_history_conflict", decodeErrorEnvelope(t, pageTwo).Error)
 	})
@@ -803,12 +803,12 @@ func TestOperationRunsRejectsCursorDateFilterDrift(t *testing.T) {
 	}}}
 	srv := newOperationTestServer(reader,
 		&operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
-	pageOne := doGet(srv, "/api/v1/operations/runs?kind=source_sync&limit=1&started_from=2026-08-01T00%3A00%3A00Z")
+	pageOne := doGet(t.Context(), srv, "/api/v1/operations/runs?kind=source_sync&limit=1&started_from=2026-08-01T00%3A00%3A00Z")
 	require.Equalf(http.StatusOK, pageOne.Code, "body: %s", pageOne.Body.String())
 	var body OperationRunsResponse
 	require.NoError(json.Unmarshal(pageOne.Body.Bytes(), &body))
 
-	pageTwo := doGet(srv, "/api/v1/operations/runs?kind=source_sync&limit=1&started_from=2026-08-02T00%3A00%3A00Z&cursor="+body.NextCursor)
+	pageTwo := doGet(t.Context(), srv, "/api/v1/operations/runs?kind=source_sync&limit=1&started_from=2026-08-02T00%3A00%3A00Z&cursor="+body.NextCursor)
 	assert.Equal(http.StatusBadRequest, pageTwo.Code)
 	assert.Equal("invalid_cursor", decodeErrorEnvelope(t, pageTwo).Error)
 }
@@ -827,11 +827,11 @@ func TestOperationRunsRejectsBoundCursorAndFailsAtomically(t *testing.T) {
 
 	reader := &operationHistoryStub{runs: []operations.Run{run}, listErr: errors.New("synthetic read failed")}
 	srv := newOperationTestServer(reader, archive)
-	w := doGet(srv, "/api/v1/operations/runs?cursor="+cursor+"&kind=source_sync")
+	w := doGet(t.Context(), srv, "/api/v1/operations/runs?cursor="+cursor+"&kind=source_sync")
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_cursor", decodeErrorEnvelope(t, w).Error)
 
-	w = doGet(srv, "/api/v1/operations/runs")
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs")
 	assert.Equal(http.StatusInternalServerError, w.Code)
 	assert.Equal("operation_history_failed", decodeErrorEnvelope(t, w).Error)
 	assert.NotContains(w.Body.String(), "runs")
@@ -848,24 +848,24 @@ func TestOperationRunDetailUsesOpaqueIdentityAndExactErrors(t *testing.T) {
 	ref, err := newOperationTokenCodec(archive).encodeRunReference(t.Context(), run.ID, operationTestArchiveUID)
 	require.NoError(err)
 	srv := newOperationTestServer(reader, archive)
-	w := doGet(srv, "/api/v1/operations/runs/"+ref)
+	w := doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var detail OperationRunDetail
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &detail))
 	assert.Equal(ref, detail.ID)
 	assert.Equal(operations.KindSourceSync, detail.Kind)
 
-	w = doGet(srv, "/api/v1/operations/runs/not-a-reference")
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs/not-a-reference")
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_operation_run_id", decodeErrorEnvelope(t, w).Error)
 
 	reader.getErr = store.ErrOperationRunNotFound
-	w = doGet(srv, "/api/v1/operations/runs/"+ref)
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 	assert.Equal(http.StatusNotFound, w.Code)
 	assert.Equal("operation_run_not_found", decodeErrorEnvelope(t, w).Error)
 
 	reader.getErr = errors.New("private ordinary reader failure")
-	w = doGet(srv, "/api/v1/operations/runs/"+ref)
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 	assert.Equal(http.StatusInternalServerError, w.Code)
 	assert.Equal("operation_history_failed", decodeErrorEnvelope(t, w).Error)
 	assert.NotContains(w.Body.String(), "private ordinary reader failure")
@@ -874,12 +874,12 @@ func TestOperationRunDetailUsesOpaqueIdentityAndExactErrors(t *testing.T) {
 	crossArchive := newOperationTestServer(reader, &operationArchiveStore{
 		mockStore: &mockStore{}, uid: "abcdef1234567890abcdef1234567890",
 	})
-	w = doGet(crossArchive, "/api/v1/operations/runs/"+ref)
+	w = doGet(t.Context(), crossArchive, "/api/v1/operations/runs/"+ref)
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_operation_run_id", decodeErrorEnvelope(t, w).Error)
 
 	badPair := "1." + base64.RawURLEncoding.EncodeToString([]byte(`{"kind":"person_sweep","id_type":"int64","int_id":17,"archive_uid":"`+operationTestArchiveUID+`"}`))
-	w = doGet(srv, "/api/v1/operations/runs/"+badPair)
+	w = doGet(t.Context(), srv, "/api/v1/operations/runs/"+badPair)
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_operation_run_id", decodeErrorEnvelope(t, w).Error)
 }
@@ -903,7 +903,7 @@ func TestOperationRunDetailAddsOnlyRegistryStatusAndEligibleActions(t *testing.T
 		ref, err := newOperationTokenCodec(st).encodeRunReference(t.Context(), run.ID, archiveUID)
 		require.NoError(err)
 
-		response := doGet(srv, "/api/v1/operations/runs/"+ref)
+		response := doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var detail OperationRunDetail
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
@@ -918,7 +918,7 @@ func TestOperationRunDetailAddsOnlyRegistryStatusAndEligibleActions(t *testing.T
 				HistoryAvailability: operations.HistoryAvailable, Active: &active, Latest: &active,
 			},
 		}
-		response = doGet(srv, "/api/v1/operations/runs/"+ref)
+		response = doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
 		assert.Empty(detail.SupportedActions)
 	})
@@ -947,7 +947,7 @@ func TestOperationRunDetailAddsOnlyRegistryStatusAndEligibleActions(t *testing.T
 		ref, err := newOperationTokenCodec(st).encodeRunReference(t.Context(), run.ID, archiveUID)
 		require.NoError(err)
 
-		response := doGet(srv, "/api/v1/operations/runs/"+ref)
+		response := doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var detail OperationRunDetail
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
@@ -994,11 +994,11 @@ func TestVisualActionsUnavailableDuringActiveRun(t *testing.T) {
 					require.NoError(st.FinishOperationInvocation(t.Context(), begun.ID,
 						operations.InvocationCounters{}, operations.StateSucceeded, nil))
 				}
-				response := doGet(srv, "/api/v1/operations/status")
+				response := doGet(t.Context(), srv, "/api/v1/operations/status")
 				require.Equal(http.StatusOK, response.Code)
 				var status OperationStatusResponse
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-				response = doGet(srv, "/api/v1/operations/runs/"+ref)
+				response = doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 				require.Equal(http.StatusOK, response.Code)
 				var detail OperationRunDetail
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
@@ -1062,14 +1062,14 @@ func TestVisualActionsUnavailableWithoutHistory(t *testing.T) {
 				ref, err := newOperationTokenCodec(archive).encodeRunReference(t.Context(), run.ID, operationTestArchiveUID)
 				require.NoError(err)
 
-				response := doGet(srv, "/api/v1/operations/status")
+				response := doGet(t.Context(), srv, "/api/v1/operations/status")
 				require.Equal(http.StatusOK, response.Code)
 				var status OperationStatusResponse
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
 				assert.Equal(operations.HistoryUnavailable, status.Lanes[8].HistoryAvailability)
 				assert.Empty(status.Lanes[8].SupportedActions)
 
-				response = doGet(srv, "/api/v1/operations/runs/"+ref)
+				response = doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 				require.Equal(http.StatusOK, response.Code)
 				var detail OperationRunDetail
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &detail))
@@ -1097,13 +1097,13 @@ func TestOperationActionsKeepExistingMutationBoundaries(t *testing.T) {
 		"/api/v1/multimodal/build",
 		"/api/v1/multimodal/run",
 	} {
-		request := httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{}`))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(`{}`))
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
 		assert.Equal(http.StatusUnauthorized, response.Code, target)
 	}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/multimodal/build", strings.NewReader(`{}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/multimodal/build", strings.NewReader(`{}`))
 	request.Header.Set("X-Api-Key", apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -1115,7 +1115,7 @@ func TestOperationActionsKeepExistingMutationBoundaries(t *testing.T) {
 		"/api/v1/operations/runs/opaque/retry",
 		"/api/v1/operations/document_embedding",
 	} {
-		request = httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{}`))
+		request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(`{}`))
 		request.Header.Set("X-Api-Key", apiKey)
 		response = httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
@@ -1161,14 +1161,14 @@ func TestOperationHistoryAPIBypassesHeldOperationGate(t *testing.T) {
 		Logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 
-	list := doGet(srv, "/api/v1/operations/runs")
+	list := doGet(t.Context(), srv, "/api/v1/operations/runs")
 	require.Equalf(http.StatusOK, list.Code, "body: %s", list.Body.String())
 	keyring, ok := srv.store.(operationTokenKeyring)
 	require.True(ok)
 	ref, err := newOperationTokenCodec(keyring).encodeRunReference(
 		t.Context(), run.ID, operationTestArchiveUID)
 	require.NoError(err)
-	detail := doGet(srv, "/api/v1/operations/runs/"+ref)
+	detail := doGet(t.Context(), srv, "/api/v1/operations/runs/"+ref)
 	require.Equalf(http.StatusOK, detail.Code, "body: %s", detail.Body.String())
 	assert.NotContains(list.Body.String()+detail.Body.String(), "private-holder-label")
 	assert.NotContains(logs.String(), "private-holder-label")
@@ -1193,7 +1193,7 @@ func TestOperationHistoryAPIDependencyFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			srv := newOperationTestServer(test.reader, test.archive)
-			w := doGet(srv, test.target)
+			w := doGet(t.Context(), srv, test.target)
 			assert.Equal(t, test.status, w.Code)
 			env := decodeErrorEnvelope(t, w)
 			assert.Equal(t, test.code, env.Error)
@@ -1286,7 +1286,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		if cursor != "" {
 			target += "&cursor=" + cursor
 		}
-		w := doGet(srv, target)
+		w := doGet(t.Context(), srv, target)
 		require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 		for _, marker := range privateMarkers {
 			assert.NotContains(withoutOpaqueOperationTokens(w.Body.String()), marker)
@@ -1307,7 +1307,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		operations.KindCardDAVSync, operations.KindPersonSweep, operations.KindSourceSync,
 	}, []operations.Kind{summaries[0].Kind, summaries[1].Kind, summaries[2].Kind})
 	for _, summary := range summaries {
-		w := doGet(srv, "/api/v1/operations/runs/"+summary.ID)
+		w := doGet(t.Context(), srv, "/api/v1/operations/runs/"+summary.ID)
 		require.Equal(http.StatusOK, w.Code)
 		for _, marker := range privateMarkers {
 			assert.NotContains(withoutOpaqueOperationTokens(w.Body.String()), marker)
@@ -1333,7 +1333,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 			unavailable: []OperationUnavailableKind{},
 		},
 	} {
-		w := doGet(srv, "/api/v1/operations/runs?"+test.query)
+		w := doGet(t.Context(), srv, "/api/v1/operations/runs?"+test.query)
 		require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 		var page OperationRunsResponse
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
@@ -1343,7 +1343,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 	}
 
 	for _, lane := range []operations.Lane{operations.LaneDocuments, operations.LaneVisualAttachments} {
-		w := doGet(srv, "/api/v1/operations/runs?lane="+string(lane))
+		w := doGet(t.Context(), srv, "/api/v1/operations/runs?lane="+string(lane))
 		require.Equal(http.StatusOK, w.Code)
 		var page OperationRunsResponse
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
@@ -1357,7 +1357,7 @@ func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
 		OperationHistoryReader: st,
 		Logger:                 testLogger(),
 	})
-	w := doGet(crossArchive, "/api/v1/operations/runs?limit=1&cursor="+firstCursor)
+	w := doGet(t.Context(), crossArchive, "/api/v1/operations/runs?limit=1&cursor="+firstCursor)
 	assert.Equal(http.StatusBadRequest, w.Code)
 	assert.Equal("invalid_cursor", decodeErrorEnvelope(t, w).Error)
 }

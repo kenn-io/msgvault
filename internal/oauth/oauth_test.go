@@ -473,7 +473,7 @@ func TestNewCallbackHandler(t *testing.T) {
 			if tt.queryCode != "" {
 				url += "&code=" + tt.queryCode
 			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 			rec := httptest.NewRecorder()
 
 			handler(rec, req)
@@ -523,7 +523,7 @@ func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			assertions := assert.New(t)
 			required := require.New(t)
-			listener, err := net.Listen("tcp", "localhost:0")
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "localhost:0")
 			required.NoError(err)
 			t.Cleanup(func() { _ = listener.Close() })
 			callbackAddress := callbackAddressFor(t, listener)
@@ -653,7 +653,7 @@ func TestBrowserFlowRejectsUnusableCallbackBeforePrintingURL(t *testing.T) {
 			// The Web-client cases fail before listening and keep the production
 			// callback, whose URL is the registration users are told to add.
 			if tc.occupyPort {
-				listener, err := net.Listen("tcp", "localhost:0")
+				listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "localhost:0")
 				required.NoError(err)
 				t.Cleanup(func() { _ = listener.Close() })
 				mgr.callbackAddress = callbackAddressFor(t, listener)
@@ -714,7 +714,7 @@ func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
 	}
 
 	inputEmail := "first.last@gmail.com"
-	require.NoError(mgr.Authorize(context.Background(), inputEmail), "Authorize")
+	require.NoError(mgr.Authorize(t.Context(), inputEmail), "Authorize")
 
 	// Token must be loadable under the original identifier.
 	loaded, err := mgr.loadTokenFile(t.Context(), inputEmail)
@@ -750,7 +750,7 @@ func TestAuthorize_CalendarOnlyUsesCalendarProfileID(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(mgr.Authorize(context.Background(), "user@gmail.com"), "Authorize")
+	require.NoError(mgr.Authorize(t.Context(), "user@gmail.com"), "Authorize")
 
 	loaded, err := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(err, "loadTokenFile")
@@ -782,7 +782,7 @@ func TestAuthorize_SavesActualGrantedScopesFromTokenResponse(t *testing.T) {
 		}).WithExtra(map[string]any{"scope": strings.Join(granted, " ")}), nil
 	}
 
-	require.NoError(mgr.Authorize(context.Background(), "user@gmail.com"), "Authorize")
+	require.NoError(mgr.Authorize(t.Context(), "user@gmail.com"), "Authorize")
 
 	loaded, err := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(err, "loadTokenFile")
@@ -819,7 +819,7 @@ func TestAuthorize_RejectsMissingGrantedScopeWithoutOverwritingToken(t *testing.
 		}).WithExtra(map[string]any{"scope": strings.Join(Scopes, " ")}), nil
 	}
 
-	err := mgr.Authorize(context.Background(), "user@gmail.com")
+	err := mgr.Authorize(t.Context(), "user@gmail.com")
 	require.Error(err, "Authorize should reject a token missing calendar.readonly")
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
@@ -859,7 +859,7 @@ func TestAuthorizeManualPreservingGrantedScopesRejectsTokenMissingPreservedScope
 		}).WithExtra(map[string]any{"scope": strings.Join(Scopes, " ")}), nil
 	}
 
-	err := mgr.AuthorizeManualPreservingGrantedScopes(context.Background(), "user@gmail.com")
+	err := mgr.AuthorizeManualPreservingGrantedScopes(t.Context(), "user@gmail.com")
 	require.Error(err)
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
@@ -903,7 +903,7 @@ func TestAuthorizePreservingGrantedScopesRejectsTokenMissingPreservedScope(t *te
 		}).WithExtra(map[string]any{"scope": strings.Join(Scopes, " ")}), nil
 	}
 
-	err := mgr.AuthorizePreservingGrantedScopes(context.Background(), "user@gmail.com")
+	err := mgr.AuthorizePreservingGrantedScopes(t.Context(), "user@gmail.com")
 	require.Error(err)
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
@@ -993,7 +993,7 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 		}, nil
 	}
 
-	err := mgr.Authorize(context.Background(), "expected@gmail.com")
+	err := mgr.Authorize(t.Context(), "expected@gmail.com")
 	require.Error(err, "expected error for mismatched email")
 
 	var mismatch *TokenMismatchError
@@ -1036,7 +1036,7 @@ func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
 		}, nil
 	}
 
-	err := mgr.Authorize(context.Background(), "alias@company.com")
+	err := mgr.Authorize(t.Context(), "alias@company.com")
 	require.Error(err, "expected error for Workspace alias mismatch")
 
 	var mismatch *TokenMismatchError
@@ -1074,7 +1074,7 @@ func TestAuthorize_CrossDomainReject(t *testing.T) {
 		}, nil
 	}
 
-	err := mgr.Authorize(context.Background(), "user@company.com")
+	err := mgr.Authorize(t.Context(), "user@company.com")
 	require.Error(t, err, "expected error for cross-domain mismatch")
 	assert.ErrorContains(t, err, "token mismatch")
 }
@@ -1202,11 +1202,11 @@ func TestForceRefreshDetectsRevokedRefreshTokenBehindValidAccessToken(t *testing
 
 			// TokenSource is satisfied by the unexpired cached access token and never
 			// contacts the provider, so it cannot see that the refresh token is revoked.
-			_, err := mgr.TokenSource(context.Background(), "test@gmail.com")
+			_, err := mgr.TokenSource(t.Context(), "test@gmail.com")
 			require.NoError(err, "TokenSource should reuse the cached access token")
 			require.Equal(int32(0), tokenEndpointHits.Load(), "TokenSource should not hit the token endpoint")
 
-			err = mgr.ForceRefresh(context.Background(), "test@gmail.com")
+			err = mgr.ForceRefresh(t.Context(), "test@gmail.com")
 			require.Error(err, "ForceRefresh should surface the revoked refresh token")
 			var retrieveErr *oauth2.RetrieveError
 			require.ErrorAs(err, &retrieveErr)
@@ -1239,7 +1239,7 @@ func TestForceRefreshSavesRefreshedToken(t *testing.T) {
 		Expiry:       time.Now().Add(time.Hour),
 	}, []string{"scope-a"})
 
-	require.NoError(mgr.ForceRefresh(context.Background(), "test@gmail.com"))
+	require.NoError(mgr.ForceRefresh(t.Context(), "test@gmail.com"))
 
 	tf, err := mgr.loadTokenFile(t.Context(), "test@gmail.com")
 	require.NoError(err)
@@ -1250,7 +1250,7 @@ func TestForceRefreshSavesRefreshedToken(t *testing.T) {
 
 func TestForceRefreshWithoutStoredToken(t *testing.T) {
 	mgr := setupTestManager(t, Scopes)
-	require.ErrorContains(t, mgr.ForceRefresh(context.Background(), "absent@gmail.com"),
+	require.ErrorContains(t, mgr.ForceRefresh(t.Context(), "absent@gmail.com"),
 		"no valid token for absent@gmail.com")
 }
 
@@ -1258,6 +1258,6 @@ func TestForceRefreshWithoutRefreshToken(t *testing.T) {
 	mgr := setupTestManager(t, Scopes)
 	writeTokenFile(t, mgr, "test@gmail.com",
 		oauth2.Token{AccessToken: "only-access", TokenType: "Bearer"}, Scopes)
-	require.ErrorContains(t, mgr.ForceRefresh(context.Background(), "test@gmail.com"),
+	require.ErrorContains(t, mgr.ForceRefresh(t.Context(), "test@gmail.com"),
 		"no refresh token")
 }

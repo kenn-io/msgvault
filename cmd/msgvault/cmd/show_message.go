@@ -251,6 +251,9 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"hidden_text_present":    msg.HiddenTextPresent,
 	}
 
+	if msg.SenderAuth != nil {
+		output["sender_auth"] = msg.SenderAuth
+	}
 	if msg.RelatedMessageID != nil {
 		output["related_message_id"] = *msg.RelatedMessageID
 	}

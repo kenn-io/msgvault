@@ -821,6 +821,7 @@ func fileRowFromGenerated(row generated.PersonFileSearchRow) query.FileRow {
 		MimeType: stringValue(row.MimeType), MIMEFamily: query.FileMIMEFamily(row.MimeFamily),
 		Size: row.SizeBytes, ParticipantIDs: append([]int64(nil), row.ParticipantIds...),
 		ParticipantLabels:  append([]string(nil), row.ParticipantLabels...),
+		SenderLabel:        stringValue(row.SenderLabel),
 		ParticipantDomains: append([]string(nil), row.ParticipantDomains...),
 		PersonProvenance:   provenance,
 	}
@@ -840,6 +841,7 @@ func entryRowFromGenerated(row generated.EntryRow) query.EntryRow {
 		ConversationType: row.ConversationType, Title: row.Title, Preview: row.Preview,
 		ParticipantIDs:             append([]int64(nil), row.ParticipantIds...),
 		ParticipantLabels:          append([]string(nil), row.ParticipantLabels...),
+		SenderLabel:                stringValue(row.SenderLabel),
 		MatchedSenderIdentities:    append([]string(nil), row.MatchedSenderIdentities...),
 		MatchedRecipientIdentities: append([]string(nil), row.MatchedRecipientIdentities...),
 		MessageCount:               row.MessageCount, HasAttachments: row.HasAttachments,

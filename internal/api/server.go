@@ -268,6 +268,7 @@ type Server struct {
 	statsSnapshotWait       time.Duration
 	vectorStatsTimeout      time.Duration
 
+	senderAuthPins         map[int64][]string
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
@@ -645,6 +646,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                    opts.Config,
+		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
@@ -832,13 +834,13 @@ func (s *Server) registerPprofHandlers(mux *http.ServeMux) {
 
 // Start begins listening for HTTP requests.
 // Returns an error if the security posture is invalid.
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	bindAddr := s.cfg.Server.BindAddr
 	if bindAddr == "" {
 		bindAddr = defaultBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(s.cfg.Server.APIPort))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		listenErr := fmt.Errorf("listen %s: %w", addr, err)
 		s.signalStarted(listenErr)

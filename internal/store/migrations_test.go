@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -39,7 +38,7 @@ func TestMigrationLedgerVersionLifecycle(t *testing.T) {
 	f := storetest.New(t)
 
 	const name = "versioned_migration"
-	requirements.NoError(f.Store.MarkMigrationAppliedContext(context.Background(), name, 3))
+	requirements.NoError(f.Store.MarkMigrationAppliedContext(t.Context(), name, 3))
 
 	for _, tc := range []struct {
 		minimum int
@@ -49,23 +48,23 @@ func TestMigrationLedgerVersionLifecycle(t *testing.T) {
 		{minimum: 3, want: true},
 		{minimum: 4, want: false},
 	} {
-		applied, err := f.Store.IsMigrationAppliedContext(context.Background(), name, tc.minimum)
+		applied, err := f.Store.IsMigrationAppliedContext(t.Context(), name, tc.minimum)
 		requirements.NoError(err, "check minimum version %d", tc.minimum)
 		assertions.Equal(tc.want, applied, "minimum version %d", tc.minimum)
 	}
 
 	var before string
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&before))
-	requirements.NoError(f.Store.MarkMigrationAppliedContext(context.Background(), name, 3), "same-version mark")
+	requirements.NoError(f.Store.MarkMigrationAppliedContext(t.Context(), name, 3), "same-version mark")
 	var after string
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT applied_at FROM applied_migrations WHERE name = ?`), name).Scan(&after))
 	assertions.Equal(before, after, "same-version mark must not rewrite applied_at")
 
-	requirements.NoError(f.Store.MarkMigrationAppliedContext(context.Background(), name, 2), "lower-version mark")
+	requirements.NoError(f.Store.MarkMigrationAppliedContext(t.Context(), name, 2), "lower-version mark")
 	var version int
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
 	assertions.Equal(3, version, "lower-version mark must not downgrade the ledger")
 }
@@ -78,11 +77,11 @@ func TestMigrationLedgerVersionRejectsInvalidValues(t *testing.T) {
 		call func() error
 	}{
 		{name: "zero check", call: func() error {
-			_, err := f.Store.IsMigrationAppliedContext(context.Background(), "invalid_zero", 0)
+			_, err := f.Store.IsMigrationAppliedContext(t.Context(), "invalid_zero", 0)
 			return err
 		}},
 		{name: "negative mark", call: func() error {
-			return f.Store.MarkMigrationAppliedContext(context.Background(), "invalid_negative", -1)
+			return f.Store.MarkMigrationAppliedContext(t.Context(), "invalid_negative", -1)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,13 +105,13 @@ func TestMigrationLedgerVersionWithDerivedDataRevision(t *testing.T) {
 	assertions.Equal(before+1, after, "successful derived-data mark must bump revision")
 
 	var version int
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
 	assertions.Equal(1, version)
 
 	// Force the ledger write to fail after the revision bump has run. The
 	// transaction must roll back both changes together.
-	_, err = f.Store.DB().Exec(`DROP TABLE applied_migrations`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE applied_migrations`)
 	requirements.NoError(err)
 	err = f.Store.MarkMigrationAppliedWithDerivedDataRevision("atomic_failure")
 	requirements.Error(err)
@@ -127,11 +126,11 @@ func TestNameOnlyLedgerWriterDoesNotRegressVersion(t *testing.T) {
 	f := storetest.New(t)
 	const name = "name_only_migration"
 
-	requirements.NoError(f.Store.MarkMigrationAppliedContext(context.Background(), name, 7))
+	requirements.NoError(f.Store.MarkMigrationAppliedContext(t.Context(), name, 7))
 	requirements.NoError(f.Store.MarkMigrationApplied(name), "name-only version-1 writer")
 
 	var version int
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT version FROM applied_migrations WHERE name = ?`), name).Scan(&version))
 	assertions.Equal(7, version, "a name-only writer must not regress a higher version")
 }
@@ -157,7 +156,7 @@ func TestArchiveIdentityExistsInConfiguredDialect(t *testing.T) {
 func TestInitSchemaMigratesListIDColumn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "legacy-list-id.db"))
+	st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "legacy-list-id.db"))
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "initialize current schema")
@@ -165,10 +164,10 @@ func TestInitSchemaMigratesListIDColumn(t *testing.T) {
 		"trg_messages_content_changed_at",
 		"trg_person_sweep_messages_update",
 	} {
-		_, err = st.DB().Exec(`DROP TRIGGER IF EXISTS ` + trigger)
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS `+trigger)
 		require.NoErrorf(err, "remove trigger that references the legacy column: %s", trigger)
 	}
-	_, err = st.DB().Exec(`ALTER TABLE messages DROP COLUMN list_id`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE messages DROP COLUMN list_id`)
 	require.NoError(err,
 		"remove column to simulate a legacy archive")
 
@@ -176,7 +175,7 @@ func TestInitSchemaMigratesListIDColumn(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err, "create source")
-	conversationID, err := st.EnsureConversation(source.ID, "legacy-list-thread", "List announcement")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "legacy-list-thread", "List announcement")
 	require.NoError(err, "ensure conversation")
 	_, err = st.UpsertMessage(&store.Message{
 		SourceID:        source.ID,
@@ -188,7 +187,7 @@ func TestInitSchemaMigratesListIDColumn(t *testing.T) {
 	require.NoError(err, "upsert migrated message")
 
 	var listID sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT list_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		source.ID, "legacy-list-message",
 	).Scan(&listID), "read migrated list ID")
@@ -232,23 +231,23 @@ func TestInitSchemaUpgradesV9WatermarkTriggersForListID(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	messageID := seedMessage(t, st, 1)
 
-	_, err := st.DB().Exec(`DROP TRIGGER IF EXISTS trg_messages_content_changed_at`)
+	_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_messages_content_changed_at`)
 	require.NoError(err, "remove current message watermark trigger")
-	_, err = st.DB().Exec(previousV9MessagesContentChangedAtTrigger)
+	_, err = st.DB().ExecContext(t.Context(), previousV9MessagesContentChangedAtTrigger)
 	require.NoError(err, "install prior v9 message watermark trigger")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_and_attachment_triggers_v9', 'message_and_attachment_triggers_v10',
 		               'message_and_attachment_triggers_v11', 'message_and_attachment_triggers_v12')`)
 	require.NoError(err, "clear current watermark trigger migration records")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v9')`)
 	require.NoError(err, "record the prior watermark trigger migration")
 
 	require.NoError(st.InitSchema(), "upgrade v9 watermark trigger definitions")
 
 	before := stampContentChangedAt(t, st, messageID)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
 		"<upgraded-list.example.test>", messageID)
 	require.NoError(err, "update List-ID after trigger migration")
 	assert.NotEqual(t, before, readContentChangedAt(t, st, messageID),
@@ -274,14 +273,14 @@ func TestPostgresInitSchemaMigratesListIDColumn(t *testing.T) {
 		"trg_messages_content_changed_at",
 		"trg_person_sweep_changes_message_update",
 	} {
-		_, err := f.Store.DB().Exec(`DROP TRIGGER IF EXISTS ` + trigger + ` ON messages`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS `+trigger+` ON messages`)
 		require.NoErrorf(err, "remove trigger that references the legacy column: %s", trigger)
 	}
-	_, err := f.Store.DB().Exec(`
+	_, err := f.Store.DB().ExecContext(t.Context(), `
 		DELETE FROM applied_migrations
 		WHERE name = 'message_and_attachment_triggers_v12'`)
 	require.NoError(err, "restore the pre-List-ID trigger migration state")
-	_, err = f.Store.DB().Exec(`ALTER TABLE messages DROP COLUMN list_id`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `ALTER TABLE messages DROP COLUMN list_id`)
 	require.NoError(err, "remove column to simulate a legacy PostgreSQL archive")
 	require.NoError(f.Store.InitSchema(), "migrate legacy PostgreSQL archive")
 
@@ -295,7 +294,7 @@ func TestPostgresInitSchemaMigratesListIDColumn(t *testing.T) {
 	require.NoError(err, "upsert migrated PostgreSQL message")
 
 	var listID sql.NullString
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT list_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		f.Source.ID, "legacy-postgres-list-message",
 	).Scan(&listID), "read migrated PostgreSQL list ID")

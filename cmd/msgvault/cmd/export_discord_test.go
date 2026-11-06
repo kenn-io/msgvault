@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -25,7 +26,11 @@ func TestExportDiscordWritesVersionedBoundedJSON(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.CompleteSync(runID, "complete"))
 
-	cmd := newExportDiscordLocalCmd(testDiscordCommandDeps(t, st, "", ""))
+	deps := testDiscordCommandDeps(t, st, "", "")
+	deps.openStore = func() (*store.Store, func(), error) {
+		return nil, nil, errors.New("export must use the read-only opener")
+	}
+	cmd := newExportDiscordLocalCmd(deps)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
@@ -68,7 +73,11 @@ func TestExportDiscordRequiresSuccessfulSync(t *testing.T) {
 	_, err := st.GetOrCreateSource(sourceTypeDiscord, testDiscordGuildA)
 	require.NoError(t, err)
 
-	cmd := newExportDiscordLocalCmd(testDiscordCommandDeps(t, st, "", ""))
+	deps := testDiscordCommandDeps(t, st, "", "")
+	deps.openStore = func() (*store.Store, func(), error) {
+		return nil, nil, errors.New("export must use the read-only opener")
+	}
+	cmd := newExportDiscordLocalCmd(deps)
 	cmd.SetArgs([]string{
 		testDiscordGuildA,
 		"--start", "2026-07-20T00:00:00Z",
@@ -94,7 +103,7 @@ func insertDiscordCLIExportConversation(
 ) int64 {
 	t.Helper()
 	var conversationID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO conversations (
 			source_id, source_conversation_id, conversation_type, title, metadata
 		) VALUES (?, ?, 'channel', 'general', ?)
@@ -114,7 +123,7 @@ func insertDiscordCLIExportMessage(
 ) {
 	t.Helper()
 	var messageID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
 			sent_at, received_at, metadata
@@ -124,7 +133,7 @@ func insertDiscordCLIExportMessage(
 		`{"author_display_name":"synthetic-user"}`,
 	).Scan(&messageID)
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, "A complete message body https://example.test/item")
 	require.NoError(t, err)

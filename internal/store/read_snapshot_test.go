@@ -23,7 +23,7 @@ func selectOne(ctx context.Context, st *store.Store) error {
 func TestRunIndependentReads(t *testing.T) {
 	t.Run("overlaps reads outside a snapshot", func(t *testing.T) {
 		st := testutil.NewTestStore(t)
-		ctx := context.Background()
+		ctx := t.Context()
 		started := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 		// Each read waits until the other has started, which only happens
 		// when both are in flight at once.
@@ -44,7 +44,7 @@ func TestRunIndependentReads(t *testing.T) {
 	t.Run("runs reads in order inside a snapshot", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		st := testutil.NewTestStore(t)
-		ctx, release, err := st.BeginReadSnapshotContext(context.Background())
+		ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 		require.NoError(err)
 		t.Cleanup(release)
 		var active, maxActive atomic.Int32
@@ -69,7 +69,7 @@ func TestRunIndependentReads(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		first, second := errors.New("first read"), errors.New("second read")
 		secondFailed := make(chan struct{})
-		err := store.RunIndependentReads(context.Background(), st.DB(),
+		err := store.RunIndependentReads(t.Context(), st.DB(),
 			func(context.Context) error {
 				select {
 				case <-secondFailed:

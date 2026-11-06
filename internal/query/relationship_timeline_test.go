@@ -1,11 +1,11 @@
 package query
 
 import (
-	"context"
-	"go.kenn.io/msgvault/internal/search"
 	"strconv"
 	"testing"
 	"time"
+
+	"go.kenn.io/msgvault/internal/search"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,7 +82,7 @@ func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emai
 func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
 	t.Parallel()
 	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("America/Chicago collapses all three chats into one burst", func(t *testing.T) {
 		assert := assert.New(t)
@@ -162,7 +162,7 @@ func TestRelationshipTimelineRejectsInvalidTimezone(t *testing.T) {
 	require := require.New(t)
 
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
-	_, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	_, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: canonicalID, Timezone: "Not/AZone", Limit: 10,
 	})
 	require.ErrorIs(err, ErrInvalidExploreRequest)
@@ -180,7 +180,7 @@ func TestRelationshipTimelineResolvesAnyMemberID(t *testing.T) {
 	assert := assert.New(t)
 
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
-	result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	result, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: canonicalID, Timezone: "America/Chicago", Limit: 10,
 	})
 	require.NoError(err)
@@ -219,13 +219,13 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 
 	engine := b.BuildEngine()
 
-	all, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	all, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: pID, Limit: 10,
 	})
 	require.NoError(err)
 	require.Len(all.Rows, 2, "both of Pat's entries are in scope without a participant filter")
 
-	filtered, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	filtered, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: pID, Limit: 10, Context: Context{ParticipantIDs: []int64{xID}},
 	})
 	require.NoError(err)
@@ -290,6 +290,13 @@ func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *t
 	b.AddFrom(attendedEventID, xID, "X")
 	b.AddTo(attendedEventID, ownerAliasID, "Owner Alias")
 
+	attendedMeetingID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "meeting_transcript",
+		SentAt: time.Date(2026, 1, 6, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(attendedMeetingID, xID, "X")
+	b.AddTo(attendedMeetingID, ownerAliasID, "Owner Alias")
+
 	emailID := b.AddMessage(MessageOpt{
 		SourceID: srcID, MessageType: "email",
 		SentAt: time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC),
@@ -298,25 +305,28 @@ func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *t
 	b.AddTo(emailID, yID, "Y")
 
 	engine := b.BuildEngine()
-	result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	result, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: xID, Limit: 10,
 	})
 	require.NoError(err)
-	require.Len(result.Rows, 2,
-		"owner-absent and roster-only events and the meeting must be excluded; owner-attended event and owner-absent email remain")
-	assert.Equal(int64(2), result.TotalCount)
+	require.Len(result.Rows, 3,
+		"owner-absent and roster-only events and meetings must be excluded; owner-attended events and meetings and owner-absent email remain")
+	assert.Equal(int64(3), result.TotalCount)
 
-	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[0].Key,
+	assert.Equal("message:"+strconv.FormatInt(attendedMeetingID, 10), result.Rows[0].Key)
+	assert.Equal("meeting", result.Rows[0].Kind)
+	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[1].Key,
 		"an event the owner attended via a clustered alias must remain")
-	assert.Equal("event", result.Rows[0].Kind)
-	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[1].Key,
+	assert.Equal("event", result.Rows[1].Kind)
+	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[2].Key,
 		"a plain email from the counterpart keeps its current owner-independent scope")
-	assert.Equal("email", result.Rows[1].Kind)
-	activity, err := engine.Explore(context.Background(), ExploreRequest{SentOnly: true, PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{xID}}, Page: PageSpec{Limit: 10}})
+	assert.Equal("email", result.Rows[2].Kind)
+	activity, err := engine.Explore(t.Context(), ExploreRequest{SentOnly: true, PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{xID}}, Page: PageSpec{Limit: 10}})
 	require.NoError(err)
-	require.Len(activity.Rows, 2, "the replacement person timeline preserves direct-owner eligibility")
-	assert.Equal(attendedEventID, *activity.Rows[0].AnchorMessageID)
-	assert.Equal(emailID, *activity.Rows[1].AnchorMessageID)
+	require.Len(activity.Rows, 3, "the replacement person timeline preserves direct-owner eligibility")
+	assert.Equal(attendedMeetingID, *activity.Rows[0].AnchorMessageID)
+	assert.Equal(attendedEventID, *activity.Rows[1].AnchorMessageID)
+	assert.Equal(emailID, *activity.Rows[2].AnchorMessageID)
 }
 
 // TestResolveCanonicalParticipant covers both the linked case (any member ID
@@ -336,15 +346,15 @@ func TestResolveCanonicalParticipant(t *testing.T) {
 	engine := b.BuildEngine()
 	canonical := min(aID, a2ID)
 
-	resolvedFromA, err := engine.ResolveCanonicalParticipant(context.Background(), aID)
+	resolvedFromA, err := engine.ResolveCanonicalParticipant(t.Context(), aID)
 	require.NoError(err)
 	assert.Equal(canonical, resolvedFromA)
 
-	resolvedFromA2, err := engine.ResolveCanonicalParticipant(context.Background(), a2ID)
+	resolvedFromA2, err := engine.ResolveCanonicalParticipant(t.Context(), a2ID)
 	require.NoError(err)
 	assert.Equal(canonical, resolvedFromA2)
 
-	resolvedLone, err := engine.ResolveCanonicalParticipant(context.Background(), loneID)
+	resolvedLone, err := engine.ResolveCanonicalParticipant(t.Context(), loneID)
 	require.NoError(err)
 	assert.Equal(loneID, resolvedLone, "an unlinked participant is a single-member cluster of itself")
 }
@@ -382,7 +392,7 @@ func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testin
 	b.AddCc(entryAlias, xAlias, "X (Work)")
 
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	byCanonical, err := engine.RelationshipTimeline(ctx, RelationshipTimelineRequest{
 		CanonicalID: pID, Limit: 10, Context: Context{ParticipantIDs: []int64{xCanonical}},
@@ -435,7 +445,7 @@ func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
 	b.AddFrom(flaggedChatID, xID, "X")
 
 	engine := b.BuildEngine()
-	result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	result, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: xID, Limit: 10,
 	})
 	require.NoError(err)
@@ -458,7 +468,7 @@ func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
 
 	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
 	keys := func(scope search.AccountScope) []string {
-		result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+		result, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 			CanonicalID: canonicalID, Timezone: "America/Chicago", Limit: 10,
 			Context: Context{AccountScopes: []search.AccountScope{scope}},
 		})

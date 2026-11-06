@@ -1,7 +1,6 @@
 package hybrid
 
 import (
-	"context"
 	"database/sql"
 	"slices"
 	"strings"
@@ -36,7 +35,7 @@ CREATE TABLE labels (
     name TEXT
 );
 `
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(err, "schema")
 	participants := []string{
 		"alice@example.com",
@@ -46,11 +45,11 @@ CREATE TABLE labels (
 	}
 	for _, p := range participants {
 		domain := p[strings.LastIndex(p, "@")+1:]
-		_, err := db.Exec(`INSERT INTO participants (email_address, domain) VALUES (?, ?)`, p, domain)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO participants (email_address, domain) VALUES (?, ?)`, p, domain)
 		require.NoError(err, "insert participant")
 	}
 	for _, l := range []string{"INBOX", "Work", "Archive"} {
-		_, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, l)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO labels (name) VALUES (?)`, l)
 		require.NoError(err, "insert label")
 	}
 	return db
@@ -60,7 +59,7 @@ func TestApplyMessageFilterPreservesExactTUIScope(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	db := newFilterTestDB(t)
-	_, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, "Work Notes")
+	_, err := db.ExecContext(t.Context(), `INSERT INTO labels (name) VALUES (?)`, "Work Notes")
 	require.NoError(err)
 	sourceID := int64(7)
 	conversationID := int64(42)
@@ -163,7 +162,7 @@ func sortedIDs(ids []int64) []int64 {
 func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:example.com to:alice cc:other.com`)
@@ -188,7 +187,7 @@ func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
 func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`larger:1M smaller:10M subject:quarterly subject:"offsite plan" after:2025-01-01 before:2025-06-01`)
@@ -208,7 +207,7 @@ func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
 }
 
 func TestBuildFilter_MessageType(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	f, err := BuildFilter(ctx, db, nil, search.Parse(`message_type=sms message_type:mms lunch`))
@@ -228,7 +227,7 @@ func TestBuildFilter_ListIDs(t *testing.T) {
 }
 
 func TestBuildFilter_SourceIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 	q := search.Parse(`lunch`)
 	q.AccountIDs = []int64{17, 23}
@@ -240,7 +239,7 @@ func TestBuildFilter_SourceIDs(t *testing.T) {
 }
 
 func TestBuildFilter_ConversationIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 	q := search.Parse(`conversation_id:17 conversation_id:23 lunch`)
 
@@ -265,7 +264,7 @@ func TestBuildFilter_ExplicitEmptyConversationIDsMatchNothing(t *testing.T) {
 func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:Work has:attachment`)
@@ -281,7 +280,7 @@ func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
 // TestBuildFilter_EmptyQueryYieldsEmptyFilter covers the
 // "no operators" path.
 func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`lunch plans`)
@@ -297,7 +296,7 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 // broadening the search instead of returning zero hits.
 func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:nobody@nowhere.invalid`)
@@ -313,7 +312,7 @@ func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
 // lookups with IN (...), and an unknown label silently became a no-op.
 func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:nonexistent-label-xyz`)
@@ -334,7 +333,7 @@ func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 // SQLite search path (internal/store/api.go), which emits one EXISTS
 // per `from:` token at the message level.
 func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	t.Run("two real tokens become two non-sentinel groups", func(t *testing.T) {
@@ -390,7 +389,7 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:bob`)
@@ -415,7 +414,7 @@ func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
 func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:nobody@nowhere.invalid`)
@@ -431,7 +430,7 @@ func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testi
 // TestBuildFilter_RepeatedLabelTokens_PerTokenGroups is the label-side
 // counterpart of TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups.
 func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	t.Run("two real labels become two groups", func(t *testing.T) {
@@ -470,7 +469,7 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 // the common `label:work` / stored-label `Work` mismatch and on
 // partial names.
 func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := newFilterTestDB(t)
 
 	cases := []struct {
@@ -499,14 +498,14 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 
 func TestBuildFilterCarriesAccountScopes(t *testing.T) {
 	assert := assert.New(t)
-	f, err := BuildFilter(context.Background(), nil, nil, search.Parse("lunch account:a@example.org received:b@example.org"))
+	f, err := BuildFilter(t.Context(), nil, nil, search.Parse("lunch account:a@example.org received:b@example.org"))
 	require.NoError(t, err)
 	assert.Equal([]search.AccountScope{
 		{Addresses: []string{"a@example.org"}},
 		{Addresses: []string{"b@example.org"}, Inbound: true},
 	}, f.AccountScopes)
 
-	require.NoError(t, ApplyMessageFilter(context.Background(), nil, nil, &f,
+	require.NoError(t, ApplyMessageFilter(t.Context(), nil, nil, &f,
 		query.MessageFilter{AccountScopes: []search.AccountScope{{Unattributed: true}}}))
 	assert.Len(f.AccountScopes, 3, "structured scopes intersect with the query's")
 	assert.True(f.AccountScopes[2].Unattributed)

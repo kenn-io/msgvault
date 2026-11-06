@@ -160,7 +160,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.42.0**.
+it is separate from the binary release version. The current schema is **3.46.0**.
+
+Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
+
+Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
@@ -207,6 +211,10 @@ Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
 Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
+
+Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
+`POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
+one exact question.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1733,6 +1741,7 @@ own schedule; nothing in this feed will invalidate them.
 | 429 | `rate_limit_exceeded` | The caller has outrun the [rate limit](#rate-limiting); `Retry-After` says how long to wait. Worth handling here more than anywhere else, because polling is what this endpoint is for. Polling faster does not make the feed advance sooner — `complete_through` moves with the database, not with your poll rate — and on SQLite it costs the importer write throughput |
 | 500 | `internal_error` | The watermark query failed. **PostgreSQL only:** this is also how the no-visibility-floor case above surfaces — a server that has never once read the bound while every writer of the message table was visible has no safe bound to report, so the endpoint refuses rather than returning a page that would step your cursor over an invisible writer's change. The server log names the `pg_read_all_stats` grant that fixes it; it also clears by itself when the foreign transaction ends |
 | 503 | `feature_unavailable`, `query_timeout` | `feature_unavailable`: the configured store cannot answer the watermark query, or cannot say which archive it is, so it cannot issue a cursor you could safely resume from. `query_timeout`: the request outran the server's per-request time limit. Both are retryable from the same cursor. (A request the caller abandoned is answered `query_canceled` on the same status, which by definition nobody is left to read.) |
+| 503 | `analytical_cache_unavailable` | The committed analytics cache is unavailable, for example while `remove-account` or a repair command rebuilds it under `engine = "duckdb"`. Retry the request. |
 
 ---
 
@@ -1777,6 +1786,8 @@ The `cc`, `bcc`, and `body_html` fields are included only when present. `body` i
 
 API schema 3.41.0 adds `body_text` for a single message's stored plain-text body, which can be generated from the HTML part and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit `body_text`, and `body` keeps its HTML fallback.
 
+Schema 3.42.0 adds an optional `sender_auth` object to message details and `GET /api/v1/cli/message` for email sources with [receiver pins](configuration.md#sender-authentication). It carries `verified`, `domain`, `authserv_id`, `spf`, `dkim`, and `dmarc`. Only `verified` is always present. Empty results carry `verified: false`. Verification covers the From domain, as reported by the pinned receiving server. List and search responses omit this field.
+
 ---
 
 ### Attachment metadata {#get-apiv1attachmentsid}
@@ -1805,6 +1816,48 @@ The response includes the SHA-256 `content_hash` used by the content endpoint:
 `POST /api/v1/integrations/docbank/attachments/backfill` resets discovery and requeues failed deliveries as sending intents with attempts reset in one transaction. It returns 202 with `{"status":"scheduled"}`, including when the job is already running. It requires attachment upload consent and a scheduled mirror job. Missing consent returns 409; an unavailable store or scheduler returns 503. Both routes require the API key.
 
 Attachment metadata and message details include an optional `docbank` array of receipts with `endpoint`, `folder`, `node_id`, `version_id`, `blob_hash`. Duplicate stored content hashes share receipts. For hashless Slack or Discord rows, discovery and details recover the hash from a local storage path in the `<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix. The mirror uploads these aliases from loose files or retained pack entries, verifies their SHA-256, and uploads under `<first 12 hex of hash>-<sanitized basename>`. See [configuration](configuration.md#mirror-stored-attachments-to-docbank) for consent and failure recovery.
+
+---
+
+### Open loops
+
+`GET /api/v1/loops` lists conversations that wait on a reply, oldest first.
+Query parameters are `person_id` and `limit` (1 to 200, default 50). It reads conversations of any age from the archive when you ask. It returns `items` and `truncated`. Each
+item has `kind`, `anchor_message_id`, `question_message_ids` (the questions
+the item covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty`
+(`participant_id`, optional `person_id`, `display_name`, `address`), `summary`,
+`owed_since_at`, and `last_activity_at`. `truncated` is true when more loops are
+open than `limit`. `skipped_unparseable` counts stored messages the list could
+not read, because their original failed to parse. A reply in one of them may
+have settled a loop that still lists. The scan computes evidence for at most 1,000 uncached messages per request. It retains body classifications and MIME facts, so another request continues farther through history. If the budget runs out, or the request reaches its time limit, it returns only
+completed conversations and sets `coverage_incomplete`. A smaller `limit` does
+not shorten the scan. While a backup or other archive work holds the daemon, a
+list still answers but saves no new evidence. A bad parameter returns 400.
+
+`POST /api/v1/loops/{message_id}/done` and
+`POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`
+record your decision on this person's open questions. Pass the item's
+`question_message_ids` as a query parameter, repeated or comma-separated, to
+mark only the questions you listed; a question that appeared later stays open,
+whatever its date. The list must include `message_id`, or the request returns
+400. Without it, the decision covers every question visible when you act. A distinct question
+imported later can list again, whatever its message date. These
+routes return `anchor_message_id`, `state` (`done` or `snoozed`), and
+`snoozed_until`. They re-read the conversation first and return 404
+`loop_not_found` when the message is not a loop that list would show now: it
+anchors no current loop, the loop has not waited out its 24 or 72 hours, or
+a listed question is no longer open in it. A
+snooze time in the past returns 400. When re-reading the conversation reaches
+the evidence budget, they save nothing and return 503 `loop_scan_incomplete`
+with `Retry-After: 1`; retry to continue. Like other writes, done, snooze, and
+reopen can return 503 `operation_in_progress` while other archive work holds
+the daemon.
+
+`POST /api/v1/loops/{message_id}/reopen` clears the done or snooze decision on
+that exact question. It returns `anchor_message_id` and `state: "open"`, or
+404 `loop_decision_not_found` when the message has no decision. Responses are
+not cacheable. These routes are owner-only: delegated agent tokens receive 401.
+See [Open loops](usage/open-loops.md) for the rules.
 
 ---
 

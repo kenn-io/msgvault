@@ -41,7 +41,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 		IncludeCalls:       true,
 		IncludeAttachments: true,
 	})
-	summary, err := imp.ImportPath(dir)
+	summary, err := imp.ImportPath(t.Context(), dir)
 	require.NoError(err, "ImportPath")
 	require.Equal(1, summary.SMSImported, "summary = %#v", summary)
 	require.Equal(1, summary.MMSImported, "summary = %#v", summary)
@@ -60,7 +60,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "messages-copy.xml"), `<smses count="1">
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
 </smses>`)
-	_, err = imp.ImportPath(dir)
+	_, err = imp.ImportPath(t.Context(), dir)
 	require.NoError(err, "ImportPath second")
 	assertMessageCount(t, f.Store, 3)
 	assertRawFormats(t, f.Store, RawFormat, 3)
@@ -69,7 +69,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 func TestImporterRejectsMissingOwnerPhone(t *testing.T) {
 	f := storetest.New(t)
 	imp := NewImporter(f.Store, ImportOptions{IncludeSMS: true})
-	_, err := imp.ImportPath(t.TempDir())
+	_, err := imp.ImportPath(t.Context(), t.TempDir())
 	require.Error(t, err, "ImportPath returned nil error")
 }
 
@@ -77,7 +77,7 @@ func TestImporterContinuesWhenFTSUpsertFails(t *testing.T) {
 	testutil.SkipIfPostgres(t, "drops SQLite's messages_fts virtual table; PostgreSQL FTS is a messages.search_fts column")
 	f := storetest.New(t)
 	if f.Store.FTS5Available() {
-		_, err := f.Store.DB().Exec(`DROP TABLE messages_fts`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TABLE messages_fts`)
 		require.NoError(t, err, "drop FTS table")
 	}
 	dir := t.TempDir()
@@ -89,7 +89,7 @@ func TestImporterContinuesWhenFTSUpsertFails(t *testing.T) {
 		OwnerPhone: "+15550000001",
 		IncludeSMS: true,
 	})
-	summary, err := imp.ImportPath(dir)
+	summary, err := imp.ImportPath(t.Context(), dir)
 	require.NoError(t, err, "ImportPath")
 	assert.Equal(t, 1, summary.SMSImported, "summary = %#v", summary)
 	assertMessageCount(t, f.Store, 1)
@@ -106,7 +106,7 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 		OwnerPhone:   "+15550000001",
 		IncludeCalls: true,
 	})
-	summary, err := imp.ImportPath(dir)
+	summary, err := imp.ImportPath(t.Context(), dir)
 	require.NoError(t, err, "ImportPath")
 	require.Equal(t, 1, summary.CallsImported)
 	assertMessageCount(t, f.Store, 1)
@@ -137,7 +137,7 @@ func TestImporterReturnsMMSMessageIDWhenAttachmentImportFails(t *testing.T) {
 		IncludeMMS:         true,
 		IncludeAttachments: true,
 	})
-	summary, err := imp.ImportPath(dir)
+	summary, err := imp.ImportPath(t.Context(), dir)
 	require.Error(err, "ImportPath")
 	assert.Contains(err.Error(), "exceeds maximum size", "ImportPath error")
 
@@ -172,10 +172,10 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 		IncludeSMS: true,
 		IncludeMMS: true,
 	})
-	_, err := imp.ImportPath(dir)
+	_, err := imp.ImportPath(t.Context(), dir)
 	require.NoError(err, "ImportPath")
 
-	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
+	rows, err := f.Store.DB().QueryContext(t.Context(), `SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
 	require.NoError(err, "query messages")
 	defer func() { _ = rows.Close() }()
 	got := map[string]bool{}
@@ -195,14 +195,14 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 func assertMessageCount(t *testing.T, st *store.Store, want int) {
 	t.Helper()
 	var got int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&got), "count messages")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&got), "count messages")
 	require.Equal(t, want, got, "message count")
 }
 
 func assertRawFormats(t *testing.T, st *store.Store, format string, want int) {
 	t.Helper()
 	var got int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`), format).Scan(&got), "count raw formats")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`), format).Scan(&got), "count raw formats")
 	require.Equal(t, want, got, "raw format count")
 }
 
@@ -211,7 +211,7 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 	var got int
 	// Filter to conversations created by this importer; the shared store
 	// fixture seeds a default-thread row that is unrelated.
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got), "count conversations")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got), "count conversations")
 	require.Equal(t, want, got, "conversation count")
 }
 
@@ -221,7 +221,7 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 func assertAttachmentAtCanonicalPath(t *testing.T, st *store.Store, attachmentsDir string) {
 	t.Helper()
 	var storagePath, contentHash, role, roleSource, sourcePartKey string
-	err := st.DB().QueryRow(`
+	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT storage_path, content_hash, attachment_role, role_source, source_part_key
 		FROM attachments ORDER BY id LIMIT 1`).
 		Scan(&storagePath, &contentHash, &role, &roleSource, &sourcePartKey)
@@ -242,7 +242,7 @@ func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int
 	t.Helper()
 	var hasAttachments bool
 	var count int
-	err := st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE message_type = 'mms'`).Scan(&hasAttachments, &count)
+	err := st.DB().QueryRowContext(t.Context(), `SELECT has_attachments, attachment_count FROM messages WHERE message_type = 'mms'`).Scan(&hasAttachments, &count)
 	require.NoError(t, err, "read mms attachment metadata")
 	require.True(t, hasAttachments, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 	require.Equal(t, wantCount, count, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)

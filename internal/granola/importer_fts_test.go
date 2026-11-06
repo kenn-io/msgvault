@@ -3,7 +3,6 @@
 package granola
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,7 +22,7 @@ func TestImport_FTSIndexed(t *testing.T) {
 	imp, st := newTestImporter(t, api)
 	require.True(st.FTS5Available(), "FTS5 build tag set but FTS5 not available")
 
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 
 	for _, term := range []string{"quarterly", "priorities", "budget"} {

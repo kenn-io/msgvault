@@ -2,7 +2,6 @@ package importer
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
@@ -36,7 +35,7 @@ func TestIngestRawMessage_DeclaredUTF8HTML(t *testing.T) {
 		"Subject: Meter reading\r\nMessage-ID: <reading@example.org>\r\nMIME-Version: 1.0\r\n" +
 		"Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + encoded.String())
 	digest := sha256.Sum256(raw)
-	err = IngestRawMessage(context.Background(), st, source.ID, "archive@example.org", "",
+	err = IngestRawMessage(t.Context(), st, source.ID, "archive@example.org", "",
 		nil, "reading-1", hex.EncodeToString(digest[:]), raw, time.Time{}, slog.Default())
 	require.NoError(err)
 

@@ -3953,6 +3953,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
+-- idx_messages_source_sent_at is built by Store.buildLargeIndexesConcurrently.
 -- idx_messages_source_id is built by Store.buildLargeIndexesConcurrently via
 -- CREATE INDEX CONCURRENTLY on a dedicated autocommit connection, outside any
 -- transaction; building it over an existing archive can take a long time,

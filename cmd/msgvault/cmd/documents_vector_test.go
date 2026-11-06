@@ -56,7 +56,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Contains(unconfirmedOutput.String(), "Docbank-prepared normalized attachment document inputs will be sent")
 	assert.NotContains(unconfirmedOutput.String(), "Explicit semantic or hybrid document searches")
 	assert.NotContains(unconfirmedOutput.String(), "secret-that-must-not-print")
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	unconfirmedConsent, err := fixture.Store.GetDocumentVectorConsent(testCtx, consentSpec.EgressFingerprint)
 	require.NoError(err)
@@ -76,7 +76,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Equal(spec, recorded.DocumentVectorGenerationSpec)
 	assert.Equal("document_embedding", recorded.Purpose)
 
-	queryConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "query_embedding")
+	queryConsentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "query_embedding")
 	require.NoError(err)
 	assert.NotEqual(consentSpec.EgressFingerprint, queryConsentSpec.EgressFingerprint)
 	queryConsent := newDocumentsCmd(deps)
@@ -92,7 +92,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 
 	consentedEndpoint := cfg.Vector.Embeddings.Endpoint
 	cfg.Vector.Embeddings.Endpoint = "https://hosted.example.test/v1"
-	changedConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
+	changedConsentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	assert.NotEqual(consentSpec.EgressFingerprint, changedConsentSpec.EgressFingerprint)
 	require.ErrorContains(requireDocumentVectorConsent(testCtx, fixture.Store, spec), "not consented")
@@ -269,7 +269,7 @@ func TestDocumentVectorProviderCommandsUseRuntimeAndValidateBounds(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture, spec, testCtx := documentVectorCommandFixture(t)
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -318,7 +318,7 @@ func TestDocumentVectorResumeRunsBoundedCleanupForRetiredGeneration(t *testing.T
 	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, spec)
 	require.NoError(err)
 	token := strings.Repeat("8", 64)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
 			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
@@ -492,7 +492,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 	require := require.New(t)
 	fixture, desired, testCtx := documentVectorCommandFixture(t)
 	cfg := invocationFromContext(testCtx).cfg
-	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), desired, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -506,7 +506,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 	obsolete, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, obsoleteSpec)
 	require.NoError(err)
 	for index := range 3 {
-		_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+		_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 			INSERT INTO document_vector_publications
 				(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 				 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
@@ -566,7 +566,7 @@ func TestRegisteredDocumentVectorJobCarriesInvocation(t *testing.T) {
 	capture := &registeredDocumentVectorJobCapture{}
 	require.NoError(registerDocumentVectorJob(capture, features, fixture.Store, state))
 	require.NotNil(capture.job)
-	require.NoError(capture.job(context.Background()))
+	require.NoError(capture.job(t.Context()))
 	active, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
 	assert.Nil(active)
@@ -580,7 +580,7 @@ func TestScheduledDocumentVectorCleansRetiredWithoutConsentOrProvider(t *testing
 	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, spec)
 	require.NoError(err)
 	token := strings.Repeat("9", 64)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
 			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
@@ -618,7 +618,7 @@ func TestScheduledDocumentVectorObservesConsentRecordedAfterRuntimeInitializatio
 	require.NoError(err)
 	assert.Nil(active)
 
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -635,7 +635,7 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 	require := require.New(t)
 	fixture, desired, testCtx := documentVectorCommandFixture(t)
 	cfg := invocationFromContext(testCtx).cfg
-	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(t.Context(), desired, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -643,7 +643,7 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 	require.NoError(err)
 	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(testCtx, active.ID, time.Now()))
 	token := strings.Repeat("c", 64)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
 			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
@@ -670,7 +670,7 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 	require.NoError(err)
 	assert.Zero(status.CleanupPending)
 	var publications int
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+	require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), fixture.Store.Rebind(
 		`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), active.ID).Scan(&publications))
 	assert.Zero(publications)
 
@@ -732,7 +732,7 @@ func documentVectorCommandFixture(t *testing.T) (*storetest.Fixture, store.Docum
 	}
 	_, err := fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 	require.NoError(t, err)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
 	require.NoError(t, err)
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	spec, err := desiredDocumentVectorSpec(testCtx, fixture.Store)

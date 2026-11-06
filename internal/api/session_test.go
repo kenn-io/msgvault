@@ -326,8 +326,9 @@ func TestSessionMutationsBypassHeldArchiveOperationGate(t *testing.T) { //nolint
 		Logger:        testLogger(),
 		OperationGate: gate,
 	})
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		require.NoError(t, srv.Shutdown(context.Background()))
+		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
 	})
 
 	login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
@@ -336,7 +337,7 @@ func TestSessionMutationsBypassHeldArchiveOperationGate(t *testing.T) { //nolint
 	loginStatus := decodeSessionStatus(t, login)
 	cookie := requireSessionCookie(t, login)
 
-	releaseGate, ok := gate.BeginLabeledWorkContext(context.Background(), "archive sync")
+	releaseGate, ok := gate.BeginLabeledWorkContext(t.Context(), "archive sync")
 	require.True(t, ok)
 	defer releaseGate()
 
@@ -419,8 +420,9 @@ func TestLoginAlwaysRateLimitedOnLoopback(t *testing.T) {
 func newSessionTestServer(t *testing.T, apiKey string) *Server {
 	t.Helper()
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: apiKey}}, nil, nil, testLogger())
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		require.NoError(t, srv.Shutdown(context.Background()))
+		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
 	})
 	return srv
 }
@@ -435,7 +437,7 @@ func performSessionRequest(
 	tlsConnection bool,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:4242"
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")

@@ -14,6 +14,7 @@ func TestIsRoomAttendee(t *testing.T) {
 		{"room@example.com", true, true},
 		{"room@resource.calendar.google.com", false, true},
 		{" Room@c.resource.calendar.google.com ", false, true},
+		{"Room@RESOURCE.Calendar.Google.COM", false, true},
 		{"room@evilresource.calendar.google.com", false, false},
 		{"room@resource.calendar.google.com.example.com", false, false},
 		{"person@example.com", false, false},

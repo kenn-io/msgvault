@@ -118,7 +118,7 @@ func TestCardDAVSetBookRolesAtomicallySwapsWriteTargetAndSchedulesWidening(t *te
 	assert.Greater(books[1].SyncRevision, oldRevision)
 
 	var targets int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM carddav_address_books WHERE is_write_target = TRUE`).Scan(&targets)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM carddav_address_books WHERE is_write_target = TRUE`).Scan(&targets)
 	require.NoError(err)
 	assert.Equal(1, targets)
 }
@@ -160,7 +160,8 @@ func TestCardDAVSetBookRolesClearsWriteTargetAndSubscriptionTogether(t *testing.
 	assert.False(after[0].IsLookupSource)
 
 	var targets int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM carddav_address_books WHERE is_write_target = TRUE`,
 	).Scan(&targets))
 	assert.Zero(targets)
@@ -276,7 +277,7 @@ func TestCardDAVSetBookRolesUnsubscribeDeletesOnlyUntouchedImportedPeople(t *tes
 	require.NoError(err)
 	participantID, err := st.EnsureParticipantByIdentifier("email", "linked@example.test", "Linked")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO person_participants (person_id, participant_id) VALUES (?, ?)`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_participants (person_id, participant_id) VALUES (?, ?)`),
 		personByHref[resources[2].Href], participantID)
 	require.NoError(err)
 	_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
@@ -752,7 +753,7 @@ func TestCardDAVDiscoveryRetainsBookWithPendingPublicationIntent(t *testing.T) {
 
 	st, _, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('pending-person', 'Pending Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -821,7 +822,7 @@ func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.
 
 	st, _, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('retry-owner', 'Retry Owner') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -920,7 +921,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingMutation(t *testing
 	require.NoError(err)
 	require.Len(books, 2)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('pending-role-person', 'Pending Role Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -978,9 +979,9 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWhenProposedTargetHasPublicati
 	require.NoError(err)
 	require.Len(books, 2)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('proposed-owner', 'Proposed Owner') RETURNING id`).Scan(&personID))
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications
 		(person_id, desired, address_book_id, href)
 		VALUES (?, TRUE, ?, ?)`), personID, books[1].ID, books[1].CanonicalURL+"proposed-owner.vcf")
 	require.NoError(err)
@@ -1039,10 +1040,10 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingConflictIntent(t *t
 				roles.IsWriteTarget = false
 			}
 			if test.conflictOnProposedTarget {
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 					SET is_write_target = FALSE WHERE id = ?`), conflictBook.ID)
 				require.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 					SET is_write_target = TRUE, is_subscribed = TRUE WHERE id = ?`), nextBook.ID)
 				require.NoError(err)
 				targetBook = conflictBook
@@ -1192,7 +1193,7 @@ func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithPendingPublication(t *t
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('pending-narrowing', 'Pending Narrowing') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -1286,10 +1287,10 @@ func addCardDAVRoleTransitionBook(
 func setCardDAVRoleTestWriteTarget(t *testing.T, st *store.Store, oldID, newID int64) {
 	t.Helper()
 	require := require.New(t)
-	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_write_target = FALSE WHERE id = ?`), oldID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_write_target = TRUE, is_subscribed = TRUE WHERE id = ?`), newID)
 	require.NoError(err)
 }
@@ -1308,7 +1309,7 @@ func settleCardDAVTestPublication(
 ) (int64, store.CardDAVRemoteResource) {
 	t.Helper()
 	var personID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 		VALUES (?, ?) RETURNING id`), slug, "Settled Owner").Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(t, err)
@@ -1352,7 +1353,7 @@ func TestCardDAVDiscoveryPersistsRolesAndPrunesOnlyAfterCompleteReplacement(t *t
 	assert.Equal([]string{"4.0", "3.0"}, books[0].SupportedVCardVersions)
 
 	// A deliberately ignored book remains ignored when it is seen again.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_subscribed = FALSE, is_lookup_source = FALSE
 		WHERE canonical_url = ?`), initial.Books[1].CanonicalURL)
 	require.NoError(err)
@@ -1607,7 +1608,7 @@ func TestCardDAVURLIdentityUsesOneCanonicalAndAliasNamespace(t *testing.T) {
 	require.Len(books, 1)
 	assert.Empty(books[0].DiscoveryAliasURL)
 	var identityCount int
-	err = st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM carddav_address_book_urls WHERE address_book_id = ?`), books[0].ID).Scan(&identityCount)
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM carddav_address_book_urls WHERE address_book_id = ?`), books[0].ID).Scan(&identityCount)
 	require.NoError(err)
 	assert.Equal(1, identityCount, "NULL alias must create only the canonical identity")
 }
@@ -1633,7 +1634,7 @@ func TestCardDAVDiscoveryRejectsCredentialRotationWithPendingRemoteFirstIntent(t
 
 		st, account, book := newCardDAVResourceStore(t)
 		var personID int64
-		require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+		require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 			VALUES ('rotation-publication', 'Rotation Publication') RETURNING id`).Scan(&personID))
 		snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 		require.NoError(err)

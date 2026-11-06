@@ -46,14 +46,14 @@ func newVaultFixture(tb testing.TB) *vaultFixture {
 	require := require.New(tb)
 	dataDir := tb.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(tb.Context(), dbPath)
 	require.NoError(err, "open store")
 	tb.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-cs", "Content Source Thread")
+	convID, err := st.EnsureConversation(tb.Context(), src.ID, "thread-cs", "Content Source Thread")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -94,7 +94,7 @@ func (f *vaultFixture) addBlob(content []byte, relPath string) string {
 	f.t.Helper()
 	h := hashOf(content)
 	f.seq++
-	err := f.store.UpsertAttachment(f.msgID, fmt.Sprintf("file-%d.bin", f.seq),
+	err := f.store.UpsertAttachment(f.t.Context(), f.msgID, fmt.Sprintf("file-%d.bin", f.seq),
 		"application/octet-stream", relPath, h, len(content))
 	require.NoErrorf(f.t, err, "UpsertAttachment(%s)", h)
 	f.writeLoose(relPath, content)
@@ -202,7 +202,7 @@ func TestContentSourcePackedBlob(t *testing.T) {
 	require.Empty(f.looseFiles(), "packer must leave no loose content")
 
 	src := f.contentSource()
-	rc, err := src.Open(context.Background(), backup.ContentRef{
+	rc, err := src.Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: int64(len(content)), StoragePath: canonicalPath(h),
 	})
 	require.NoError(err)
@@ -217,7 +217,7 @@ func TestContentSourceCanonicalLooseBlob(t *testing.T) {
 	content := []byte("loose canonical payload")
 	h := f.addBlob(content, canonicalPath(hashOf(content)))
 
-	rc, err := f.contentSource().Open(context.Background(), backup.ContentRef{
+	rc, err := f.contentSource().Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: int64(len(content)), StoragePath: canonicalPath(h),
 	})
 	require.NoError(err)
@@ -227,7 +227,7 @@ func TestContentSourceCanonicalLooseBlob(t *testing.T) {
 func TestBackupCapturesLooseBlobAboveMaintenanceLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newVaultFixture(t)
 	content := randomBytes(t, 1024)
 	h := f.addBlob(content, canonicalPath(hashOf(content)))
@@ -278,7 +278,7 @@ func TestContentSourceNoncanonicalFallback(t *testing.T) {
 	rel := "synctech-sms/" + h[:2] + "/" + h
 	f.addBlob(content, rel) // recorded at the legacy path, never indexed
 
-	rc, err := f.contentSource().Open(context.Background(), backup.ContentRef{
+	rc, err := f.contentSource().Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: int64(len(content)), StoragePath: rel,
 	})
 	require.NoError(err)
@@ -312,7 +312,7 @@ func TestContentSourceRetriesPackedLookupWhenLegacyOpenLosesRace(t *testing.T) {
 	}
 	opened := make(chan openResult, 1)
 	go func() {
-		rc, err := src.Open(context.Background(), backup.ContentRef{
+		rc, err := src.Open(t.Context(), backup.ContentRef{
 			Hash: h, Size: int64(len(content)), StoragePath: rel,
 		})
 		opened <- openResult{rc: rc, err: err}
@@ -346,14 +346,14 @@ func TestContentSourceMissingBlob(t *testing.T) {
 	h := hashOf([]byte("never stored anywhere"))
 
 	// Canonical StoragePath: nothing more to try beyond the blob store.
-	_, err := src.Open(context.Background(), backup.ContentRef{
+	_, err := src.Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: 1, StoragePath: canonicalPath(h),
 	})
 	require.ErrorIs(err, fs.ErrNotExist)
 	assert.Contains(err.Error(), h)
 
 	// Recorded noncanonical path that is also missing.
-	_, err = src.Open(context.Background(), backup.ContentRef{
+	_, err = src.Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: 1, StoragePath: "synctech-sms/" + h[:2] + "/" + h,
 	})
 	require.Error(err)
@@ -372,7 +372,7 @@ func TestContentSourceMalformedHash(t *testing.T) {
 		assert.NotPanicsf(func() {
 			// A non-empty StoragePath would reach the hash-slicing fallback
 			// if the validation error ever satisfied fs.ErrNotExist.
-			_, err = src.Open(context.Background(), backup.ContentRef{
+			_, err = src.Open(t.Context(), backup.ContentRef{
 				Hash: hash, Size: 1, StoragePath: "synctech-sms/xx/" + hash,
 			})
 		}, "hash %q", hash)
@@ -387,7 +387,7 @@ func TestContentSourceNonLocalStoragePath(t *testing.T) {
 	f := newVaultFixture(t)
 	h := hashOf([]byte("escaping blob"))
 
-	_, err := f.contentSource().Open(context.Background(), backup.ContentRef{
+	_, err := f.contentSource().Open(t.Context(), backup.ContentRef{
 		Hash: h, Size: 1, StoragePath: "../evil",
 	})
 	require.Error(err)
@@ -401,7 +401,7 @@ func TestContentSourceCancelledContext(t *testing.T) {
 	content := []byte("cancelled read payload")
 	h := f.addBlob(content, canonicalPath(hashOf(content)))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := f.contentSource().Open(ctx, backup.ContentRef{
 		Hash: h, Size: int64(len(content)), StoragePath: canonicalPath(h),
@@ -417,7 +417,7 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newVaultFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	contentA := []byte("first packed attachment")
 	contentB := []byte("second attachment, imported at a legacy path")
@@ -463,14 +463,14 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	assert.Positive(restoreRes.AttachmentPacks)
 	assert.Empty(restoreRes.PackFallbacks)
 
-	restoredStore, err := store.OpenForTest(restoreRes.DBPath)
+	restoredStore, err := store.OpenForTest(t.Context(), restoreRes.DBPath)
 	require.NoError(err, "open restored store")
 	t.Cleanup(func() { _ = restoredStore.Close() })
 	restoredAttDir := filepath.Join(target, "attachments")
 	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), restoredAttDir)
 	require.NoError(err)
 	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
-		r, size, err := blobs.Open(h)
+		r, size, err := blobs.Open(t.Context(), h)
 		require.NoErrorf(err, "attachmentstore.Open(%s) after packed restore", h)
 		assert.Equalf(int64(len(want)), size, "blob %s size", h)
 		assert.Equalf(want, readAllAndClose(t, r), "blob %s reads byte-identical", h)
@@ -518,7 +518,7 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	assert.Equal(2, repacked.BlobsPacked)
 	cycleBlobs := attachmentstore.Wrap(maint.Store())
 	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
-		r, size, err := cycleBlobs.Open(h)
+		r, size, err := cycleBlobs.Open(t.Context(), h)
 		require.NoError(err)
 		assert.Equal(int64(len(want)), size)
 		assert.Equal(want, readAllAndClose(t, r))
@@ -531,7 +531,7 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	assert.Equal(int64(2), looseRes.LooseAttachmentBlobs)
 	_, err = os.Stat(filepath.Join(looseTarget, "attachments", "packs"))
 	require.ErrorIs(err, fs.ErrNotExist)
-	looseStore, err := store.OpenForTest(looseRes.DBPath)
+	looseStore, err := store.OpenForTest(t.Context(), looseRes.DBPath)
 	require.NoError(err)
 	defer func() { require.NoError(looseStore.Close()) }()
 	require.NoError(looseStore.ClearAttachmentPackMetadataContext(t.Context()), "mirror --loose-attachments CLI cleanup")
@@ -539,7 +539,7 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(looseBlobs.Close()) }()
 	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
-		r, _, err := looseBlobs.Open(h)
+		r, _, err := looseBlobs.Open(t.Context(), h)
 		require.NoError(err)
 		assert.Equal(want, readAllAndClose(t, r))
 	}
@@ -548,7 +548,7 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 func TestBackupPackedRestoreOverwriteReplacesPriorPackAuthority(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	snapshot := newVaultFixture(t)
 	snapshotContent := []byte("attachment retained by the restored snapshot")
@@ -580,7 +580,7 @@ func TestBackupPackedRestoreOverwriteReplacesPriorPackAuthority(t *testing.T) {
 		TargetDir: target, PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
 	})
 	require.NoError(err)
-	newerStore, err := store.OpenForTest(newerRestore.DBPath)
+	newerStore, err := store.OpenForTest(t.Context(), newerRestore.DBPath)
 	require.NoError(err)
 	newerRecords, err := newerStore.ListPackRecordsContext(t.Context())
 	require.NoError(err)
@@ -598,7 +598,7 @@ func TestBackupPackedRestoreOverwriteReplacesPriorPackAuthority(t *testing.T) {
 		PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
 	})
 	require.NoError(err)
-	restoredStore, err := store.OpenForTest(restored.DBPath)
+	restoredStore, err := store.OpenForTest(t.Context(), restored.DBPath)
 	require.NoError(err)
 	defer func() { require.NoError(restoredStore.Close()) }()
 	restoredRecords, err := restoredStore.ListPackRecordsContext(t.Context())
@@ -615,10 +615,10 @@ func TestBackupPackedRestoreOverwriteReplacesPriorPackAuthority(t *testing.T) {
 	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "attachments"))
 	require.NoError(err)
 	defer func() { require.NoError(blobs.Close()) }()
-	reader, _, err := blobs.Open(snapshotHash)
+	reader, _, err := blobs.Open(t.Context(), snapshotHash)
 	require.NoError(err)
 	assert.Equal(snapshotContent, readAllAndClose(t, reader))
-	_, _, err = blobs.Open(newerHash)
+	_, _, err = blobs.Open(t.Context(), newerHash)
 	require.ErrorIs(err, fs.ErrNotExist,
 		"a preserved old pack file must not grant authority to non-snapshot content")
 }
@@ -627,7 +627,7 @@ func TestBackupPackedRestoreMixedConfiguredLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newVaultFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	small := []byte("small packed blob")
 	large := randomBytes(t, 1024)
 	smallHash := f.addBlob(small, canonicalPath(hashOf(small)))
@@ -660,14 +660,14 @@ func TestBackupPackedRestoreMixedConfiguredLimit(t *testing.T) {
 	assert.NoFileExists(filepath.Join(target, "attachments", smallHash[:2], smallHash))
 	assert.FileExists(filepath.Join(target, "attachments", largeHash[:2], largeHash))
 
-	restoredStore, err := store.OpenForTest(res.DBPath)
+	restoredStore, err := store.OpenForTest(t.Context(), res.DBPath)
 	require.NoError(err)
 	defer func() { require.NoError(restoredStore.Close()) }()
 	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "attachments"))
 	require.NoError(err)
 	defer func() { require.NoError(blobs.Close()) }()
 	for h, want := range map[string][]byte{smallHash: small, largeHash: large} {
-		r, _, err := blobs.Open(h)
+		r, _, err := blobs.Open(t.Context(), h)
 		require.NoError(err)
 		assert.Equal(want, readAllAndClose(t, r))
 	}
@@ -735,13 +735,13 @@ func makeSparsePackedVault(t *testing.T, f *vaultFixture) (string, []byte, strin
 	stats := f.pack()
 	require.Equal(t, 3, stats.BlobsPacked)
 
-	entry, err := f.store.GetAttachmentPackEntry(liveHash)
+	entry, err := f.store.GetAttachmentPackEntry(t.Context(), liveHash)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadAHash, deadBHash)
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
 		time.Now().UTC().Add(-48*time.Hour).Format(time.RFC3339), entry.PackID)
 	require.NoError(t, err)
@@ -769,7 +769,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	}
 	created := make(chan createResult, 1)
 	go func() {
-		manifest, createErr := backup.Create(context.Background(), repo, backupapp.New("test"), backup.CreateOptions{
+		manifest, createErr := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
 			DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
 			ContentSource: blocked, Jobs: 1,
 		})
@@ -781,7 +781,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	case <-time.After(time.Minute):
 		require.FailNow("backup did not open the old packed blob")
 	}
-	repackStats, repackErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
+	repackStats, repackErr := f.maint.Repack(t.Context(), packstore.RepackOptions{})
 	require.NoError(repackErr)
 	assert.Equal(1, repackStats.PacksRemoved)
 	assert.NoFileExists(oldPath)
@@ -796,10 +796,10 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	require.NotNil(result.manifest)
 	assert.Equal(int64(1), result.manifest.Attachments.Blobs)
 	require.NoError(backupBlobs.Close())
-	verify, err := backup.Verify(context.Background(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})
+	verify, err := backup.Verify(t.Context(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})
 	require.NoError(err)
 	assert.Empty(verify.Problems)
-	r, _, err := f.blobs.Open(liveHash)
+	r, _, err := f.blobs.Open(t.Context(), liveHash)
 	require.NoError(err)
 	assert.Equal(live, readAllAndClose(t, r))
 }
@@ -823,7 +823,7 @@ func TestBackupCaptureFailsLoudlyAfterLogicalDeletion(t *testing.T) {
 	require.NoError(err)
 	created := make(chan error, 1)
 	go func() {
-		_, createErr := backup.Create(context.Background(), repo, backupapp.New("test"), backup.CreateOptions{
+		_, createErr := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
 			DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
 			ContentSource: blocked, Jobs: 1,
 		})
@@ -834,7 +834,7 @@ func TestBackupCaptureFailsLoudlyAfterLogicalDeletion(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow("backup did not reach attachment capture")
 	}
-	_, err = f.store.DB().Exec(f.store.Rebind(`DELETE FROM attachments WHERE content_hash = ?`), hash)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`DELETE FROM attachments WHERE content_hash = ?`), hash)
 	require.NoError(err)
 	close(blocked.release)
 	var createErr error

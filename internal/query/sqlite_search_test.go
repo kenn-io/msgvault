@@ -19,7 +19,7 @@ func TestSearchPipeOR(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE message_bodies SET body_text = CASE message_id WHEN 1 THEN 'alpha beta' WHEN 2 THEN 'gamma' ELSE 'ordinary body' END`)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = CASE message_id WHEN 1 THEN 'alpha beta' WHEN 2 THEN 'gamma' ELSE 'ordinary body' END`)
 	requirements.NoError(err)
 	env.EnableFTS()
 	t.Run("empty FTS term", func(t *testing.T) {
@@ -30,7 +30,7 @@ func TestSearchPipeOR(t *testing.T) {
 		db := dbtest.NewTestDB(t, "../store/schema.sql")
 		source := db.AddSource(dbtest.SourceOpts{Identifier: "test@example.com"})
 		conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source})
-		_, err := db.DB.Exec(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, account_address, account_path)
+		_, err := db.DB.ExecContext(t.Context(), `INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, account_address, account_path)
 			VALUES (?, ?, 'work@example.org', 'email', 'invoice', 'work@example.org', 'inbound'), (?, ?, 'other@example.org', 'email', 'invoice', 'other@example.org', 'inbound')`, source, conversation, source, conversation)
 		require.NoError(err)
 		q := search.ParseOR("account:other@example.org | subject:invoice")
@@ -43,7 +43,7 @@ func TestSearchPipeOR(t *testing.T) {
 	q := search.ParseOR("alpha beta | gamma")
 	rows := env.MustSearch(q, 100, 0)
 	assertMessageIDs(t, rows, []int64{1, 2})
-	_, err = env.DB.Exec(`DELETE FROM messages_fts WHERE rowid = 3`)
+	_, err = env.DB.ExecContext(t.Context(), `DELETE FROM messages_fts WHERE rowid = 3`)
 	requirements.NoError(err)
 	rows = env.MustSearch(search.ParseOR("from:alice@example.com | gamma"), 100, 0)
 	assertMessageIDs(t, rows, []int64{1, 2, 3})
@@ -73,7 +73,7 @@ func TestSearchPipeORDateOrder(t *testing.T) {
 	db := dbtest.NewTestDB(t, "../store/schema.sql")
 	source := db.AddSource(dbtest.SourceOpts{Identifier: "work@example.org"})
 	conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source, Title: "Staging"})
-	_, err := db.DB.Exec(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, sent_at)
+	_, err := db.DB.ExecContext(t.Context(), `INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, sent_at)
 		VALUES (?, ?, 'message-1', 'email', 'first', '2026-01-01'), (?, ?, 'message-2', 'email', 'second', '2026-01-02')`, source, conversation, source, conversation)
 	require.NoError(err)
 	rows, err := NewSQLiteEngine(db.DB).SearchFast(t.Context(), search.ParseOR("subject:first | subject:second"), MessageFilter{}, 100, 0)
@@ -145,7 +145,7 @@ func TestSearch_Filters(t *testing.T) {
 			query:     &search.Query{ConversationIDs: []int64{1, 104}},
 			wantCount: 4,
 			setup: func(env *testEnv) {
-				_, err := env.DB.Exec(`
+				_, err := env.DB.ExecContext(t.Context(), `
 					INSERT INTO conversations (
 						id, source_id, source_conversation_id, conversation_type, title
 					) VALUES
@@ -251,9 +251,9 @@ func TestSearch_MessageTypeFilter(t *testing.T) {
 		FromID:  aliceID,
 		ToIDs:   []int64{bobID},
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = 'sms' WHERE id = ?`, smsID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = 'sms' WHERE id = ?`, smsID)
 	require.NoError(err, "set sms message_type")
-	_, err = env.DB.Exec(`UPDATE messages SET message_type = 'email' WHERE id = ?`, emailID)
+	_, err = env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = 'email' WHERE id = ?`, emailID)
 	require.NoError(err, "set email message_type")
 
 	results := env.MustSearch(search.Parse("message_type:sms"), 100, 0)
@@ -288,7 +288,7 @@ func TestSearch_ListIDFilters(t *testing.T) {
 	unicodeID := env.AddMessage(dbtest.MessageOpts{
 		Subject: "unicode list marker", SentAt: "2024-04-13 10:00:00", FromID: aliceID, ToIDs: []int64{bobID},
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN ? THEN '<Announce.Shared.example.org>'
 		WHEN ? THEN '<announce.example.net>'
 		WHEN ? THEN '<Ops%_Team\Archive.example.org>'
@@ -362,7 +362,7 @@ func TestHasFTSTable(t *testing.T) {
 	assert.False(t, env.Engine.hasFTSTable(env.Ctx),
 		"expected hasFTSTable to return false for test DB without FTS")
 
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, snippet);
 	`)
 	if err != nil {
@@ -424,7 +424,7 @@ func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
 
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, snippet);
 	`)
 	if err != nil {
@@ -433,7 +433,7 @@ func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 
 	env.Engine = NewSQLiteEngine(env.DB)
 
-	canceledCtx, cancel := context.WithCancel(context.Background())
+	canceledCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	firstResult := env.Engine.hasFTSTable(canceledCtx)
@@ -442,7 +442,7 @@ func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 		t.Skip("SQLite driver does not error on canceled context; cannot test error-retry behavior")
 	}
 
-	validCtx := context.Background()
+	validCtx := t.Context()
 	secondResult := env.Engine.hasFTSTable(validCtx)
 
 	assert.True(t, secondResult,
@@ -709,7 +709,7 @@ func TestSearchByDomains_HidesDeleted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	all, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, nil)
 	require.NoError(err, "SearchByDomains baseline")
@@ -733,7 +733,7 @@ func TestSearchByDomains_SourceFilter(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	own, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, []int64{1})
 	require.NoError(err)
@@ -748,7 +748,7 @@ func TestSearchByDomains_SourceFilter(t *testing.T) {
 func TestSearchByDomains_HasMore(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, tc := range []struct {
 		name          string
@@ -820,7 +820,7 @@ func TestSearchFilenameLiteralFilters(t *testing.T) {
 	env := newTestEnv(t)
 	id := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-01-01 10:00:00"})
 	other := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-02-01 10:00:00"})
-	_, err := env.DB.Exec(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?, 'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL)`, id, id, other, other)
+	_, err := env.DB.ExecContext(t.Context(), `INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?, 'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL)`, id, id, other, other)
 	require.NoError(t, err)
 	env.EnableFTS()
 	rows := env.MustSearch(search.Parse(`shared filename:budget%_ filename:界`), 1, 0)

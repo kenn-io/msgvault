@@ -7,22 +7,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
-
-func makeMailbox(t *testing.T, root string) {
-	t.Helper()
-	for _, dir := range []string{"cur", "new", "tmp"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0700))
-	}
-}
 
 func TestDiscoverReadsDeliveredMessagesAndNestedFolders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	makeMailbox(t, root)
-	makeMailbox(t, filepath.Join(root, ".Projects.Go"))
-	makeMailbox(t, filepath.Join(root, "Archive", "2024"))
+	email.Maildir(t, root)
+	email.Maildir(t, filepath.Join(root, ".Projects.Go"))
+	email.Maildir(t, filepath.Join(root, "Archive", "2024"))
 	for _, file := range []string{
 		"cur/one", "new/two", "tmp/incomplete", ".Projects.Go/cur/three", "Archive/2024/new/four",
 		"dovecot-uidlist", "cur/.DS_Store", "new/.nfs0001",
@@ -45,9 +39,9 @@ func TestDiscoverRejectsNonMaildirAndDoesNotFollowSymlinks(t *testing.T) {
 	root := t.TempDir()
 	_, err := Discover(root)
 	require.Error(err)
-	makeMailbox(t, root)
+	email.Maildir(t, root)
 	outside := t.TempDir()
-	makeMailbox(t, outside)
+	email.Maildir(t, outside)
 	require.NoError(os.WriteFile(filepath.Join(outside, "new", "secret"), []byte("private"), 0600))
 	require.NoError(os.Symlink(outside, filepath.Join(root, ".Linked")))
 	require.NoError(os.Symlink(filepath.Join(outside, "new", "secret"), filepath.Join(root, "cur", "link")))
@@ -75,9 +69,9 @@ func TestDiscoverDoesNotDescendIntoMessageOrTemporaryDirectories(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	makeMailbox(t, root)
+	email.Maildir(t, root)
 	for _, dir := range []string{"cur/nested", "new/nested", "tmp/.Hidden"} {
-		makeMailbox(t, filepath.Join(root, dir))
+		email.Maildir(t, filepath.Join(root, dir))
 		require.NoError(os.WriteFile(filepath.Join(root, dir, "new/message"), []byte("body"), 0600))
 	}
 	boxes, err := Discover(root)

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -92,7 +91,7 @@ func TestRelationshipCalendarValidatesIdentityYearAndTimezone(t *testing.T) {
 		{CanonicalID: 1, Year: 2026, Timezone: "Mars/Olympus_Mons"},
 	}
 	for _, request := range tests {
-		_, err := engine.RelationshipCalendar(context.Background(), request)
+		_, err := engine.RelationshipCalendar(t.Context(), request)
 		assert.ErrorIs(t, err, ErrInvalidExploreRequest, request)
 	}
 }

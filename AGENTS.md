@@ -38,6 +38,34 @@ provide different ways to use the same archive.
   Describe reusable requirements generically and run the private-data scrub
   before publishing.
 
+## Commit messages
+
+Commit subjects must use the Conventional Commits format. Pull requests are
+squash-merged: the PR title becomes the commit subject and the PR description
+becomes the commit body, so PR titles use the same format.
+
+```text
+type(scope): summary
+```
+
+The scope is optional and names the part of the project the change touches.
+Use one of these types:
+
+- `feat`: a new capability users can see or use.
+- `fix`: a bug fix users can notice.
+- `perf`: faster or lighter behavior users can notice.
+- `refactor`, `test`, `docs`, `build`, `ci`, or `chore`: a change that leaves
+  product behavior as it was.
+
+Mark a breaking change with `!` before the colon, as in
+`feat(api)!: remove the v1 endpoints`, and describe the break in a
+`BREAKING CHANGE:` footer at the end of the commit body or PR description.
+
+This format is required. Releases and release notes are generated from these
+messages: the type decides whether a change appears in the notes and under
+which heading, and the version bump follows the largest change since the last
+release, from a breaking change to `feat` to `fix`.
+
 ## Documentation
 
 - Write for the person trying to use or maintain msgvault. Lead with the
@@ -113,6 +141,16 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 - A timeout may bound a wait for an observable transition. Do not make runner
   throughput a correctness requirement, such as ten polls within one second.
 
+## CI runners
+
+CI jobs use GitHub-hosted runners. The `CI gate` job in `ci-pr.yml` only checks
+the CI run's result and runs on the Namespace profile
+`namespace-profile-linux-1cpu`, so it does not wait in the GitHub-hosted queue.
+That profile uses Namespace's
+[Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+which disables workload access to Namespace features and APIs. GitHub fork
+approvals, token permissions, and secrets are separate controls.
+
 ## Test data
 
 Use synthetic names and reserved example addresses in ordinary fixtures. Never
@@ -145,6 +183,18 @@ before publication. This exception does not permit reuse in ordinary tests.
 - Route database operations through `Store`. Use DuckDB for Parquet queries,
   `mattn/go-sqlite3` for SQLite, context cancellation for long operations, and
   wrapped errors with useful context. Prefer table-driven tests.
+- Pass the caller's `context.Context` to database, HTTP, and subprocess calls:
+  `QueryContext`, `ExecContext`, `BeginTx`, `http.NewRequestWithContext`, and
+  `exec.CommandContext`. The `noctx` linter in `make lint-ci` rejects the forms
+  without a context. A function that does such work takes `ctx` as its first
+  parameter; call `context.Background()` only at a process root.
+- Use `context.WithoutCancel(ctx)` only for work that must finish after
+  cancellation, such as recording a failed sync run, a resume checkpoint, or
+  cleanup. Add a short comment that says why.
+- Tests use `t.Context()`. The `usetesting` linter rejects
+  `context.Background()` and `context.TODO()` in tests. `t.Cleanup` callbacks
+  run after `t.Context()` is canceled, so use
+  `context.WithoutCancel(t.Context())` there.
 - Use `gogs/chardet` for charset detection and `golang.org/x/text/encoding` for
   conversion.
 - Never use `SELECT DISTINCT` with JOINs; use `EXISTS` subqueries to avoid

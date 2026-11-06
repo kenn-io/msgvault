@@ -26,7 +26,7 @@ func seedMembershipEmbeddingGuard(tb testing.TB, s *Store, size int) {
 
 func TestMembershipEmbeddingGuardSeeksBeeperIndex(t *testing.T) {
 	requirements := require.New(t)
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "embedding-guard.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "embedding-guard.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(s.Close()) })
 	requirements.NoError(s.InitSchema())

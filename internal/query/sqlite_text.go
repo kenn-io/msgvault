@@ -382,6 +382,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		orderBy = "last_message_at"
 	}
 	orderBy += " " + sqliteDirection(scope.Filter.SortDirection) + ", c.id DESC"
+	args = append(slices.Clone(args), args...)
 	return fmt.Sprintf(`
 		SELECT
 			c.id,
@@ -391,10 +392,10 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
 			COALESCE(CAST(MAX(m.sent_at) AS TEXT), '') AS last_message_at,
 			COALESCE(
-				(SELECT m2.snippet FROM messages m2
-				 WHERE m2.conversation_id = c.id
+				(SELECT m.snippet FROM messages m
+				 WHERE m.conversation_id = c.id
 				   AND %s
-				 ORDER BY m2.sent_at DESC, m2.id DESC LIMIT 1),
+				 ORDER BY m.sent_at DESC, m.id DESC LIMIT 1),
 				''
 			) AS last_preview,
 			COALESCE(SUM(m.size_estimate), 0) AS total_size
@@ -404,7 +405,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		WHERE %s
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
-	`, textMsgTypeFilterAlias("m2"), where, orderBy), args
+	`, where, where, orderBy), args
 }
 
 // sqliteTimestampLayouts lists the datetime string formats emitted by SQLite
@@ -439,12 +440,6 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 // Uses the m. table alias used in text query methods.
 func textMsgTypeFilter() string {
 	return "m.message_type IN (" + TextMessageTypeSQLList + ")"
-}
-
-// textMsgTypeFilterAlias returns a SQL condition restricting to text message types
-// using the given table alias.
-func textMsgTypeFilterAlias(alias string) string {
-	return alias + ".message_type IN (" + TextMessageTypeSQLList + ")"
 }
 
 func sqliteDirection(d SortDirection) string {
@@ -487,7 +482,7 @@ func sqliteTextParticipantCondition(conversation string, participantIDs []int64)
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
 func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []any) {
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if filter.SearchQuery != "" {
@@ -597,59 +592,14 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 func (e *SQLiteEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
-	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
-
-	// Sort clause.
-	var orderBy string
-	switch filter.SortField {
-	case TextSortByCount:
-		orderBy = "message_count"
-	case TextSortByName:
-		orderBy = "title"
-	default: // TextSortByLastMessage
-		orderBy = "last_message_at"
-	}
-	if filter.SortDirection == SortAsc {
-		orderBy += " ASC"
-	} else {
-		orderBy += " DESC"
-	}
-	// Append the unique conversation PK as a tiebreaker so conversations
-	// sharing the primary sort key (e.g. identical last_message_at) get a
-	// total, stable order across LIMIT/OFFSET pages. c.id is the GROUP BY key
-	// and is selectable here. [C3]
-	orderBy += ", c.id DESC"
+	query, args := e.sqliteTextSnapshotQuery(TextSnapshotScope{Filter: filter})
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {
 		limit = 100
 	}
 
-	query := fmt.Sprintf(`
-		SELECT
-			c.id,
-			COALESCE(c.title, '') AS title,
-			COALESCE(s.source_type, '') AS source_type,
-			COUNT(*) AS message_count,
-			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
-			MAX(m.sent_at) AS last_message_at,
-			COALESCE(
-				(SELECT m2.snippet FROM messages m2
-				 WHERE m2.conversation_id = c.id
-				   AND %s
-				 ORDER BY m2.sent_at DESC, m2.id DESC LIMIT 1),
-				''
-			) AS last_preview,
-			COALESCE(SUM(m.size_estimate), 0) AS total_size
-		FROM conversations c
-		JOIN messages m ON m.conversation_id = c.id
-		LEFT JOIN sources s ON s.id = m.source_id
-		WHERE %s
-		GROUP BY c.id, c.title, s.source_type
-		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, textMsgTypeFilterAlias("m2"), where, orderBy)
-
+	query += " LIMIT ? OFFSET ?"
 	args = append(args, limit, filter.Pagination.Offset)
 
 	rows, err := e.db.QueryContext(ctx, query, args...)
@@ -760,7 +710,7 @@ func (e *SQLiteEngine) TextAggregate(
 		return nil, err
 	}
 
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if opts.SourceID != nil {
@@ -777,7 +727,7 @@ func (e *SQLiteEngine) TextAggregate(
 	}
 	if opts.SearchQuery != "" {
 		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
-		conditions = append(conditions, "(m.subject LIKE ? OR m.snippet LIKE ?)")
+		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}
 
@@ -953,7 +903,7 @@ func (e *SQLiteEngine) GetTextStats(
 	}
 	if opts.SearchQuery != "" {
 		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
-		conditions = append(conditions, "(m.subject LIKE ? OR m.snippet LIKE ?)")
+		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}
 

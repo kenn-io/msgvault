@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -41,7 +40,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 	// Seed rows the rebuilt table's foreign keys will point at.
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-envelope", "")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-envelope", "")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&Message{
 		ConversationID:  convID,
@@ -96,7 +95,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 	require.Error(err, "legacy table-level UNIQUE must reject an alias row")
 
 	// Run the migration we are testing.
-	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(context.Background()),
+	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(t.Context()),
 		"ensureRecipientEnvelopeUniqueIndex")
 
 	// 1) The table-level UNIQUE (its autoindex) is gone and the expected
@@ -156,7 +155,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 	applied, err := st.IsMigrationApplied(migrationRecipientEnvelopeUnique)
 	require.NoError(err, "read migration ledger")
 	assert.True(applied, "migration must be marked applied")
-	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(context.Background()),
+	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(t.Context()),
 		"second run must be a no-op")
 	var rowCount int
 	require.NoError(st.db.QueryRow(
@@ -186,7 +185,7 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 	require.NoError(seed.InitSchema(), "initialize seed archive")
 	source, err := seed.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err, "create source")
-	conversationID, err := seed.EnsureConversation(source.ID, "thread-dangling-recipients", "")
+	conversationID, err := seed.EnsureConversation(t.Context(), source.ID, "thread-dangling-recipients", "")
 	require.NoError(err, "create conversation")
 	messageID, err := seed.UpsertMessage(&Message{
 		ConversationID:  conversationID,
@@ -234,7 +233,7 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 		 FROM message_recipients_current`,
 		`DROP TABLE message_recipients_current`,
 	} {
-		_, err = legacy.Exec(stmt)
+		_, err = legacy.ExecContext(t.Context(), stmt)
 		require.NoError(err, "restore legacy recipient schema: %q", stmt)
 	}
 
@@ -249,7 +248,7 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 		{id: 9102, messageID: messageID, participantID: missingParticipantID},
 		{id: 9103, messageID: missingMessageID + 1, participantID: missingParticipantID + 1},
 	} {
-		_, err = legacy.Exec(`
+		_, err = legacy.ExecContext(t.Context(), `
 			INSERT INTO message_recipients
 				(id, message_id, participant_id, recipient_type, display_name, email_address)
 			VALUES (?, ?, ?, 'to', 'Dangling', NULL)
@@ -338,6 +337,7 @@ func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T)
 	source, err := seed.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err, "create source")
 	conversationID, err := seed.EnsureConversation(
+		t.Context(),
 		source.ID, "thread-legacy-recipient-activity", "",
 	)
 	require.NoError(err, "create conversation")
@@ -385,7 +385,7 @@ func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T)
 		 FROM message_recipients_current`,
 		`DROP TABLE message_recipients_current`,
 	} {
-		_, err = legacy.Exec(stmt)
+		_, err = legacy.ExecContext(t.Context(), stmt)
 		require.NoError(err, "restore legacy recipient schema: %q", stmt)
 	}
 	require.NoError(legacy.Close(), "close legacy archive")
@@ -458,7 +458,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop(t *testing.T)
 	require.NoError(err, "reattach legacy unique constraint")
 
 	// Run the migration we are testing.
-	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(context.Background()),
+	require.NoError(st.ensureRecipientEnvelopeUniqueIndex(t.Context()),
 		"ensureRecipientEnvelopeUniqueIndex")
 
 	var constraintCount int
@@ -480,7 +480,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop(t *testing.T)
 	// existing snapshot is still rejected.
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-envelope-pg", "")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-envelope-pg", "")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&Message{
 		ConversationID:  convID,
@@ -563,7 +563,7 @@ func TestIdentityRefreshSelectionsUseIndexes(t *testing.T) {
 	assert.Contains(t, plan(fmt.Sprintf(identityEnvelopeSelection, "LOWER(?)"), int64(1), "alias@example.test"), "SEARCH mr USING INDEX idx_message_recipients_email_from")
 	source, err := st.GetOrCreateSource("gmail", "plan@example.test")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "plan", "Plan")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "plan", "Plan")
 	require.NoError(err)
 	_, err = st.db.Exec(`WITH RECURSIVE n(id) AS (SELECT 1 UNION ALL SELECT id+1 FROM n WHERE id<10000)
 		INSERT INTO participants(id, email_address) SELECT id, 'sender-' || id || '@example.test' FROM n`)

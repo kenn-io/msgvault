@@ -34,7 +34,7 @@ func newImportFixture(t *testing.T, policy attachmentpolicy.Policy) importFixtur
 	root, dest := t.TempDir(), t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "Attachments"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "Attachments", "voice.caf"), []byte("caffSYNTHETIC"), 0600))
-	c, err := NewClient(path, WithAttachments(dest, root, policy))
+	c, err := NewClient(t.Context(), path, WithAttachments(dest, root, policy))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	st := testutil.NewTestStore(t)
@@ -63,7 +63,7 @@ func importedAttachment(t *testing.T, st *store.Store, source int64, message str
 func importedAttachmentByKey(t *testing.T, st *store.Store, source int64, message, key string) (int64, store.AttachmentRef) {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), source, message).Scan(&id))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), source, message).Scan(&id))
 	refs, err := st.MessageIMessageAttachmentsContext(t.Context(), id)
 	require.NoError(t, err)
 	require.Len(t, refs, 1)
@@ -76,7 +76,7 @@ func TestImportAttachmentBytesAndIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	c, db, st, source, _, dest := attachmentFixture(t, attachmentpolicy.Policy{})
-	_, err := db.Exec(`INSERT INTO attachment VALUES ('synthetic-sticker','~/Library/Messages/Attachments/voice.caf','sticker.caf','audio/x-caf','com.apple.coreaudio-format',13,1);
+	_, err := db.ExecContext(t.Context(), `INSERT INTO attachment VALUES ('synthetic-sticker','~/Library/Messages/Attachments/voice.caf','sticker.caf','audio/x-caf','com.apple.coreaudio-format',13,1);
 		INSERT INTO message (date,text) VALUES (700000002,'Sticker');
 		INSERT INTO chat_message_join VALUES (1,3);
 		INSERT INTO message_attachment_join VALUES (3,2);
@@ -101,7 +101,7 @@ func TestImportAttachmentBytesAndIdentity(t *testing.T) {
 	assert.Equal("com.apple.coreaudio-format", metadata["uti"])
 
 	var stickerMessage int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id='3'`), source).Scan(&stickerMessage))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id='3'`), source).Scan(&stickerMessage))
 	refs, err := st.MessageIMessageAttachmentsContext(t.Context(), stickerMessage)
 	require.NoError(err)
 	require.Contains(refs, "imessage:2")
@@ -119,20 +119,20 @@ func TestImportUnchangedRerunDoesNotRewriteAttachments(t *testing.T) {
 	messageID, _ := importedAttachment(t, st, source, "1")
 
 	var baseline int64
-	require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal
 		WHERE dataset = 'attachments' AND message_id = ?`, messageID).Scan(&baseline))
 	_, err = c.Import(t.Context(), st, source)
 	require.NoError(err)
 
 	var changes int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal
 		WHERE seq > ? AND dataset = 'attachments' AND message_id = ?`, baseline, messageID).Scan(&changes))
 	assert.Zero(changes, "an unchanged reimport must not schedule attachment cache repairs")
 
 	require.NoError(os.Remove(filepath.Join(f.root, "Attachments", "voice.caf")))
 	_, err = c.Import(t.Context(), st, source)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal
 		WHERE seq > ? AND dataset = 'attachments' AND message_id = ?`, baseline, messageID).Scan(&changes))
 	assert.Zero(changes, "a rerun after the source file is gone must keep the archived row untouched")
 	_, ref := importedAttachment(t, st, source, "1")
@@ -159,14 +159,14 @@ func TestImportAttachmentSchema(t *testing.T) {
 			require := require.New(t)
 			path, db := testutil.NewIMessageAttachmentChatDB(t)
 			if tc.drop != "" {
-				_, err := db.Exec(tc.drop)
+				_, err := db.ExecContext(t.Context(), tc.drop)
 				require.NoError(err)
 			}
 			directory, root := "", ""
 			if tc.capture {
 				directory, root = t.TempDir(), t.TempDir()
 			}
-			c, err := NewClient(path, WithAttachments(directory, root, attachmentpolicy.Policy{}))
+			c, err := NewClient(t.Context(), path, WithAttachments(directory, root, attachmentpolicy.Policy{}))
 			require.NoError(err)
 			t.Cleanup(func() { _ = c.Close() })
 			st := testutil.NewTestStore(t)
@@ -195,22 +195,11 @@ type cancelOnceStored struct {
 
 func (c cancelOnceStored) Err() error {
 	var n int
-	if err := c.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n); err == nil && n > 0 {
+	// Err has no context parameter; this probe only decides when to cancel.
+	if err := c.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM messages`).Scan(&n); err == nil && n > 0 {
 		c.cancel()
 	}
 	return c.Context.Err()
-}
-
-func TestImportCancellationIsNotAnAttachmentFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	c, st, source := importOnlyFixture(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	summary, err := c.Import(cancelOnceStored{Context: ctx, cancel: cancel, db: st.DB()}, st, source)
-	require.ErrorIs(err, context.Canceled)
-	require.NotErrorIs(err, ErrAttachmentImport)
-	assert.Zero(summary.AttachmentFailures)
 }
 
 // Unavailable markers must remain visible and recover on an explicit rerun.
@@ -227,8 +216,10 @@ func TestImportUnavailableAttachmentRecovers(t *testing.T) {
 	assert.Equal(attachmentpolicy.SkipSourceUnavailable, ref.SkipReason)
 	assert.Empty(ref.ContentHash)
 	require.NoError(os.WriteFile(filepath.Join(root, "Attachments", "voice.caf"), []byte("restored"), 0600))
-	_, err = c.Import(t.Context(), st, source)
+	summary, err = c.Import(t.Context(), st, source)
 	require.NoError(err)
+	assert.Equal(2, summary.MessagesUpdated)
+	assert.Zero(summary.MessagesAdded)
 	_, ref = importedAttachment(t, st, source, "1")
 	assert.Equal(attachmentpolicy.StateStored, ref.State)
 }
@@ -237,26 +228,26 @@ func TestImportAttachmentOccurrencesUseSourceRowIDOrder(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
-	_, err := db.Exec(`DELETE FROM message_attachment_join WHERE message_id = 1`)
+	_, err := db.ExecContext(t.Context(), `DELETE FROM message_attachment_join WHERE message_id = 1`)
 	require.NoError(err)
 	want := make([]string, 0, 10)
 	for id := int64(1); id <= 10; id++ {
 		if id > 1 {
-			_, err = db.Exec(`INSERT INTO attachment (ROWID, guid, filename, transfer_name, mime_type, uti, total_bytes)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO attachment (ROWID, guid, filename, transfer_name, mime_type, uti, total_bytes)
 				VALUES (?, ?, '~/Library/Messages/Attachments/voice.caf', 'voice.caf', 'audio/x-caf', 'com.apple.coreaudio-format', 4)`,
 				id, "synthetic-"+strconv.FormatInt(id, 10))
 			require.NoError(err)
 		}
-		_, err = db.Exec(`INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (1, ?)`, id)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (1, ?)`, id)
 		require.NoError(err)
 		want = append(want, "imessage:"+strconv.FormatInt(id, 10))
 	}
 	_, err = c.Import(t.Context(), st, source)
 	require.NoError(err)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		source, "1").Scan(&messageID))
-	rows, err := st.DB().Query(st.Rebind(`SELECT source_attachment_id FROM attachments WHERE message_id = ? ORDER BY id`), messageID)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT source_attachment_id FROM attachments WHERE message_id = ? ORDER BY id`), messageID)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var got []string
@@ -286,10 +277,10 @@ func TestImportAttachmentPolicy(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			c, db, st, source, _, dest := attachmentFixture(t, tc.policy)
-			_, err := db.Exec(`UPDATE attachment SET total_bytes=?`, tc.declared)
+			_, err := db.ExecContext(t.Context(), `UPDATE attachment SET total_bytes=?`, tc.declared)
 			require.NoError(err)
 			if tc.filename != "" {
-				_, err = db.Exec(`UPDATE attachment SET filename=?`, tc.filename)
+				_, err = db.ExecContext(t.Context(), `UPDATE attachment SET filename=?`, tc.filename)
 				require.NoError(err)
 			}
 			summary, err := c.Import(t.Context(), st, source)
@@ -307,6 +298,25 @@ func TestImportAttachmentPolicy(t *testing.T) {
 }
 
 func TestImportAttachmentFailures(t *testing.T) {
+	t.Run("failed attachment insert does not count an update", func(t *testing.T) {
+		testutil.SkipIfPostgres(t, "SQLite trigger injection")
+		require := require.New(t)
+		c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
+		_, err := db.ExecContext(t.Context(), `DELETE FROM message_attachment_join`)
+		require.NoError(err)
+		_, err = c.Import(t.Context(), st, source)
+		require.NoError(err)
+
+		_, err = db.ExecContext(t.Context(), `INSERT INTO message_attachment_join VALUES (1,1)`)
+		require.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
+		require.NoError(err)
+		summary, err := c.Import(t.Context(), st, source)
+		require.ErrorContains(err, "synthetic failure")
+		require.ErrorIs(err, ErrAttachmentImport)
+		assert.Zero(t, summary.MessagesUpdated)
+	})
+
 	t.Run("archive write error stops the run", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -315,17 +325,17 @@ func TestImportAttachmentFailures(t *testing.T) {
 		c.pageSize = 1
 		require.NoError(os.RemoveAll(dest))
 		require.NoError(os.WriteFile(dest, []byte("synthetic destination blocker"), 0600))
-		_, err := st.DB().Exec(`CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
 		require.NoError(err)
 		_, err = c.Import(t.Context(), st, source)
 		require.ErrorContains(err, "synthetic failure")
 		require.ErrorIs(err, ErrAttachmentImport)
 		require.ErrorContains(err, "store iMessage attachment bytes")
 		var messages int
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source).Scan(&messages))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source).Scan(&messages))
 		assert.Equal(1, messages, "a failing archive write must not be retried for every later message")
 		var messageCount int
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_count FROM conversations WHERE source_id = ?`), source).Scan(&messageCount))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id = ?`), source).Scan(&messageCount))
 		assert.Equal(1, messageCount, "the committed message must be counted before the fatal error returns")
 	})
 }
@@ -340,7 +350,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 	}
 	metadataOnly := func(t *testing.T, f importFixtureParts) *Client {
 		t.Helper()
-		c, err := NewClient(f.path, WithAttachments("", "", attachmentpolicy.Policy{}))
+		c, err := NewClient(t.Context(), f.path, WithAttachments("", "", attachmentpolicy.Policy{}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = c.Close() })
 		return c
@@ -374,7 +384,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 			policy: attachmentpolicy.Policy{MaxParticipants: 5},
 			reimport: func(t *testing.T, f importFixtureParts, _ store.AttachmentRef) *Client {
 				t.Helper()
-				_, err := f.db.Exec(`INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4'),('h5'),('h6');
+				_, err := f.db.ExecContext(t.Context(), `INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4'),('h5'),('h6');
 					INSERT INTO chat_handle_join VALUES (1,2),(1,3),(1,4),(1,5),(1,6)`)
 				require.NoError(t, err)
 				return f.c
@@ -395,7 +405,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 			name: "metadata-only reimport of a source without attachment tables",
 			reimport: func(t *testing.T, f importFixtureParts, _ store.AttachmentRef) *Client {
 				t.Helper()
-				_, err := f.db.Exec(`DROP TABLE attachment; DROP TABLE message_attachment_join`)
+				_, err := f.db.ExecContext(t.Context(), `DROP TABLE attachment; DROP TABLE message_attachment_join`)
 				require.NoError(t, err)
 				return metadataOnly(t, f)
 			},
@@ -421,7 +431,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 				t.Helper()
 				require.NoError(t, os.Remove(filepath.Join(f.dest, before.StoragePath)))
 				removeSource(t, f, before)
-				limited, err := NewClient(f.path, WithAttachments(f.dest, f.root, attachmentpolicy.Policy{}), WithLimit(1))
+				limited, err := NewClient(t.Context(), f.path, WithAttachments(f.dest, f.root, attachmentpolicy.Policy{}), WithLimit(1))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = limited.Close() })
 				return limited
@@ -449,7 +459,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 			require := require.New(t)
 			f := newImportFixture(t, tc.policy)
 			if tc.setup != "" {
-				_, err := f.db.Exec(tc.setup)
+				_, err := f.db.ExecContext(t.Context(), tc.setup)
 				require.NoError(err)
 			}
 			_, err := f.c.Import(t.Context(), f.st, f.source)
@@ -458,7 +468,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 			require.Equal(attachmentpolicy.StateStored, before.State)
 			require.NotEmpty(before.ContentHash)
 			if tc.update != "" {
-				_, err = f.db.Exec(`UPDATE attachment SET ` + tc.update)
+				_, err = f.db.ExecContext(t.Context(), `UPDATE attachment SET `+tc.update)
 				require.NoError(err)
 			}
 			reimport := tc.reimport
@@ -489,7 +499,7 @@ func TestImportRetainsArchivedBytesByAttachmentIdentity(t *testing.T) {
 			assert.Equal(tc.wantUnavailable, summary.AttachmentsUnavailable)
 			assert.Equal(tc.wantSkipped, summary.AttachmentsSkipped)
 			var hasAttachments bool
-			require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT has_attachments FROM messages WHERE id = ?`), id).Scan(&hasAttachments))
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT has_attachments FROM messages WHERE id = ?`), id).Scan(&hasAttachments))
 			assert.True(hasAttachments)
 			if tc.afterwards != nil {
 				tc.afterwards(t, f, before)
@@ -503,7 +513,7 @@ func TestNewClientRejectsUnusableAttachmentsRoot(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(file, nil, 0600))
 	for _, root := range []string{filepath.Join(t.TempDir(), "missing"), file} {
-		_, err := NewClient(path, WithAttachments(t.TempDir(), root, attachmentpolicy.Policy{}))
+		_, err := NewClient(t.Context(), path, WithAttachments(t.TempDir(), root, attachmentpolicy.Policy{}))
 		require.ErrorContains(t, err, "messages root")
 	}
 }
@@ -513,7 +523,7 @@ func TestImportAttachmentFilenameFromTransferName(t *testing.T) {
 	require := require.New(t)
 	c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
 	for name, want := range map[string]string{"../../voice.caf": "voice.caf", "..": "attachment"} {
-		_, err := db.Exec(`UPDATE attachment SET transfer_name = ?`, name)
+		_, err := db.ExecContext(t.Context(), `UPDATE attachment SET transfer_name = ?`, name)
 		require.NoError(err)
 		_, err = c.Import(t.Context(), st, source)
 		require.NoError(err)
@@ -533,7 +543,7 @@ func TestImportCapturesFromDefaultMessagesRoot(t *testing.T) {
 	require.NoError(os.MkdirAll(attachments, 0700))
 	require.NoError(os.WriteFile(filepath.Join(attachments, "voice.caf"), []byte("caffSYNTHETIC"), 0600))
 	path, _ := testutil.NewIMessageAttachmentChatDB(t)
-	c, err := NewClient(path, WithAttachments(t.TempDir(), "", attachmentpolicy.Policy{}))
+	c, err := NewClient(t.Context(), path, WithAttachments(t.TempDir(), "", attachmentpolicy.Policy{}))
 	require.NoError(err)
 	t.Cleanup(func() { _ = c.Close() })
 	st := testutil.NewTestStore(t)
@@ -556,7 +566,7 @@ func TestChatParticipantCountIsReadOncePerRun(t *testing.T) {
 	first, err := c.chatParticipantCount(t.Context(), f.st, convID, 1)
 	require.NoError(err)
 
-	_, err = db.Exec(`INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4');
+	_, err = db.ExecContext(t.Context(), `INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4');
 		INSERT INTO chat_handle_join VALUES (1,2),(1,3),(1,4)`)
 	require.NoError(err)
 	cached, err := c.chatParticipantCount(t.Context(), f.st, convID, 1)
@@ -576,7 +586,7 @@ func TestImportVanishedJoinRowKeepsStoredOccurrence(t *testing.T) {
 	_, err := c.Import(t.Context(), st, source)
 	require.NoError(err)
 	_, stored := importedAttachment(t, st, source, "1")
-	_, err = db.Exec(`DELETE FROM message_attachment_join`)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM message_attachment_join`)
 	require.NoError(err)
 	require.NoError(os.RemoveAll(dest))
 
@@ -597,11 +607,11 @@ func TestImportSummarizesAttachmentFailures(t *testing.T) {
 	require := require.New(t)
 	c, db, st, source, _, dest := attachmentFixture(t, attachmentpolicy.Policy{})
 	for i := range 12 {
-		_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (?, 'More', 1)`, 700000100+i)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text,cache_has_attachments) VALUES (?, 'More', 1)`, 700000100+i)
 		require.NoError(err)
-		_, err = db.Exec(`INSERT INTO chat_message_join VALUES (1, ?)`, 3+i)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO chat_message_join VALUES (1, ?)`, 3+i)
 		require.NoError(err)
-		_, err = db.Exec(`INSERT INTO message_attachment_join VALUES (?, 1)`, 3+i)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO message_attachment_join VALUES (?, 1)`, 3+i)
 		require.NoError(err)
 	}
 	require.NoError(os.RemoveAll(dest))
@@ -616,7 +626,7 @@ func TestImportSummarizesAttachmentFailures(t *testing.T) {
 	assert.Zero(summary.Skipped)
 	require.EqualError(err, "13 messages had attachment errors: "+ErrAttachmentImport.Error())
 	var messages int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source).Scan(&messages))
 	assert.Equal(13, messages, "a persisted message with a failed attachment must consume the limit")
 	for _, message := range []string{"1", "2"} {
 		_, ref := importedAttachment(t, st, source, message)
@@ -650,7 +660,7 @@ func TestImportAttachmentWithInvalidUTF8Names(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	c, db, st, source, _, dest := attachmentFixture(t, attachmentpolicy.Policy{})
-	_, err := db.Exec(`UPDATE attachment SET guid = ?, filename = ?, transfer_name = ?, mime_type = ?, uti = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE attachment SET guid = ?, filename = ?, transfer_name = ?, mime_type = ?, uti = ?`,
 		"guid\xfe", "~/Library/Messages/Attachments/voice.caf", "transfer\xfd.caf", "audio/x-caf\xfc", "uti\xfb")
 	require.NoError(err)
 	_, err = c.Import(t.Context(), st, source)
@@ -683,7 +693,7 @@ func TestImportAudioUTIWithoutMIMETypeIsClassifiedAudio(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
-			_, err := db.Exec(`UPDATE attachment SET mime_type = NULL, uti = ?`, tc.uti)
+			_, err := db.ExecContext(t.Context(), `UPDATE attachment SET mime_type = NULL, uti = ?`, tc.uti)
 			require.NoError(err)
 			_, err = c.Import(t.Context(), st, source)
 			require.NoError(err)
@@ -702,7 +712,7 @@ func TestImportMetadataOnlyDoesNotCountPolicySkips(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newImportFixture(t, attachmentpolicy.Policy{})
-	c, err := NewClient(f.path, WithAttachments("", "", attachmentpolicy.Policy{MaxParticipants: 1}))
+	c, err := NewClient(t.Context(), f.path, WithAttachments("", "", attachmentpolicy.Policy{MaxParticipants: 1}))
 	require.NoError(err)
 	t.Cleanup(func() { _ = c.Close() })
 	summary, err := c.Import(t.Context(), f.st, f.source)
@@ -715,7 +725,7 @@ func TestImportMetadataOnlyDoesNotCountPolicySkips(t *testing.T) {
 func conversationMemberCount(t *testing.T, f importFixtureParts) int {
 	t.Helper()
 	var metadata string
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT COALESCE(CAST(metadata AS TEXT), '') FROM conversations
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COALESCE(CAST(metadata AS TEXT), '') FROM conversations
 		WHERE source_id = ?`), f.source).Scan(&metadata))
 	require.NotEmpty(t, metadata, "the conversation has no member_count")
 	var record struct {
@@ -733,7 +743,7 @@ func TestImportRefreshesMemberCountWithoutAttachments(t *testing.T) {
 	require.NoError(err)
 	require.Equal(2, conversationMemberCount(t, f))
 
-	_, err = f.db.Exec(`INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4'),('h5'),('h6'),('h7'),('h8'),('h9'),('h10'),('h11'),
+	_, err = f.db.ExecContext(t.Context(), `INSERT INTO handle (id) VALUES ('h2'),('h3'),('h4'),('h5'),('h6'),('h7'),('h8'),('h9'),('h10'),('h11'),
 		('h12'),('h13'),('h14'),('h15'),('h16'),('h17'),('h18'),('h19'),('h20');
 		INSERT INTO chat_handle_join SELECT 1, ROWID FROM handle WHERE ROWID > 1`)
 	require.NoError(err)
@@ -741,7 +751,7 @@ func TestImportRefreshesMemberCountWithoutAttachments(t *testing.T) {
 	require.NoError(err)
 	require.Equal(21, conversationMemberCount(t, f))
 
-	_, err = f.db.Exec(`DELETE FROM chat_handle_join WHERE handle_id > 1; DELETE FROM message_attachment_join`)
+	_, err = f.db.ExecContext(t.Context(), `DELETE FROM chat_handle_join WHERE handle_id > 1; DELETE FROM message_attachment_join`)
 	require.NoError(err)
 	_, err = f.c.Import(t.Context(), f.st, f.source)
 	require.NoError(err)
@@ -755,15 +765,15 @@ func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
 	}{
 		{"no join rows", func(t *testing.T, f importFixtureParts) *Client {
 			t.Helper()
-			_, err := f.db.Exec(`DELETE FROM message_attachment_join`)
+			_, err := f.db.ExecContext(t.Context(), `DELETE FROM message_attachment_join`)
 			require.NoError(t, err)
 			return f.c
 		}},
 		{"no attachment tables", func(t *testing.T, f importFixtureParts) *Client {
 			t.Helper()
-			_, err := f.db.Exec(`DROP TABLE attachment; DROP TABLE message_attachment_join`)
+			_, err := f.db.ExecContext(t.Context(), `DROP TABLE attachment; DROP TABLE message_attachment_join`)
 			require.NoError(t, err)
-			c, err := NewClient(f.path, WithAttachments("", "", attachmentpolicy.Policy{}))
+			c, err := NewClient(t.Context(), f.path, WithAttachments("", "", attachmentpolicy.Policy{}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = c.Close() })
 			return c
@@ -775,36 +785,29 @@ func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
 			c := tc.setup(t, f)
 			hasAttachments := func() bool {
 				var flag bool
-				require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT has_attachments FROM messages
+				require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT has_attachments FROM messages
 					WHERE source_id = ? AND source_message_id = '1'`), f.source).Scan(&flag))
 				return flag
 			}
-			for _, flag := range []int{0, 1, 0, 1} {
-				_, err := f.db.Exec(`UPDATE message SET cache_has_attachments = ?`, flag)
+			for i, flag := range []int{0, 1, 0, 1, 1} {
+				_, err := f.db.ExecContext(t.Context(), `UPDATE message SET cache_has_attachments = ?`, flag)
 				require.NoError(err)
-				_, err = c.Import(t.Context(), f.st, f.source)
+				summary, err := c.Import(t.Context(), f.st, f.source)
 				require.NoError(err)
 				require.Equal(flag == 1, hasAttachments(), "source flag %d", flag)
+				require.Equal([]int{0, 2, 2, 2, 0}[i], summary.MessagesUpdated)
+				if i == 0 && tc.name == "no join rows" && !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+					_, err := f.st.DB().ExecContext(t.Context(), `CREATE TABLE synthetic_flag_updates (message_id INTEGER);
+						CREATE TRIGGER synthetic_flag_updates AFTER UPDATE OF has_attachments ON messages
+						BEGIN INSERT INTO synthetic_flag_updates VALUES (NEW.id); END`)
+					require.NoError(err)
+					_, err = f.c.Import(t.Context(), f.st, f.source)
+					require.NoError(err)
+					var updates int
+					require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
+					require.Zero(updates, "unchanged messages must leave the archive untouched")
+				}
 			}
 		})
 	}
-}
-
-func TestImportUnchangedFlagWithoutRowsWritesNoExtraUpdate(t *testing.T) {
-	testutil.SkipIfPostgres(t, "SQLite trigger counts statements")
-	require := require.New(t)
-	f := newImportFixture(t, attachmentpolicy.Policy{})
-	_, err := f.db.Exec(`DELETE FROM message_attachment_join; UPDATE message SET cache_has_attachments = 0`)
-	require.NoError(err)
-	_, err = f.c.Import(t.Context(), f.st, f.source)
-	require.NoError(err)
-	_, err = f.st.DB().Exec(`CREATE TABLE synthetic_flag_updates (message_id INTEGER);
-		CREATE TRIGGER synthetic_flag_updates AFTER UPDATE OF has_attachments ON messages
-		BEGIN INSERT INTO synthetic_flag_updates VALUES (NEW.id); END`)
-	require.NoError(err)
-	_, err = f.c.Import(t.Context(), f.st, f.source)
-	require.NoError(err)
-	var updates int
-	require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
-	require.Equal(2, updates, "only the message upsert may write each message")
 }

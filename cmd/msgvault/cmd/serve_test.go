@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
@@ -280,7 +281,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	cfg.Server.APIPort = freeTCPPort(t)
 	t.Cleanup(func() { cfg = oldCfg })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
@@ -321,7 +322,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
@@ -376,7 +377,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
@@ -416,7 +417,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	cfg.Server.APIPort = 0 // auto-select an open port
 	t.Cleanup(func() { cfg = oldCfg })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
@@ -446,7 +447,9 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	assert.NotZero(rt.Port, "runtime record must record the bound ephemeral port")
 
 	url := fmt.Sprintf("http://%s/health", net.JoinHostPort(rt.Host, strconv.Itoa(rt.Port)))
-	resp, err := http.Get(url) //nolint:gosec // local test server
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(err, "build GET /health on discovered address")
+	resp, err := http.DefaultClient.Do(request)
 	require.NoError(err, "GET /health on discovered address")
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(http.StatusOK, resp.StatusCode, "/health status")
@@ -482,7 +485,7 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 		return ctx.Err()
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: "serve"}
@@ -502,7 +505,9 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
 
 	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
-	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+	healthRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort), nil)
+	require.NoError(err, "build GET /health")
+	resp, err := healthClient.Do(healthRequest)
 	require.NoError(err, "GET /health")
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(http.StatusOK, resp.StatusCode)
@@ -511,10 +516,12 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	assert.Equal(api.AnalyticsModeSQLFallback, health.AnalyticsEngine,
 		"auto mode must report live-SQL fallback while cache initialization is blocked")
 
-	aggregateResp, err := healthClient.Get(fmt.Sprintf(
+	aggregateRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf(
 		"http://127.0.0.1:%d/api/v1/aggregates?view_type=senders",
 		c.Server.APIPort,
-	))
+	), nil)
+	require.NoError(err, "build GET aggregate")
+	aggregateResp, err := healthClient.Do(aggregateRequest)
 	require.NoError(err, "GET aggregate through SQL fallback")
 	defer func() { _ = aggregateResp.Body.Close() }()
 	assert.Equal(http.StatusOK, aggregateResp.StatusCode,
@@ -553,7 +560,7 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 		return ctx.Err()
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: serveCmd.Use}
@@ -587,41 +594,51 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	// The runner's throughput is not under test; the stubbed build keeps the
 	// daemon initializing for as long as these requests take.
 	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
-	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort), nil)
+	require.NoError(err, "build GET /health")
+	resp, err := healthClient.Do(request)
 	require.NoError(err, "GET /health")
 	var health api.HealthResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&health))
 	_ = resp.Body.Close()
 	assert.Equal(api.AnalyticsModeInitializing, health.AnalyticsEngine)
 
-	resp, err = healthClient.Get(fmt.Sprintf(
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf(
 		"http://127.0.0.1:%d/api/v1/messages/filter?limit=1",
 		c.Server.APIPort,
-	))
+	), nil)
+	require.NoError(err, "build GET general archive route")
+	resp, err = healthClient.Do(request)
 	require.NoError(err, "GET general archive route")
 	assert.Equal(http.StatusOK, resp.StatusCode,
 		"SQLite-backed detail routes must remain available while DuckDB initializes")
 	_ = resp.Body.Close()
 
-	resp, err = healthClient.Get(fmt.Sprintf(
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf(
 		"http://127.0.0.1:%d/api/v1/text/conversations",
 		c.Server.APIPort,
-	))
+	), nil)
+	require.NoError(err, "build GET text conversations")
+	resp, err = healthClient.Do(request)
 	require.NoError(err, "GET text conversations")
 	assert.Equal(http.StatusOK, resp.StatusCode,
 		"SQLite-backed text routes must remain available while DuckDB initializes")
 	_ = resp.Body.Close()
 
-	resp, err = healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/aggregates?view_type=senders", c.Server.APIPort))
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/aggregates?view_type=senders", c.Server.APIPort), nil)
+	require.NoError(err, "build GET analytics route")
+	resp, err = healthClient.Do(request)
 	require.NoError(err, "GET analytics route")
 	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode)
 	_ = resp.Body.Close()
 
-	resp, err = healthClient.Post(
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodPost,
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/query", c.Server.APIPort),
-		"application/json",
 		strings.NewReader(`{"sql":"SELECT 1"}`),
 	)
+	require.NoError(err, "build POST query")
+	request.Header.Set("Content-Type", "application/json")
+	resp, err = healthClient.Do(request)
 	require.NoError(err, "POST SQL query")
 	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode,
 		"startup already owns cache recovery")
@@ -650,7 +667,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	c.Vector.Enabled = false
 	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	t.Cleanup(cancel)
 
@@ -663,7 +680,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
+		_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
 		return err
 	})
 
@@ -683,7 +700,11 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 
 	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
 	readAnalyticsMode := func() string {
-		resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort), nil)
+		if err != nil {
+			return ""
+		}
+		resp, err := healthClient.Do(request)
 		if err != nil {
 			return ""
 		}
@@ -713,13 +734,13 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 
 func TestListenServeAPIHonorsAvailableExplicitPort(t *testing.T) {
 	require := require.New(t)
-	probe, err := net.Listen("tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
 	require.NoError(err)
 	explicitPort, err := listenerPort(probe)
 	require.NoError(err)
 	require.NoError(probe.Close())
 
-	ln, err := listenServeAPI(defaultDaemonBindAddr, explicitPort)
+	ln, err := listenServeAPI(t.Context(), defaultDaemonBindAddr, explicitPort)
 	require.NoError(err)
 	t.Cleanup(func() { _ = ln.Close() })
 	actualPort, err := listenerPort(ln)
@@ -733,7 +754,7 @@ func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
 	require.NoError(err, "reserve API port")
 	t.Cleanup(func() { _ = ln.Close() })
 	addr, ok := ln.Addr().(*net.TCPAddr)
@@ -746,7 +767,7 @@ func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
 	t.Cleanup(func() { cfg = oldCfg })
 
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(testInvocationContext(context.Background(), cfg, invocationOptions{}))
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	err = runServe(cmd, nil)
 
 	require.Error(err, "runServe")
@@ -788,12 +809,12 @@ func (g recordingServeGate) Wait(context.Context) error {
 }
 
 func TestShutdownServeRuntimeDrainsGateAroundHTTPAndScheduler(t *testing.T) {
-	doneCtx, done := context.WithCancel(context.Background())
+	doneCtx, done := context.WithCancel(t.Context())
 	done()
 	events := []string{}
 
 	err := shutdownServeRuntime(
-		context.Background(),
+		t.Context(),
 		io.Discard,
 		recordingServeAPIServer{events: &events},
 		recordingServeScheduler{events: &events, ctx: doneCtx},
@@ -811,7 +832,7 @@ func TestShutdownServeRuntimeDrainsGateAroundHTTPAndScheduler(t *testing.T) {
 
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err, "listen on free port")
 	defer func() { require.NoError(t, ln.Close(), "close listener") }()
 	addr, ok := ln.Addr().(*net.TCPAddr)
@@ -830,7 +851,9 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 			require.FailNow(t, "runServe exited before health was ready")
 		default:
 		}
-		resp, err := http.Get(url) //nolint:gosec // local test server
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+		require.NoError(t, err, "build health request")
+		resp, err := http.DefaultClient.Do(request)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -854,7 +877,9 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 			require.FailNow(t, "runServe exited before health was ready")
 		default:
 		}
-		resp, err := client.Get(url)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+		require.NoError(t, err, "build health request")
+		resp, err := client.Do(request)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -873,7 +898,7 @@ func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
 	state := &invocation{cfg: c}
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -881,9 +906,9 @@ func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
@@ -915,7 +940,7 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.MinRebuildInterval = 0
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -923,12 +948,12 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
-	engine, err := openDaemonDuckDBEngine(c, s)
+	engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
@@ -955,13 +980,14 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 		}
 	}
 	jobs := newCacheBuildJobs(ctx, nil, func(context.Context, buildCacheMode) error {
-		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 		return err
 	})
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		releaseBuild()
 		cancel()
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer drainCancel()
 		require.True(jobs.waitContext(drainCtx))
 		buildCacheBeforeMessagesExportHook = nil
@@ -979,7 +1005,7 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 	require.NotNil(result.Cache)
 	assert.True(result.Cache.Building)
 	assert.EqualValues(1, result.Rows[0][0])
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (3, 1, 'message-3', 1, 'email', '2024-01-03 00:00:00')
 	`)
@@ -1013,7 +1039,7 @@ func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *t
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = false
 	c.Analytics.MinRebuildInterval = 0
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -1021,12 +1047,12 @@ func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *t
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
-	engine, err := openDaemonDuckDBEngine(c, s)
+	engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
@@ -1058,7 +1084,7 @@ func TestFreshQueryVerifiesCleanPublicationInBackground(t *testing.T) {
 	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -1066,9 +1092,9 @@ func TestFreshQueryVerifiesCleanPublicationInBackground(t *testing.T) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
-	engine, err := openDaemonDuckDBEngine(c, s)
+	engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	started := make(chan buildCacheMode, 1)
@@ -1152,7 +1178,7 @@ func TestQueryQueuesRepairWhenPublishedShardDisappears(t *testing.T) {
 			assertions := assert.New(t)
 			c, s := openPublishedQueryTestStore(t)
 			c.Analytics.AutoBuildCache = true
-			engine, err := openDaemonDuckDBEngine(c, s)
+			engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = engine.Close() })
 			shards, err := filepath.Glob(filepath.Join(c.AnalyticsDir(), "messages", "*", "*.parquet"))
@@ -1186,7 +1212,7 @@ func openPublishedQueryTestStore(t *testing.T) (*config.Config, *store.Store) {
 	t.Helper()
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -1194,7 +1220,7 @@ func openPublishedQueryTestStore(t *testing.T) (*config.Config, *store.Store) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	requirements.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	requirements.NoError(err)
 	return c, s
 }
@@ -1204,7 +1230,7 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -1212,9 +1238,9 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	requirements.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	requirements.NoError(err)
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
@@ -1258,9 +1284,10 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			})
+			// Cleanup runs after t.Context() is canceled.
 			t.Cleanup(func() {
 				cancel()
-				cleanupCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+				cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 				defer stop()
 				require.True(jobs.waitContext(cleanupCtx), "cache worker stopped")
 			})
@@ -1327,7 +1354,7 @@ func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
@@ -1349,7 +1376,7 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
@@ -1370,7 +1397,7 @@ func TestOpenDaemonAnalyticsEngineReturnsCancellationWhenCacheBuilderIsLocked(t 
 	require.NoError(buildLock.Lock())
 	t.Cleanup(func() { _ = buildLock.Unlock() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	engine, _, _, err := openDaemonAnalyticsEngine(
@@ -1390,12 +1417,12 @@ func TestOpenDaemonAnalyticsEngineWarnsWhenDuckDBRefreshDisabled(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = false
-	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err, "build ready analytics cache")
 	staleness := cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir())
 	require.False(staleness.NeedsBuild, "test cache must be ready: %+v", staleness)
 	var logs bytes.Buffer
-	analyticsCtx := testInvocationContext(context.Background(), c, invocationOptions{})
+	analyticsCtx := testInvocationContext(t.Context(), c, invocationOptions{})
 	inv := invocationFromContext(analyticsCtx)
 	oldLogger := inv.logger
 	inv.logger = slog.New(slog.NewTextHandler(&logs, nil))
@@ -1421,12 +1448,12 @@ func TestOpenDaemonAnalyticsEngineWarnsWhenDuckDBRefreshDisabled(t *testing.T) {
 }
 
 func TestDaemonCacheRefreshErrorReportsDaemonCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	subprocessErr := errors.New("signal: killed")
 
 	require.ErrorIs(t, daemonCacheRefreshError(ctx, subprocessErr), context.Canceled)
-	assert.Same(t, subprocessErr, daemonCacheRefreshError(context.Background(), subprocessErr))
+	assert.Same(t, subprocessErr, daemonCacheRefreshError(t.Context(), subprocessErr))
 	assert.NoError(t, daemonCacheRefreshError(ctx, nil))
 }
 
@@ -1436,7 +1463,7 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
 			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
@@ -1448,12 +1475,12 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 	builds := 0
 	stubBuildCacheSubprocess(t, func(_ context.Context, fullRebuild bool) error {
 		builds++
-		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
+		_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
 		return err
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
@@ -1467,13 +1494,13 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 func TestDaemonDuckDBEnginesUseIsolatedSpillDirectories(t *testing.T) {
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
-	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	requirements.NoError(err)
 
-	longLived, err := openDaemonDuckDBEngine(c, s)
+	longLived, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	requirements.NoError(err)
 	defer func() { _ = longLived.Close() }()
-	temporary, err := openDaemonDuckDBEngine(c, s)
+	temporary, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	requirements.NoError(err)
 
 	spillParent := filepath.Join(c.HomeDir, "tmp",
@@ -1483,7 +1510,7 @@ func TestDaemonDuckDBEnginesUseIsolatedSpillDirectories(t *testing.T) {
 	requirements.Len(entries, 2, "each engine owns its own spill subdirectory")
 
 	requirements.NoError(temporary.Close())
-	_, err = longLived.QuerySQL(context.Background(), "SELECT 1")
+	_, err = longLived.QuerySQL(t.Context(), "SELECT 1")
 	requirements.NoError(err,
 		"closing a temporary engine must not disturb the live engine")
 	entries, err = os.ReadDir(spillParent)
@@ -1500,7 +1527,7 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
 	var logs bytes.Buffer
-	analyticsCtx := testInvocationContext(context.Background(), c, invocationOptions{})
+	analyticsCtx := testInvocationContext(t.Context(), c, invocationOptions{})
 	inv := invocationFromContext(analyticsCtx)
 	oldLogger := inv.logger
 	inv.logger = slog.New(slog.NewTextHandler(&logs, nil))
@@ -1527,7 +1554,7 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 // message so the publication is usable but stale.
 func publishStaleTestCache(t *testing.T, c *config.Config, s *store.Store) {
 	t.Helper()
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
 			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
@@ -1535,9 +1562,9 @@ func publishStaleTestCache(t *testing.T, c *config.Config, s *store.Store) {
 			VALUES (1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello', 'Preview');
 	`)
 	require.NoError(t, err, "insert published data")
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(t, err, "publish cache")
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
 			VALUES (2, 1, 1, 'msg2', 'email', '2024-01-16 10:00:00', 'Later', 'Arrived after publication');
 	`)
@@ -1598,12 +1625,12 @@ func TestOpenDaemonAnalyticsEngineServesPartialPublication(t *testing.T) {
 					return errors.New("simulated repair failure")
 				})
 				engine, gotMode, _, err := openDaemonAnalyticsEngine(
-					context.Background(), c, s, startupCacheBuildIntentNone,
+					t.Context(), c, s, startupCacheBuildIntentNone,
 				)
 				require.NoError(err, "a usable partial publication keeps startup available")
 				defer func() { _ = engine.Close() }()
 				assert.Equal(api.AnalyticsModeDuckDB, gotMode)
-				stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{})
+				stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{})
 				require.NoError(err)
 				assert.Equal(int64(1), stats.MessageCount, "analytics still query the published snapshot")
 				if interval > 0 {
@@ -1630,7 +1657,7 @@ func TestOpenDaemonAnalyticsEngineServesUsablePublicationWhenStartupBuildFails(t
 	})
 
 	engine, mode, _, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
@@ -1652,7 +1679,7 @@ func TestOpenDaemonAnalyticsEngineDuckDBServesUsablePublicationWhenStartupBuildF
 	})
 
 	engine, mode, _, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "a usable publication keeps engine=duckdb startable after a failed build")
 	defer func() { _ = engine.Close() }()
@@ -1668,7 +1695,7 @@ func TestOpenDaemonAnalyticsEngineDuckDBServesStalePublicationWithoutAutoBuild(t
 	publishStaleTestCache(t, c, s)
 
 	engine, mode, _, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "engine=duckdb serves a usable publication even when stale")
 	defer func() { _ = engine.Close() }()
@@ -1686,7 +1713,7 @@ func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
 	})
 
 	engine, _, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		t.Context(), c, s, startupCacheBuildIntentNone,
 	)
 	if engine != nil {
 		_ = engine.Close()
@@ -1707,12 +1734,12 @@ func TestOpenDaemonAnalyticsEngineExplicitIntentOverridesDisabledAutoBuild(t *te
 	stubStartupCacheBuild(t, func(_ context.Context, intent startupCacheBuildIntent) error {
 		builds++
 		assert.Equal(startupCacheBuildIntentDefault, intent)
-		_, err := buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+		_, err := buildCacheAuto(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 		return err
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	require.NoError(t, err)
 	defer func() { _ = engine.Close() }()
@@ -1727,18 +1754,18 @@ func TestOpenDaemonAnalyticsEngineExplicitFullBuildRunsWhenCacheIsFresh(t *testi
 	require := require.New(t)
 
 	c, s := openTestDaemonAnalyticsStore(t)
-	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
 	builds := 0
 	stubStartupCacheBuild(t, func(_ context.Context, intent startupCacheBuildIntent) error {
 		builds++
 		assert.Equal(startupCacheBuildIntentFull, intent)
-		_, buildErr := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		_, buildErr := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 		return buildErr
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentFull,
+		t.Context(), c, s, startupCacheBuildIntentFull,
 	)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
@@ -1758,7 +1785,7 @@ func TestOpenDaemonAnalyticsEngineExplicitFailureKeepsAutoFallback(t *testing.T)
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	require.NoError(t, err)
 	defer func() { _ = engine.Close() }()
@@ -1778,7 +1805,7 @@ func TestOpenDaemonAnalyticsEngineExplicitSuccessWithoutUsableCacheIsFailed(t *t
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	require.NoError(t, err)
 	defer func() { _ = engine.Close() }()
@@ -1795,14 +1822,14 @@ func TestOpenDaemonAnalyticsEngineExplicitFullFailureDoesNotReuseOldCache(t *tes
 
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
-	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
 	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
 		return errors.New("simulated full rebuild failure")
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentFull,
+		t.Context(), c, s, startupCacheBuildIntentFull,
 	)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
@@ -1819,18 +1846,18 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBOpenFailureMarksIntentFailed(t *
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
-		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 		return err
 	})
 	sentinel := errors.New("simulated DuckDB open failure")
 	oldOpen := openDaemonDuckDBEngineForRun
-	openDaemonDuckDBEngineForRun = func(*config.Config, *store.Store) (*query.DuckDBEngine, error) {
+	openDaemonDuckDBEngineForRun = func(context.Context, *config.Config, *store.Store) (*query.DuckDBEngine, error) {
 		return nil, sentinel
 	}
 	t.Cleanup(func() { openDaemonDuckDBEngineForRun = oldOpen })
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	require.NoError(t, err, "auto mode must preserve live-SQL fallback")
 	defer func() { _ = engine.Close() }()
@@ -1853,7 +1880,7 @@ func TestOpenDaemonAnalyticsEngineSQLLeavesExplicitIntentUnconsumed(t *testing.T
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
@@ -1871,7 +1898,7 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
 	})
 
 	engine, _, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentDefault,
+		t.Context(), c, s, startupCacheBuildIntentDefault,
 	)
 	if engine != nil {
 		_ = engine.Close()
@@ -1937,7 +1964,7 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 	)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1983,7 +2010,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 			runnerCalls := 0
 
 			err := adapter.runCLISyncWithRunner(
-				context.Background(),
+				t.Context(),
 				api.CLISyncRequest{Email: "alice@example.com"},
 				func(event api.CLISyncEvent) error {
 					events = append(events, event)
@@ -2106,7 +2133,7 @@ remote_enabled = true
 		Args: []string{"delete-staged", "--yes", manifest.ID},
 	})
 	require.NoError(err)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "boundary-secret")
 	response := httptest.NewRecorder()
@@ -2181,9 +2208,9 @@ func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
 		api.CLISyncRequest{Full: true, OperationID: "operation-1"},
 		nil,
 		func(context.Context, []string, func(string, string) error) error {
-			runID, err := f.Store.StartSyncOperation(f.Source.ID, "operation-1")
+			runID, err := f.Store.StartSyncOperation(t.Context(), f.Source.ID, "operation-1")
 			require.NoError(err)
-			require.NoError(f.Store.CompleteSync(runID, "cursor"))
+			require.NoError(f.Store.CompleteSyncContext(t.Context(), runID, "cursor"))
 			op, err := f.Store.GetSyncOperation("operation-1")
 			require.NoError(err)
 			assert.Equal("running", op.Status)
@@ -2233,7 +2260,7 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 			runnerCalls := 0
 
 			err := adapter.runCLICommandWithRunner(
-				context.Background(),
+				t.Context(),
 				api.CLIRunRequest{Args: tt.args, Env: map[string]string{"TEST": "value"}, Cwd: "/tmp"},
 				func(event api.CLIRunEvent) error {
 					events = append(events, event)
@@ -2332,7 +2359,7 @@ func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 	var gotArgs []string
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(), req, nil,
+		t.Context(), req, nil,
 		func(
 			_ context.Context,
 			args []string,
@@ -2362,7 +2389,7 @@ func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
 	var events []api.CLIRunEvent
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
+		t.Context(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
 		func(event api.CLIRunEvent) error {
 			events = append(events, event)
 			return nil
@@ -2388,7 +2415,7 @@ func TestStoreAPIAdapterRejectsExplicitRepackInLooseAttachmentMode(t *testing.T)
 	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
+		t.Context(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
 		nil,
 		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
 			require.FailNow(t, "disabled repack must never spawn a child process")
@@ -2408,7 +2435,7 @@ func TestStoreAPIAdapterExplicitRepackAcceptsLoggingPassthroughFlags(t *testing.
 	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(), api.CLIRunRequest{Args: []string{
+		t.Context(), api.CLIRunRequest{Args: []string{
 			"repack-attachments", "--log-level=debug", "--log-sql",
 			"--log-sql-slow-ms=250", "--verbose",
 		}}, nil,
@@ -2470,7 +2497,7 @@ func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 			runnerCalls := 0
 
 			err := adapter.runCLICommandWithRunner(
-				context.Background(),
+				t.Context(),
 				api.CLIRunRequest{Args: tt.args},
 				nil,
 				func(context.Context, []string, map[string]string, string, func(string, string) error) error {
@@ -2499,7 +2526,7 @@ func TestStoreAPIAdapterPostRemovalRepackWarningPreservesSuccess(t *testing.T) {
 	var events []api.CLIRunEvent
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(), api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
+		t.Context(), api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
 		func(event api.CLIRunEvent) error {
 			events = append(events, event)
 			return nil
@@ -2521,7 +2548,7 @@ func TestStoreAPIAdapterPostRemovalRepackCancellationPreservesSuccess(t *testing
 	f := newAttachmentMaintenanceFixture(t)
 	oldPackID := f.makeZeroLivePack([]byte("canceled post-removal repack remains retryable"))
 	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var events []api.CLIRunEvent
 
 	err := adapter.runCLICommandWithRunner(
@@ -2550,7 +2577,7 @@ func TestStoreAPIAdapterExplicitRepackCancellationFailsFast(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	oldPackID := f.makeZeroLivePack([]byte("explicit canceled repack is fail-fast"))
 	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := adapter.runCLICommandWithRunner(
@@ -2575,7 +2602,7 @@ func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testi
 	var events []api.CLISyncEvent
 
 	err := adapter.runCLISyncWithRunner(
-		context.Background(),
+		t.Context(),
 		api.CLISyncRequest{Email: "alice@example.com"},
 		func(event api.CLISyncEvent) error {
 			events = append(events, event)
@@ -2600,7 +2627,7 @@ func TestStoreAPIAdapterMaintenanceWarningStreamFailurePreservesSuccess(t *testi
 	warningErr := errors.New("client disconnected")
 
 	err := adapter.runCLICommandWithRunner(
-		context.Background(),
+		t.Context(),
 		api.CLIRunRequest{Args: []string{importMboxCommand, "archive.mbox"}},
 		func(api.CLIRunEvent) error { return warningErr },
 		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
@@ -2631,7 +2658,7 @@ func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/init-db", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/init-db", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2657,7 +2684,7 @@ func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
 	f := storetest.New(t)
 	keepID := f.CreateMessage("keep")
 	dropID := f.CreateMessage("drop")
-	_, err := f.Store.MergeDuplicates(keepID, []int64{dropID}, "batch-a")
+	_, err := f.Store.MergeDuplicates(t.Context(), keepID, []int64{dropID}, "batch-a")
 	require.NoError(err, "merge duplicate")
 
 	adapter := &storeAPIAdapter{store: f.Store}
@@ -2668,7 +2695,8 @@ func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 	)
 
-	planReq := httptest.NewRequest(
+	planReq := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/delete-deduped/plan",
 		strings.NewReader(`{"batch_ids":["batch-a"]}`),
@@ -2691,7 +2719,8 @@ func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
 	assert.Equal(int64(1), plan.BatchCount, "plan batch count")
 	require.Len(plan.Batches, 1, "plan batches")
 
-	executeReq := httptest.NewRequest(
+	executeReq := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/delete-deduped",
 		strings.NewReader(`{
@@ -3000,7 +3029,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 	src, err := s.GetOrCreateSource("imap", imapID)
 	require.NoError(err, "create imap source")
 	require.NoError(s.UpdateSourceDisplayName(src.ID, imapEmail), "set display_name")
-	require.NoError(s.UpdateSourceSyncConfig(src.ID,
+	require.NoError(s.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"host":"127.0.0.1","port":1,"username":"user@example.com","tls":true}`,
 	), "set sync_config")
 	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), imapID, "unused"), "save credentials")
@@ -3049,7 +3078,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 
 	// Unknown identifier returns empty slice (not nil), enabling the
 	// Gmail token-first fallback in runScheduledSync.
-	got, _, err := findScheduledSyncSources(s, "missing@example.com")
+	got, _, err := findScheduledSyncSources(t.Context(), s, "missing@example.com")
 	require.NoError(err, "findScheduledSyncSources(missing)")
 	assert.Empty(got, "findScheduledSyncSources(missing) should be empty")
 
@@ -3066,7 +3095,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	teamsSrc, err := s.GetOrCreateSource("teams", sharedEmail)
 	require.NoError(err, "create teams source")
 
-	got, _, err = findScheduledSyncSources(s, sharedEmail)
+	got, _, err = findScheduledSyncSources(t.Context(), s, sharedEmail)
 	require.NoError(err, "findScheduledSyncSources(imap+teams)")
 	require.Len(got, 2, "findScheduledSyncSources(imap+teams) should return 2 sources")
 	assert.Equal("imap", got[0].SourceType, "first source should be imap")
@@ -3079,7 +3108,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	gmailSrc, err := s.GetOrCreateSource("gmail", gmailAddr)
 	require.NoError(err, "create gmail source")
 
-	got, _, err = findScheduledSyncSources(s, gmailAddr)
+	got, _, err = findScheduledSyncSources(t.Context(), s, gmailAddr)
 	require.NoError(err, "findScheduledSyncSources(gmail)")
 	require.Len(got, 1, "findScheduledSyncSources(gmail) should return 1 source")
 	assert.Equal("gmail", got[0].SourceType, "source should be gmail")
@@ -3090,7 +3119,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	_, err = s.GetOrCreateSource("mbox", mboxAddr)
 	require.NoError(err, "create mbox source")
 
-	got, _, err = findScheduledSyncSources(s, mboxAddr)
+	got, _, err = findScheduledSyncSources(t.Context(), s, mboxAddr)
 	require.NoError(err, "findScheduledSyncSources(mbox-only)")
 	assert.Empty(got, "findScheduledSyncSources(mbox-only) should be empty")
 
@@ -3103,12 +3132,12 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	require.NoError(err, "create second Discord source")
 	require.NoError(s.UpdateSourceDisplayName(discordB.ID, "Shared Guild"), "name second Discord source")
 
-	got, _, err = findScheduledSyncSources(s, discordB.Identifier)
+	got, _, err = findScheduledSyncSources(t.Context(), s, discordB.Identifier)
 	require.NoError(err, "find Discord source by guild ID")
 	require.Len(got, 1, "exact guild ID selects one Discord source")
 	assert.Equal(discordB.ID, got[0].ID)
 
-	got, _, err = findScheduledSyncSources(s, "Shared Guild")
+	got, _, err = findScheduledSyncSources(t.Context(), s, "Shared Guild")
 	require.NoError(err, "do not resolve Discord source by display name")
 	assert.Empty(got, "duplicate guild display names must not select an arbitrary source")
 }
@@ -3126,7 +3155,7 @@ func TestScheduledSyncSkipsRetiredSourcesWithoutGmailFallback(t *testing.T) {
 	})
 	require.NoError(err)
 
-	sources, retiredMatch, err := findScheduledSyncSources(f.Store, retired.Identifier)
+	sources, retiredMatch, err := findScheduledSyncSources(t.Context(), f.Store, retired.Identifier)
 	require.NoError(err)
 	assert.Empty(sources)
 	assert.True(retiredMatch)
@@ -3151,12 +3180,13 @@ func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T)
 		FromSourceID: retired.ID, IntoSourceID: destination.ID,
 	})
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE sources SET source_type = '' WHERE id = ?`), retired.ID,
 	)
 	require.NoError(err)
 
-	sources, retiredMatch, err := findScheduledSyncSources(f.Store, retired.Identifier)
+	sources, retiredMatch, err := findScheduledSyncSources(t.Context(), f.Store, retired.Identifier)
 	require.NoError(err)
 	assert.Empty(sources)
 	assert.True(retiredMatch, "legacy source type still marks the account as retired")
@@ -3273,7 +3303,7 @@ func TestRunScheduledSyncStopsAfterYield(t *testing.T) {
 		rebuildCacheAfterScheduledSourceRun = originalRebuild
 	})
 
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(scheduler.ErrYieldedToWaiter)
 	imports, rebuilds := 0, 0
 	importDiscordSourceForScheduledRun = func(ctx context.Context, _ *store.Store, _ *store.Source,
@@ -3296,7 +3326,7 @@ func TestRunScheduledSyncStopsAfterYield(t *testing.T) {
 }
 
 func TestScheduledSyncYieldResultPreservesCollectedErrors(t *testing.T) {
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(scheduler.ErrYieldedToWaiter)
 
 	sourceErr := errors.New("synthetic earlier source failure")
@@ -3339,7 +3369,7 @@ func TestRunScheduledSyncCooperativePreemptionPreservesSourceResult(t *testing.T
 				return nil
 			}
 
-			ctx, requestPreemption := jobctx.WithPreemption(context.Background())
+			ctx, requestPreemption := jobctx.WithPreemption(t.Context())
 			requestPreemption()
 			err = runScheduledSync(ctx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
@@ -3357,7 +3387,7 @@ func TestRunScheduledSyncCooperativePreemptionPreservesSourceResult(t *testing.T
 }
 
 func TestScheduledSyncYieldedForCooperativePreemption(t *testing.T) {
-	ctx, requestPreemption := jobctx.WithPreemption(context.Background())
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
 	requestPreemption()
 	require.True(t, scheduledSyncYielded(ctx))
 }
@@ -3430,10 +3460,16 @@ func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
 	require.NoError(err)
 	imap, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://reader@example.test:993")
 	require.NoError(err)
+	teams, err := st.Store.GetOrCreateSource(sourceTypeTeams, "teams-reader@example.test")
+	require.NoError(err)
 
-	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier, testDiscardLogger()))
-	assert.False(scheduledSyncPreemptible(st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
-	assert.True(scheduledSyncPreemptible(st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, gmail.Identifier, testDiscardLogger()), "archive repair restarts from row zero and must finish before yielding")
+	_, _, err = rederive.RunIfStale(t.Context(), st.Store, gmail.SourceType, gmail.Identifier, gmail.ID, nil)
+	require.NoError(err)
+	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, gmail.Identifier, testDiscardLogger()), "Gmail history sync is resumable after repair")
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
+	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, teams.Identifier, testDiscardLogger()), "Teams sync does not run archive repair")
+	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
 }
 
 func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {

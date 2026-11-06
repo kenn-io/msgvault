@@ -97,6 +97,10 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
+On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. Review these values before sending. The draft is still written unchanged.
+
+Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
+
 Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
@@ -380,7 +384,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
-| `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
+| `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool), `include_segments` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
@@ -484,6 +488,35 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+On newer `main` builds, `get_message` with `include_segments: true` returns
+`segments_version: "seg-v1"` and `segments` with `kind`, `start`, and `end`.
+For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
+`signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
+or 1 for an attribution line or unprefixed history block.
+
+Outlook history blocks are quoted for both replies and forwards. They require
+consecutive `From:` and `Sent:` lines, then a `Subject:` within the first 64
+lines, before any blank line. `Date:` can replace `Sent:` only when an
+underscore divider of at least ten characters precedes the block. Recognized
+separators are English `Original Message`, `Forwarded message`, and
+`Begin forwarded message:`, plus Thunderbird's German `Original-Nachricht`
+and `Weitergeleitete Nachricht` and French `Message original` and
+`Message transféré` lines. A relay label, quoted or forwarded, runs from
+the separator or Outlook history block to the end of the body.
+Reply headers are recognized on one line in English and in Thunderbird's
+German and French dated forms. Wrapped headers and other localized headers
+stay authored; the quoted lines beneath them still get quoted ranges. A
+signature starts only at an exact `-- ` line, including the trailing space.
+
+Authored means no relay marker was recognized; it doesn't prove
+who wrote the text. Only ranges overlapping the returned body window appear.
+Their byte offsets refer to the whole selected body, with an exclusive `end`,
+and stay unclipped across pages. Classification examines at most 1 MiB,
+stopping at the last complete line; remaining bytes keep the last label.
+`segments_truncated: true` reports the scan limit. Non-email messages get one
+authored range. HTML returns `segments_unavailable: "unsupported_format"` with
+no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an
@@ -848,6 +881,16 @@ The tool returns the batch ID, message count, and next steps:
   "next_step": "Run 'msgvault delete-staged' to execute deletion"
 }
 ```
+
+## Server identity (unreleased)
+
+On `main`, the MCP server declares msgvault's website and icon. The icon is
+included as a PNG data URI, so stdio and HTTP clients can load it without an
+external request. Whether it appears depends on the client.
+
+The MCP HTTP listener also serves the same PNG at `/icon.png` and `/favicon.ico`.
+These public image routes accept GET and HEAD without a bearer key. They expose
+no archive data; `/mcp` keeps its configured authentication.
 
 ## CLI Flags
 

@@ -35,7 +35,7 @@ func waitForLockWait(t *testing.T, st *store.Store, fragment, message string) in
 	var pid int
 	var err error
 	require.Eventually(t, func() bool {
-		err = st.DB().QueryRowContext(context.Background(), `
+		err = st.DB().QueryRowContext(t.Context(), `
 			SELECT COALESCE(MIN(pid), 0) FROM pg_stat_activity
 			WHERE datname = current_database()
 			  AND wait_event_type = 'Lock' AND POSITION($1 IN query) > 0`, fragment).Scan(&pid)
@@ -50,8 +50,8 @@ func TestPostgreSQLLockWaitIgnoresOtherDatabases(t *testing.T) {
 	first := requirePostgreSQLStore(t)
 	second := requirePostgreSQLStore(t)
 	var firstDB, secondDB string
-	require.NoError(first.DB().QueryRow(`SELECT current_database()`).Scan(&firstDB))
-	require.NoError(second.DB().QueryRow(`SELECT current_database()`).Scan(&secondDB))
+	require.NoError(first.DB().QueryRowContext(t.Context(), `SELECT current_database()`).Scan(&firstDB))
+	require.NoError(second.DB().QueryRowContext(t.Context(), `SELECT current_database()`).Scan(&secondDB))
 	if firstDB == secondDB {
 		t.Skip("requires database-cloned fixtures")
 	}
@@ -96,7 +96,7 @@ func TestPostgreSQLLockWaitIgnoresOtherDatabases(t *testing.T) {
 func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) bool {
 	t.Helper()
 	var held bool
-	require.NoError(t, st.DB().QueryRowContext(context.Background(), `
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
 			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
@@ -108,7 +108,7 @@ func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) 
 // do and keeps it until release runs.
 func holdIdentityRow(t *testing.T, st *store.Store) func() {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := st.DB().ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '0') ON CONFLICT (key) DO NOTHING`)
 	require.NoError(t, err)
 	tx, err := st.DB().BeginTx(ctx, nil)
@@ -179,7 +179,7 @@ func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {
 	persist := func(f *attrFixture, scoped *store.Store, key string) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			_, err := scoped.PersistMessageContext(context.Background(), &store.MessagePersistData{
+			_, err := scoped.PersistMessageContext(t.Context(), &store.MessagePersistData{
 				Message:    &store.Message{SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: key, MessageType: "email"},
 				RawMIME:    []byte("To: alias@example.org\r\n\r\nbody"),
 				Recipients: []store.RecipientSet{f.recipientSet("to", []string{"alias@example.org"}, true)},
@@ -222,7 +222,7 @@ func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
 	release := holdIdentityRow(t, st)
 	persistDone := make(chan error, 1)
 	go func() {
-		_, err := scoped.PersistMessageContext(context.Background(), &store.MessagePersistData{
+		_, err := scoped.PersistMessageContext(t.Context(), &store.MessagePersistData{
 			Message: &store.Message{SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "p-1", MessageType: "email"},
 			RawMIME: []byte("Delivered-To: persist@example.net\r\n\r\nbody"),
 		})
@@ -233,12 +233,12 @@ func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
 
 	removeDone := make(chan error, 1)
 	go func() {
-		_, _, err := st.RemoveSourceSerialized(context.Background(), victim.source.ID)
+		_, _, err := st.RemoveSourceSerialized(t.Context(), victim.source.ID)
 		removeDone <- err
 	}()
 	require.Eventually(t, func() bool {
 		var waiting int
-		return st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pg_stat_activity
+		return st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pg_stat_activity
 			WHERE datname = current_database()
 			  AND wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
 	}, pgWaitBudget, 10*time.Millisecond, "source removal must wait for the identity row")
@@ -259,7 +259,7 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 3, UIDNext: 2},
 		Memberships: []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 3, UID: 1, SourceMessageID: "imap-1"}},
 	}}))
-	archive, err := st.EnsureLabel(f.source.ID, "Archive", "Archive", "user")
+	archive, err := st.EnsureLabel(t.Context(), f.source.ID, "Archive", "Archive", "user")
 	require.NoError(err)
 
 	paused := make(chan struct{})
@@ -277,13 +277,13 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 
 	repairDone := make(chan error, 1)
 	go func() {
-		_, err := st.RepairIMAPSourceLabels(context.Background(), f.source.ID, true)
+		_, err := st.RepairIMAPSourceLabels(t.Context(), f.source.ID, true)
 		repairDone <- err
 	}()
 	<-paused
 	var repairPID int
 	require.Eventually(func() bool {
-		return st.DB().QueryRowContext(context.Background(), `
+		return st.DB().QueryRowContext(t.Context(), `
 			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
 			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
 			  AND c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
@@ -292,7 +292,7 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 
 	persistDone := make(chan error, 1)
 	go func() {
-		_, err := st.PersistMessageContext(context.Background(), &store.MessagePersistData{
+		_, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
 			Message:  &store.Message{SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "imap-1", MessageType: "email"},
 			RawMIME:  []byte("Delivered-To: owner@example.net\r\n\r\nbody"),
 			LabelIDs: []int64{archive},
@@ -301,7 +301,7 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 	}()
 	persistPID := waitForLockWait(t, st, "UPDATE sources SET updated_at", "the persist must wait on the source row")
 	var blockers []int64
-	rows, err := st.DB().QueryContext(context.Background(), `SELECT unnest(pg_blocking_pids($1))`, persistPID)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT unnest(pg_blocking_pids($1))`, persistPID)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -328,7 +328,7 @@ func TestAccountAttributionSentRoleChangeVsPersistPG(t *testing.T) {
 	st := requirePostgreSQLStore(t)
 	f := newAttrFixtureOn(t, st, "imap", "imaps://owner%40example.net@mail.example.net:993")
 	f.confirm("owner@example.net")
-	labels, err := st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{"Outbox": {Name: "Outbox", Type: "user"}})
+	labels, err := st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{"Outbox": {Name: "Outbox", Type: "user"}})
 	require.NoError(err)
 	outbox := labels["Outbox"]
 
@@ -349,7 +349,7 @@ func TestAccountAttributionSentRoleChangeVsPersistPG(t *testing.T) {
 
 	persistDone := make(chan error, 1)
 	go func() {
-		_, err := st.PersistMessageContext(context.Background(), &store.MessagePersistData{
+		_, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
 			Message:    &store.Message{SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "out-1", MessageType: "email"},
 			RawMIME:    []byte("From: owner@example.net\r\n\r\nbody"),
 			Recipients: []store.RecipientSet{f.recipientSet("from", []string{"owner@example.net"}, true)},
@@ -360,7 +360,7 @@ func TestAccountAttributionSentRoleChangeVsPersistPG(t *testing.T) {
 	<-paused
 	roleDone := make(chan error, 1)
 	go func() {
-		_, err := st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+		_, err := st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 			"Outbox": {Name: "Outbox", Type: "user", SystemRole: store.LabelSystemRoleSent},
 		})
 		roleDone <- err
@@ -396,7 +396,7 @@ func TestAccountAttributionScopedParticipantMergeVsSourceRemovalPG(t *testing.T)
 	assert.False(t, holdsRelationLock(t, st, pid, "sync_runs"), "the waiting merge must not hold sync_runs")
 	removeDone := make(chan error, 1)
 	go func() {
-		_, _, err := st.RemoveSourceSerialized(context.Background(), victim.source.ID)
+		_, _, err := st.RemoveSourceSerialized(t.Context(), victim.source.ID)
 		removeDone <- err
 	}()
 	release()
@@ -432,7 +432,7 @@ func TestChatwootScopedIdentityWritesVsSourceRemovalPG(t *testing.T) {
 					})
 					writeDone <- err
 				case "participant_phone":
-					_, err := scoped.EnsureParticipantByPhone("+12025550101", "Example Contact", "chatwoot")
+					_, err := scoped.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example Contact", "chatwoot")
 					writeDone <- err
 				}
 			}()
@@ -471,7 +471,7 @@ func TestAccountAttributionIdentityAndDraftEntriesVsSourceRemovalPG(t *testing.T
 	release := holdIdentityRow(t, st)
 	mergeDone := make(chan error, 1)
 	go func() {
-		_, err := scoped.MergeConfirmedAccountIdentitySignalsContext(context.Background(), f.source.ID,
+		_, err := scoped.MergeConfirmedAccountIdentitySignalsContext(t.Context(), f.source.ID,
 			[]store.IdentityConfirmation{{Identifier: "alice@example.com", Signals: []string{"profile"}}})
 		mergeDone <- err
 	}()
@@ -479,7 +479,7 @@ func TestAccountAttributionIdentityAndDraftEntriesVsSourceRemovalPG(t *testing.T
 	publishDone := make(chan error, 1)
 	go func() {
 		replacement := store.GmailDraftReceipt{SourceID: f.source.ID, GmailDraftID: "d-1", GmailMessageID: "gm-2", ThreadID: "t-1"}
-		_, err := st.PublishGmailDraftReplacementContext(context.Background(), draft.DraftID, 1, "gm-2", participants,
+		_, err := st.PublishGmailDraftReplacementContext(t.Context(), draft.DraftID, 1, "gm-2", participants,
 			gmailTestBuild(f.source.ID, f.conv, replacement, []byte("new")))
 		publishDone <- err
 	}()
@@ -490,7 +490,7 @@ func TestAccountAttributionIdentityAndDraftEntriesVsSourceRemovalPG(t *testing.T
 	}
 	removeDone := make(chan error, 1)
 	go func() {
-		_, _, err := st.RemoveSourceSerialized(context.Background(), victim.source.ID)
+		_, _, err := st.RemoveSourceSerialized(t.Context(), victim.source.ID)
 		removeDone <- err
 	}()
 	release()
@@ -518,11 +518,11 @@ func TestAccountAttributionOrdinaryDraftsTakeNoIdentityLockPG(t *testing.T) {
 	defer release()
 	done := make(chan error, 2)
 	go func() {
-		_, err := st.FinishBeeperDraftContext(context.Background(), bdraft.DraftID, bdraft.Revision, "hello")
+		_, err := st.FinishBeeperDraftContext(t.Context(), bdraft.DraftID, bdraft.Revision, "hello")
 		done <- err
 	}()
 	go func() {
-		_, err := st.ClaimGmailDraftContext(context.Background(), gdraft.DraftID, 1, store.GmailDraftOperationDelete, nil)
+		_, err := st.ClaimGmailDraftContext(t.Context(), gdraft.DraftID, 1, store.GmailDraftOperationDelete, nil)
 		done <- err
 	}()
 	assert.NoError(t, waitResult(t, done, "Beeper or Gmail draft write"))
@@ -552,7 +552,7 @@ func TestAccountAttributionRetypeDuringRefreshPG(t *testing.T) {
 	t.Cleanup(resumeOnce)
 
 	refreshDone := make(chan error, 1)
-	go func() { refreshDone <- st.RefreshAccountAttributionForTest(context.Background(), id) }()
+	go func() { refreshDone <- st.RefreshAccountAttributionForTest(t.Context(), id) }()
 	<-paused
 	_, err := st.UpsertMessage(&store.Message{
 		SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "retype", MessageType: "chat",

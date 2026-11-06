@@ -35,6 +35,8 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 		return "Muesli" + name
 	case "go.kenn.io/msgvault/internal/persontiers":
 		return "PersonTier" + name
+	case "go.kenn.io/msgvault/internal/senderauth":
+		return "SenderAuth" + name
 	default:
 		return name
 	}

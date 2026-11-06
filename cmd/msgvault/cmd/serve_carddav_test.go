@@ -49,7 +49,7 @@ func TestRecoverCardDAVSyncRunsAtStartupTerminalizesOrphansAndLogsOnlyCount(t *t
 
 func TestRecoverCardDAVSyncRunsAtStartupReturnsFailure(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	_, err := st.DB().Exec(`DROP TABLE carddav_sync_runs`)
+	_, err := st.DB().ExecContext(t.Context(), `DROP TABLE carddav_sync_runs`)
 	require.NoError(t, err)
 
 	err = recoverCardDAVSyncRunsAtStartup(t.Context(), st, slog.New(slog.DiscardHandler))

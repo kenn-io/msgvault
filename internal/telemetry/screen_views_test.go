@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,8 +20,8 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 )
 
-func screenRequest(h http.Handler, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+func screenRequest(ctx context.Context, h http.Handler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, req)
@@ -46,15 +47,15 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 			`{"event":"message_opened","properties":{"surface":"web"}}`,
 			`{"event":"search_run","properties":{"surface":"web","search_type":"text"}}`,
 		} {
-			assertions.JSONEq(`{"status":"queued"}`, screenRequest(h, body).Body.String())
+			assertions.JSONEq(`{"status":"queued"}`, screenRequest(t.Context(), h, body).Body.String())
 		}
 		return
 	}
 	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "restart" {
 		day = day.Add(2 * time.Minute)
-		assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
-		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
-		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, valid).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
 		return
 	}
 	for _, body := range []string{
@@ -62,7 +63,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 		`{"event":"unknown","event":"app_opened","properties":{"surface":"tui","surface":"web"}}`,
 		"{\"event\":\"app_opened\",\"properties\":{\"surface\":\"web\",\"private\":\"\xff\"}}",
 	} {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, body).Code)
 	}
 	if !reporter.Enabled() {
 		for _, body := range []string{
@@ -70,7 +71,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 			`{"event":"message_opened","properties":{"surface":"tui"}}`,
 			`{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`,
 		} {
-			response := screenRequest(h, body)
+			response := screenRequest(t.Context(), h, body)
 			assertions.Equal(http.StatusAccepted, response.Code)
 			assertions.JSONEq(`{"status":"disabled"}`, response.Body.String())
 		}
@@ -83,24 +84,24 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 		`{"event":"screen_viewed","properties":{"screen":"settings","surface":"private"}}`,
 		`{"event":"screen_viewed","properties":{"screen":"settings"}}`,
 	} {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, body).Code)
 	}
-	assertions.Equal(http.StatusBadRequest, screenRequest(h, valid+`{}`).Code)
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"Event":"unknown","event":"screen_viewed","Properties":{"screen":"private","screen":"settings","surface":"web"}}`).Code)
-	assertions.Equal(http.StatusRequestEntityTooLarge, screenRequest(h, strings.Repeat(" ", 64<<10)+valid).Code)
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":" screen_viewed ","properties":{" screen ":"directory","surface":"tui","content":"private"}}`).Code)
+	assertions.Equal(http.StatusBadRequest, screenRequest(t.Context(), h, valid+`{}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"Event":"unknown","event":"screen_viewed","Properties":{"screen":"private","screen":"settings","surface":"web"}}`).Code)
+	assertions.Equal(http.StatusRequestEntityTooLarge, screenRequest(t.Context(), h, strings.Repeat(" ", 64<<10)+valid).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":" screen_viewed ","properties":{" screen ":"directory","surface":"tui","content":"private"}}`).Code)
 	conflicting := `{"event":"screen_viewed","properties":{"screen":"email"," screen ":"texts","surface":"web"}}`
-	assertions.Equal(http.StatusAccepted, screenRequest(h, conflicting).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, conflicting).Code)
 	for _, event := range []string{EventSearchRun, EventMessageOpened, EventSyncFinished} {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":{"surface":"other"}}`, event)).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, fmt.Sprintf(`{"event":%q,"properties":{"surface":"other"}}`, event)).Code)
 	}
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"web","search_type":"other"}}`).Code)
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"web"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"web","search_type":"other"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"web"}}`).Code)
 	for _, surface := range []string{"web", "tui", "cli"} {
 		for _, kind := range []string{"text", "semantic", "hybrid"} {
 			body := fmt.Sprintf(`{"event":"search_run","properties":{"surface":%q,"search_type":%q,"query":"private"}}`, surface, kind)
 			for range 2 {
-				assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+				assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, body).Code)
 			}
 		}
 	}
@@ -110,7 +111,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	previous, err := os.ReadFile(path)
 	requirements.NoError(err)
 	h.now = func() time.Time { return day.Add(24 * time.Hour) }
-	assertions.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"search_run","properties":{"surface":"web","search_type":"text"}}`).Code)
+	assertions.Equal(http.StatusInternalServerError, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"web","search_type":"text"}}`).Code)
 	h.now = func() time.Time { return day }
 	restored, err := os.ReadFile(path)
 	requirements.NoError(err)
@@ -118,7 +119,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	h.captureEvent = capture
 	for _, surface := range []string{"web", "tui", "cli"} {
 		for range 2 {
-			assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":"sync_finished","properties":{"surface":%q,"message_id":1}}`, surface)).Code)
+			assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, fmt.Sprintf(`{"event":"sync_finished","properties":{"surface":%q,"message_id":1}}`, surface)).Code)
 		}
 	}
 	day = day.Add(2 * time.Minute)
@@ -127,11 +128,11 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(claimsPath))
 	requirements.NoError(os.Mkdir(claimsPath, 0o700))
-	assertions.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+	assertions.Equal(http.StatusInternalServerError, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
 	requirements.NoError(os.Remove(claimsPath))
 	requirements.NoError(os.WriteFile(claimsPath, previous, 0o600))
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
-	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(t.Context(), h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
 }
 
 func TestMixedLedgerUpgradePreservesSearchClaims(t *testing.T) {
@@ -215,7 +216,7 @@ func exerciseDailyViewRollover(t *testing.T, opts Options) {
 				`{"event":"screen_viewed","properties":{"screen":"settings","surface":"web"}}`,
 				`{"event":"message_opened","properties":{"surface":"web"}}`,
 			} {
-				require.Equal(t, http.StatusAccepted, screenRequest(h, body).Code)
+				require.Equal(t, http.StatusAccepted, screenRequest(t.Context(), h, body).Code)
 			}
 		}
 		report()

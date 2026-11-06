@@ -336,7 +336,7 @@ func parseSalvagedAddressList(value string) []Address {
 		addresses = append(addresses, Address{
 			Name:   addr.Name,
 			Email:  email,
-			Domain: extractDomain(email),
+			Domain: ExtractDomain(email),
 		})
 	}
 	return addresses
@@ -457,7 +457,7 @@ func parseAddressList(env *enmime.Envelope, header string) []Address {
 		addresses = append(addresses, Address{
 			Name:   addr.Name,
 			Email:  strings.ToLower(addr.Address),
-			Domain: extractDomain(addr.Address),
+			Domain: ExtractDomain(addr.Address),
 		})
 	}
 	return addresses
@@ -477,7 +477,7 @@ func fallbackAddressList(value string) []Address {
 			email = strings.ToLower(email)
 			addresses = append(addresses, Address{
 				Email:  email,
-				Domain: extractDomain(email),
+				Domain: ExtractDomain(email),
 			})
 		}
 	}
@@ -593,8 +593,8 @@ func stripAddressDecorations(value string) string {
 	return stripped.String()
 }
 
-// extractDomain extracts the domain from an email address.
-func extractDomain(email string) string {
+// ExtractDomain extracts the domain from an email address.
+func ExtractDomain(email string) string {
 	if _, domain, ok := strings.CutLast(email, "@"); ok {
 		return strings.ToLower(domain)
 	}

@@ -62,7 +62,7 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("cli-evidence")
-	_, err := f.Store.DB().Exec(f.Store.Rebind("INSERT INTO message_bodies(message_id,body_text) VALUES (?,?)"), id, "é界🙂 send the revised budget")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("INSERT INTO message_bodies(message_id,body_text) VALUES (?,?)"), id, "é界🙂 send the revised budget")
 	require.NoError(err)
 	kataServer := httptest.NewServer(katatest.New(t).Service.Handler())
 	t.Cleanup(kataServer.Close)
@@ -229,7 +229,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	st, _ := storedBeeperVoiceNote(t)
 	var messageID, attachmentID int64
 	var hash string
-	require.NoError(st.DB().QueryRow(`SELECT message_id, id, content_hash FROM attachments`).Scan(&messageID, &attachmentID, &hash))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id, id, content_hash FROM attachments`).Scan(&messageID, &attachmentID, &hash))
 	const vault, version = "22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"
 	transcript := []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday.")
 	var revoked atomic.Bool
@@ -330,7 +330,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 
 	// A file cited as extracted text and as a Docbank transcript is found by both, once
 	// each, oldest first.
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
 		SELECT 'doc-occurrence',a.id,a.message_id,m.source_id,a.content_hash,a.attachment_role,'test' FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=?`), attachmentID)
 	require.NoError(err)
 	encodedRef, err := json.Marshal(window.Evidence[0].Reference)
@@ -375,7 +375,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	assert.Equal("unavailable", unavailable.Passages[0].State)
 	revoked.Store(false)
 
-	_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib"), messageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib"), messageID)
 	require.NoError(err)
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &unavailable))
 	require.Len(unavailable.Passages, 1)

@@ -57,7 +57,7 @@ func TestEmbeddingChangeJournal_DisabledUntilContextualUse(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("test", "journal-opt-in")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "ordinary", "Ordinary")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "ordinary", "Ordinary")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, SourceMessageID: "journal-disabled",
@@ -190,7 +190,7 @@ func TestEmbeddingChangeJournal_ContextualSoftDeleteAndRestoreClearInactiveScope
 	f.materializeBody(t, messageID, "synthetic soft lifecycle body")
 
 	before := latestEmbeddingChangeSequence(t, f.store)
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	changes := embeddingChangesAfter(t, f.store, before)
@@ -201,7 +201,7 @@ func TestEmbeddingChangeJournal_ContextualSoftDeleteAndRestoreClearInactiveScope
 		sql.NullTime{Time: sentAt, Valid: true}, sql.NullTime{})
 
 	before = latestEmbeddingChangeSequence(t, f.store)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE messages SET deleted_at = NULL WHERE id = ?`), messageID)
 	require.NoError(err)
 	changes = embeddingChangesAfter(t, f.store, before)
@@ -299,7 +299,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryLifecycle(t *testing.T) {
 		"clearing the last embeddable field must retire the stale document")
 
 	before = latestEmbeddingChangeSequence(t, f.store)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	changes = embeddingChangesAfter(t, f.store, before)
@@ -347,7 +347,7 @@ func TestEmbeddingChangeJournal_EmbedGenResetJournalsBodylessOrdinary(t *testing
 		Subject:        sql.NullString{String: "Repaired subject", Valid: true},
 	})
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE messages SET embed_gen = ? WHERE id = ?`), int64(42), messageID)
 	require.NoError(err)
 	before := latestEmbeddingChangeSequence(t, f.store)
@@ -367,7 +367,8 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryUpsertRollsBackWithJournalFailur
 	postgres := store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
 
 	var before int64
-	require.NoError(f.store.DB().QueryRow(
+	require.NoError(f.store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before))
 	insertSQL := `INSERT INTO embedding_changes (sequence, kind) VALUES (?, ?)`
 	messageCountSQL := `SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`
@@ -375,7 +376,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryUpsertRollsBackWithJournalFailur
 		insertSQL = `INSERT INTO embedding_changes (sequence, kind) VALUES ($1, $2)`
 		messageCountSQL = `SELECT COUNT(*) FROM messages WHERE source_id = $1 AND source_message_id = $2`
 	}
-	_, err := f.store.DB().Exec(insertSQL,
+	_, err := f.store.DB().ExecContext(t.Context(), insertSQL,
 		before+1, string(store.EmbeddingChangeMessageUpdate))
 	require.NoError(err)
 
@@ -388,11 +389,12 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryUpsertRollsBackWithJournalFailur
 	assert.Contains(err.Error(), "bodyless message journal")
 
 	var messages int
-	require.NoError(f.store.DB().QueryRow(messageCountSQL,
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), messageCountSQL,
 		f.sourceID, "bodyless-atomic").Scan(&messages))
 	assert.Zero(messages, "the message and its journal event must commit or roll back together")
 	var after int64
-	require.NoError(f.store.DB().QueryRow(
+	require.NoError(f.store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&after))
 	assert.Equal(before, after, "a failed journal append must not advance the durable clock")
 }
@@ -403,17 +405,17 @@ func TestEmbeddingChangeJournal_MessageLookupIndexRestoredByInitSchema(t *testin
 	f := newEmbeddingJournalFixture(t)
 	const indexName = "idx_embedding_changes_message_id"
 
-	_, err := f.store.DB().Exec(`DROP INDEX IF EXISTS ` + indexName)
+	_, err := f.store.DB().ExecContext(t.Context(), `DROP INDEX IF EXISTS `+indexName)
 	require.NoError(err)
 	require.NoError(f.store.InitSchema())
 
 	var count int
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		require.NoError(f.store.DB().QueryRow(`
+		require.NoError(f.store.DB().QueryRowContext(t.Context(), `
 			SELECT COUNT(*) FROM pg_indexes
 			WHERE schemaname = current_schema() AND indexname = $1`, indexName).Scan(&count))
 	} else {
-		require.NoError(f.store.DB().QueryRow(`
+		require.NoError(f.store.DB().QueryRowContext(t.Context(), `
 			SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&count))
 	}
 	assert.Equal(1, count)
@@ -462,7 +464,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 		t.Skip("SQLite snapshot-upgrade regression")
 	}
 	dbPath := filepath.Join(t.TempDir(), "membership-writer.db")
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -480,7 +482,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 	require.NoError(err)
 	require.NoError(st.EnsureConversationParticipant(conversationID, firstParticipant, "member"))
 
-	holder, err := store.OpenForTest(dbPath)
+	holder, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = holder.Close() })
 	conn, err := holder.DB().Conn(t.Context())
@@ -489,9 +491,10 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 	_, err = conn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(err)
 	committed := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if !committed {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			_, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		}
 	})
 	_, err = conn.ExecContext(t.Context(),
@@ -522,7 +525,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 	require.NoError(replaceErr)
 
 	var count int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM conversation_participants
 		WHERE conversation_id = ? AND participant_id = ?`,
 		conversationID, secondParticipant).Scan(&count))
@@ -564,7 +567,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotBoundsSQLParameters(t *testing
 
 	require.NoError(f.store.ReplaceConversationParticipants(f.oldConversationID, desired))
 	var count int
-	require.NoError(f.store.DB().QueryRow(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`,
 		f.oldConversationID).Scan(&count))
 	assert.Equal(len(desired), count)
@@ -587,7 +590,7 @@ func TestEmbeddingChangeJournal_MessageTypeTransitionsPreserveOldAndNewKind(t *t
 				time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC))
 			f.materializeBody(t, id, "transition body")
 			before := latestEmbeddingChangeSequence(t, f.store)
-			_, err := f.store.DB().Exec(f.store.Rebind(
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 				`UPDATE messages SET message_type = ?, conversation_id = ? WHERE id = ?`),
 				transition.newType, f.newConversationID, id)
 			require.NoError(t, err)
@@ -617,7 +620,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryTransitionToContextualPreservesB
 				SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true},
 			})
 			require.NoError(err)
-			_, err = f.store.DB().Exec(f.store.Rebind(
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 				`UPDATE messages SET embed_gen = ? WHERE id = ?`), int64(42), messageID)
 			require.NoError(err)
 			before := latestEmbeddingChangeSequence(t, f.store)
@@ -633,7 +636,7 @@ func TestEmbeddingChangeJournal_BodylessOrdinaryTransitionToContextualPreservesB
 			assert.Equal(messageID, updatedID)
 			var storedType string
 			var embedGen sql.NullInt64
-			require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 				`SELECT message_type, embed_gen FROM messages WHERE id = ?`), messageID).
 				Scan(&storedType, &embedGen))
 			assert.Equal(newType, storedType)
@@ -668,7 +671,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 			name: "sender",
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE messages SET sender_id = ? WHERE id = ?`), f.bobID, messageID)
 				require.NoError(t, err)
 			},
@@ -678,7 +681,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 			name: "time and UTC day",
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE messages SET sent_at = ? WHERE id = ?`), movedAt, messageID)
 				require.NoError(t, err)
 			},
@@ -694,7 +697,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 			name: "conversation move",
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE messages SET conversation_id = ? WHERE id = ?`),
 					f.newConversationID, messageID)
 				require.NoError(t, err)
@@ -711,7 +714,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 			name: "delete",
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`DELETE FROM messages WHERE id = ?`), messageID)
 				require.NoError(t, err)
 			},
@@ -726,7 +729,7 @@ func TestEmbeddingChangeJournal_MessageMutationsKeepOldAndNewScope(t *testing.T)
 			name: "source tombstone",
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), time.Now().UTC(), messageID)
 				require.NoError(t, err)
 			},
@@ -795,15 +798,15 @@ func TestEmbeddingChangeJournal_FallbackTimestampMutationsKeepCanonicalScope(t *
 			f := newEmbeddingJournalFixture(t)
 			messageID := f.insertMessage(t, "fallback-"+tt.name, "beeper", f.oldConversationID, oldTime)
 			if tt.name == "received_at" {
-				_, err := f.store.DB().Exec(f.store.Rebind(tt.seed), oldTime, oldTime.Add(-time.Hour), messageID)
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tt.seed), oldTime, oldTime.Add(-time.Hour), messageID)
 				require.NoError(err)
 			} else {
-				_, err := f.store.DB().Exec(f.store.Rebind(tt.seed), oldTime, messageID)
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tt.seed), oldTime, messageID)
 				require.NoError(err)
 			}
 			f.materializeBody(t, messageID, "fallback timestamp body")
 			before := latestEmbeddingChangeSequence(t, f.store)
-			_, err := f.store.DB().Exec(f.store.Rebind(tt.apply), newTime, messageID)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tt.apply), newTime, messageID)
 			require.NoError(err)
 
 			changes := embeddingChangesAfter(t, f.store, before)
@@ -846,7 +849,7 @@ func TestEmbeddingChangeJournal_MessageBodyMutations(t *testing.T) {
 			seed: true,
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`DELETE FROM message_bodies WHERE message_id = ?`), messageID)
 				require.NoError(t, err)
 			},
@@ -912,7 +915,7 @@ func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
 			name: "title",
 			apply: func(t *testing.T, f embeddingJournalFixture) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE conversations SET title = ? WHERE id = ?`),
 					"Renamed chat", f.oldConversationID)
 				require.NoError(t, err)
@@ -940,7 +943,7 @@ func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
 			},
 			apply: func(t *testing.T, f embeddingJournalFixture) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE conversation_participants SET role = ?
 					 WHERE conversation_id = ? AND participant_id = ?`),
 					"admin", f.oldConversationID, f.bobID)
@@ -960,7 +963,7 @@ func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
 			},
 			apply: func(t *testing.T, f embeddingJournalFixture) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`DELETE FROM conversation_participants
 					 WHERE conversation_id = ? AND participant_id = ?`),
 					f.oldConversationID, f.bobID)
@@ -980,7 +983,7 @@ func TestEmbeddingChangeJournal_BeeperConversationMetadata(t *testing.T) {
 			},
 			apply: func(t *testing.T, f embeddingJournalFixture) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE participants SET display_name = ? WHERE id = ?`),
 					"Alice Renamed", f.aliceID)
 				require.NoError(t, err)
@@ -1035,14 +1038,14 @@ func TestEmbeddingChangeJournal_ParticipantDisplayNameIncludesSenderWithoutMembe
 	f.materializeBody(t, messageID, "sender body")
 
 	var membershipCount int
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants
 		 WHERE conversation_id = ? AND participant_id = ?`),
 		f.oldConversationID, f.aliceID).Scan(&membershipCount))
 	require.Zero(membershipCount, "the regression requires sender use without membership")
 	before := latestEmbeddingChangeSequence(t, f.store)
 
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE participants SET display_name = ? WHERE id = ?`), "Alice Sender", f.aliceID)
 	require.NoError(err)
 
@@ -1089,11 +1092,11 @@ func TestEmbeddingChangeJournal_ParticipantEffectiveDisplayFallbacks(t *testing.
 			messageID := f.insertMessage(t, "participant-fallback", "beeper", f.oldConversationID,
 				time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC))
 			f.materializeBody(t, messageID, "fallback body")
-			_, err := f.store.DB().Exec(f.store.Rebind(tt.seed), f.aliceID)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tt.seed), f.aliceID)
 			require.NoError(err)
 			before := latestEmbeddingChangeSequence(t, f.store)
 
-			_, err = f.store.DB().Exec(f.store.Rebind(tt.update), f.aliceID)
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tt.update), f.aliceID)
 			require.NoError(err)
 			changes := embeddingChangesAfter(t, f.store, before)
 			if !tt.wantChange {
@@ -1114,7 +1117,7 @@ func TestEmbeddingChangeJournal_NoOpConversationTitleDoesNotJournal(t *testing.T
 	f.materializeBody(t, messageID, "title body")
 	before := latestEmbeddingChangeSequence(t, f.store)
 
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE conversations SET title = ? WHERE id = ?`), "Old chat", f.oldConversationID)
 	require.NoError(t, err)
 
@@ -1137,7 +1140,7 @@ func TestEmbeddingChangeJournal_ContextualSubjectAndSnippetDoNotJournal(t *testi
 				if field == "snippet" {
 					statement = `UPDATE messages SET snippet = ? WHERE id = ?`
 				}
-				_, err := f.store.DB().Exec(f.store.Rebind(statement), "ignored change", messageID)
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(statement), "ignored change", messageID)
 				require.NoError(t, err)
 
 				assert.Empty(t, embeddingChangesAfter(t, f.store, before))
@@ -1178,7 +1181,7 @@ func TestEmbeddingChangeJournal_OrdinaryEmbeddingContentMutations(t *testing.T) 
 			seedBody: true,
 			apply: func(t *testing.T, f embeddingJournalFixture, messageID int64) {
 				t.Helper()
-				_, err := f.store.DB().Exec(f.store.Rebind(
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 					`UPDATE messages SET subject = ? WHERE id = ?`), "updated ordinary subject", messageID)
 				require.NoError(t, err)
 			},
@@ -1218,15 +1221,15 @@ func TestEmbeddingChangeJournal_EmailOnlyMetadataDoesNotJournal(t *testing.T) {
 		f.oldConversationID, f.aliceID, "member"))
 	before := latestEmbeddingChangeSequence(t, f.store)
 
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE conversations SET title = ? WHERE id = ?`), "changed", f.oldConversationID)
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE conversation_participants SET role = ?
 		 WHERE conversation_id = ? AND participant_id = ?`),
 		"admin", f.oldConversationID, f.aliceID)
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE participants SET display_name = ? WHERE id = ?`), "Alice Renamed", f.aliceID)
 	require.NoError(err)
 
@@ -1270,7 +1273,8 @@ func TestEmbeddingChangeJournal_InitSchemaIsIdempotent(t *testing.T) {
 	require.NoError(f.store.InitSchema())
 
 	var clockRows int
-	require.NoError(f.store.DB().QueryRow(
+	require.NoError(f.store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM embedding_change_clock`).Scan(&clockRows))
 	assert.Equal(t, 1, clockRows)
 	before := latestEmbeddingChangeSequence(t, f.store)
@@ -1284,7 +1288,7 @@ func TestEmbeddingChangeJournal_InitSchemaIsIdempotent(t *testing.T) {
 func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *testing.T) {
 	require := require.New(t)
 	f := newEmbeddingJournalFixture(t)
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "embedding_change_journal_triggers_v7")
 	require.NoError(err)
 	if f.store.IsPostgreSQL() {
@@ -1296,7 +1300,7 @@ func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *test
 			`DROP TRIGGER IF EXISTS trg_embedding_changes_membership ON conversation_participants`,
 			`DROP TRIGGER IF EXISTS trg_embedding_changes_participant_display_name ON participants`,
 		} {
-			_, err := f.store.DB().Exec(statement)
+			_, err := f.store.DB().ExecContext(t.Context(), statement)
 			require.NoError(err)
 		}
 	} else {
@@ -1312,19 +1316,20 @@ func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *test
 			"trg_embedding_changes_membership_delete",
 			"trg_embedding_changes_participant_display_name",
 		} {
-			_, err := f.store.DB().Exec(`DROP TRIGGER IF EXISTS ` + trigger)
+			_, err := f.store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS `+trigger)
 			require.NoError(err)
 		}
 	}
-	_, err = f.store.DB().Exec(`ALTER TABLE embedding_changes DROP COLUMN old_message_type`)
+	_, err = f.store.DB().ExecContext(t.Context(), `ALTER TABLE embedding_changes DROP COLUMN old_message_type`)
 	require.NoError(err)
-	_, err = f.store.DB().Exec(`ALTER TABLE embedding_changes DROP COLUMN new_message_type`)
+	_, err = f.store.DB().ExecContext(t.Context(), `ALTER TABLE embedding_changes DROP COLUMN new_message_type`)
 	require.NoError(err)
 
 	require.NoError(f.store.InitSchema())
 	if !f.store.IsPostgreSQL() {
 		var triggerCount int
-		require.NoError(f.store.DB().QueryRow(
+		require.NoError(f.store.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_embedding_changes_body_insert'`).Scan(&triggerCount))
 		assert.Equal(t, 1, triggerCount)
 	}
@@ -1363,7 +1368,7 @@ func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.
 	// (no journal row) and stays open. Enabling capture must wait for it:
 	// otherwise it could commit after the reconciliation snapshot without a
 	// journal entry and a generation would activate with stale metadata.
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	open := true
 	t.Cleanup(func() {
@@ -1371,15 +1376,15 @@ func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.
 			_ = tx.Rollback()
 		}
 	})
-	_, err = tx.Exec(st.Rebind(
+	_, err = tx.ExecContext(t.Context(), st.Rebind(
 		`UPDATE conversations SET title = ? WHERE id = ?`), "Stale title", conversationID)
 	require.NoError(err)
 
 	enabled := make(chan error, 1)
-	go func() { enabled <- st.EnableEmbeddingChangeJournal(context.Background()) }()
+	go func() { enabled <- st.EnableEmbeddingChangeJournal(t.Context()) }()
 	require.Eventually(func() bool {
 		var waiting bool
-		queryErr := st.DB().QueryRow(`
+		queryErr := st.DB().QueryRowContext(t.Context(), `
 			SELECT EXISTS (
 				SELECT 1 FROM pg_locks
 				WHERE locktype = 'advisory' AND NOT granted
@@ -1399,7 +1404,7 @@ func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.
 	require.NoError(<-enabled)
 
 	before := latestEmbeddingChangeSequence(t, st)
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE conversations SET title = ? WHERE id = ?`), "After title", conversationID)
 	require.NoError(err)
 	changes, err := st.ScanEmbeddingChanges(t.Context(), before, 10)
@@ -1421,7 +1426,7 @@ func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T)
 	f.materializeBody(t, secondMessageID, "second body")
 	before := latestEmbeddingChangeSequence(t, f.store)
 
-	first, err := f.store.DB().BeginTx(context.Background(), nil)
+	first, err := f.store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	firstOpen := true
 	t.Cleanup(func() {
@@ -1429,7 +1434,7 @@ func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T)
 			_ = first.Rollback()
 		}
 	})
-	second, err := f.store.DB().BeginTx(context.Background(), nil)
+	second, err := f.store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	secondOpen := true
 	t.Cleanup(func() {
@@ -1438,22 +1443,22 @@ func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T)
 		}
 	})
 	var firstPID, secondPID int
-	require.NoError(first.QueryRow(`SELECT pg_backend_pid()`).Scan(&firstPID))
-	require.NoError(second.QueryRow(`SELECT pg_backend_pid()`).Scan(&secondPID))
+	require.NoError(first.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&firstPID))
+	require.NoError(second.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&secondPID))
 
-	_, err = first.Exec(f.store.Rebind(
+	_, err = first.ExecContext(t.Context(), f.store.Rebind(
 		`UPDATE messages SET sender_id = ? WHERE id = ?`), f.bobID, firstMessageID)
 	require.NoError(err)
 	secondUpdate := make(chan error, 1)
 	go func() {
-		_, updateErr := second.Exec(f.store.Rebind(
+		_, updateErr := second.ExecContext(t.Context(), f.store.Rebind(
 			`UPDATE messages SET sender_id = ? WHERE id = ?`), f.bobID, secondMessageID)
 		secondUpdate <- updateErr
 	}()
 
 	require.Eventually(func() bool {
 		var blocked bool
-		queryErr := f.store.DB().QueryRow(`
+		queryErr := f.store.DB().QueryRowContext(t.Context(), `
 			SELECT $1 = ANY(pg_blocking_pids($2))`, firstPID, secondPID).Scan(&blocked)
 		return queryErr == nil && blocked
 	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
@@ -1497,12 +1502,13 @@ func TestEmbeddingChangeJournal_PostgresMutationLocksClockBeforeSourceRow(t *tes
 		}
 	})
 	var activationPID int
-	require.NoError(activation.QueryRow(`SELECT pg_backend_pid()`).Scan(&activationPID))
-	_, err = activation.Exec(`SELECT pg_advisory_xact_lock(
+	require.NoError(activation.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&activationPID))
+	_, err = activation.ExecContext(t.Context(), `SELECT pg_advisory_xact_lock(
 		hashtextextended('msgvault.embedding_change_clock', 0))`)
 	require.NoError(err)
 	var sequence int64
-	require.NoError(activation.QueryRow(
+	require.NoError(activation.QueryRowContext(
+		t.Context(),
 		`SELECT sequence FROM embedding_change_clock WHERE singleton = 1 FOR UPDATE`).Scan(&sequence))
 
 	mutation, err := f.store.DB().BeginTx(t.Context(), nil)
@@ -1514,23 +1520,23 @@ func TestEmbeddingChangeJournal_PostgresMutationLocksClockBeforeSourceRow(t *tes
 		}
 	})
 	var mutationPID int
-	require.NoError(mutation.QueryRow(`SELECT pg_backend_pid()`).Scan(&mutationPID))
+	require.NoError(mutation.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&mutationPID))
 	mutationDone := make(chan error, 1)
 	go func() {
-		_, updateErr := mutation.Exec(f.store.Rebind(
+		_, updateErr := mutation.ExecContext(t.Context(), f.store.Rebind(
 			`UPDATE messages SET sender_id = ? WHERE id = ?`), f.bobID, messageID)
 		mutationDone <- updateErr
 	}()
 
 	require.Eventually(func() bool {
 		var blocked bool
-		queryErr := f.store.DB().QueryRow(`
+		queryErr := f.store.DB().QueryRowContext(t.Context(), `
 			SELECT $1 = ANY(pg_blocking_pids($2))`, activationPID, mutationPID).Scan(&blocked)
 		return queryErr == nil && blocked
 	}, postgresLockWaiterBudget, postgresLockWaiterPoll,
 		"the source mutation must wait for the activation clock lock")
 	var lockedMessageID int64
-	require.NoError(activation.QueryRow(`SELECT id FROM messages WHERE id = $1 FOR UPDATE NOWAIT`,
+	require.NoError(activation.QueryRowContext(t.Context(), `SELECT id FROM messages WHERE id = $1 FOR UPDATE NOWAIT`,
 		messageID).Scan(&lockedMessageID),
 		"the mutation must acquire the clock lock before it modifies or locks the source row")
 	assert.Equal(t, messageID, lockedMessageID)
@@ -1558,12 +1564,13 @@ func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot
 		}
 	})
 	var activationPID int
-	require.NoError(activation.QueryRow(`SELECT pg_backend_pid()`).Scan(&activationPID))
-	_, err = activation.Exec(`SELECT pg_advisory_xact_lock(
+	require.NoError(activation.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&activationPID))
+	_, err = activation.ExecContext(t.Context(), `SELECT pg_advisory_xact_lock(
 		hashtextextended('msgvault.embedding_change_clock', 0))`)
 	require.NoError(err)
 	var sequence int64
-	require.NoError(activation.QueryRow(
+	require.NoError(activation.QueryRowContext(
+		t.Context(),
 		`SELECT sequence FROM embedding_change_clock WHERE singleton = 1 FOR UPDATE`).Scan(&sequence))
 
 	mutation, err := f.store.DB().BeginTx(t.Context(), nil)
@@ -1575,10 +1582,10 @@ func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot
 		}
 	})
 	var mutationPID int
-	require.NoError(mutation.QueryRow(`SELECT pg_backend_pid()`).Scan(&mutationPID))
+	require.NoError(mutation.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&mutationPID))
 	insertDone := make(chan error, 1)
 	go func() {
-		_, insertErr := mutation.Exec(`
+		_, insertErr := mutation.ExecContext(t.Context(), `
 			INSERT INTO messages (
 				conversation_id, source_id, source_message_id, message_type
 			) VALUES ($1, $2, $3, 'beeper')`,
@@ -1588,7 +1595,7 @@ func TestEmbeddingChangeJournal_PostgresInsertLocksClockBeforeActivationSnapshot
 
 	require.Eventually(func() bool {
 		var blocked bool
-		queryErr := f.store.DB().QueryRow(`
+		queryErr := f.store.DB().QueryRowContext(t.Context(), `
 			SELECT $1 = ANY(pg_blocking_pids($2))`, activationPID, mutationPID).Scan(&blocked)
 		return queryErr == nil && blocked
 	}, postgresLockWaiterBudget, postgresLockWaiterPoll,

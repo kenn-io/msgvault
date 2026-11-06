@@ -102,7 +102,7 @@ func TestContactsReadDoesNotChangeStores(t *testing.T) {
 	db, err := openQueryOnly(path)
 	require.NoError(err)
 	var before int
-	require.NoError(db.QueryRow(`SELECT count(*) FROM ZABCDRECORD`).Scan(&before))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM ZABCDRECORD`).Scan(&before))
 	require.NoError(db.Close())
 
 	_, err = OpenContacts(t.Context(), root)
@@ -112,7 +112,7 @@ func TestContactsReadDoesNotChangeStores(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
 	var after int
-	require.NoError(db.QueryRow(`SELECT count(*) FROM ZABCDRECORD`).Scan(&after))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM ZABCDRECORD`).Scan(&after))
 	assert.Equal(t, before, after)
 }
 

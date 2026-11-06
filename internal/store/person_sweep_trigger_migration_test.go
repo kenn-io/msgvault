@@ -12,13 +12,13 @@ import (
 func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_change_triggers_v5")
 	requirements.NoError(err)
 	if f.store.IsPostgreSQL() {
-		_, err = f.store.DB().Exec(`DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients ON message_recipients`)
+		_, err = f.store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients ON message_recipients`)
 		requirements.NoError(err)
-		_, err = f.store.DB().Exec(`
+		_, err = f.store.DB().ExecContext(t.Context(), `
 			CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_recipients() RETURNS trigger AS $$
 			BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;
 			CREATE TRIGGER trg_person_sweep_changes_recipients
@@ -26,9 +26,9 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 			FOR EACH ROW EXECUTE FUNCTION msgvault_person_sweep_changes_recipients()`)
 		requirements.NoError(err)
 	} else {
-		_, err = f.store.DB().Exec(`DROP TRIGGER IF EXISTS trg_person_sweep_recipients_insert`)
+		_, err = f.store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_person_sweep_recipients_insert`)
 		requirements.NoError(err)
-		_, err = f.store.DB().Exec(`
+		_, err = f.store.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER trg_person_sweep_recipients_insert
 			AFTER INSERT ON message_recipients FOR EACH ROW BEGIN SELECT 1; END`)
 		requirements.NoError(err)
@@ -38,7 +38,7 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	messageID := f.insertMessage(t, "trigger-repair", "email", f.bobID,
 		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
 	before := latestPersonSweepSequence(t, f.store)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address)
 		VALUES (?, ?, 'to', ?)`), messageID, f.aliceID, "alice@example.test")
 	requirements.NoError(err)
@@ -54,22 +54,22 @@ func TestPersonSweepTriggerMigrationV5RepairsV4DocumentLifecycleDefinition(t *te
 	f, personID := newPersonSweepDocumentFixture(t)
 	_, err := f.Store.SetPersonTrackingContext(t.Context(), personID, true)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO applied_migrations (name) VALUES (?)
 		ON CONFLICT (name) DO NOTHING`), "person_sweep_change_triggers_v4")
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_change_triggers_v5")
 	requirements.NoError(err)
 	if f.Store.IsPostgreSQL() {
-		_, err = f.Store.DB().Exec(`
+		_, err = f.Store.DB().ExecContext(t.Context(), `
 			CREATE OR REPLACE FUNCTION msgvault_append_person_sweep_document_changes(
 			    _person_id BIGINT, _source_id BIGINT, _message_id BIGINT,
 			    _change_kind TEXT, _evidence_effect TEXT)
 			RETURNS VOID AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql`)
 		requirements.NoError(err)
 	} else {
-		_, err = f.Store.DB().Exec(`DROP TRIGGER IF EXISTS trg_person_sweep_documents_message_update`)
+		_, err = f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_person_sweep_documents_message_update`)
 		requirements.NoError(err)
 	}
 	requirements.NoError(f.Store.InitSchema())

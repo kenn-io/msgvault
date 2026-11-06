@@ -258,7 +258,7 @@ func TestInitSchemaAddsDurableAttemptTargetsToLegacySchema(t *testing.T) {
 	if st.IsPostgreSQL() {
 		drop += ` CASCADE`
 	}
-	_, err := st.DB().Exec(drop)
+	_, err := st.DB().ExecContext(t.Context(), drop)
 	requirements.NoError(err)
 
 	requirements.NoError(st.InitSchema())
@@ -269,7 +269,7 @@ func TestInitSchemaAddsDurableAttemptTargetsToLegacySchema(t *testing.T) {
 		         WHERE table_schema = current_schema()
 		           AND table_name = 'person_enrichment_attempts' AND column_name = 'targets_json'`
 	}
-	requirements.NoError(st.DB().QueryRow(query).Scan(&columnCount))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&columnCount))
 	assert.Equal(t, 1, columnCount)
 }
 
@@ -280,7 +280,7 @@ func TestInitSchemaAddsProviderStartedAtToLegacySchema(t *testing.T) {
 	if st.IsPostgreSQL() {
 		drop += ` CASCADE`
 	}
-	_, err := st.DB().Exec(drop)
+	_, err := st.DB().ExecContext(t.Context(), drop)
 	requirements.NoError(err)
 
 	requirements.NoError(st.InitSchema())
@@ -291,7 +291,7 @@ func TestInitSchemaAddsProviderStartedAtToLegacySchema(t *testing.T) {
 		         WHERE table_schema = current_schema()
 		           AND table_name = 'person_enrichment_attempts' AND column_name = 'provider_started_at'`
 	}
-	requirements.NoError(st.DB().QueryRow(query).Scan(&columnCount))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&columnCount))
 	assert.Equal(t, 1, columnCount)
 }
 
@@ -303,7 +303,7 @@ func TestInitSchemaAddsFreshTriggerMarkerToLegacySchema(t *testing.T) {
 	if st.IsPostgreSQL() {
 		drop += ` CASCADE`
 	}
-	_, err := st.DB().Exec(drop)
+	_, err := st.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
 
 	require.NoError(st.InitSchema())
@@ -314,7 +314,7 @@ func TestInitSchemaAddsFreshTriggerMarkerToLegacySchema(t *testing.T) {
 		         WHERE table_schema = current_schema()
 		           AND table_name = 'person_enrichment_work' AND column_name = 'has_fresh_trigger'`
 	}
-	require.NoError(st.DB().QueryRow(query).Scan(&columnCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&columnCount))
 	assert.Equal(1, columnCount)
 }
 

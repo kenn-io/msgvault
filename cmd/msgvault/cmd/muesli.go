@@ -108,7 +108,7 @@ Examples:
 					"Grant the process reading Muesli Full Disk Access so attendees picked from Contacts link to people.")
 			}
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ Examples:
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nMuesli source %s registered.\n", source.Identifier)
@@ -179,7 +179,7 @@ Examples:
 			}
 		}
 
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -264,7 +264,7 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	notRegistered := fmt.Errorf(
 		"muesli source %q is not registered; run msgvault add-muesli %s first",
 		source.Identifier, source.Identifier)
-	registered, err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(ctx, st, muesli.SourceType, source.Identifier, notRegistered)
 	if err != nil {
 		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
 	}

@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -50,6 +52,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	SenderAuth           *senderauth.Verdict
 	RelatedMessageID     *int64
 	ConversationTitle    string
 	Calendar             *CalendarProjection
@@ -548,12 +551,15 @@ type searchOperator struct {
 	arg       string
 }
 
+const messageSearchDateOrder = "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+
 type messageSearchSQL struct {
 	operators  []searchOperator
 	conditions []string
 	join       string
 	where      string
 	orderBy    string
+	rank       string
 	args       []any
 	orderArgs  []any
 	fts        bool
@@ -601,7 +607,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			plan := s.buildMessageSearchCriteria(branch, ftsAvailable, true)
 			return plan.conditions, plan.args
 		})
-		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC", fts: ftsAvailable && q.HasTextTerms()}
+		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: messageSearchDateOrder, fts: ftsAvailable && q.HasTextTerms()}
 	}
 	var conditions []string
 	var args []any
@@ -859,9 +865,11 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		args = append(args, arg)
 	}
 
-	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	orderBy := messageSearchDateOrder
 	var orderArgs []any
+	var rank string
 	if ftsEnabled {
+		rank = ftsOrder
 		orderBy = ftsOrder + ", " + orderBy
 		for range ftsOrderArgCount {
 			orderArgs = append(orderArgs, ftsExpr)
@@ -869,7 +877,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	}
 	return messageSearchSQL{
 		operators: operators, conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
-		args: args, orderArgs: orderArgs, fts: ftsEnabled,
+		args: args, orderArgs: orderArgs, rank: rank, fts: ftsEnabled,
 	}
 }
 
@@ -904,22 +912,15 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 	}
 }
 
-// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
-// the existing runtime FTS-error fallback retry through subject and snippet.
-func (s *Store) searchMessagesQueryImpl(
-	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
-) ([]APIMessage, int64, error) {
-	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
-
-	// Count query.
-	countSQL := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM messages m
-		%s
-		WHERE %s
-	`, plan.join, plan.where)
-
-	// Results query.
+func messageSearchPageSQL(plan messageSearchSQL, offset, limit int) (string, []any) {
+	rankColumn := ""
+	innerOrder := plan.orderBy
+	outerOrder := messageSearchDateOrder
+	if plan.rank != "" {
+		rankColumn = ", " + plan.rank + " AS search_rank"
+		innerOrder = "search_rank, " + messageSearchDateOrder
+		outerOrder = "page.search_rank, " + outerOrder
+	}
 	searchSQL := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -935,8 +936,14 @@ func (s *Store) searchMessagesQueryImpl(
 			m.has_attachments,
 			m.hidden_text_present,
 			m.size_estimate
-		FROM messages m
-		%s
+		FROM (
+			SELECT m.id%s FROM messages m
+			%s
+			WHERE %s
+			ORDER BY %s
+			LIMIT ? OFFSET ?
+		) page
+		JOIN messages m ON m.id = page.id
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
@@ -944,18 +951,33 @@ func (s *Store) searchMessagesQueryImpl(
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE %s
 		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, plan.join, plan.where, plan.orderBy)
+	`, participantSummarySenderSQL, rankColumn, plan.join, plan.where, innerOrder, outerOrder)
 
-	// If the dialect's order-by fragment has ? placeholders, bind the FTS
-	// expression that many extra times — right after the WHERE args and
-	// before LIMIT/OFFSET so Rebind assigns them the correct positions.
-	resultArgs := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
-	resultArgs = append(resultArgs, plan.args...)
-	resultArgs = append(resultArgs, plan.orderArgs...)
-	resultArgs = append(resultArgs, limit, offset)
+	// Bind rank in the SELECT list before WHERE; ORDER BY reuses its alias.
+	args := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
+	args = append(args, plan.orderArgs...)
+	args = append(args, plan.args...)
+	args = append(args, limit, offset)
+	return searchSQL, args
+}
+
+// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
+// the existing runtime FTS-error fallback retry through subject and snippet.
+func (s *Store) searchMessagesQueryImpl(
+	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
+) ([]APIMessage, int64, error) {
+	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
+
+	// Count query.
+	countSQL := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM messages m
+		%s
+		WHERE %s
+	`, plan.join, plan.where)
+
+	searchSQL, resultArgs := messageSearchPageSQL(plan, offset, limit)
 
 	var (
 		total              int64
@@ -1283,7 +1305,8 @@ func (s *Store) fetchRecipientsInto(
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, p.id, %s
+		SELECT mr.message_id, p.id, %s, COALESCE(p.domain, ''),
+		       EXISTS (SELECT 1 FROM participant_links l WHERE l.participant_a = p.id OR l.participant_b = p.id)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
@@ -1298,8 +1321,13 @@ func (s *Store) fetchRecipientsInto(
 	for rows.Next() {
 		var msgID int64
 		var recipient ParticipantDisplay
-		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display); err != nil {
+		var domain string
+		var hasIdentityLink bool
+		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display, &domain, &hasIdentityLink); err != nil {
 			return fmt.Errorf("scan recipient: %w", err)
+		}
+		if !hasIdentityLink && calevent.IsRoomAttendee("@"+domain, false) {
+			recipient.ParticipantID = 0
 		}
 		if recipient.Display != "" {
 			result[msgID] = append(result[msgID], recipient)

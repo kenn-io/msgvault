@@ -18,7 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -28,6 +28,39 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## loops
+
+Show the conversations waiting on a reply, and clear them, through the
+selected daemon. Requires API schema 3.44.0. See [Open loops](usage/open-loops.md)
+for the rules.
+
+```bash
+msgvault loops list
+msgvault loops list --limit 10 --json
+msgvault loops list --person 42
+msgvault loops done 4521
+msgvault loops snooze 4521 --until 48h
+msgvault loops reopen 4521
+```
+
+| Command | Flags and behavior |
+|---|---|
+| `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
+| `done` | One message ID; marks that loop done. `--questions <ids>` marks only the `question_message_ids` from `list --json`. A distinct question can list again |
+| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions; `--questions <ids>` marks only the listed questions |
+| `reopen` | One message ID; clears the done or snooze decision on that exact question |
+
+`list` prints a "Waiting on you" section and a "Waiting on them" section,
+oldest first, with the age, person, subject, and message ID of each loop. A
+section with no loops is left out. When `--limit` cuts the list, a line says
+so. A line also
+says how many stored messages could not be read, when there are any. If the
+scan needs more than 1,000 uncached message classifications,
+the command returns completed conversations and warns that more loops may be
+missing; JSON sets `coverage_incomplete`. An empty complete list prints
+`No open loops.` A message that is not an open loop, such as one you already
+answered, fails with `<id> isn't an open loop.`
 
 ## meetings
 
@@ -834,10 +867,14 @@ msgvault sync-full account@example.com
 
 An idle incremental sync cannot discover older omitted messages unless Gmail
 reports a new history event for them. The full listing resumes from its saved
-checkpoint when the request scope matches; after this coverage change, an older
-narrower checkpoint restarts from the first page. Previously archived messages
-are not duplicated. Gmail can return only messages that still exist in the
-mailbox; permanently deleted messages cannot be backfilled.
+checkpoint when the request scope matches. A resumed full sync without filters
+or a limit publishes the History point its first run recorded, unless the source
+already has a newer cursor. The next incremental sync catches mail that arrived
+meanwhile. Filtered or limited full syncs leave the source cursor
+unchanged. A full sync interrupted under an earlier release starts
+from the first page once. Previously archived messages aren't downloaded again
+or duplicated. Gmail can return only messages that still exist in the mailbox;
+permanently deleted messages cannot be backfilled.
 
 At the current 500-ID page size, a listing of N matching messages needs roughly
 `ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
@@ -881,8 +918,12 @@ Folder filters are applied only to IMAP accounts. See
 [IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
 
 For Gmail, normal incremental sync consumes History API deletion events and
-marks those messages as deleted from the source. If Gmail says the saved history
-cursor has expired, msgvault recovers with an unfiltered, unlimited snapshot of
+marks those messages as deleted from the source. If saving a label change or
+source-deletion marker fails, sync returns an error and keeps its previous
+History position. The next sync retries those changes.
+
+If Gmail says the saved history cursor has expired, msgvault recovers with an
+unfiltered, unlimited snapshot of
 the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
@@ -897,9 +938,11 @@ the reconciliation commit and that checkpoint repeats reconciliation safely.
 The source cursor advances only after catch-up succeeds. If the saved recovery
 cursor also expires, msgvault starts a new complete recovery; one invocation
 attempts at most one such restart.
-Like an ordinary sync, recovery records per-message fetch and ingest
-errors without stopping, so one failing message cannot hold the account in
-recovery. Fetches that fail during catch-up are retried by the next `sync`.
+Recovery re-reads each archived message's labels with one metadata request,
+without downloading MIME again. A failed label read or save stops recovery at
+that page. The next `sync` retries it. Other per-message fetch and ingest errors
+are recorded without stopping. Fetches that fail during catch-up are retried by
+the next `sync`.
 
 While recovery is pending, a Gmail `sync-full` with query, date, or limit
 filters is rejected. Finish the complete recovery first. `--noresume` restarts
@@ -2727,6 +2770,8 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
+Search prints a stderr hint when another full-text result exists, with the next `--offset`. Vector and hybrid text print one hint at a time; their JSON objects gain a `hints` array containing that hint's `code` and `message`. Full-text JSON stays a bare array. Complete pages add no hint. At the semantic page cap, the hint asks you to raise `vector.search.max_page_size_hybrid`. When hybrid retrieval measures messages omitted by its per-method limits, the hint names `vector.search.k_per_signal`. If both limits apply, it names both settings. Raise the named settings above their reported values on the server and restart the daemon before raising `--limit`.
+
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
 with terminal controls removed and whitespace collapsed. Terminal tables fit the
@@ -3958,6 +4003,8 @@ msgvault list-senders [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
+`list-senders`, `list-domains`, and `list-labels` print a stderr hint to raise `-n` when more rows match, including with `--json`. Their JSON stdout stays a bare array.
+
 ---
 
 ## list-domains
@@ -4812,7 +4859,7 @@ msgvault show-thread <message-id> [--limit N] [--offset N] [--json] [--strip-quo
 ```
 
 The default limit is 100; the maximum is 500. Messages are ordered by timestamp
-instant and ID, with undated messages last. Use `--offset` for later pages.
+instant and ID, with undated messages last. SQLite compares instants to the millisecond, with ties in message-ID order. Use `--offset` for later pages.
 Archived source-deleted messages remain included; dedup-hidden rows are excluded.
 A notice goes to stderr when more messages remain. The command uses the selected
 daemon; unsupported older daemons return an upgrade error.

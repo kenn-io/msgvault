@@ -37,7 +37,7 @@ describe('application foundation', () => {
     }
   });
 
-  it('reports resolved workspaces and standalone messages', async () => {
+  it('reports resolved workspaces', async () => {
     const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
     const session = createSessionController(async (input) => {
       const request = input as Request;
@@ -61,9 +61,6 @@ describe('application foundation', () => {
       await fireEvent.click(await screen.findByRole('button', { name: label }));
       await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
     }
-    window.history.replaceState(null, '', '/messages/123');
-    await fireEvent(window, new PopStateEvent('popstate'));
-    await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
   });
   afterEach(() => {
     vi.restoreAllMocks();

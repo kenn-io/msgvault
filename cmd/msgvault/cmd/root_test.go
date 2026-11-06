@@ -133,7 +133,7 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 		Use:   "test-ctx",
 		Short: "Test command for context verification",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			receivedCtx = cmd.Context()
+			receivedCtx = cmd.Context() //nolint:fatcontext // The test captures the command context to inspect it.
 			return nil
 		},
 	}
@@ -145,7 +145,7 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 	// Create a context with a custom value
 	testKey := ctxKey("test-key")
 	testValue := "test-value"
-	ctx := context.WithValue(context.Background(), testKey, testValue)
+	ctx := context.WithValue(t.Context(), testKey, testValue)
 
 	testRoot.SetArgs([]string{"test-ctx"})
 	err := ExecuteContext(ctx)
@@ -416,7 +416,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			ctx := context.Background()
+			ctx := t.Context()
 			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive, gmailReauthHint)
 
 			if tt.wantErr {
@@ -451,7 +451,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 				return mismatch
 			},
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true, gmailReauthHint)
+		_, err := getTokenSourceWithReauth(t.Context(), mock, "user@example.com", true, gmailReauthHint)
 		require.Error(t, err)
 		msg := err.Error()
 		for _, want := range []string{"remove-account", "add-account", "primary address"} {
@@ -474,7 +474,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			hasTokenVal: true,
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
+		_, err := getTokenSourceWithReauth(t.Context(), mock, "x@gmail.com", false, gmailReauthHint)
 		require.ErrorContains(t, err, "add-account x@gmail.com --force")
 		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
 	})
@@ -488,7 +488,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			hasTokenVal: true,
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, calendarReauthHint)
+		_, err := getTokenSourceWithReauth(t.Context(), mock, "x@gmail.com", false, calendarReauthHint)
 		require.ErrorContains(t, err, "add-calendar x@gmail.com")
 		require.ErrorContains(t, err, "add-calendar x@gmail.com --headless")
 		require.NotContains(t, err.Error(), "add-account")
@@ -509,7 +509,7 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 		return fakeTokenSource{}, nil
 	}
 
-	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true, gmailReauthHint)
+	ts, err := getTokenSourceWithReauth(t.Context(), m, "test@gmail.com", true, gmailReauthHint)
 
 	require.NoError(err)
 	assert.NotNil(ts)

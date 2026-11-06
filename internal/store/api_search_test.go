@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,7 +169,8 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 		WithSubject("lunch plans").
 		WithSnippet("grab sushi").
 		Create(t, f.Store)
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`),
 		"sms", smsMsg)
 	require.NoError(err, "mark sms")
@@ -214,7 +216,8 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows(t *testing.
 		Create(t, f.Store)
 
 	for id, value := range map[int64]string{legacyBlank: "", sms: "sms"} {
-		_, err := f.Store.DB().Exec(
+		_, err := f.Store.DB().ExecContext(
+			t.Context(),
 			f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), value, id)
 		require.NoError(err, "set message_type for %d", id)
 	}
@@ -255,7 +258,7 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows(t *testing.T
 		Snippet:         sql.NullString{String: "legacy null", Valid: true}, MessageType: store.MessageTypeEmail,
 	})
 	require.NoError(err, "create legacy email")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET message_type = NULL WHERE id = ?`), legacyNull)
 	require.NoError(err, "clear legacy message type")
 	_, err = st.BackfillFTS(nil)
@@ -322,4 +325,50 @@ func TestSearchMessagesQuery_ListIDFilters(t *testing.T) {
 			assert.ElementsMatch(t, tc.want, got, "matching message IDs")
 		})
 	}
+}
+
+func TestSearchMessagesQueryPagesKeepRankAndDetails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	subjectHit := f.NewMessage().WithSubject("project").WithSentAt(day).Create(t, f.Store)
+	bodyHit := f.NewMessage().WithSubject("update").WithSentAt(day.Add(24*time.Hour)).Create(t, f.Store)
+	tiedHit := f.NewMessage().WithSubject("update").WithSentAt(day.Add(24*time.Hour)).Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(subjectHit, "project", "", "", "", ""))
+	for _, id := range []int64{bodyHit, tiedHit} {
+		require.NoError(f.Store.UpsertFTS(id, "update", "project", "", "", ""))
+	}
+	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	require.NoError(f.Store.ReplaceMessageRecipients(subjectHit, "from", []int64{sender}, []string{"Sender"}))
+	labels := f.EnsureLabels(map[string]string{"project-label": "Project"}, "user")
+	require.NoError(f.Store.AddMessageLabels(t.Context(), subjectHit, []int64{labels["project-label"]}))
+
+	q := &search.Query{TextTerms: []string{"project"}}
+	want := []int64{subjectHit, tiedHit, bodyHit}
+	full, total, err := f.Store.SearchMessagesQuery(q, 0, 10)
+	require.NoError(err)
+	require.Len(full, len(want))
+	assert.Equal(int64(len(want)), total)
+	var ids []int64
+	for _, msg := range full {
+		ids = append(ids, msg.ID)
+	}
+	assert.Equal(want, ids)
+	assert.Equal("sender@example.com", full[0].FromEmail)
+	assert.Equal("Sender", full[0].FromName)
+	assert.Equal(f.ConvID, full[0].ConversationID)
+	assert.Equal("default-thread", full[0].SourceConversationID)
+	assert.Equal([]string{"Project"}, full[0].Labels)
+	var paged []store.APIMessage
+	for offset := range want {
+		page, _, err := f.Store.SearchMessagesQuery(q, offset, 1)
+		require.NoError(err)
+		require.Len(page, 1)
+		paged = append(paged, page...)
+	}
+	assert.Equal(full, paged)
+	pastEnd, _, err := f.Store.SearchMessagesQuery(q, len(want)+1, 1)
+	require.NoError(err)
+	assert.Empty(pastEnd)
 }

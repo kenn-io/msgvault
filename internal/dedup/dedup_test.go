@@ -34,6 +34,7 @@ func addMessage(
 ) int64 {
 	t.Helper()
 	convID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
 	require.NoError(t, err, "EnsureConversation")
@@ -57,7 +58,8 @@ func assertSoftDeleted(
 ) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
 	require.NoError(t, err, "query deleted_at")
@@ -75,10 +77,10 @@ func linkLabel(
 	sourceLabelID, name, typ string,
 ) {
 	t.Helper()
-	lid, err := st.EnsureLabel(sourceID, sourceLabelID, name, typ)
+	lid, err := st.EnsureLabel(t.Context(), sourceID, sourceLabelID, name, typ)
 	require.NoError(t, err, "EnsureLabel "+sourceLabelID)
 	require.NoError(t,
-		st.LinkMessageLabel(msgID, lid),
+		st.LinkMessageLabel(t.Context(), msgID, lid),
 		"LinkMessageLabel "+sourceLabelID,
 	)
 }
@@ -94,14 +96,15 @@ func ingestRawMessage(
 	t.Helper()
 	hash := sha256.Sum256(raw)
 	err := importer.IngestRawMessage(
-		context.Background(), st, source.ID, source.Identifier, "",
+		t.Context(), st, source.ID, source.Identifier, "",
 		nil, sourceMessageID, hex.EncodeToString(hash[:]), raw, fallbackDate,
 		slog.New(slog.DiscardHandler),
 	)
 	require.NoError(t, err, "IngestRawMessage")
 
 	var messageID int64
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages
 			WHERE source_id = ? AND source_message_id = ?`),
 		source.ID, sourceMessageID,
@@ -114,7 +117,8 @@ func setArchivedAt(
 	t *testing.T, st *store.Store, messageID int64, archivedAt time.Time,
 ) {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"),
 		archivedAt, messageID,
 	)
@@ -125,7 +129,8 @@ func setRFC822MessageID(
 	t *testing.T, st *store.Store, messageID int64, rfc822MessageID string,
 ) {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind("UPDATE messages SET rfc822_message_id = ? WHERE id = ?"),
 		rfc822MessageID, messageID,
 	)
@@ -218,7 +223,8 @@ func TestEngine_ScanMergesEmbeddedNULMessageIDForms(t *testing.T) {
 	var hidden int
 	for _, messageID := range []int64{bareID, bracketedID} {
 		var deletedAt sql.NullTime
-		err := f.Store.DB().QueryRow(
+		err := f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), messageID,
 		).Scan(&deletedAt)
 		require.NoError(err)
@@ -251,7 +257,7 @@ func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
 		Account:          "test@example.com",
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 	require.Equal(1, report.DuplicateMessages, "prune count")
@@ -261,7 +267,7 @@ func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
 	assert.Equal(idGmail, survivor.ID, "survivor (gmail)")
 
 	summary, err := eng.Execute(
-		context.Background(), report, "batch-union",
+		t.Context(), report, "batch-union",
 	)
 	require.NoError(err, "Execute")
 	assert.Equal(1, summary.GroupsMerged, "groupsMerged")
@@ -286,7 +292,7 @@ func TestEngine_Scan_RejectsEmptyAccountSourceIDs(t *testing.T) {
 			eng := dedup.NewEngine(st, dedup.Config{
 				AccountSourceIDs: tc.ids,
 			}, nil)
-			_, err := eng.Scan(context.Background())
+			_, err := eng.Scan(t.Context())
 			require.Error(t, err, "expected error for empty AccountSourceIDs")
 			assert.ErrorContains(t, err, "AccountSourceIDs must be non-empty")
 		})
@@ -302,13 +308,15 @@ func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
 
 	idInbox := addMessage(t, st, gmail, "inbox-sent", "rfc-sent", false)
 	idSent := addMessage(t, st, gmail, "sent-sent", "rfc-sent", true)
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(10000), 3, idInbox,
 	)
 	require.NoError(err, "make received copy payload-richer")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(100), 0, idSent,
@@ -323,7 +331,7 @@ func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
 		Account:          "test@example.com",
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 
@@ -350,10 +358,10 @@ func TestEngine_DefaultConfig_NeverStagesRemote(t *testing.T) {
 		DeletionsDir:     deletionsDir,
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	summary, err := eng.Execute(
-		context.Background(), report, "batch-default",
+		t.Context(), report, "batch-default",
 	)
 	require.NoError(err, "Execute")
 
@@ -396,10 +404,10 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 		DeletionsDir:               deletionsDir,
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	summary, err := eng.Execute(
-		context.Background(), report, "batch-opt",
+		t.Context(), report, "batch-opt",
 	)
 	require.NoError(err, "Execute")
 
@@ -424,7 +432,7 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	require.NotNil(pending[0].Source)
 	assert.Equal(deletion.SourceReference{ID: gmail.ID, Type: "gmail", Identifier: "test@example.com"}, *pending[0].Source)
 
-	restored, stillExec, err := eng.Undo("batch-opt")
+	restored, stillExec, err := eng.Undo(t.Context(), "batch-opt")
 	require.NoError(err, "Undo")
 	assert.Equal(int64(3), restored, "restored")
 	assert.Empty(stillExec, "stillExec")
@@ -461,7 +469,7 @@ func TestSourceMergeHistoryCannotStageLiveProviderCopyForRemoteDeletion(t *testi
 	assert.Equal(int64(1), mergeResult.MessagesMoved, "messages moved")
 
 	var archiveOnly int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
 	`), archivedMessageID).Scan(&archiveOnly), "check archive-only marker")
 	require.Equal(1, archiveOnly, "merged history marker")
@@ -479,7 +487,7 @@ func TestSourceMergeHistoryCannotStageLiveProviderCopyForRemoteDeletion(t *testi
 	assert.True(archiveOnlyByID[archivedMessageID], "single-group query archive marker")
 	assert.False(archiveOnlyByID[liveMessageID], "single-group query live status")
 
-	candidates, err := st.GetAllRawMIMECandidates(live.ID)
+	candidates, err := st.GetAllRawMIMECandidates(t.Context(), live.ID)
 	require.NoError(err, "GetAllRawMIMECandidates")
 	candidateArchiveOnlyByID := make(map[int64]bool, len(candidates))
 	for _, candidate := range candidates {
@@ -547,7 +555,7 @@ func TestEngine_OptIn_RejectsMissingSourceIdentifierBeforeMerge(t *testing.T) {
 		DeletionsDir:               deletionsDir,
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1)
 	group := &report.Groups[0]
@@ -557,7 +565,7 @@ func TestEngine_OptIn_RejectsMissingSourceIdentifierBeforeMerge(t *testing.T) {
 		}
 	}
 
-	_, err = eng.Execute(context.Background(), report, "batch-missing-source")
+	_, err = eng.Execute(t.Context(), report, "batch-missing-source")
 	require.ErrorContains(err, "has no source identifier")
 	assertSoftDeleted(t, st, winnerID, false)
 	assertSoftDeleted(t, st, loserID, false)
@@ -584,7 +592,7 @@ func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
 		AccountSourceIDs: []int64{alice.ID},
 		Account:          "test@example.com",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(t, err, "Scan")
 	assert.Equal(t, 0, report.DuplicateGroups, "cross-account dedup happened")
 }
@@ -612,7 +620,7 @@ func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
 		ContentHashFallback: true,
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 	require.Equal(1, report.ContentHashGroups, "contentHashGroups")
@@ -631,7 +639,8 @@ func TestEngine_ContentHashPrefersAttachmentCompleteCopy(t *testing.T) {
 	require.NoError(st.UpsertMessageRaw(partialID, raw), "UpsertMessageRaw partial")
 	require.NoError(st.UpsertMessageRaw(fullID, raw), "UpsertMessageRaw full")
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ?, archived_at = ?
 			WHERE id = ?`),
@@ -639,7 +648,8 @@ func TestEngine_ContentHashPrefersAttachmentCompleteCopy(t *testing.T) {
 		time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC), partialID,
 	)
 	require.NoError(err, "set partial completeness")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ?, archived_at = ?
 			WHERE id = ?`),
@@ -653,7 +663,7 @@ func TestEngine_ContentHashPrefersAttachmentCompleteCopy(t *testing.T) {
 		Account:             source.Identifier,
 		ContentHashFallback: true,
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 	require.Equal("normalized-hash", report.Groups[0].KeyType, "key type")
@@ -683,7 +693,7 @@ func TestEngine_ContentHashFallbackDisabledByDefault(t *testing.T) {
 		Account:          "test@example.com",
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(0, report.DuplicateGroups, "groups")
 }
@@ -749,14 +759,16 @@ func TestEngine_NonEquivalentPayloadCannotSteerSurvivorOrRemoteDeletion(t *testi
 			"From: attacker@example.test\r\nSubject: Different message\r\n\r\nDifferent body"),
 	), "store forged raw MIME")
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 			WHERE id = ?`),
 		int64(100), false, 0, legitimateID,
 	)
 	require.NoError(err, "set legitimate completeness")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 			WHERE id = ?`),
@@ -771,7 +783,7 @@ func TestEngine_NonEquivalentPayloadCannotSteerSurvivorOrRemoteDeletion(t *testi
 		DeleteDupsFromSourceServer: true,
 		DeletionsDir:               deletionsDir,
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 
@@ -780,7 +792,7 @@ func TestEngine_NonEquivalentPayloadCannotSteerSurvivorOrRemoteDeletion(t *testi
 	assert.Equal(legitimateID, survivor.ID,
 		"non-equivalent completeness metadata must not steer survivor selection")
 
-	summary, err := eng.Execute(context.Background(), report, "non-equivalent")
+	summary, err := eng.Execute(t.Context(), report, "non-equivalent")
 	require.NoError(err, "Execute")
 	assert.Empty(summary.StagedManifests,
 		"non-equivalent Message-ID matches must not stage remote deletion")
@@ -841,7 +853,8 @@ func TestEngine_MixedNormalizedHashesIgnorePayloadCompleteness(t *testing.T) {
 				id := addMessage(t, f.Store, f.Source, name, messageID, false)
 				ids[name] = id
 				require.NoError(f.Store.UpsertMessageRaw(id, spec.raw), "store "+name+" raw MIME")
-				_, err := f.Store.DB().Exec(
+				_, err := f.Store.DB().ExecContext(
+					t.Context(),
 					f.Store.Rebind(`UPDATE messages
 						SET size_estimate = ?, attachment_count = ?, has_attachments = ?
 						WHERE id = ?`),
@@ -898,11 +911,13 @@ func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
 	)
 	setRFC822MessageID(t, st, partialID, strings.Trim(messageID, "<>"))
 	setRFC822MessageID(t, st, fullID, strings.Trim(messageID, "<>"))
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind("DELETE FROM attachments WHERE message_id = ?"), partialID,
 	)
 	require.NoError(err, "remove partial extracted attachment")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET has_attachments = FALSE, attachment_count = 0 WHERE id = ?`),
 		partialID,
@@ -915,7 +930,7 @@ func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
 		AccountSourceIDs: []int64{source.ID},
 		Account:          source.Identifier,
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 
@@ -923,7 +938,7 @@ func TestEngine_PartialFirstFullLaterKeepsAttachmentCompleteCopy(t *testing.T) {
 	survivor := group.Messages[group.Survivor]
 	require.Equal(fullID, survivor.ID, "attachment-complete survivor")
 
-	_, err = eng.Execute(context.Background(), report, "partial-full")
+	_, err = eng.Execute(t.Context(), report, "partial-full")
 	require.NoError(err, "Execute")
 	assertSoftDeleted(t, st, partialID, true)
 	assertSoftDeleted(t, st, fullID, false)
@@ -963,11 +978,13 @@ func TestEngine_CrossMailboxPartialFullKeepsAttachmentCompleteCopy(t *testing.T)
 	)
 	setRFC822MessageID(t, st, partialID, strings.Trim(messageID, "<>"))
 	setRFC822MessageID(t, st, fullID, strings.Trim(messageID, "<>"))
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind("DELETE FROM attachments WHERE message_id = ?"), partialID,
 	)
 	require.NoError(err, "remove partial extracted attachment")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET has_attachments = FALSE, attachment_count = 0 WHERE id = ?`),
 		partialID,
@@ -981,7 +998,7 @@ func TestEngine_CrossMailboxPartialFullKeepsAttachmentCompleteCopy(t *testing.T)
 		Account:           "Apple Mail",
 		ScopeIsCollection: true,
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 
@@ -1021,13 +1038,15 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 		),
 		"UpsertMessageRaw apple-mail",
 	)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(100), 0, gmailID,
 	)
 	require.NoError(err, "set gmail completeness")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 			SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(10000), 3, appleMailID,
@@ -1039,7 +1058,7 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 		Account:           "collection",
 		ScopeIsCollection: true,
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 
@@ -1064,14 +1083,16 @@ func TestEngine_SurvivorTiebreakerHasAttachments(t *testing.T) {
 	require.NoError(st.UpsertMessageRaw(idWithoutFlag, raw), "store first raw MIME")
 	require.NoError(st.UpsertMessageRaw(idWithFlag, raw), "store second raw MIME")
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 				WHERE id = ?`),
 		int64(len(raw)), false, 0, idWithoutFlag,
 	)
 	require.NoError(err, "clear attachment flag")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 				WHERE id = ?`),
@@ -1083,7 +1104,7 @@ func TestEngine_SurvivorTiebreakerHasAttachments(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          "test",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Len(report.Groups, 1, "duplicate groups")
 	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
@@ -1100,13 +1121,15 @@ func TestEngine_SurvivorTiebreakerLargerPayload(t *testing.T) {
 	raw := []byte("Message-ID: <rfc-payload-tie>\r\nSubject: Same\r\n\r\nBody")
 	require.NoError(st.UpsertMessageRaw(idSmaller, raw), "store smaller raw MIME")
 	require.NoError(st.UpsertMessageRaw(idLarger, raw), "store larger raw MIME")
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(1000), 1, idSmaller,
 	)
 	require.NoError(err, "set smaller payload completeness")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages
 				SET size_estimate = ?, attachment_count = ? WHERE id = ?`),
 		int64(2000), 1, idLarger,
@@ -1117,7 +1140,7 @@ func TestEngine_SurvivorTiebreakerLargerPayload(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          "test",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
@@ -1140,7 +1163,7 @@ func TestEngine_SurvivorTiebreakerRawMIME(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          "test",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
@@ -1155,19 +1178,19 @@ func TestEngine_SurvivorTiebreakerMoreLabels(t *testing.T) {
 	idFew := addMessage(t, st, f.Source, "few", "rfc-label-tie", false)
 	idMany := addMessage(t, st, f.Source, "many", "rfc-label-tie", false)
 
-	lid1, _ := st.EnsureLabel(f.Source.ID, "L1", "Label1", "user")
-	lid2, _ := st.EnsureLabel(f.Source.ID, "L2", "Label2", "user")
-	lid3, _ := st.EnsureLabel(f.Source.ID, "L3", "Label3", "user")
-	_ = st.LinkMessageLabel(idFew, lid1)
-	_ = st.LinkMessageLabel(idMany, lid1)
-	_ = st.LinkMessageLabel(idMany, lid2)
-	_ = st.LinkMessageLabel(idMany, lid3)
+	lid1, _ := st.EnsureLabel(t.Context(), f.Source.ID, "L1", "Label1", "user")
+	lid2, _ := st.EnsureLabel(t.Context(), f.Source.ID, "L2", "Label2", "user")
+	lid3, _ := st.EnsureLabel(t.Context(), f.Source.ID, "L3", "Label3", "user")
+	_ = st.LinkMessageLabel(t.Context(), idFew, lid1)
+	_ = st.LinkMessageLabel(t.Context(), idMany, lid1)
+	_ = st.LinkMessageLabel(t.Context(), idMany, lid2)
+	_ = st.LinkMessageLabel(t.Context(), idMany, lid3)
 
 	eng := dedup.NewEngine(st, dedup.Config{
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          "test",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(t, err, "Scan")
 	require.Equal(t, 1, report.DuplicateGroups, "groups")
 	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
@@ -1207,7 +1230,7 @@ func TestEngine_SurvivorTiebreakerLowerID(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 		Account:          "test",
 	}, nil)
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(t, err, "Scan")
 	require.Equal(t, 1, report.DuplicateGroups, "groups")
 	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
@@ -1225,6 +1248,7 @@ func addMessageWithFrom(
 	t.Helper()
 	require := require.New(t)
 	convID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
 	require.NoError(err, "EnsureConversation")
@@ -1286,7 +1310,7 @@ func TestEngine_PerSourceIdentity(t *testing.T) {
 		IdentityAddressesBySource: identities,
 	}, nil)
 
-	report, err := eng.Scan(context.Background())
+	report, err := eng.Scan(t.Context())
 	require.NoError(err, "Scan")
 	require.Equal(1, report.DuplicateGroups, "groups")
 
@@ -1345,7 +1369,7 @@ func TestEngine_AliasOnlyAfterDiscoveryConfirmation(t *testing.T) {
 			Account:                   source.Identifier,
 			IdentityAddressesBySource: identityAddresses,
 		}, nil)
-		report, err := engine.Scan(context.Background())
+		report, err := engine.Scan(t.Context())
 		require.NoError(err, "Scan")
 		require.Len(report.Groups, 1, "duplicate groups")
 		for _, message := range report.Groups[0].Messages {
@@ -1395,7 +1419,8 @@ func TestEngine_ScanPlansRFC822BackfillWithoutWriting(t *testing.T) {
 	assert.Equal(0, report.DuplicateGroups)
 
 	var storedID sql.NullString
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"),
 		messageID,
 	).Scan(&storedID)
@@ -1531,7 +1556,8 @@ func TestEngine_ExecuteBackfillsThenMergesWhenActionablePlanIsUnchanged(t *testi
 	assertSoftDeleted(t, f.Store, loserID, true)
 
 	var storedID sql.NullString
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"),
 		derivedID,
 	).Scan(&storedID)
@@ -1558,7 +1584,7 @@ func TestEngine_ExecuteStopsWhenRFC822BackfillPlanChanged(t *testing.T) {
 	require.Equal(int64(1), report.PendingRFC822IDBackfill())
 	require.Len(report.Groups, 1)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`),
 		"claimed@example.test", derivedID)
 	require.NoError(err)
@@ -1641,7 +1667,8 @@ func TestEngine_ExecuteStopsBeforeMergeWhenBackfillRevealsDuplicate(t *testing.T
 	assertSoftDeleted(t, f.Store, loserID, false)
 
 	var batched int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages WHERE delete_batch_id IS NOT NULL",
 	).Scan(&batched)
 	require.NoError(err)
@@ -1817,7 +1844,7 @@ func TestEngine_MetadataQualityBeforeLabels(t *testing.T) {
 			richer := addMessage(t, f.Store, f.Source, "richer", "quality@example.test", false)
 			// The older copy has only a fallback conversation key; the richer
 			// copy preserves a provider thread and an archived reply header.
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations
 				SET source_conversation_id = 'older'
 				WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)`), older)
 			require.NoError(err)

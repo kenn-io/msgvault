@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,26 +12,15 @@ import (
 )
 
 func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
-	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
-	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1, 1)
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(rows.Err())
-	assert.Contains(t, plan.String(), "COVERING INDEX idx_messages_conversation_content_changed")
-	assert.NotContains(t, plan.String(), "SCAN m")
+	plan := dbtest.ExplainQueryPlan(t, s.DB(), query.SQLiteTimelineSnapshotProbe, 1, 1, 1, 1)
+	assert.Contains(t, plan, "COVERING INDEX idx_messages_conversation_content_changed")
+	assert.NotContains(t, plan, "SCAN m")
 }
 
 func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 	exec := func(query string) func(*store.Store) error {
-		return func(s *store.Store) error { _, err := s.DB().Exec(query); return err }
+		return func(s *store.Store) error { _, err := s.DB().ExecContext(t.Context(), query); return err }
 	}
 	for _, tc := range []struct {
 		name   string
@@ -54,7 +42,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 				messageType = "matrix"
 			}
 			dbtest.SeedTextTimeline(t, s.DB(), messageType)
-			_, err := s.DB().Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id)
+			_, err := s.DB().ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id)
 				VALUES (802, 701, 7, 'message-802', ?, '2020-01-01 11:00:00', 11)`, messageType)
 			require.NoError(err)
 			fixture := `
@@ -70,7 +58,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 					UPDATE messages SET sender_id = 12, content_changed_at = '2020-01-01 00:00:00';
 				`
 			}
-			_, err = s.DB().Exec(fixture)
+			_, err = s.DB().ExecContext(t.Context(), fixture)
 			require.NoError(err)
 			engine := query.NewSQLiteEngine(s.DB())
 			filter := query.TextFilter{Pagination: query.Pagination{Limit: 1}, SortDirection: query.SortAsc}
@@ -87,7 +75,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 
 			require.NoError(tc.change(s))
 			if !tc.roster {
-				_, err = s.DB().Exec(`UPDATE messages SET content_changed_at = '2021-01-01 00:00:00' WHERE content_changed_at > '2022-01-01'`)
+				_, err = s.DB().ExecContext(t.Context(), `UPDATE messages SET content_changed_at = '2021-01-01 00:00:00' WHERE content_changed_at > '2022-01-01'`)
 				require.NoError(err)
 			}
 			page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), 701, filter)
@@ -104,7 +92,7 @@ func TestSQLiteTimelineSnapshotRevisionStableOutsideRecentWindow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
-	_, err := s.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
+	_, err := s.DB().ExecContext(t.Context(), `INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat-701', 'direct_chat');
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type) VALUES (801, 701, 7, 'recent-message', 'imessage')`)
 	require.NoError(err)
@@ -112,7 +100,7 @@ func TestSQLiteTimelineSnapshotRevisionStableOutsideRecentWindow(t *testing.T) {
 	conversationID := int64(701)
 	scope := query.TextSnapshotScope{ConversationID: &conversationID}
 	read := func(offset string) (string, string) {
-		_, err := s.DB().Exec(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801`, offset)
+		_, err := s.DB().ExecContext(t.Context(), `UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801`, offset)
 		require.NoError(err)
 		first, err := engine.TextSnapshotRevision(t.Context(), scope)
 		require.NoError(err)
@@ -139,7 +127,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 			require := require.New(t)
 			s := testutil.NewSQLiteTestStore(t)
 			dbtest.SeedTextTimeline(t, s.DB(), "imessage")
-			_, err := s.DB().Exec(`
+			_, err := s.DB().ExecContext(t.Context(), `
 				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, content_changed_at) VALUES
 					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', '2020-01-01 00:00:00');
 				UPDATE messages SET sender_id = NULL, content_changed_at = '2020-01-01 00:00:00';
@@ -151,7 +139,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 					(801, 11, 'from'), (802, 11, 'from');
 			`)
 			require.NoError(err)
-			require.NoError(s.AddMessageLabels(801, []int64{901}))
+			require.NoError(s.AddMessageLabels(t.Context(), 801, []int64{901}))
 			require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))
 			require.NoError(s.UpsertFTS(802, "", "needle", "", "", ""))
 			engine := query.NewSQLiteEngine(s.DB())
@@ -169,13 +157,13 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 				switch tc.name {
 				case "label":
 					if step == 0 {
-						require.NoError(s.AddMessageLabels(802, []int64{901}))
+						require.NoError(s.AddMessageLabels(t.Context(), 802, []int64{901}))
 					} else {
 						require.NoError(s.ReplaceMessageLabels(802, nil))
 					}
 				case "search":
 					if step == 0 {
-						_, err = s.DB().Exec(`DELETE FROM messages_fts`)
+						_, err = s.DB().ExecContext(t.Context(), `DELETE FROM messages_fts`)
 						require.NoError(err)
 					} else {
 						require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))

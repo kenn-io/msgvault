@@ -35,7 +35,7 @@ func seedTwoSourceArchiveIn(t *testing.T, dataDir string, shareMessageID bool) *
 	if !shareMessageID {
 		secondMessageID = "<s2-only@example.com>"
 	}
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES
 	(1, 'gmail', 'me@example.com'),
 	(2, 'whatsapp', '+15550100');
@@ -55,7 +55,8 @@ INSERT INTO messages
 		2: "Counter-signed.",
 		3: "Unrelated chat that happens to reuse the id.",
 	} {
-		_, err = s.DB().Exec(
+		_, err = s.DB().ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, id, body)
 		require.NoError(err, "seed body %d", id)
 	}
@@ -146,7 +147,8 @@ func TestRequireDisjointSourceIDs_AllowsSeveralSourcesWithDisjointIDs(t *testing
 	s := seedTwoSourceArchiveIn(t, t.TempDir(), false)
 
 	var sources int
-	require.NoError(s.DB().QueryRow(
+	require.NoError(s.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(DISTINCT source_id) FROM messages`).Scan(&sources))
 	require.Equal(2, sources, "the archive really does hold two connected accounts")
 
@@ -165,7 +167,8 @@ func TestRequireDisjointSourceIDs_IgnoresUnretrievableCopies(t *testing.T) {
 
 	// Hide the second source's copy the way dedup does, leaving the row in
 	// place.
-	_, err := s.DB().Exec(
+	_, err := s.DB().ExecContext(
+		t.Context(),
 		`UPDATE messages SET deleted_at = '2023-01-01T00:00:00Z' WHERE id = 3`)
 	require.NoError(err, "hide the duplicate")
 

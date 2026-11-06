@@ -3,7 +3,6 @@
 package tasklinks
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +25,7 @@ func TestWindowsDiskCacheFailsClosedWithoutConsumingOrReplacingExistingFile(t *t
 	requirements.ErrorIs(idx.Load(), ErrDiskCacheSecurityUnsupported)
 	assertions.Empty(idx.Lookup(testCacheIdentity(), identity, true).Tasks)
 
-	status, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{
+	status, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{
 		Tasks: []taskclient.Task{indexedTask("task-1", "Current-session task", identity)},
 	}}}, testCacheIdentity(), "remote-1", 100)
 	requirements.NoError(err)

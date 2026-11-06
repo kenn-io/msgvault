@@ -161,7 +161,7 @@ type DurableAttachmentReceipt struct {
 // existing authoritative copy after the loose file is durable. Its receipt is
 // populated even when publication succeeded but a later durability step
 // failed, so callers can roll back a newly created blob.
-func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (DurableAttachmentReceipt, error) {
+func StoreAttachmentFileDurable(ctx context.Context, attachmentsDir string, att *mime.Attachment) (DurableAttachmentReceipt, error) {
 	if attachmentsDir == "" {
 		return DurableAttachmentReceipt{}, nil
 	}
@@ -185,7 +185,7 @@ func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (Du
 	if err != nil {
 		return DurableAttachmentReceipt{}, err
 	}
-	result, writeErr := loose.WriteBytes(context.Background(), att.Content, packstore.WriteOptions{
+	result, writeErr := loose.WriteBytes(ctx, att.Content, packstore.WriteOptions{
 		Durability:   packstore.DurablePublication,
 		Dedup:        packstore.VerifyFullHash,
 		ExpectedHash: expectedHash,
@@ -388,7 +388,7 @@ func OpenAttachmentSource(srcPath string, maxSize int64) (*os.File, error) {
 // the stored size. On failures after the source was hashed, contentHash and
 // size are still returned (with an empty storage path) so callers can record
 // metadata for content they could not store.
-func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (string, string, int64, error) {
+func StoreAttachmentFromPath(ctx context.Context, attachmentsDir, srcPath string, maxSize int64) (string, string, int64, error) {
 	if attachmentsDir == "" || srcPath == "" {
 		return "", "", 0, errors.New("attachments dir and source path are required")
 	}
@@ -424,7 +424,7 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
 	}
-	result, writeErr := loose.Write(context.Background(), f, packstore.WriteOptions{
+	result, writeErr := loose.Write(ctx, f, packstore.WriteOptions{
 		Durability: packstore.AtomicPublication,
 		Dedup:      packstore.VerifyFullHash,
 		MaxBytes:   maxSize,

@@ -38,7 +38,7 @@ func TestSearchChatsMetadataContextLeavesMembershipDirty(t *testing.T) {
 	require.Len(page.Results, 1)
 	assert.Equal(chat, page.Results[0].ConversationID)
 	var dirty int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM chat_members_dirty").Scan(&dirty))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_members_dirty").Scan(&dirty))
 	assert.Equal(1, dirty, "metadata scans must leave membership writes queued")
 }
 
@@ -62,7 +62,7 @@ func TestChatDiscoveryFollowsArchiveChanges(t *testing.T) {
 		return messageID
 	}
 	exec := func(statement string, args ...any) {
-		_, err := st.DB().Exec(st.Rebind(statement), args...)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(statement), args...)
 		requirements.NoError(err, statement)
 	}
 	first := message("first", participant("Alpha"))
@@ -129,7 +129,7 @@ func seedAliasChat(t *testing.T, st *store.Store) int64 {
 
 func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
 	requirements := require.New(t)
-	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "upgrade.db"))
+	st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "upgrade.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	requirements.NoError(st.InitSchema())
@@ -139,7 +139,7 @@ func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
 		`DELETE FROM chat_members`, `DELETE FROM chat_members_dirty`,
 		`DELETE FROM applied_migrations WHERE name = 'chat_members_v1'`,
 	} {
-		_, err = st.DB().Exec(statement)
+		_, err = st.DB().ExecContext(t.Context(), statement)
 		requirements.NoError(err)
 	}
 	assert.Empty(t, discoveredChats(t, st, "Upgrade"))
@@ -151,7 +151,7 @@ func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
 func TestChatDiscoveryReadOnlyStoreRefusesPendingChanges(t *testing.T) {
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "readonly.db")
-	writer, err := store.OpenForTest(path)
+	writer, err := store.OpenForTest(t.Context(), path)
 	requirements.NoError(err)
 	requirements.NoError(writer.InitSchema())
 	chat := seedAliasChat(t, writer)
@@ -163,7 +163,7 @@ func TestChatDiscoveryReadOnlyStoreRefusesPendingChanges(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrChatMembersStale)
 	requirements.NoError(reader.Close())
 
-	writer, err = store.OpenForTest(path)
+	writer, err = store.OpenForTest(t.Context(), path)
 	requirements.NoError(err)
 	assert.Equal(t, []int64{chat}, discoveredChats(t, writer, "Upgrade"))
 	requirements.NoError(writer.Close())
@@ -192,7 +192,7 @@ func TestCopySubsetRebuildsChatMembers(t *testing.T) {
 	requirements.NoError(src.Close())
 
 	dstDir := filepath.Join(t.TempDir(), "subset")
-	_, err = store.CopySubset(srcPath, dstDir, 1, false)
+	_, err = store.CopySubset(t.Context(), srcPath, dstDir, 1, false)
 	requirements.NoError(err)
 	dst, err := store.Open(filepath.Join(dstDir, "msgvault.db"))
 	requirements.NoError(err)
@@ -238,12 +238,12 @@ func TestChatDiscoveryRejectsAnchorChangedAfterRefresh(t *testing.T) {
 	requirements.NoError(st.RefreshChatMembersContext(t.Context()))
 	requirements.Equal(newest, metadataAnchor())
 
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), newest)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), newest)
 	requirements.NoError(err)
 	assert.Equal(t, middle, metadataAnchor(), "a hidden anchor falls back to the newest live message")
 
 	requirements.NoError(st.RefreshChatMembersContext(t.Context()))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET conversation_id = ? WHERE id = ?"), other, middle)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET conversation_id = ? WHERE id = ?"), other, middle)
 	requirements.NoError(err)
 	assert.Equal(t, oldest, metadataAnchor(), "an anchor moved to another chat is not reported for this one")
 }

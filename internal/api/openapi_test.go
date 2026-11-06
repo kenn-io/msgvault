@@ -28,6 +28,20 @@ const (
 	openAPIClientGeneratedDir = "../../pkg/client/generated"
 )
 
+func TestOpenAPISenderAuthSchemaName(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schemas := document.Components.Schemas.Map()
+		requirements.NotNil(schemas["SenderAuthVerdict"])
+		for _, name := range []string{"MessageDetail", "CliMessageResponse"} {
+			requirements.NotNil(schemas[name])
+			property := schemas[name].Properties["sender_auth"]
+			requirements.NotNil(property)
+			assertions.Equal("#/components/schemas/SenderAuthVerdict", property.Ref)
+		}
+	}
+}
+
 func TestNullableObjectReferenceSchemas(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
@@ -2232,13 +2246,14 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		_, err := os.ReadFile(filepath.Join("..", "..", "tools", "oapi-codegen", name))
 		requirements.NoError(err)
 	}
-	cmd := exec.Command("go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
 		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
 	requirements.NoError(err, "build client generator:\n%s", out)
 
-	cmd = exec.Command(
+	cmd = exec.CommandContext(
+		t.Context(),
 		generator,
 		"-config",
 		"config.yaml",
@@ -2254,7 +2269,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		_, err := os.ReadDir(filepath.Join(fixer, name))
 		requirements.NoError(err)
 	}
-	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
+	cmd = exec.CommandContext(t.Context(), "go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
 	out, err = cmd.CombinedOutput()
 	requirements.NoError(err, "apply generated-client validator fixup:\n%s", out)
 

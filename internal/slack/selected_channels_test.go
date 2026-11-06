@@ -34,7 +34,7 @@ func TestSelectedChannelIDsConstrainHistoryAndReplySearch(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(imp.store.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 	assert.Equal(11, count, "selected history plus replies, without duplicate roots")
 	opts.ChannelIDs = []string{}
 	summary, err = imp.Import(t.Context(), opts)

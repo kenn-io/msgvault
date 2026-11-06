@@ -44,10 +44,10 @@ func TestRegisterCalendars_NormalizesAccountEmailInSourceIdentity(t *testing.T) 
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
 	s, st := newSyncer(t, m, Options{AccountEmail: "Alice.Example@Example.COM"})
 
-	_, err := s.RegisterCalendars(context.Background())
+	_, err := s.RegisterCalendars(t.Context())
 	require.NoError(err)
 
-	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	src, err := st.GetSourceByIdentifier(t.Context(), "alice.example@example.com/primary")
 	require.NoError(err)
 	assert.Equal("gcal", src.SourceType)
 
@@ -68,13 +68,13 @@ func TestRegisterCalendars_ReusesMixedCaseCalendarSource(t *testing.T) {
 	oldSrc, err := st.GetOrCreateSource(gcal.SourceType, "Alice.Example@Example.COM/primary")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceSyncCursor(oldSrc.ID, "cursor-1"))
-	require.NoError(st.UpdateSourceSyncConfig(oldSrc.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), oldSrc.ID,
 		`{"account_email":"Alice.Example@Example.COM","calendar_id":"primary"}`))
 
-	_, err = s.RegisterCalendars(context.Background())
+	_, err = s.RegisterCalendars(t.Context())
 	require.NoError(err)
 
-	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	src, err := st.GetSourceByIdentifier(t.Context(), "alice.example@example.com/primary")
 	require.NoError(err)
 	assert.Equal(oldSrc.ID, src.ID, "existing source row must be reused")
 	assert.Equal("cursor-1", src.SyncCursor.String, "existing cursor state must be preserved")
@@ -89,7 +89,7 @@ func retiredCalendarSyncSource(t *testing.T, st *store.Store) *store.Source {
 	require := require.New(t)
 	retired, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(retired.ID, buildSourceConfigJSON(sourceConfig{
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), retired.ID, buildSourceConfigJSON(sourceConfig{
 		AccountEmail: testAccount, CalendarID: "primary", CalendarSummary: "Primary", AccessRole: "owner",
 	})))
 	require.NoError(st.UpdateSourceSyncCursor(retired.ID, "existing-token"))
@@ -130,7 +130,7 @@ func TestIncrementalSkipsRetiredCalendarSources(t *testing.T) {
 	assert.Zero(result.CalendarsSynced)
 	assert.Zero(m.ListEventsCalls(), "retired calendar events are not fetched")
 	var runs int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
 	assert.Zero(runs, "a retired source does not start another sync run")
 }
 
@@ -175,7 +175,7 @@ type msgRow struct {
 func getMsg(t *testing.T, st *store.Store, sourceID int64, smid string) (msgRow, bool) {
 	t.Helper()
 	var m msgRow
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, conversation_id, message_type, subject, sent_at, sender_id,
 		       is_from_me, snippet, metadata, deleted_from_source_at
 		FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, smid).
@@ -190,7 +190,7 @@ func getMsg(t *testing.T, st *store.Store, sourceID int64, smid string) (msgRow,
 
 func primarySource(t *testing.T, st *store.Store) *store.Source {
 	t.Helper()
-	src, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	src, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 	require.NoError(t, err)
 	return src
 }
@@ -198,7 +198,8 @@ func primarySource(t *testing.T, st *store.Store) *store.Source {
 func countMessages(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var n int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&n))
 	return n
 }
@@ -206,7 +207,8 @@ func countMessages(t *testing.T, st *store.Store, sourceID int64) int {
 func bodyText(t *testing.T, st *store.Store, msgID int64) string {
 	t.Helper()
 	var body sql.NullString
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), msgID).Scan(&body)
 	if err == sql.ErrNoRows {
 		return ""
@@ -218,14 +220,15 @@ func bodyText(t *testing.T, st *store.Store, msgID int64) string {
 func rawFormat(t *testing.T, st *store.Store, msgID int64) string {
 	t.Helper()
 	var f string
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT raw_format FROM message_raw WHERE message_id = ?`), msgID).Scan(&f))
 	return f
 }
 
 func recipientEmails(t *testing.T, st *store.Store, msgID int64, typ string) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT p.email_address FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
@@ -245,7 +248,8 @@ func recipientEmails(t *testing.T, st *store.Store, msgID int64, typ string) []s
 func conversationTitle(t *testing.T, st *store.Store, convID int64) string {
 	t.Helper()
 	var title sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT title FROM conversations WHERE id = ?`), convID).Scan(&title))
 	return title.String
 }
@@ -289,7 +293,7 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	require.NoError(err)
 
-	res, err := s.Full(context.Background())
+	res, err := s.Full(t.Context())
 	require.NoError(err)
 	assert.Equal(1, res.CalendarsSynced)
 	assert.Equal(1, res.EventsAdded)
@@ -331,7 +335,8 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	// FTS to_addr indexes the raw attendee email (SQLite vtable).
 	if st.FTS5Available() && !st.IsPostgreSQL() {
 		var toAddr, ftsBody string
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(
+			t.Context(),
 			`SELECT to_addr, body FROM messages_fts WHERE message_id = ?`, row.id).Scan(&toAddr, &ftsBody))
 		assert.Contains(toAddr, "bob@example.com", "attendee email reaches FTS via to_addr")
 		assert.NotContains(ftsBody, "bob@example.com", "attendee email must not be double-encoded in FTS body")
@@ -353,7 +358,7 @@ func TestFull_ConfiguredAccountAttributionSurvivesIdentityMutation(t *testing.T)
 	m.FullSyncToken["primary"] = "TOKEN1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 
 	src := primarySource(t, st)
@@ -397,7 +402,7 @@ func TestFull_ClearsBodyWhenEventBodyBecomesEmpty(t *testing.T) {
 	m.FullSyncToken["primary"] = "TOKEN1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	row, ok := getMsg(t, st, src.ID, "e1")
@@ -413,7 +418,7 @@ func TestFull_ClearsBodyWhenEventBodyBecomesEmpty(t *testing.T) {
 	}}
 	m.FullSyncToken["primary"] = "TOKEN2"
 
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 
 	row, ok = getMsg(t, st, src.ID, "e1")
@@ -425,7 +430,7 @@ func TestFull_ClearsBodyWhenEventBodyBecomesEmpty(t *testing.T) {
 func recipientParticipantID(t *testing.T, st *store.Store, msgID int64, typ string) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT participant_id FROM message_recipients
 		WHERE message_id = ? AND recipient_type = ?`), msgID, typ).Scan(&id))
 	return id
@@ -443,14 +448,14 @@ func TestFull_IdempotentReRun(t *testing.T) {
 
 	s, st := newSyncer(t, m, Options{})
 
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	first, _ := getMsg(t, st, src.ID, "e1")
 	assert.Equal(2, countMessages(t, st, src.ID))
 
 	// Re-run: no duplicate rows, stable ids.
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 	assert.Equal(2, countMessages(t, st, src.ID), "re-run must not duplicate rows")
 	again, _ := getMsg(t, st, src.ID, "e1")
@@ -469,15 +474,15 @@ func TestFull_ReusesMixedCaseCalendarSource(t *testing.T) {
 
 	oldSrc, err := st.GetOrCreateSource(gcal.SourceType, "Alice.Example@Example.COM/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(oldSrc.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), oldSrc.ID,
 		`{"account_email":"Alice.Example@Example.COM","calendar_id":"primary"}`))
 
-	res, err := s.Full(context.Background())
+	res, err := s.Full(t.Context())
 	require.NoError(err)
 	assert.Equal(1, res.CalendarsSynced)
 	assert.Equal(1, res.EventsAdded)
 
-	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	src, err := st.GetSourceByIdentifier(t.Context(), "alice.example@example.com/primary")
 	require.NoError(err)
 	assert.Equal(oldSrc.ID, src.ID, "full sync must reuse the existing source row")
 	assert.Equal("T1", src.SyncCursor.String, "cursor should advance on the reused source")
@@ -504,13 +509,13 @@ func TestFull_AccessRoleFilter(t *testing.T) {
 
 	assert := assert.New(t)
 	require := require.New(t)
-	res, err := s.Full(context.Background())
+	res, err := s.Full(t.Context())
 	require.NoError(err)
 	assert.Equal(2, res.CalendarsSynced, "default filter keeps owner+writer only")
 
-	_, err = st.GetSourceByIdentifier(testAccount + "/holidays")
+	_, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 	require.ErrorIs(err, store.ErrSourceNotFound, "reader calendar must be skipped")
-	_, err = st.GetSourceByIdentifier(testAccount + "/team")
+	_, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/team")
 	assert.NoError(err, "writer calendar must be synced")
 }
 
@@ -519,7 +524,7 @@ func TestFull_InvalidMinAccessRoleRejected(t *testing.T) {
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
 	s, _ := newSyncer(t, m, Options{MinAccessRole: "wrtier"})
 
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid min access role")
@@ -530,7 +535,7 @@ func TestRegisterCalendars_InvalidMinAccessRoleRejected(t *testing.T) {
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
 	s, _ := newSyncer(t, m, Options{MinAccessRole: "wrtier"})
 
-	_, err := s.RegisterCalendars(context.Background())
+	_, err := s.RegisterCalendars(t.Context())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid min access role")
@@ -545,7 +550,7 @@ func TestIncremental_CancellationRetainsRow(t *testing.T) {
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	before, ok := getMsg(t, st, src.ID, "e1")
@@ -556,7 +561,7 @@ func TestIncremental_CancellationRetainsRow(t *testing.T) {
 	m.IncEvents["T1"] = [][]gcal.Event{{{ID: "e1", Status: gcal.StatusCancelled}}}
 	m.IncNextToken["T1"] = "T2"
 
-	res, err := s.Incremental(context.Background())
+	res, err := s.Incremental(t.Context())
 	require.NoError(err)
 	assert.Equal(1, res.EventsCancelled)
 
@@ -607,11 +612,11 @@ func TestIncremental_PersistsExplicitOAuthAppBinding(t *testing.T) {
 			m.FullSyncToken["primary"] = "T1"
 
 			s, st := newSyncer(t, m, Options{})
-			_, err := s.Full(context.Background())
+			_, err := s.Full(t.Context())
 			require.NoError(err)
 			src := primarySource(t, st)
 			if tc.initialApp.Valid {
-				require.NoError(st.UpdateSourceOAuthApp(src.ID, tc.initialApp))
+				require.NoError(st.UpdateSourceOAuthApp(t.Context(), src.ID, tc.initialApp))
 			}
 
 			m.IncEvents["T1"] = [][]gcal.Event{{timedEvent(tc.deltaID, "Delta")}}
@@ -623,11 +628,11 @@ func TestIncremental_PersistsExplicitOAuthAppBinding(t *testing.T) {
 				OAuthAppSet:  true,
 			}).WithLogger(quietLogger())
 
-			res, err := incremental.Incremental(context.Background())
+			res, err := incremental.Incremental(t.Context())
 			require.NoError(err)
 			assert.Equal(1, res.CalendarsSynced)
 
-			src, err = st.GetSourceByIdentifier(testAccount + "/primary")
+			src, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 			require.NoError(err)
 			assert.Equal(tc.nextToken, src.SyncCursor.String)
 			assert.Equal(tc.wantAppSet, src.OAuthApp.Valid)
@@ -670,15 +675,15 @@ func TestIncremental_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T
 			m.FullSyncToken["holidays"] = "H1"
 
 			s, st := newSyncer(t, m, Options{AllCalendars: true})
-			_, err := s.Full(context.Background())
+			_, err := s.Full(t.Context())
 			require.NoError(err)
 
-			primary, err := st.GetSourceByIdentifier(testAccount + "/primary")
+			primary, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 			require.NoError(err)
-			holidays, err := st.GetSourceByIdentifier(testAccount + "/holidays")
+			holidays, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 			require.NoError(err)
-			require.NoError(st.UpdateSourceOAuthApp(primary.ID, sql.NullString{String: "old-app", Valid: true}))
-			require.NoError(st.UpdateSourceOAuthApp(holidays.ID, sql.NullString{String: "old-app", Valid: true}))
+			require.NoError(st.UpdateSourceOAuthApp(t.Context(), primary.ID, sql.NullString{String: "old-app", Valid: true}))
+			require.NoError(st.UpdateSourceOAuthApp(t.Context(), holidays.ID, sql.NullString{String: "old-app", Valid: true}))
 
 			m.IncEvents["P1"] = [][]gcal.Event{{timedEvent("e2", "Primary delta")}}
 			m.IncNextToken["P1"] = "P2"
@@ -690,13 +695,13 @@ func TestIncremental_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T
 				Calendars:    []string{"primary"},
 			}).WithLogger(quietLogger())
 
-			res, err := incremental.Incremental(context.Background())
+			res, err := incremental.Incremental(t.Context())
 			require.NoError(err)
 			assert.Equal(1, res.CalendarsSynced)
 
-			primary, err = st.GetSourceByIdentifier(testAccount + "/primary")
+			primary, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 			require.NoError(err)
-			holidays, err = st.GetSourceByIdentifier(testAccount + "/holidays")
+			holidays, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 			require.NoError(err)
 			assert.Equal(tc.wantAppSet, primary.OAuthApp.Valid, "selected source binding")
 			assert.Equal(tc.wantApp, primary.OAuthApp.String, "selected source binding")
@@ -717,7 +722,7 @@ func TestRegisterCalendars_PersistsExplicitOAuthAppBindingBeforeSelection(t *tes
 		Calendars:    []string{"primary"},
 	}).WithLogger(quietLogger())
 
-	registered, err := register.RegisterCalendars(context.Background())
+	registered, err := register.RegisterCalendars(t.Context())
 	require.NoError(t, err)
 	require.Len(t, registered, 1)
 
@@ -737,7 +742,7 @@ func TestFull_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T) {
 		Calendars:    []string{"primary"},
 	}).WithLogger(quietLogger())
 
-	res, err := full.Full(context.Background())
+	res, err := full.Full(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.CalendarsSynced)
 
@@ -758,22 +763,22 @@ func seedCalendarOAuthBindingFixture(t *testing.T) (*gcal.MockAPI, *store.Store)
 	m.FullSyncToken["holidays"] = "H1"
 
 	s, st := newSyncer(t, m, Options{AllCalendars: true})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(t, err)
 
-	primary, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	primary, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 	require.NoError(t, err)
-	holidays, err := st.GetSourceByIdentifier(testAccount + "/holidays")
+	holidays, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceOAuthApp(primary.ID, sql.NullString{String: "old-app", Valid: true}))
-	require.NoError(t, st.UpdateSourceOAuthApp(holidays.ID, sql.NullString{String: "old-app", Valid: true}))
+	require.NoError(t, st.UpdateSourceOAuthApp(t.Context(), primary.ID, sql.NullString{String: "old-app", Valid: true}))
+	require.NoError(t, st.UpdateSourceOAuthApp(t.Context(), holidays.ID, sql.NullString{String: "old-app", Valid: true}))
 
 	return m, st
 }
 
 func assertCalendarOAuthApp(t *testing.T, st *store.Store, calendarID string, want sql.NullString) {
 	t.Helper()
-	src, err := st.GetSourceByIdentifier(testAccount + "/" + calendarID)
+	src, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/"+calendarID)
 	require.NoError(t, err)
 	assert.Equal(t, want.Valid, src.OAuthApp.Valid, "oauth_app validity for %s", calendarID)
 	assert.Equal(t, want.String, src.OAuthApp.String, "oauth_app value for %s", calendarID)
@@ -788,7 +793,7 @@ func TestIncremental_410TriggersFullResync(t *testing.T) {
 	s, st := newSyncer(t, m, Options{})
 	assert := assert.New(t)
 	require := require.New(t)
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	require.Equal("T1", src.SyncCursor.String)
@@ -801,7 +806,7 @@ func TestIncremental_410TriggersFullResync(t *testing.T) {
 	}}
 	m.FullSyncToken["primary"] = "T2"
 
-	res, err := s.Incremental(context.Background())
+	res, err := s.Incremental(t.Context())
 	require.NoError(err, "410 should self-heal into a full resync, not error out")
 	assert.GreaterOrEqual(res.CalendarsSynced, 1)
 
@@ -836,7 +841,7 @@ func TestFull_RecurringMasterAndCancelledOccurrence(t *testing.T) {
 	s, st := newSyncer(t, m, Options{})
 	assert := assert.New(t)
 	require := require.New(t)
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 
@@ -878,7 +883,7 @@ func TestFull_EnqueuesForEmbedding(t *testing.T) {
 	enq := &captureEnqueuer{}
 	s.SetEmbedEnqueuer(enq)
 
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(t, err)
 	assert.Len(t, enq.ids, 2, "both events queued for embedding")
 
@@ -956,16 +961,16 @@ func TestSparseStandaloneCancellationOccurrences(t *testing.T) {
 			cal := gcal.Calendar{ID: "primary", TimeZone: "UTC"}
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 			if known {
-				_, err = s.ingestEvent(src.ID, cal, gcal.Event{ID: "single", Status: "confirmed", Start: gcal.EventDateTime{DateTime: from.Add(9 * time.Hour)}, End: gcal.EventDateTime{DateTime: from.Add(10 * time.Hour)}})
+				_, err = s.ingestEvent(t.Context(), src.ID, cal, gcal.Event{ID: "single", Status: "confirmed", Start: gcal.EventDateTime{DateTime: from.Add(9 * time.Hour)}, End: gcal.EventDateTime{DateTime: from.Add(10 * time.Hour)}})
 				requirements.NoError(err)
 			}
 			ev, err := gcalmodel.DecodeEvent([]byte(`{"id":"single","status":"cancelled"}`))
 			requirements.NoError(err)
-			id, _, err := s.flagCancelled(src.ID, cal, ev)
+			id, _, err := s.flagCancelled(t.Context(), src.ID, cal, ev)
 			requirements.NoError(err)
 			var kind, status string
 			var start, end sql.NullTime
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT kind, status, start_at, end_at FROM calendar_events WHERE message_id = ?`), id).Scan(&kind, &status, &start, &end))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT kind, status, start_at, end_at FROM calendar_events WHERE message_id = ?`), id).Scan(&kind, &status, &start, &end))
 			assertions.Equal("single", kind)
 			assertions.Equal("cancelled", status)
 			assertions.Equal(known, start.Valid)
@@ -995,7 +1000,7 @@ func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
 	} {
 		ev, err := gcalmodel.DecodeEvent([]byte(raw))
 		requirements.NoError(err)
-		_, err = s.ingestEvent(src.ID, cal, ev)
+		_, err = s.ingestEvent(t.Context(), src.ID, cal, ev)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
@@ -1003,7 +1008,7 @@ func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
 		if cancelled {
 			ev, err := gcalmodel.DecodeEvent([]byte(`{"id":"exception","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"status":"cancelled"}`))
 			requirements.NoError(err)
-			_, inserted, err := s.flagCancelled(src.ID, cal, ev)
+			_, inserted, err := s.flagCancelled(t.Context(), src.ID, cal, ev)
 			requirements.NoError(err)
 			assertions.False(inserted)
 		}
@@ -1041,7 +1046,7 @@ func TestExceptionArchiveKeyByOriginalStart(t *testing.T) {
 			requirements.NoError(err)
 			ev, err := gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "Moved", tt.originalStart)))
 			requirements.NoError(err)
-			_, err = s.ingestEvent(src.ID, gcal.Calendar{ID: "primary", TimeZone: "UTC"}, ev)
+			_, err = s.ingestEvent(t.Context(), src.ID, gcal.Calendar{ID: "primary", TimeZone: "UTC"}, ev)
 			requirements.NoError(err)
 
 			row, ok := getMsg(t, st, src.ID, tt.wantKey)
@@ -1066,12 +1071,12 @@ func TestOffsetFreeExceptionResyncAndSparseCancellationReuseRow(t *testing.T) {
 
 	ev, err := gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "Before", original)))
 	requirements.NoError(err)
-	first, err := s.ingestEvent(src.ID, cal, ev)
+	first, err := s.ingestEvent(t.Context(), src.ID, cal, ev)
 	requirements.NoError(err)
 
 	ev, err = gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "After", original)))
 	requirements.NoError(err)
-	second, err := s.ingestEvent(src.ID, cal, ev)
+	second, err := s.ingestEvent(t.Context(), src.ID, cal, ev)
 	requirements.NoError(err)
 	assertions.Equal(first, second)
 	row, ok := getMsg(t, st, src.ID, "instance-example")
@@ -1080,7 +1085,7 @@ func TestOffsetFreeExceptionResyncAndSparseCancellationReuseRow(t *testing.T) {
 
 	ev, err = gcalmodel.DecodeEvent([]byte(exceptionJSON("cancelled", "", original)))
 	requirements.NoError(err)
-	id, inserted, err := s.flagCancelled(src.ID, cal, ev)
+	id, inserted, err := s.flagCancelled(t.Context(), src.ID, cal, ev)
 	requirements.NoError(err)
 	assertions.False(inserted)
 	assertions.Equal(first, id)

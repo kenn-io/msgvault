@@ -99,7 +99,7 @@ var buildCacheMu = newContextMutex()
 // query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
 // cache writers hold it exclusively only while they actually mutate live
 // cache paths — the brief rename+marker publication step, and destructive
-// maintenance (lockCacheAndInvalidateSyncState) for its whole operation.
+// maintenance while draining readers and invalidating the marker.
 // Staging and index construction run under cacheBuilderFileLock instead, so
 // a multi-minute rebuild no longer blocks queries against the committed
 // generation. The lock file lives NEXT TO the analytics directory, not
@@ -148,14 +148,10 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState returns a release function with the cache
-// exclusively locked against builders AND readers and the commit marker
-// already invalidated. Callers must keep the locks through their database
-// mutation and the lock-held cache rebuild (buildCacheLocked with
-// publishLockHeld — the publication step must not re-acquire the
-// reader-coordination lock this function already holds, or it would
-// self-deadlock on a second file descriptor). A destructive mutation must
-// not proceed when any protection step fails.
+// lockCacheAndInvalidateSyncState drains readers and invalidates the cache marker
+// under the exclusive reader lock, then releases it. Callers keep the builder
+// lock through their database mutation and rebuild. A destructive mutation must
+// not proceed when invalidation or unlocking fails.
 func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
 	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
@@ -174,18 +170,16 @@ func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) 
 			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
 		)
 	}
-	release := func() error {
-		return errors.Join(
-			wrapError(readerLock.Unlock(), "unlock analytics cache"),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+	invalidateErr := invalidateSyncStateFile(query.CacheStatePath(analyticsDir))
+	unlockErr := readerLock.Unlock()
+	if err := errors.Join(
+		wrapError(invalidateErr, "invalidate analytics cache before mutation"),
+		wrapError(unlockErr, "unlock analytics cache"),
+	); err != nil {
+		return nil, errors.Join(err, wrapError(builderLock.Unlock(), "unlock cache builder lock"))
 	}
-	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
-			wrapError(release(), "unlock analytics cache after invalidation failure"),
-		)
-	}
+	release := func() error { return wrapError(builderLock.Unlock(), "unlock cache builder lock") }
+
 	return release, nil
 }
 
@@ -364,7 +358,7 @@ By default, this performs an incremental update (only adding new messages).
 			return err
 		}
 		if isDaemonBuildCacheChild() {
-			return runBuildCacheLocalMode(mode, state)
+			return runBuildCacheLocalMode(cmd.Context(), mode, state)
 		}
 		if mode == buildCacheModeDerived || mode == buildCacheModeAuto || mode == buildCacheModeScheduledAuto {
 			return errors.New("--auto, --scheduled-auto, and --derived-only are internal daemon-child modes")
@@ -449,16 +443,16 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 	})
 }
 
-func runBuildCacheLocal(fullRebuild, auto bool, state *invocation) error {
+func runBuildCacheLocal(ctx context.Context, fullRebuild, auto bool, state *invocation) error {
 	mode, err := requestedBuildCacheMode(fullRebuild, auto, false, false)
 	if err != nil {
 		return err
 	}
-	return runBuildCacheLocalMode(mode, state)
+	return runBuildCacheLocalMode(ctx, mode, state)
 }
 
-func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
-	state = invocationState(context.Background(), state)
+func runBuildCacheLocalMode(ctx context.Context, mode buildCacheMode, state *invocation) error {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -482,7 +476,7 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 		return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)
 	}
 
-	release, err := acquireBuildCacheWriteLock(cfg, state)
+	release, err := acquireBuildCacheWriteLock(ctx, cfg, state)
 	if err != nil {
 		return err
 	}
@@ -499,11 +493,12 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 	var result *buildResult
 	switch mode {
 	case buildCacheModeAuto:
-		result, err = buildCacheAuto(dbPath, analyticsDir, builderOverrides)
+		result, err = buildCacheAuto(ctx, dbPath, analyticsDir, builderOverrides)
 	case buildCacheModeDerived:
-		result, err = buildCacheDerivedOnly(dbPath, analyticsDir, builderOverrides)
+		result, err = buildCacheDerivedOnly(ctx, dbPath, analyticsDir, builderOverrides)
 	case buildCacheModeScheduledAuto:
 		result, err = buildCacheScheduled(
+			ctx,
 			dbPath,
 			analyticsDir,
 			cfg.Analytics.MinRebuildInterval,
@@ -511,9 +506,9 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 			builderOverrides,
 		)
 	case buildCacheModeFull:
-		result, err = buildCache(dbPath, analyticsDir, true, builderOverrides)
+		result, err = buildCache(ctx, dbPath, analyticsDir, true, builderOverrides)
 	case buildCacheModeDefault:
-		result, err = buildCache(dbPath, analyticsDir, false, builderOverrides)
+		result, err = buildCache(ctx, dbPath, analyticsDir, false, builderOverrides)
 	default:
 		return fmt.Errorf("unknown build-cache mode %d", mode)
 	}
@@ -559,6 +554,7 @@ func resolveCacheSQLitePath(dsn string) (string, error) {
 }
 
 func buildCacheDerivedOnly(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
@@ -570,26 +566,25 @@ func buildCacheDerivedOnly(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
+	buildLock, err := acquireCacheBuildLock(ctx, analyticsDir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
 	return refreshDerivedDatasetsOnly(
-		context.Background(),
+		ctx,
 		dbPath,
 		analyticsDir,
-		acquirePublishLock,
 		false,
 		builderOverrides...,
 	)
 }
 
-func acquireBuildCacheWriteLock(cfg *config.Config, state *invocation) (func(), error) {
+func acquireBuildCacheWriteLock(ctx context.Context, cfg *config.Config, state *invocation) (func(), error) {
 	if isDaemonBuildCacheChild() {
 		return func() {}, nil
 	}
-	return acquireDirectSQLiteWriteLock(cfg, state)
+	return acquireDirectSQLiteWriteLock(ctx, cfg, state)
 }
 
 func isDaemonBuildCacheChild() bool {
@@ -794,11 +789,12 @@ func messageCacheAttributionSQL(
 // recheck staleness under the inter-process lock so retries cannot skip cache
 // repairs for deletions or other mutations that leave the ID boundary intact.
 func buildCache(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	fullRebuild bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, !fullRebuild, builderOverrides...)
+	return buildCacheImpl(ctx, dbPath, analyticsDir, fullRebuild, !fullRebuild, builderOverrides...)
 }
 
 // buildCacheAuto builds the cache for automatic (staleness-derived) callers.
@@ -807,10 +803,11 @@ func buildCache(
 // we waited can make the work unnecessary or downgrade a full rebuild to an
 // incremental one, instead of erasing a cache that was just completed.
 func buildCacheAuto(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, false, true, builderOverrides...)
+	return buildCacheImpl(ctx, dbPath, analyticsDir, false, true, builderOverrides...)
 }
 
 // buildCacheScheduled rechecks both staleness and the configured minimum
@@ -818,6 +815,7 @@ func buildCacheAuto(
 // may have waited for another publication after its daemon-side decision, so
 // the lock-held check is the authoritative throttle boundary.
 func buildCacheScheduled(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	minRebuildInterval time.Duration,
 	now func() time.Time,
@@ -831,34 +829,35 @@ func buildCacheScheduled(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
+	buildLock, err := acquireCacheBuildLock(ctx, analyticsDir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
 
-	staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
+	staleness := cacheNeedsBuildLocked(ctx, dbPath, analyticsDir)
 	if !staleness.NeedsBuild {
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
 	if _, throttle := scheduledCacheBuildDelay(staleness, minRebuildInterval, now()); throttle {
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
-	return withFullBuildFallback(func() (*buildResult, error) {
+	return withFullBuildFallback(ctx, func() (*buildResult, error) {
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, acquirePublishLock,
+			return refreshIdentityDatasetsOnly(ctx, dbPath, analyticsDir,
 				builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
-			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				acquirePublishLock, true, builderOverrides...)
+			return refreshDerivedDatasetsOnly(ctx, dbPath, analyticsDir,
+				true, builderOverrides...)
 		}
-		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
-			acquirePublishLock, builderOverrides...)
-	}, dbPath, analyticsDir, acquirePublishLock, builderOverrides...)
+		return buildCacheLockedAttempt(ctx, dbPath, analyticsDir, staleness.FullRebuild, false,
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 func buildCacheImpl(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
@@ -866,17 +865,17 @@ func buildCacheImpl(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
+	buildLock, err := acquireCacheBuildLock(ctx, analyticsDir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
 	return buildCacheLocked(
+		ctx,
 		dbPath,
 		analyticsDir,
 		fullRebuild,
 		recheckStaleness,
-		acquirePublishLock,
 		builderOverrides...,
 	)
 }
@@ -994,33 +993,32 @@ func relatedDriftOnly(staleness cacheStaleness) bool {
 // leaving immutable message facts untouched. The caller already holds the
 // exclusive cross-process cache builder lock.
 func refreshIdentityDatasetsOnly(
+	ctx context.Context,
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return refreshDerivedDatasetsOnly(
-		context.Background(),
+		ctx,
 		dbPath,
 		analyticsDir,
-		locking,
 		false,
 		builderOverrides...,
 	)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
-// exclusive cross-process cache builder lock. locking describes how the
-// publication step coordinates with readers — see cachePublishLocking.
+// exclusive cross-process cache builder lock. Publication briefly takes the
+// reader lock to replace datasets and write the marker.
 func buildCacheLocked(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
-	return withFullBuildFallback(func() (*buildResult, error) {
-		return buildCacheLockedAttempt(dbPath, analyticsDir, fullRebuild, recheckStaleness,
-			locking, builderOverrides...)
-	}, dbPath, analyticsDir, locking, builderOverrides...)
+	return withFullBuildFallback(ctx, func() (*buildResult, error) {
+		return buildCacheLockedAttempt(ctx, dbPath, analyticsDir, fullRebuild, recheckStaleness,
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 // withFullBuildFallback runs build and finishes with a full build when a
@@ -1028,9 +1026,9 @@ func buildCacheLocked(
 // after the staleness check selects that refresh. The caller holds the builder
 // lock, and build's own resources are released before the full build starts.
 func withFullBuildFallback(
+	ctx context.Context,
 	build func() (*buildResult, error),
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	result, err := build()
@@ -1038,13 +1036,13 @@ func withFullBuildFallback(
 		return result, err
 	}
 	fmt.Printf("%v. Forcing full rebuild...\n", err)
-	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
+	return buildCacheLockedAttempt(ctx, dbPath, analyticsDir, true, false, builderOverrides...)
 }
 
 func buildCacheLockedAttempt(
+	ctx context.Context,
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
@@ -1059,16 +1057,16 @@ func buildCacheLockedAttempt(
 		return nil, err
 	}
 	if recheckStaleness {
-		staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
+		staleness := cacheNeedsBuildLocked(ctx, dbPath, analyticsDir)
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
+			return refreshIdentityDatasetsOnly(ctx, dbPath, analyticsDir, builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
-			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				locking, true, builderOverrides...)
+			return refreshDerivedDatasetsOnly(ctx, dbPath, analyticsDir,
+				true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1116,7 +1114,7 @@ func buildCacheLockedAttempt(
 	// alongside it: this full build exports those facts from the current store
 	// state, so stamping a lagging revision here is likewise self-healing — the
 	// matching staleness check catches it on the next pass.
-	identityStore, err := store.Open(dbPath)
+	identityStore, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for identity export: %w", err)
 	}
@@ -1125,7 +1123,7 @@ func buildCacheLockedAttempt(
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read identity revision: %w", err)
 	}
-	derivedDataRevision, err := identityStore.DerivedDataRevision()
+	derivedDataRevision, err := identityStore.DerivedDataRevisionContext(ctx)
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read derived-data revision: %w", err)
@@ -1142,7 +1140,7 @@ func buildCacheLockedAttempt(
 		fullRebuild = true
 		lastMessageID = 0
 	}
-	participantIdentifierRevision, err := identityStore.ParticipantIdentifierRevision()
+	participantIdentifierRevision, err := identityStore.ParticipantIdentifierRevisionContext(ctx)
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read participant identifier revision: %w", err)
@@ -1157,7 +1155,7 @@ func buildCacheLockedAttempt(
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read person display-name revision: %w", err)
 	}
-	participantClusters, err := identityStore.ParticipantClusters()
+	participantClusters, err := identityStore.ParticipantClusters(ctx)
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read participant clusters: %w", err)
@@ -1182,16 +1180,16 @@ func buildCacheLockedAttempt(
 		firstBuilderOverrides(builderOverrides),
 	)
 	defer func() { buildErr = duckdbutil.BuilderError(buildErr, policy) }()
-	db, err := duckdbutil.Open(context.Background(), policy)
+	db, err := duckdbutil.Open(ctx, policy)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = db.Close() }()
 	textRepairs := &cacheTextRepairs{}
-	if err := registerCacheTextFunctions(context.Background(), db, textRepairs); err != nil {
+	if err := registerCacheTextFunctions(ctx, db, textRepairs); err != nil {
 		return nil, err
 	}
-	sourceSnapshot, err := openCacheSourceSnapshot(db, dbPath)
+	sourceSnapshot, err := openCacheSourceSnapshot(ctx, db, dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1209,7 +1207,7 @@ func buildCacheLockedAttempt(
 	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
-	if err := sourceSnapshot.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
+	if err := sourceSnapshot.QueryRowContext(ctx, maxIDQuery).Scan(&maxMessageID); err != nil {
 		return nil, fmt.Errorf("get max message id: %w", err)
 	}
 	maxID := int64(0)
@@ -1217,32 +1215,32 @@ func buildCacheLockedAttempt(
 		maxID = maxMessageID.Int64
 	}
 	var hasSyncRunsTable int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'sync_runs'
 	`).Scan(&hasSyncRunsTable); err != nil {
 		return nil, fmt.Errorf("check sync_runs table: %w", err)
 	}
 	if hasSyncRunsTable > 0 {
-		if err := sourceSnapshot.QueryRow(`
+		if err := sourceSnapshot.QueryRowContext(ctx, `
 			SELECT COALESCE(MAX(id), 0) FROM sync_runs
 			WHERE status = 'completed' AND completed_at IS NOT NULL
 		`).Scan(&lastCompletedSyncRunID); err != nil {
 			return nil, fmt.Errorf("get last completed sync run id: %w", err)
 		}
-		if syncCounters, err = readCacheSyncCounters(sourceSnapshot); err != nil {
+		if syncCounters, err = readCacheSyncCountersContext(ctx, sourceSnapshot); err != nil {
 			return nil, fmt.Errorf("get cache sync counters: %w", err)
 		}
 	}
 	var hasRelatedChangeJournal int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'cache_related_change_journal'
 	`).Scan(&hasRelatedChangeJournal); err != nil {
 		return nil, fmt.Errorf("check cache related-change journal: %w", err)
 	}
 	if hasRelatedChangeJournal > 0 {
-		if err := sourceSnapshot.QueryRow(`
+		if err := sourceSnapshot.QueryRowContext(ctx, `
 			SELECT COALESCE((SELECT seq FROM sqlite_sequence
 				WHERE name = 'cache_related_change_journal'), 0)
 		`).Scan(&relatedChangeSeq); err != nil {
@@ -1258,7 +1256,7 @@ func buildCacheLockedAttempt(
 		additionsRegressed := syncCounters.additions < previousState.LastCacheAdditionCount
 		populationChanged := false
 		if syncCounters.additions != previousState.LastCacheAdditionCount {
-			if err := sourceSnapshot.QueryRow(coveredCacheMessageCountSQL(), previousState.LastMessageID).
+			if err := sourceSnapshot.QueryRowContext(ctx, coveredCacheMessageCountSQL(), previousState.LastMessageID).
 				Scan(&coveredCount); err != nil {
 				return nil, fmt.Errorf("check cached message population: %w", err)
 			}
@@ -1276,7 +1274,7 @@ func buildCacheLockedAttempt(
 
 	var relatedKinds relatedChangeKinds
 	if hasPreviousState && !fullRebuild && relatedChangeSeq > previousState.LastRelatedChangeSeq {
-		relatedKinds, err = inspectRelatedChangeKinds(sourceSnapshot,
+		relatedKinds, err = inspectRelatedChangeKinds(ctx, sourceSnapshot,
 			previousState.LastRelatedChangeSeq, relatedChangeSeq, previousState.LastMessageID)
 		if err != nil {
 			return nil, err
@@ -1306,8 +1304,8 @@ func buildCacheLockedAttempt(
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
 		}
-		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			locking, true, builderOverrides...)
+		return refreshDerivedDatasetsOnly(ctx, dbPath, analyticsDir,
+			true, builderOverrides...)
 	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {
@@ -1323,7 +1321,7 @@ func buildCacheLockedAttempt(
 	var expectedBatchCount, expectedTotalCount int64
 	expectedCountQuery := "SELECT COUNT(*) FROM messages WHERE " +
 		exportableMessageWhere("") + " AND id <= ? AND id > ?"
-	if err := sourceSnapshot.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
+	if err := sourceSnapshot.QueryRowContext(ctx, expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
 		return nil, fmt.Errorf("count expected staged messages: %w", err)
 	}
 	if coveredCounted && !replaceAll {
@@ -1331,7 +1329,7 @@ func buildCacheLockedAttempt(
 	} else {
 		expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
 			exportableMessageWhere("") + " AND id <= ?"
-		if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
+		if err := sourceSnapshot.QueryRowContext(ctx, expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
 			return nil, fmt.Errorf("count expected cached messages: %w", err)
 		}
 	}
@@ -1339,21 +1337,21 @@ func buildCacheLockedAttempt(
 		buildCacheAfterSnapshotHook()
 	}
 	var attachmentMIMEColumnCount int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pragma_table_info('attachments') WHERE name = 'mime_type'
 	`).Scan(&attachmentMIMEColumnCount); err != nil {
 		return nil, fmt.Errorf("inspect attachment MIME schema: %w", err)
 	}
 	sourceSnapshot.hasAttachmentMIME = attachmentMIMEColumnCount > 0
 	var attachmentMetadataColumnCount int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pragma_table_info('attachments') WHERE name = 'attachment_metadata'
 	`).Scan(&attachmentMetadataColumnCount); err != nil {
 		return nil, fmt.Errorf("inspect attachment metadata schema: %w", err)
 	}
 	sourceSnapshot.hasAttachmentMetadata = attachmentMetadataColumnCount > 0
 	var messageSourceAttributionColumnCount int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pragma_table_info('messages')
 		WHERE name = 'source_is_from_me'
 	`).Scan(&messageSourceAttributionColumnCount); err != nil {
@@ -1365,7 +1363,7 @@ func buildCacheLockedAttempt(
 	}
 	sourceSnapshot.hasMessageSourceAttribution = messageSourceAttributionColumnCount > 0
 	var accountAttributionColumnCount int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pragma_table_info('messages')
 		WHERE name IN ('account_address', 'account_path')
 	`).Scan(&accountAttributionColumnCount); err != nil {
@@ -1373,7 +1371,7 @@ func buildCacheLockedAttempt(
 	}
 	sourceSnapshot.hasAccountAttribution = accountAttributionColumnCount == 2
 	var recipientEnvelopeColumnCount int
-	if err := sourceSnapshot.QueryRow(`
+	if err := sourceSnapshot.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
 		WHERE name = 'email_address'
 	`).Scan(&recipientEnvelopeColumnCount); err != nil {
@@ -1395,12 +1393,12 @@ func buildCacheLockedAttempt(
 			afterMessageIDs[dataset] = 0
 		}
 	}
-	if err := sourceSnapshot.Prepare(maxID, afterMessageIDs); err != nil {
+	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
 
 	exportDB := sourceSnapshot.DuckDB()
-	unsentFingerprint, err := stageUnsentMessages(context.Background(), sourceSnapshot, maxID)
+	unsentFingerprint, err := stageUnsentMessages(ctx, sourceSnapshot, maxID)
 	if err != nil {
 		return nil, err
 	}
@@ -1408,7 +1406,7 @@ func buildCacheLockedAttempt(
 	if !replaceAll {
 		// The staleness decision precedes the pinned snapshot. Recheck the
 		// committed IDs before acknowledging its new unsent fingerprint.
-		coveredFingerprint, err := messageIDsFingerprint(context.Background(), exportDB, `SELECT message_id FROM tmp_unsent_messages
+		coveredFingerprint, err := messageIDsFingerprint(ctx, exportDB, `SELECT message_id FROM tmp_unsent_messages
 			WHERE message_id <= ? ORDER BY message_id`, previousState.LastMessageID)
 		if err != nil {
 			return nil, fmt.Errorf("fingerprint covered unsent messages: %w", err)
@@ -1452,13 +1450,12 @@ func buildCacheLockedAttempt(
 	// Export each table separately - this is MUCH faster than joining during export
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
-	if err := exportRelatedDatasets(context.Background(), exportDB, sourceSnapshot,
+	if err := exportRelatedDatasets(ctx, exportDB, sourceSnapshot,
 		maxID, staging.root, afterMessageIDs); err != nil {
 		return nil, err
 	}
 
 	// 4. Export participants
-	ctx := context.Background()
 	copyDataset := func(table, selectSQL string) func() error {
 		return func() error {
 			return copyParquet(ctx, exportDB, filepath.Join(staging.root, table), table+".parquet", selectSQL)
@@ -1528,11 +1525,11 @@ func buildCacheLockedAttempt(
 	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
-	messagesRelation, err := sourceSnapshot.messageSliceRelation("messages", "id", lastMessageID, maxID)
+	messagesRelation, err := sourceSnapshot.messageSliceRelation(ctx, "messages", "id", lastMessageID, maxID)
 	if err != nil {
 		return nil, err
 	}
-	recipientsRelation, err := sourceSnapshot.messageSliceRelation("message_recipients", "message_id", lastMessageID, maxID)
+	recipientsRelation, err := sourceSnapshot.messageSliceRelation(ctx, "message_recipients", "message_id", lastMessageID, maxID)
 	if err != nil {
 		return nil, err
 	}
@@ -1592,7 +1589,7 @@ func buildCacheLockedAttempt(
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
 	}
-	derived, err := identityindex.Build(context.Background(), exportDB, identityindex.BuildOptions{
+	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		UnsentMessages:       "tmp_unsent_messages",
 		Mode:                 buildMode,
 		CommittedRoot:        analyticsDir,
@@ -1624,7 +1621,7 @@ func buildCacheLockedAttempt(
 	// committed marker describes exactly the types baked into the staged
 	// activity rows and conversations dataset.
 	typesFingerprint, err := fingerprintConversationTypesFromSnapshot(
-		context.Background(),
+		ctx,
 		exportDB,
 		maxID,
 	)
@@ -1661,7 +1658,7 @@ func buildCacheLockedAttempt(
 			if partialSnapshot {
 				level = slog.LevelWarn
 			}
-			slog.Log(context.Background(), level,
+			slog.Log(ctx, level,
 				"sync counters changed during cache export; published read snapshot",
 				"full_rebuild_required", partialSnapshot,
 				"additions", fmt.Sprintf("%d→%d", syncCounters.additions, currentCounters.additions),
@@ -1700,12 +1697,12 @@ func buildCacheLockedAttempt(
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
+	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
 	if hasRelatedChangeJournal > 0 {
-		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+		warnRelatedChangePrune(ctx, dbPath, relatedChangeSeq, derivedDataRevision)
 	}
 
 	return &buildResult{
@@ -1945,7 +1942,7 @@ func identityColumns(columns ...string) map[string]bool {
 	return set
 }
 
-func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
+func openCacheSourceSnapshot(ctx context.Context, duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
 	// MSGVAULT_FORCE_CSV_SNAPSHOT lets tests exercise the CSV fallback that
 	// Windows and macOS always use, so drift between the COPY queries and the
 	// CSV views fails on every platform instead of only on Windows CI.
@@ -1955,16 +1952,16 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 		// (for example in an air-gapped installation). Keep every scan on the
 		// attached read transaction. sqlite_query converts unprotected SQLite
 		// values to text, so separate DuckDB pipelines must also run serially.
-		if _, err := duckDB.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
+		if _, err := duckDB.ExecContext(ctx, "INSTALL sqlite; LOAD sqlite;"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite_scanner unavailable, using CSV fallback: %v\n", err)
-		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true; SET threads = 1"); err != nil {
+		} else if _, err := duckDB.ExecContext(ctx, "SET sqlite_disable_multithreaded_scans = true; SET threads = 1"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite snapshot scans unavailable, using CSV fallback: %v\n", err)
 		} else {
 			escapedPath := strings.ReplaceAll(dbPath, "'", "''")
-			if _, err := duckDB.Exec(fmt.Sprintf("ATTACH '%s' AS sqlite_db (TYPE sqlite, READ_ONLY)", escapedPath)); err != nil {
+			if _, err := duckDB.ExecContext(ctx, fmt.Sprintf("ATTACH '%s' AS sqlite_db (TYPE sqlite, READ_ONLY)", escapedPath)); err != nil {
 				fmt.Fprintf(os.Stderr, "  sqlite attach failed, using CSV fallback: %v\n", err)
 			} else {
-				duckTx, err := duckDB.BeginTx(context.Background(), nil)
+				duckTx, err := duckDB.BeginTx(ctx, nil)
 				if err != nil {
 					return nil, fmt.Errorf("begin DuckDB cache snapshot: %w", err)
 				}
@@ -1985,7 +1982,7 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("open sqlite for CSV export: %w", err)
 	}
-	sqliteTx, err := sqliteDB.BeginTx(context.Background(), nil)
+	sqliteTx, err := sqliteDB.BeginTx(ctx, nil)
 	if err != nil {
 		_ = sqliteDB.Close()
 		_ = os.RemoveAll(tmpDir)
@@ -1997,12 +1994,12 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 	}, nil
 }
 
-// QueryRow executes source metadata SQL inside the same snapshot used by the
+// QueryRowContext executes source metadata SQL inside the same snapshot used by the
 // table exports. sqlite_query preserves native SQLite query planning and
 // indexes when sqlite_scanner is active.
-func (s *cacheSourceSnapshot) QueryRow(query string, args ...any) *sql.Row {
+func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	if s.sqliteTx != nil {
-		return s.sqliteTx.QueryRow(query, args...)
+		return s.sqliteTx.QueryRowContext(ctx, query, args...)
 	}
 	escapedQuery := strings.ReplaceAll(query, "'", "''")
 	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
@@ -2011,7 +2008,7 @@ func (s *cacheSourceSnapshot) QueryRow(query string, args ...any) *sql.Row {
 		duckQuery += ", params=row(" + placeholders + ")"
 	}
 	duckQuery += ")"
-	return s.duckTx.QueryRow(duckQuery, args...)
+	return s.duckTx.QueryRowContext(ctx, duckQuery, args...)
 }
 
 func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
@@ -2024,12 +2021,12 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 // messageSliceRelation lets SQLite use its message indexes before DuckDB
 // reads an incremental slice. Cast back to the attached schema because
 // sqlite_query transports columns as VARCHAR.
-func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after, through int64) (string, error) {
+func (s *cacheSourceSnapshot) messageSliceRelation(ctx context.Context, table, idColumn string, after, through int64) (string, error) {
 	relation := "sqlite_db." + table
 	if s.csvSnapshot || after == 0 {
 		return relation, nil
 	}
-	rows, err := s.DuckDB().Query("SELECT * FROM " + relation + " LIMIT 0")
+	rows, err := s.DuckDB().QueryContext(ctx, "SELECT * FROM "+relation+" LIMIT 0")
 	if err != nil {
 		return "", fmt.Errorf("describe message slice %s: %w", table, err)
 	}
@@ -2064,14 +2061,14 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
 // read transaction. Child tables carry only rows the build reads.
 // sqlite_scanner reads the attached database directly.
-func (s *cacheSourceSnapshot) Prepare(through int64, afterMessageIDs map[string]int64) error {
-	return s.prepareTables(s.tables(through, afterMessageIDs))
+func (s *cacheSourceSnapshot) Prepare(ctx context.Context, through int64, afterMessageIDs map[string]int64) error {
+	return s.prepareTables(ctx, s.tables(through, afterMessageIDs))
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
 // fallback path. sqlite_scanner needs no materialization. Derived refreshes
 // use this to avoid exporting unrelated multi-million-row junction tables.
-func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) error {
+func (s *cacheSourceSnapshot) PrepareDatasets(ctx context.Context, through int64, names ...string) error {
 	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
 		wanted[name] = true
@@ -2091,7 +2088,7 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 		return fmt.Errorf("prepare SQLite cache snapshot: unknown datasets %s",
 			strings.Join(missing, ", "))
 	}
-	return s.prepareTables(selected)
+	return s.prepareTables(ctx, selected)
 }
 
 func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]int64) []cacheSnapshotTable {
@@ -2180,7 +2177,7 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 	}
 }
 
-func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
+func (s *cacheSourceSnapshot) prepareTables(ctx context.Context, tables []cacheSnapshotTable) error {
 	if s.sqliteTx == nil {
 		return nil
 	}
@@ -2196,7 +2193,7 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 
 	// Create sqlite_db schema with views pointing to CSV files.
 	// This lets the existing COPY queries reference sqlite_db.tablename unchanged.
-	if _, err := s.duckDB.Exec("CREATE SCHEMA sqlite_db"); err != nil {
+	if _, err := s.duckDB.ExecContext(ctx, "CREATE SCHEMA sqlite_db"); err != nil {
 		return fmt.Errorf("create sqlite_db schema: %w", err)
 	}
 	for _, t := range tables {
@@ -2225,7 +2222,7 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 			`CREATE VIEW sqlite_db."%s" AS SELECT * FROM read_csv_auto('%s', %s)`,
 			t.name, escaped, csvOpts,
 		)
-		if _, err := s.duckDB.Exec(viewSQL); err != nil {
+		if _, err := s.duckDB.ExecContext(ctx, viewSQL); err != nil {
 			return query.HintRepairEncoding(
 				fmt.Errorf("create view sqlite_db.%s: %w", t.name, err),
 			)
@@ -2341,7 +2338,10 @@ func exportToCSV(db sqlRunner, query string, dest string, identityCols map[strin
 // rebuildCacheAfterWrite refreshes the SQLite-backed analytics cache after a
 // write operation. Cache maintenance is part of the operation result: SQLite
 // remains authoritative, but callers must surface any refresh failure.
-func rebuildCacheAfterWrite(dbPath string, state *invocation) error {
+func rebuildCacheAfterWrite(ctx context.Context, dbPath string, state *invocation) error {
+	// Callers refresh after interrupted writes too. Rows the write already
+	// committed must reach the cache even when its context was cancelled.
+	ctx = context.WithoutCancel(ctx)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -2351,11 +2351,11 @@ func rebuildCacheAfterWrite(dbPath string, state *invocation) error {
 		return nil
 	}
 	analyticsDir := cfg.AnalyticsDir()
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	staleness := cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
 	if !staleness.NeedsBuild {
 		return nil
 	}
-	result, err := buildCacheAuto(dbPath, analyticsDir, analyticsBuilderOverrides(cfg.Analytics))
+	result, err := buildCacheAuto(ctx, dbPath, analyticsDir, analyticsBuilderOverrides(cfg.Analytics))
 	if err != nil {
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
@@ -2403,7 +2403,9 @@ func rebuildCacheAfterManualSync(dbPath string, state *invocation) error {
 			"remaining", remaining.String(), "published_at", staleness.PublishedAt)
 		return nil
 	}
-	return rebuildCacheAfterWrite(dbPath, state)
+	// Manual syncs rebuild the cache even after the sync was interrupted, so
+	// the rebuild does not inherit the sync's cancellation.
+	return rebuildCacheAfterWrite(context.Background(), dbPath, state)
 }
 
 // buildCacheSubprocess runs `msgvault build-cache` as a child process

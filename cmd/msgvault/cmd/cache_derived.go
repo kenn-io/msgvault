@@ -31,7 +31,6 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
@@ -66,7 +65,7 @@ func refreshDerivedDatasetsOnly(
 	}
 	defer func() { _ = staging.cleanup() }()
 
-	st, err := store.Open(dbPath)
+	st, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for derived cache refresh: %w", err)
 	}
@@ -75,7 +74,7 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("read identity revision: %w", err)
 	}
-	derivedDataRevision, err := st.DerivedDataRevision()
+	derivedDataRevision, err := st.DerivedDataRevisionContext(ctx)
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("read derived-data revision: %w", err)
@@ -103,7 +102,7 @@ func refreshDerivedDatasetsOnly(
 		return nil, fmt.Errorf("%w: account identity revision changed",
 			ErrDerivedRefreshRequiresFullBuild)
 	}
-	participantIdentifierRevision, err := st.ParticipantIdentifierRevision()
+	participantIdentifierRevision, err := st.ParticipantIdentifierRevisionContext(ctx)
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("read participant identifier revision: %w", err)
@@ -118,7 +117,7 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("read person display-name revision: %w", err)
 	}
-	clusters, err := st.ParticipantClusters()
+	clusters, err := st.ParticipantClusters(ctx)
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("read participant clusters: %w", err)
@@ -146,7 +145,7 @@ func refreshDerivedDatasetsOnly(
 	if derivedRefreshBeforeSnapshotHook != nil {
 		derivedRefreshBeforeSnapshotHook()
 	}
-	sourceSnapshot, err := openCacheSourceSnapshot(duckDB, dbPath)
+	sourceSnapshot, err := openCacheSourceSnapshot(ctx, duckDB, dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +166,7 @@ func refreshDerivedDatasetsOnly(
 		// A late terminal sync can add children to an already-exported parent.
 		// Acknowledge its addition counter only from the same snapshot used to
 		// repair those children. Changed facts or interrupted runs remain full repairs.
-		counters, err := readCacheSyncCounters(sourceSnapshot)
+		counters, err := readCacheSyncCountersContext(ctx, sourceSnapshot)
 		if err != nil {
 			return nil, fmt.Errorf("read related-refresh sync counters: %w", err)
 		}
@@ -179,21 +178,21 @@ func refreshDerivedDatasetsOnly(
 				ErrDerivedRefreshRequiresFullBuild)
 		}
 		if counters.additions != state.LastCacheAdditionCount {
-			if err := verifyRelatedOnlyAdditions(sourceSnapshot, state); err != nil {
+			if err := verifyRelatedOnlyAdditions(ctx, sourceSnapshot, state); err != nil {
 				return nil, err
 			}
 		}
 		state.LastCacheAdditionCount = counters.additions
-		if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT seq FROM sqlite_sequence
+		if err := sourceSnapshot.QueryRowContext(ctx, `SELECT COALESCE((SELECT seq FROM sqlite_sequence
 			WHERE name = 'cache_related_change_journal'), 0)`).Scan(&relatedChangeSeq); err != nil {
 			return nil, fmt.Errorf("read related-change boundary: %w", err)
 		}
-		if err := inspectRelatedSnapshotColumns(sourceSnapshot); err != nil {
+		if err := inspectRelatedSnapshotColumns(ctx, sourceSnapshot); err != nil {
 			return nil, err
 		}
 		// The CSV fallback closes its SQLite transaction during preparation.
 		// Read journal metadata while that snapshot is still available.
-		relatedKinds, err = inspectRelatedChangeKinds(sourceSnapshot,
+		relatedKinds, err = inspectRelatedChangeKinds(ctx, sourceSnapshot,
 			state.LastRelatedChangeSeq, relatedChangeSeq, state.LastMessageID)
 		if err != nil {
 			return nil, err
@@ -212,7 +211,7 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
-	if err := sourceSnapshot.PrepareDatasets(state.LastMessageID, datasets...); err != nil {
+	if err := sourceSnapshot.PrepareDatasets(ctx, state.LastMessageID, datasets...); err != nil {
 		return nil, err
 	}
 	exportDB := sourceSnapshot.DuckDB()
@@ -279,11 +278,11 @@ func refreshDerivedDatasetsOnly(
 			Append:  map[string]bool{},
 			Replace: relatedReplacements,
 		}
-		if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+		if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 			return nil, err
 		}
 		reportCacheTextRepairs(os.Stderr, textRepairs)
-		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+		warnRelatedChangePrune(ctx, dbPath, relatedChangeSeq, derivedDataRevision)
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 	}
 
@@ -401,12 +400,12 @@ func refreshDerivedDatasetsOnly(
 			plan.Replace[dataset] = true
 		}
 	}
-	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
 	if repairRelated {
-		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+		warnRelatedChangePrune(ctx, dbPath, relatedChangeSeq, derivedDataRevision)
 	}
 	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 }
@@ -580,7 +579,6 @@ func publishDerivedCache(
 	analyticsDir string,
 	plan cachePublishPlan,
 	state query.CacheSyncState,
-	locking cachePublishLocking,
 ) error {
 	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
@@ -592,7 +590,6 @@ func publishDerivedCache(
 		plan,
 		data,
 		derivedPublishBeforeMarkerHook,
-		locking,
 	)
 }
 
@@ -603,9 +600,9 @@ func publishDerivedCache(
 // exportable message above it. The staleness check ignores a message deleted
 // at the source when it looks for new messages, so such a message above the
 // boundary would otherwise stay out of the cache.
-func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) error {
+func verifyRelatedOnlyAdditions(ctx context.Context, snapshot *cacheSourceSnapshot, state syncState) error {
 	var coveredCount int64
-	if err := snapshot.QueryRow(coveredCacheMessageCountSQL(), state.LastMessageID).
+	if err := snapshot.QueryRowContext(ctx, coveredCacheMessageCountSQL(), state.LastMessageID).
 		Scan(&coveredCount); err != nil {
 		return fmt.Errorf("check related-refresh message population: %w", err)
 	}
@@ -614,7 +611,7 @@ func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) 
 			ErrDerivedRefreshRequiresFullBuild)
 	}
 	var uncachedExportable bool
-	if err := snapshot.QueryRow(`SELECT EXISTS (SELECT 1 FROM messages WHERE id > ? AND `+
+	if err := snapshot.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM messages WHERE id > ? AND `+
 		exportableMessageWhere("")+`)`, state.LastMessageID).Scan(&uncachedExportable); err != nil {
 		return fmt.Errorf("check related-refresh message boundary: %w", err)
 	}

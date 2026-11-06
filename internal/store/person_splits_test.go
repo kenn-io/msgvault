@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -36,7 +35,7 @@ func newPersonSplitFixtureWithAbsorbedSetup(
 ) personSplitFixture {
 	t.Helper()
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	survivorParticipant, err := st.EnsureParticipant(
 		"split-survivor@example.com", "Survivor", "example.com")
@@ -158,7 +157,7 @@ func TestSplitPersonMerge_ExactReversal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 		ParticipantIDs:         f.absorbedParticipants,
@@ -227,7 +226,7 @@ func TestSplitPersonMerge_ZeroParticipantProfile(t *testing.T) {
 			require.NoError(err)
 			require.Empty(cardDAVPerson.ParticipantIDs)
 
-			localPerson := mustPromotedPerson(t, st,
+			localPerson := mustPromotedPerson(t.Context(), t, st,
 				"zero-participant-local-"+test.name+"@example.test", "Local "+test.name)
 			survivor, absorbed := localPerson, cardDAVPerson
 			if test.cardDAVIsSurvivor {
@@ -314,11 +313,11 @@ func TestSplitPersonMerge_ExactReversalIncludesLaterAbsorbedAlias(t *testing.T) 
 func TestSplitPersonMerge_ExactReversalRestoresIdentityCandidates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-candidate-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-candidate-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st, "split-candidate-other@example.com", "Other")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-candidate-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-candidate-absorbed@example.com", "Absorbed")
+	other := mustPromotedPerson(t.Context(), t, st, "split-candidate-other@example.com", "Other")
 	absorbedSource, err := st.GetOrCreateSource("gmail", "split-candidates-absorbed")
 	require.NoError(err)
 	survivorSource, err := st.GetOrCreateSource("gmail", "split-candidates-survivor")
@@ -444,13 +443,13 @@ func TestSplitPersonMerge_ExactReversalRestoresIdentityCandidates(t *testing.T) 
 func TestSplitPersonMerge_ExactReversalKeepsExternalMergeLineage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-lineage-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-lineage-absorbed@example.com", "Absorbed")
-	externalSurvivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-lineage-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-lineage-absorbed@example.com", "Absorbed")
+	externalSurvivor := mustPromotedPerson(t.Context(), t, st,
 		"split-lineage-external-survivor@example.com", "External Survivor")
-	externalAbsorbed := mustPromotedPerson(t, st,
+	externalAbsorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-lineage-external-absorbed@example.com", "External Absorbed")
 	relationshipIDs := make([]int64, 0, 2)
 	for _, personID := range []int64{survivor.ID, absorbed.ID} {
@@ -514,13 +513,13 @@ func TestSplitPersonMerge_ExactReversalKeepsExternalMergeLineage(t *testing.T) {
 func TestSplitPersonMerge_ExactReversalSkipsUnsupportedGeneratedCandidate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"split-generated-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-generated-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st,
+	other := mustPromotedPerson(t.Context(), t, st,
 		"split-generated-other@example.com", "Other")
 	absorbedSource, err := st.GetOrCreateSource("gmail", "split-generated-absorbed")
 	require.NoError(err)
@@ -591,13 +590,13 @@ func TestSplitPersonMerge_ExactReversalSkipsUnsupportedGeneratedCandidate(t *tes
 func TestSplitPersonMerge_ExactReversalSkipsIndividuallyUnsupportedEvidence(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"split-evidence-support-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-evidence-support-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st,
+	other := mustPromotedPerson(t.Context(), t, st,
 		"split-evidence-support-other@example.com", "Other")
 	removedSource, err := st.GetOrCreateSource("gmail", "split-evidence-support-removed")
 	require.NoError(err)
@@ -669,11 +668,11 @@ func TestSplitPersonMerge_ExactReversalSkipsUnsupportedEvidenceForCollapsedCandi
 ) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"split-collapsed-evidence-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-collapsed-evidence-absorbed@example.com", "Absorbed")
 	removedSource, err := st.GetOrCreateSource("gmail", "split-collapsed-evidence-removed")
 	require.NoError(err)
@@ -739,7 +738,7 @@ func TestSplitPersonMerge_ExactReversalSkipsUnsupportedEvidenceForCollapsedCandi
 func TestSplitPersonMerge_CompletedExactSplitReportsAlreadySplit(t *testing.T) {
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 		ParticipantIDs:         f.absorbedParticipants,
@@ -760,11 +759,11 @@ func TestSplitPersonMerge_CompletedExactSplitReportsAlreadySplit(t *testing.T) {
 func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesCompositeKeyJournal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-chain-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-chain-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-chain-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-chain-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-chain-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-chain-third@example.com", "Third")
 	entry, err := st.CreateDailyNoteEntryContext(ctx, store.DailyNoteEntryInput{
 		LocalDate: "2026-08-19", Body: "belongs to second", Author: "test",
 		PersonIDs: []int64{second.ID},
@@ -811,11 +810,11 @@ func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesCompositeKeyJourn
 func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesEmploymentJournal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-chain-job-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-chain-job-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-chain-job-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-chain-job-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-chain-job-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-chain-job-third@example.com", "Third")
 	organization := mustOrganization(t, st, "Split Chained Employment")
 	secondEmployment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: second.ID, OrganizationID: organization.ID,
@@ -864,11 +863,11 @@ func TestSplitPersonMerge_ExactReversalAfterChainedMergeRebasesEmploymentJournal
 func TestSplitPersonMerge_LaterSplitRebasesEarlierCompositeKeyJournal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-rebase-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-rebase-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-rebase-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-rebase-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-rebase-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-rebase-third@example.com", "Third")
 	entry, err := st.CreateDailyNoteEntryContext(ctx, store.DailyNoteEntryInput{
 		LocalDate: "2026-08-20", Body: "belongs to second", Author: "test",
 		PersonIDs: []int64{second.ID},
@@ -924,11 +923,11 @@ func TestSplitPersonMerge_LaterSplitRebasesEarlierCompositeKeyJournal(t *testing
 func TestSplitPersonMerge_LaterSplitRebasesEarlierDeduplicatedRowJournal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-dedup-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-dedup-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-dedup-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-dedup-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-dedup-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-dedup-third@example.com", "Third")
 	organization := mustOrganization(t, st, "Split Dedup Rebase Organization")
 	secondEmployment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: second.ID, OrganizationID: organization.ID,
@@ -995,11 +994,11 @@ func TestSplitPersonMerge_LaterSplitRebasesEarlierDeduplicatedRowJournal(t *test
 func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-nested-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-nested-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-nested-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-nested-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-nested-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-nested-third@example.com", "Third")
 	secondName, err := st.AddPersonNameContext(ctx, second.ID, store.PersonNameInput{
 		NameKind: store.PersonNameFormatted, Formatted: new("Nested Second"),
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -1067,11 +1066,11 @@ func TestSplitPersonMerge_LaterMergeIsPartialAfterEarlierSurvivorLineageSplit(t 
 
 func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	first := mustPromotedPerson(t, st, "split-chain-first@example.com", "First")
-	second := mustPromotedPerson(t, st, "split-chain-second@example.com", "Second")
-	third := mustPromotedPerson(t, st, "split-chain-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, st, "split-chain-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, st, "split-chain-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, st, "split-chain-third@example.com", "Third")
 	secondName, err := st.AddPersonNameContext(ctx, second.ID, store.PersonNameInput{
 		NameKind: store.PersonNameFormatted, Formatted: new("Second Profile"),
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -1129,7 +1128,7 @@ func TestSplitPersonMerge_ChainedPartialSplitsReleasePersonDeletion(t *testing.T
 func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowEdits(t *testing.T) {
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := f.store.DB().ExecContext(ctx,
 		f.store.Rebind(`UPDATE person_names SET formatted = ? WHERE id = ?`),
 		"Curated After Merge", f.absorbedNameID)
@@ -1151,10 +1150,10 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowEdits(t *testing.T) 
 func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowDeletion(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-delete-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-delete-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-delete-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-delete-absorbed@example.com", "Absorbed")
 	organization := mustOrganization(t, st, "Split Delete Organization")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: absorbed.ID, OrganizationID: organization.ID,
@@ -1199,10 +1198,10 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergeRowDeletion(t *testing.
 
 func TestSplitPersonMerge_ExactReversalRestoresDeduplicatedRows(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-job-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-job-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-job-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-job-absorbed@example.com", "Absorbed")
 	organization := mustOrganization(t, st, "Split Shared Employer")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: survivor.ID, OrganizationID: organization.ID,
@@ -1244,10 +1243,10 @@ func TestSplitPersonMerge_ExactReversalRestoresDeduplicatedRows(t *testing.T) {
 func TestSplitPersonMerge_ExactReversalPreservesDeletedDeduplicationTarget(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-deleted-dedup-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-deleted-dedup-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-deleted-dedup-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-deleted-dedup-absorbed@example.com", "Absorbed")
 	organization := mustOrganization(t, st, "Split Deleted Dedup Employer")
 	for _, personID := range []int64{survivor.ID, absorbed.ID} {
 		_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
@@ -1300,11 +1299,11 @@ func TestSplitPersonMerge_ExactReversalPreservesDeletedDeduplicationTarget(t *te
 func TestSplitPersonMerge_ExactReversalAdvancesMovedRowRevision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-revision-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-revision-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st, "split-revision-other@example.com", "Other")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-revision-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-revision-absorbed@example.com", "Absorbed")
+	other := mustPromotedPerson(t.Context(), t, st, "split-revision-other@example.com", "Other")
 	organization := mustOrganization(t, st, "Split Revision Organization")
 	original, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: absorbed.ID, OrganizationID: organization.ID,
@@ -1395,10 +1394,10 @@ func TestSplitPersonMerge_ExactReversalAdvancesMovedRowRevision(t *testing.T) {
 
 func TestSplitPersonMerge_ExactReversalReleasesPersonDeletion(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-delete-reference-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-delete-reference-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-delete-reference-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-delete-reference-absorbed@example.com", "Absorbed")
 	for personID, channel := range map[int64]string{
 		survivor.ID: "email", absorbed.ID: "chat",
 	} {
@@ -1435,7 +1434,7 @@ func TestSplitPersonMerge_ExactReversalReleasesPersonDeletion(t *testing.T) {
 func TestSplitPersonMerge_ExactReversalLeavesMissingRecordTargetInactive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newPersonMergeRecordReferenceFixture(t, "split-missing-candidate-target")
 	_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(
 		`DELETE FROM persons WHERE id = ?`), f.absorbedTarget.ID)
@@ -1462,10 +1461,10 @@ func TestSplitPersonMerge_ExactReversalLeavesMissingRecordTargetInactive(t *test
 func TestSplitPersonMerge_ExactReversalRestoresRetainedCollisionsInPlace(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-retained-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-retained-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-retained-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-retained-absorbed@example.com", "Absorbed")
 	resourceUID := "shared-resource"
 	propertyID := "shared-property"
 	sourceRef := "shared-book"
@@ -1544,10 +1543,10 @@ func TestSplitPersonMerge_ExactReversalRestoresRetainedCollisionsInPlace(t *test
 func TestSplitPersonMerge_ExactReversalFinalizesPendingCandidates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
-	survivor := mustPromotedPerson(t, f.Store, "split-candidate-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, f.Store, "split-candidate-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, f.Store, "split-candidate-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, f.Store, "split-candidate-absorbed@example.com", "Absorbed")
 	for personID, channel := range map[int64]string{survivor.ID: "email", absorbed.ID: "chat"} {
 		_, err := f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
 			PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
@@ -1588,10 +1587,10 @@ func TestSplitPersonMerge_ExactReversalFinalizesPendingCandidates(t *testing.T) 
 func TestSplitPersonMerge_ExactReversalRejectsAcceptedCandidates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
-	survivor := mustPromotedPerson(t, f.Store, "split-reviewed-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, f.Store, "split-reviewed-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, f.Store, "split-reviewed-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, f.Store, "split-reviewed-absorbed@example.com", "Absorbed")
 	for personID, channel := range map[int64]string{survivor.ID: "email", absorbed.ID: "chat"} {
 		_, err := f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
 			PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
@@ -1645,11 +1644,11 @@ func TestSplitPersonMerge_ExactReversalRejectsAcceptedAbsorbedCandidateFromEarli
 ) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
-	first := mustPromotedPerson(t, f.Store, "split-reviewed-chain-first@example.com", "First")
-	second := mustPromotedPerson(t, f.Store, "split-reviewed-chain-second@example.com", "Second")
-	third := mustPromotedPerson(t, f.Store, "split-reviewed-chain-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, f.Store, "split-reviewed-chain-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, f.Store, "split-reviewed-chain-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, f.Store, "split-reviewed-chain-third@example.com", "Third")
 	for personID, channel := range map[int64]string{first.ID: "email", second.ID: "chat"} {
 		_, err := f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
 			PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
@@ -1711,11 +1710,11 @@ func TestSplitPersonMerge_ExactReversalRejectsAcceptedAbsorbedCandidateFromEarli
 func TestSplitPersonMerge_ExactReversalAllowsCandidateAcceptedBeforeMerge(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
-	first := mustPromotedPerson(t, f.Store, "split-preaccepted-first@example.com", "First")
-	second := mustPromotedPerson(t, f.Store, "split-preaccepted-second@example.com", "Second")
-	third := mustPromotedPerson(t, f.Store, "split-preaccepted-third@example.com", "Third")
+	first := mustPromotedPerson(t.Context(), t, f.Store, "split-preaccepted-first@example.com", "First")
+	second := mustPromotedPerson(t.Context(), t, f.Store, "split-preaccepted-second@example.com", "Second")
+	third := mustPromotedPerson(t.Context(), t, f.Store, "split-preaccepted-third@example.com", "Third")
 	for personID, channel := range map[int64]string{first.ID: "email", second.ID: "chat"} {
 		_, err := f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
 			PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
@@ -1768,7 +1767,7 @@ func TestSplitPersonMerge_ExactReversalAllowsCandidateAcceptedBeforeMerge(t *tes
 
 func TestSplitPersonMerge_IdempotencyReplaysCommittedResultAfterLaterChanges(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newPersonSplitFixture(t)
 	request := store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
@@ -1817,9 +1816,9 @@ func TestSplitPersonMerge_ExactReversalRestoresTracking(t *testing.T) {
 			assert := assert.New(t)
 			ctx := t.Context()
 			st := testutil.NewTestStore(t)
-			survivor := mustPromotedPerson(t, st,
+			survivor := mustPromotedPerson(t.Context(), t, st,
 				"tracking-survivor-"+test.name+"@example.com", "Survivor")
-			absorbed := mustPromotedPerson(t, st,
+			absorbed := mustPromotedPerson(t.Context(), t, st,
 				"tracking-absorbed-"+test.name+"@example.com", "Absorbed")
 			if test.trackSurvivor {
 				_, err := st.SetPersonTrackingContext(ctx, survivor.ID, true)
@@ -1862,9 +1861,9 @@ func TestSplitPersonMerge_ExactReversalReconcilesDeduplicatedTracking(t *testing
 		assert := assert.New(t)
 		ctx := t.Context()
 		st := testutil.NewTestStore(t)
-		survivor := mustPromotedPerson(t, st,
+		survivor := mustPromotedPerson(t.Context(), t, st,
 			"tracking-change-survivor@example.com", "Survivor")
-		absorbed := mustPromotedPerson(t, st,
+		absorbed := mustPromotedPerson(t.Context(), t, st,
 			"tracking-change-absorbed@example.com", "Absorbed")
 		_, err := st.SetPersonTrackingContext(ctx, survivor.ID, true)
 		require.NoError(err)
@@ -1900,11 +1899,11 @@ func TestSplitPersonMerge_ExactReversalReconcilesDeduplicatedTracking(t *testing
 		assert := assert.New(t)
 		ctx := t.Context()
 		st := testutil.NewTestStore(t)
-		survivor := mustPromotedPerson(t, st,
+		survivor := mustPromotedPerson(t.Context(), t, st,
 			"tracking-reassign-survivor@example.com", "Survivor")
-		absorbed := mustPromotedPerson(t, st,
+		absorbed := mustPromotedPerson(t.Context(), t, st,
 			"tracking-reassign-absorbed@example.com", "Absorbed")
-		reassigned := mustPromotedPerson(t, st,
+		reassigned := mustPromotedPerson(t.Context(), t, st,
 			"tracking-reassign-target@example.com", "Target")
 		_, err := st.SetPersonTrackingContext(ctx, survivor.ID, true)
 		require.NoError(err)
@@ -1943,11 +1942,11 @@ func TestSplitPersonMerge_ExactReversalReconcilesDeduplicatedTracking(t *testing
 func TestSplitPersonMerge_ExactReversalPreservesRecreatedTracking(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"tracking-recreated-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"tracking-recreated-absorbed@example.com", "Absorbed")
 	_, err := st.SetPersonTrackingContext(ctx, absorbed.ID, true)
 	require.NoError(err)
@@ -1989,10 +1988,10 @@ func TestSplitPersonMerge_ExactReversalPreservesRecreatedTracking(t *testing.T) 
 func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-fields-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-fields-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-fields-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-fields-absorbed@example.com", "Absorbed")
 	survivorOrg := mustOrganization(t, st, "Split Survivor Primary")
 	absorbedOrg := mustOrganization(t, st, "Split Absorbed Primary")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
@@ -2044,11 +2043,11 @@ func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testi
 func TestSplitPersonMerge_ExactReversalPreservesPostMergePersonReassignment(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-reassign-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-reassign-absorbed@example.com", "Absorbed")
-	third := mustPromotedPerson(t, st, "split-reassign-third@example.com", "Third")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-reassign-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-reassign-absorbed@example.com", "Absorbed")
+	third := mustPromotedPerson(t.Context(), t, st, "split-reassign-third@example.com", "Third")
 	organization := mustOrganization(t, st, "Split Reassignment Organization")
 	absorbedEmployment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
 		PersonID: absorbed.ID, OrganizationID: organization.ID,
@@ -2100,13 +2099,13 @@ func TestSplitPersonMerge_ExactReversalPreservesPostMergePersonReassignment(t *t
 func TestSplitPersonMerge_ExactReversalSkipsDeletedRelationshipType(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"split-dependency-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-dependency-absorbed@example.com", "Absorbed")
-	reviewOwner := mustPromotedPerson(t, st,
+	reviewOwner := mustPromotedPerson(t.Context(), t, st,
 		"split-dependency-review@example.com", "Review Owner")
 	relationshipType, err := st.CreateRelationshipTypeContext(ctx,
 		store.RelationshipTypeInput{
@@ -2168,15 +2167,15 @@ func TestSplitPersonMerge_ExactReversalSkipsDeletedRelationshipType(t *testing.T
 func TestSplitPersonMerge_ExactReversalNullsMissingDependencyOnRecreatedReview(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st,
+	survivor := mustPromotedPerson(t.Context(), t, st,
 		"split-recreated-review-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st,
+	absorbed := mustPromotedPerson(t.Context(), t, st,
 		"split-recreated-review-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st,
+	other := mustPromotedPerson(t.Context(), t, st,
 		"split-recreated-review-other@example.com", "Other")
-	matched := mustPromotedPerson(t, st,
+	matched := mustPromotedPerson(t.Context(), t, st,
 		"split-recreated-review-matched@example.com", "Matched")
 	relationshipType, err := st.CreateRelationshipTypeContext(ctx,
 		store.RelationshipTypeInput{
@@ -2257,13 +2256,13 @@ func TestSplitPersonMerge_ExactReversalNullsMissingDependencyOnRecreatedReview(t
 func TestSplitPersonMerge_ExactReversalRestoresRelationshipReviewDependency(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-review-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-review-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st, "split-review-other@example.com", "Other")
-	reviewOwner := mustPromotedPerson(t, st, "split-review-owner@example.com", "Review Owner")
-	pendingOwner := mustPromotedPerson(t, st, "split-review-pending@example.com", "Pending Owner")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-review-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-review-absorbed@example.com", "Absorbed")
+	other := mustPromotedPerson(t.Context(), t, st, "split-review-other@example.com", "Other")
+	reviewOwner := mustPromotedPerson(t.Context(), t, st, "split-review-owner@example.com", "Review Owner")
+	pendingOwner := mustPromotedPerson(t.Context(), t, st, "split-review-pending@example.com", "Pending Owner")
 	survivorEdge, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
 		SourcePersonID: survivor.ID, TargetPersonID: other.ID, TypeSlug: "friend",
 		Source: store.ProvenanceUser, Actor: "test",
@@ -2345,11 +2344,11 @@ func TestSplitPersonMerge_ExactReversalRestoresRelationshipReviewDependency(t *t
 
 func TestSplitPersonMerge_ExactReversalRestoresIdentityEvidenceDependency(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "split-evidence-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "split-evidence-absorbed@example.com", "Absorbed")
-	other := mustPromotedPerson(t, st, "split-evidence-other@example.com", "Other")
+	survivor := mustPromotedPerson(t.Context(), t, st, "split-evidence-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "split-evidence-absorbed@example.com", "Absorbed")
+	other := mustPromotedPerson(t.Context(), t, st, "split-evidence-other@example.com", "Other")
 	source, err := st.GetOrCreateSource("gmail", "split-evidence")
 	require.NoError(err)
 	input := func(personID int64) store.IdentityMatchCandidateInput {
@@ -2403,7 +2402,7 @@ func TestSplitPersonMerge_Partial(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	postMergeName, err := f.store.AddPersonNameContext(ctx, f.survivor.ID, store.PersonNameInput{
 		NameKind: store.PersonNameFormatted, Formatted: new("Post Merge"),
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -2445,7 +2444,7 @@ func TestSplitPersonMerge_PartialRejectsAcceptedCandidateAcrossBoundary(t *testi
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	selected := f.absorbedParticipants[0]
 	retained := f.absorbedParticipants[1]
 	_, err := f.store.UnlinkParticipants(selected, retained)
@@ -2481,7 +2480,7 @@ func TestSplitPersonMerge_PartialReplayExcludesSurvivorJournalRows(t *testing.T)
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(`UPDATE person_merge_rows
 		SET origin_side = 'survivor'
 		WHERE merge_id = ? AND table_name = 'person_names' AND original_row_id = ?`),
@@ -2507,7 +2506,7 @@ func TestSplitPersonMerge_PartialReplayExcludesSurvivorJournalRows(t *testing.T)
 
 func TestSplitPersonMerge_CutsIdentityLinks(t *testing.T) {
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 		ParticipantIDs:         []int64{f.absorbedParticipants[0]},
@@ -2524,7 +2523,7 @@ func TestSplitPersonMerge_SequentialPartialSplitsReleasePersonDeletion(t *testin
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	first, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 		ParticipantIDs:         []int64{f.absorbedParticipants[0]},
@@ -2549,7 +2548,7 @@ func TestSplitPersonMerge_SequentialPartialSplitsReleasePersonDeletion(t *testin
 func TestSplitPersonMerge_Validation(t *testing.T) {
 	require := require.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	base := store.PersonSplitRequest{
 		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 		ParticipantIDs:         []int64{f.absorbedParticipants[0]},
@@ -2598,7 +2597,7 @@ func TestSplitPersonMerge_Validation(t *testing.T) {
 func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	survivorParticipant := f.EnsureParticipant(
 		"split-activity-survivor@example.com", "Survivor", "example.com")
 	absorbedParticipant := f.EnsureParticipant(
@@ -2698,7 +2697,7 @@ func TestSplitPersonMerge_RecomputesAbsorbedActivityRemovedByOwnerMerge(t *testi
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	ownerParticipant := f.EnsureParticipant(
 		"split-owner-merge@example.com", "Owner", "example.com")
 	absorbedParticipant := f.EnsureParticipant(
@@ -2764,7 +2763,7 @@ func TestSplitPersonMerge_Rollback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPersonSplitFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if f.store.IsPostgreSQL() {
 		_, err := f.store.DB().ExecContext(ctx, `
 			CREATE FUNCTION fail_person_split_name() RETURNS trigger AS $$
@@ -2811,7 +2810,7 @@ func TestPersonSplitConcurrencySplitSplit(t *testing.T) {
 	results := make(chan error, 2)
 	for _, key := range []string{"concurrent-split-a", "concurrent-split-b"} {
 		go func() {
-			_, err := f.store.SplitPersonMergeContext(context.Background(), store.PersonSplitRequest{
+			_, err := f.store.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 				SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 				ParticipantIDs:         f.absorbedParticipants,
 				ExpectedSourceRevision: f.survivor.Revision,
@@ -2831,7 +2830,7 @@ func TestPersonSplitConcurrencySplitSplit(t *testing.T) {
 				"loser must report a typed stale-lineage error: %v", err)
 		}
 	}
-	current, err := f.store.GetPersonContext(context.Background(), f.survivor.ID)
+	current, err := f.store.GetPersonContext(t.Context(), f.survivor.ID)
 	require.NoError(err)
 	assert.Equal(f.survivor.Revision+1, current.Revision)
 	assertPersonSplitConcurrencyState(t, f.store, 1)
@@ -2845,7 +2844,7 @@ func TestPersonSplitConcurrencyProfileUpdate(t *testing.T) {
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := f.store.SplitPersonMergeContext(context.Background(), store.PersonSplitRequest{
+		_, err := f.store.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 			SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 			ParticipantIDs:         f.absorbedParticipants,
 			ExpectedSourceRevision: f.survivor.Revision,
@@ -2856,17 +2855,17 @@ func TestPersonSplitConcurrencyProfileUpdate(t *testing.T) {
 	go func() {
 		<-start
 		_, err := f.store.UpdatePersonDisplayNameContext(
-			context.Background(), f.survivor.ID, f.survivor.Revision, new("Concurrent Name"))
+			t.Context(), f.survivor.ID, f.survivor.Revision, new("Concurrent Name"))
 		results <- err
 	}()
 	close(start)
 	errs := []error{<-results, <-results}
 	assert.Equal(1, countNilErrors(errs), "split and stale profile update cannot both commit")
-	current, err := f.store.GetPersonContext(context.Background(), f.survivor.ID)
+	current, err := f.store.GetPersonContext(t.Context(), f.survivor.ID)
 	require.NoError(err)
 	assert.Equal(f.survivor.Revision+1, current.Revision)
 	var splitCount int
-	require.NoError(f.store.DB().QueryRow(`SELECT COUNT(*) FROM person_splits`).Scan(&splitCount))
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_splits`).Scan(&splitCount))
 	assert.Contains([]int{0, 1}, splitCount)
 	assertPersonSplitConcurrencyState(t, f.store, splitCount)
 }
@@ -2876,12 +2875,12 @@ func assertPersonSplitConcurrencyState(t *testing.T, st *store.Store, wantSplits
 	require := require.New(t)
 	assert := assert.New(t)
 	var splitCount, orphanRows, orphanParticipants int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_splits`).Scan(&splitCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_splits`).Scan(&splitCount))
 	assert.Equal(wantSplits, splitCount)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_merge_rows row_record
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_merge_rows row_record
 		LEFT JOIN person_merges merge_record ON merge_record.id = row_record.merge_id
 		WHERE merge_record.id IS NULL`).Scan(&orphanRows))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_merge_participants lineage
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_merge_participants lineage
 		LEFT JOIN person_merges merge_record ON merge_record.id = lineage.merge_id
 		WHERE merge_record.id IS NULL`).Scan(&orphanParticipants))
 	assert.Zero(orphanRows)
@@ -2903,9 +2902,9 @@ func TestSplitPersonMerge_ExactReversalRestoresBriefEnrollment(t *testing.T) {
 			assert := assert.New(t)
 			ctx := t.Context()
 			st := testutil.NewTestStore(t)
-			survivor := mustPromotedPerson(t, st,
+			survivor := mustPromotedPerson(t.Context(), t, st,
 				"brief-split-survivor-"+test.name+"@example.com", "Survivor")
-			absorbed := mustPromotedPerson(t, st,
+			absorbed := mustPromotedPerson(t.Context(), t, st,
 				"brief-split-absorbed-"+test.name+"@example.com", "Absorbed")
 			if test.enrollSurvivor {
 				_, err := st.SetPersonBriefEnrollmentContext(ctx, survivor.ID, true, "owner", true)
@@ -2945,8 +2944,8 @@ func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testi
 	assert := assert.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	survivor := mustPromotedPerson(t, st, "brief-replaced-survivor@example.com", "Survivor")
-	absorbed := mustPromotedPerson(t, st, "brief-replaced-absorbed@example.com", "Absorbed")
+	survivor := mustPromotedPerson(t.Context(), t, st, "brief-replaced-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t.Context(), t, st, "brief-replaced-absorbed@example.com", "Absorbed")
 	_, err := st.SetPersonBriefEnrollmentContext(ctx, absorbed.ID, true, "owner", true)
 	require.NoError(err)
 	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{

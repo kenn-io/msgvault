@@ -60,7 +60,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -82,17 +82,17 @@ Examples:
 				rerr := repairDerivedSource(ctx, cmd.OutOrStdout(), s, src)
 				if ctx.Err() != nil {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run repair-derived to finish (idempotent).")
-					return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+					return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 				}
 				if rerr != nil {
 					return errors.Join(
 						fmt.Errorf("repair failed for %s: %w", label, rerr),
-						rebuildCacheAfterWrite(cfg.DatabaseDSN(), state),
+						rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state),
 					)
 				}
 			}
 
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+			return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 		},
 	}
 	cmd.Flags().StringArrayVar(&repairDerivedSourceTypes, "source-type", nil,

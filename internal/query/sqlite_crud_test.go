@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -126,6 +128,59 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.filter.HasEmptyTargets())
+		})
+	}
+}
+
+func TestListMessagesBySourceUsesSourceTimelineIndex(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	for _, tc := range []struct {
+		name   string
+		filter MessageFilter
+		index  string
+		scoped bool
+	}{
+		{"source", MessageFilter{}, "idx_messages_source_sent_at", true},
+		{"conversation", MessageFilter{ConversationID: new(int64(1))}, "idx_messages_conversation", false},
+		{"date range", MessageFilter{After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))}, "idx_messages_source_sent_at", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dialect := &rebindRecordingDialect{Dialect: SQLiteQueryDialect{}}
+			engine := NewEngineWithDialect(env.DB, dialect)
+			if !tc.scoped {
+				tc.filter.SourceID = new(int64(1))
+			}
+			tc.filter.Sorting = MessageSorting{Field: MessageSortByDate, Direction: SortDesc}
+			tc.filter.Pagination = Pagination{Limit: 100}
+			ctx := env.Ctx
+			if tc.scoped {
+				ctx = sourcescope.WithSourceIDs(ctx, []int64{1})
+			}
+			_, err := engine.ListMessages(ctx, tc.filter)
+			require.NoError(err)
+			require.NotEmpty(dialect.queries)
+			args := make([]any, strings.Count(dialect.queries[0], "?"))
+			for i := range args {
+				args[i] = 1
+			}
+			rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+dialect.queries[0], args...)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				if parent == 0 {
+					plan = append(plan, detail)
+				}
+			}
+			require.NoError(rows.Err())
+			assert.Contains(strings.Join(plan, "\n"), "USING INDEX "+tc.index)
+			assert.NotContains(strings.Join(plan, "\n"), "USE TEMP B-TREE FOR ORDER BY")
 		})
 	}
 }
@@ -250,9 +305,9 @@ func TestGetMessage(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	_, err := env.DB.Exec(`UPDATE messages SET is_from_me = TRUE WHERE id = 1`)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET is_from_me = TRUE WHERE id = 1`)
 	require.NoError(err, "mark message as sent by the account owner")
-	_, err = env.DB.Exec(`UPDATE conversations SET title = 'Team chat' WHERE id = (SELECT conversation_id FROM messages WHERE id = 1)`)
+	_, err = env.DB.ExecContext(t.Context(), `UPDATE conversations SET title = 'Team chat' WHERE id = (SELECT conversation_id FROM messages WHERE id = 1)`)
 	require.NoError(err)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
@@ -294,7 +349,7 @@ func TestGetMessageWithURLBackedAttachment(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
 		VALUES (1, 'deck.pptx', 'reference', 0, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'https://sp/deck.pptx')
 	`)
@@ -314,7 +369,7 @@ func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	result, err := env.DB.Exec(`
+	result, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
 		VALUES (1, 'recording.mp4', 'video/mp4', 0, 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd', 'https://sp/recording.mp4')
 	`)
@@ -336,7 +391,7 @@ func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
 	env := newTestEnv(t)
 	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
 		VALUES (1, 'report.pdf', 'application/pdf', 123, ?, '01/report.pdf')
 	`, hash)
@@ -359,12 +414,12 @@ func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {
 	hash := strings.Repeat("ab", 32)
 	storagePath := hash[:2] + "/" + hash
 
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path, source_attachment_id)
 		VALUES (1, 'owner.bin', 'application/octet-stream', 12, ?, ?, 'discord:owner')
 	`, hash, storagePath)
 	require.NoError(err)
-	aliasResult, err := env.DB.Exec(`
+	aliasResult, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path, source_attachment_id)
 		VALUES (1, 'alias.bin', 'application/octet-stream', 12, '', ?, 'discord:alias')
 	`, storagePath)
@@ -435,7 +490,7 @@ func TestListAccountsLastSyncAt(t *testing.T) {
 	checks.Nil(accounts[0].LastSyncAt, "never-synced source has no last sync time")
 
 	syncedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-	_, err = env.DB.Exec(`UPDATE sources SET last_sync_at = ? WHERE id = ?`, syncedAt, accounts[0].ID)
+	_, err = env.DB.ExecContext(t.Context(), `UPDATE sources SET last_sync_at = ? WHERE id = ?`, syncedAt, accounts[0].ID)
 	must.NoError(err, "set last_sync_at")
 
 	accounts, err = env.Engine.ListAccounts(env.Ctx)
@@ -759,7 +814,7 @@ func TestMatchEmptySenderName_MixedFromRecipients(t *testing.T) {
 	nullID := env.AddParticipant(dbtest.ParticipantOpts{Email: nil, DisplayName: nil, Domain: ""})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Mixed From", SentAt: "2024-06-01 10:00:00", FromID: aliceID})
 	lastMsgID := env.LastMessageID()
-	_, err := env.DB.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`, lastMsgID, nullID)
+	_, err := env.DB.ExecContext(t.Context(), `INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`, lastMsgID, nullID)
 	require.NoError(t, err, "insert")
 
 	filter := MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)}
@@ -814,13 +869,14 @@ func TestGetDeletionTargetsByFilterExcludesPortableArchiveOnlyMarker(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO source_merge_archive_only_messages (message_id) VALUES (1)
 	`)
 	require.NoError(err)
 
 	var provenanceCount int
-	require.NoError(env.DB.QueryRow(
+	require.NoError(env.DB.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM source_merge_messages WHERE message_id = 1`,
 	).Scan(&provenanceCount))
 	assert.Zero(provenanceCount, "subset archives may retain a portable marker without merge provenance")
@@ -848,7 +904,7 @@ func TestGetDeletionTargetsByFilter_DomainIsCaseInsensitive(t *testing.T) {
 func TestGetDeletionTargetsByFilter_ConversationID(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO conversations (
 			id, source_id, source_conversation_id, conversation_type, title
 		) VALUES (2, 1, 'thread2', 'email_thread', 'Other Thread');
@@ -870,7 +926,7 @@ func TestSQLiteEngine_ListIDScopesFastSearchAndDeletionLiterally(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN 1 THEN '<dev_1@example.test>'
 		WHEN 2 THEN '<DEV_1@EXAMPLE.TEST>'
 		WHEN 3 THEN '<devA1@example.test>'
@@ -908,7 +964,7 @@ func TestSQLiteEngine_GetDeletionTargetsByAggregateSearch_List(t *testing.T) {
 	require := require.New(t)
 	env := newTestEnv(t)
 	listID := "<dev@example.test>"
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, listID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, listID)
 	require.NoError(err)
 
 	targets, err := env.Engine.GetDeletionTargetsByAggregateSearch(
@@ -1285,7 +1341,7 @@ func TestGetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
 // It returns the message subject. Used to prove that combining a Sender (email)
 // filter with a SenderName filter binds BOTH to the SAME from-row rather than
 // matching across different authors of a multi-author message.
-func addMultiAuthorMessage(env *testEnv, subject string) string {
+func addMultiAuthorMessage(ctx context.Context, env *testEnv, subject string) string {
 	authorAID := env.AddParticipant(dbtest.ParticipantOpts{
 		Email:       new("author-a@example.com"),
 		DisplayName: new("Author A"),
@@ -1300,7 +1356,8 @@ func addMultiAuthorMessage(env *testEnv, subject string) string {
 	// AddMessage's FromID inserts the first 'from' row (Author A); add the
 	// second 'from' row (Author B) manually so the message has two authors.
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: subject, SentAt: "2024-06-10 10:00:00", FromID: authorAID})
-	_, err := env.DB.Exec(
+	_, err := env.DB.ExecContext(
+		ctx,
 		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`,
 		msgID, authorBID,
 	)
@@ -1317,7 +1374,7 @@ func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	subject := addMultiAuthorMessage(env, "Two Authors")
+	subject := addMultiAuthorMessage(t.Context(), env, "Two Authors")
 
 	// Cross-row: email on Author A's row, name on Author B's row. The pre-fix
 	// builder emitted two independent EXISTS and matched; the fix must not.
@@ -1348,7 +1405,7 @@ func TestGetDeletionTargetsByFilter_SenderEmailAndName_SameFromRow(t *testing.T)
 	require := require.New(t)
 	env := newTestEnv(t)
 
-	addMultiAuthorMessage(env, "Two Authors GID")
+	addMultiAuthorMessage(t.Context(), env, "Two Authors GID")
 	crossRowMsgID := env.LastMessageID()
 	crossRowGmailID := fmt.Sprintf("msg%d", crossRowMsgID)
 
@@ -2063,7 +2120,8 @@ func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
 		{messageID: message2, body: "ordinary nonmatching second body"},
 		{messageID: message3, body: "scopedbodyneedle appears only in the third body"},
 	} {
-		_, err := env.DB.Exec(
+		_, err := env.DB.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`,
 			fixture.messageID, fixture.body,
 		)
@@ -2077,7 +2135,7 @@ func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
 		{messageID: message1, size: 11, path: "01/first"},
 		{messageID: message3, size: 33, path: "03/third"},
 	} {
-		_, err := env.DB.Exec(`
+		_, err := env.DB.ExecContext(t.Context(), `
 			INSERT INTO attachments (message_id, filename, mime_type, size, storage_path)
 			VALUES (?, 'transcript.txt', 'text/plain', ?, ?)
 		`, fixture.messageID, fixture.size, fixture.path)
@@ -2278,7 +2336,7 @@ func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = ? WHERE id = ?`, "sms", int64(2))
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = ? WHERE id = ?`, "sms", int64(2))
 	require.NoError(t, err, "mark message as sms")
 
 	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "message_type:sms Hello"})
@@ -2329,7 +2387,7 @@ func TestSearchFastWithStats_MessageTypeStats(t *testing.T) {
 		SentAt:       "2024-04-01 10:00:00",
 		SizeEstimate: 321,
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = 'sms' WHERE id = ?`, smsID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = 'sms' WHERE id = ?`, smsID)
 	require.NoError(err, "set sms message_type")
 
 	q := search.Parse("message_type:sms")
@@ -2350,7 +2408,8 @@ func TestGetMessageRaw(t *testing.T) {
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Raw Test", SentAt: "2024-06-01 12:00:00"})
-	_, err := env.DB.Exec(
+	_, err := env.DB.ExecContext(
+		t.Context(),
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
 	)
@@ -2377,12 +2436,14 @@ func TestGetMessageRaw_ServesDeletedFromSource(t *testing.T) {
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Deleted", SentAt: "2024-06-01 12:00:00"})
-	_, err := env.DB.Exec(
+	_, err := env.DB.ExecContext(
+		t.Context(),
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
 	)
 	require.NoError(err, "insert message_raw")
-	_, err = env.DB.Exec(
+	_, err = env.DB.ExecContext(
+		t.Context(),
 		`UPDATE messages SET deleted_from_source_at = '2024-06-02 12:00:00' WHERE id = ?`,
 		msgID,
 	)
@@ -2400,12 +2461,14 @@ func TestGetMessageRaw_FiltersInternallyDeleted(t *testing.T) {
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Dedup loser", SentAt: "2024-06-01 12:00:00"})
-	_, err := env.DB.Exec(
+	_, err := env.DB.ExecContext(
+		t.Context(),
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
 	)
 	require.NoError(err, "insert message_raw")
-	_, err = env.DB.Exec(
+	_, err = env.DB.ExecContext(
+		t.Context(),
 		`UPDATE messages SET deleted_at = '2024-06-02 12:00:00' WHERE id = ?`,
 		msgID,
 	)
@@ -2425,7 +2488,8 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 	env := newTestEnv(t)
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Soft-deleted", SentAt: "2024-06-01 12:00:00"})
-	_, err := env.DB.Exec(
+	_, err := env.DB.ExecContext(
+		t.Context(),
 		`UPDATE messages SET deleted_from_source_at = '2024-06-02 12:00:00' WHERE id = ?`,
 		msgID,
 	)
@@ -2477,7 +2541,7 @@ func TestGetDeletionTargetsByMessageIDsPreservesDuplicateGmailIDSource(t *testin
 		SourceID: sourceID, ConversationID: conversationID,
 		Subject: "Same remote ID", SentAt: "2024-06-01 12:00:00",
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET source_message_id = 'msg1' WHERE id = ?`, messageID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET source_message_id = 'msg1' WHERE id = ?`, messageID)
 	require.NoError(err)
 
 	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{messageID})
@@ -2493,9 +2557,9 @@ func TestDeletionTargetResolversExcludeArchiveOnlyMergeHistory(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
 	// Subsets preserve this portable marker even when merge provenance is omitted.
-	_, err := env.DB.Exec(`INSERT INTO source_merge_archive_only_messages(message_id) VALUES (1)`)
+	_, err := env.DB.ExecContext(t.Context(), `INSERT INTO source_merge_archive_only_messages(message_id) VALUES (1)`)
 	require.NoError(t, err)
-	_, err = env.DB.Exec(`UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, "<dev@example.test>")
+	_, err = env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, "<dev@example.test>")
 	require.NoError(t, err)
 	env.EnableFTS()
 
@@ -2549,26 +2613,26 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Non-Gmail source message.
-	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
+	_, err := env.DB.ExecContext(t.Context(), `INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
 	require.NoError(err, "insert whatsapp source")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (901, 1, 99, 'wa-1', 'whatsapp', '2024-01-01')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (901, 1, 99, 'wa-1', 'whatsapp', '2024-01-01')`)
 	require.NoError(err, "insert whatsapp message")
 
 	// Remote-deleted and dedup-soft-deleted Gmail messages (source 1 = test@gmail.com).
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (902, 1, 1, 'gone-1', 'email', '2024-01-02', '2024-06-01')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (902, 1, 1, 'gone-1', 'email', '2024-01-02', '2024-06-01')`)
 	require.NoError(err, "insert source-deleted message")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
 	require.NoError(err, "insert dedup-deleted message")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (904, 1, 1, '', 'email', '2024-01-04')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (904, 1, 1, '', 'email', '2024-01-04')`)
 	require.NoError(err, "insert message without provider ID")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (905, 1, 1, 'legacy-empty', '', '2024-01-05')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (905, 1, 1, 'legacy-empty', '', '2024-01-05')`)
 	require.NoError(err, "insert legacy empty-type message")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (?, 1, 1, 'chat-1', ?, '2024-01-07')`, 907, store.MessageTypeGoogleChat)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (?, 1, 1, 'chat-1', ?, '2024-01-07')`, 907, store.MessageTypeGoogleChat)
 	require.NoError(err, "insert Gmail Chat message")
 
-	_, err = env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'msmail', 'm@example.com'), (97, 'imap', 'i@example.com')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO sources (id, source_type, identifier) VALUES (98, 'msmail', 'm@example.com'), (97, 'imap', 'i@example.com')`)
 	require.NoError(err, "insert msmail and imap sources")
-	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (908, 1, 98, 'AAMk-1', 'email', '2024-01-08'), (909, 1, 97, 'INBOX|1', 'email', '2024-01-09')`)
+	_, err = env.DB.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (908, 1, 98, 'AAMk-1', 'email', '2024-01-08'), (909, 1, 97, 'INBOX|1', 'email', '2024-01-09')`)
 	require.NoError(err, "insert msmail and imap messages")
 
 	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904, 905, 907, 908, 909})

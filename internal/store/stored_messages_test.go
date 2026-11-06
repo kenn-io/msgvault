@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -41,7 +40,7 @@ func persistStoredMessage(
 func TestStoredMessagesContext(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("whatsapp", "+15555550100")
@@ -76,7 +75,8 @@ func TestStoredMessagesContext(t *testing.T) {
 	_, foreign := stored["foreign"]
 	assert.False(foreign, "another source's message with the same ID is excluded")
 
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 		[]byte("not zlib"), firstID,
 	)
@@ -99,7 +99,7 @@ func TestStoredMessagesContext(t *testing.T) {
 func TestMessageContentMatchesContext(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("whatsapp", "+15555550100")
@@ -160,9 +160,56 @@ func TestMessageContentMatchesContext(t *testing.T) {
 	if st.IsPostgreSQL() {
 		clearDocument = `UPDATE messages SET search_fts = NULL WHERE id = ?`
 	}
-	_, err = st.DB().Exec(st.Rebind(clearDocument), id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(clearDocument), id)
 	require.NoError(err)
 	absent, err := st.MessageContentMatchesContext(ctx, id, body, doc)
 	require.NoError(err)
 	assert.False(absent, "a message without a search document never matches")
+}
+
+func TestStoredMessageMatches(t *testing.T) {
+	instant := sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 123456789, time.UTC), Valid: true}
+	message := &store.Message{
+		ConversationID: 1, SenderID: sql.NullInt64{Int64: 2, Valid: true},
+		IsFromMe: true, MessageType: "sms", SentAt: instant, InternalDate: instant,
+		Snippet: sql.NullString{String: "hello", Valid: true}, SizeEstimate: 5,
+	}
+	stored := store.StoredMessage{
+		ConversationID: 1, SenderID: sql.NullInt64{Int64: 2, Valid: true},
+		SourceIsFromMe: sql.NullBool{Bool: true, Valid: true}, MessageType: "sms",
+		SentAt: instant, InternalDate: instant,
+		Snippet: sql.NullString{String: "hello", Valid: true}, SizeEstimate: 5, Raw: []byte(`{"body":"hello"}`),
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*store.StoredMessage)
+		want   bool
+	}{
+		{"same", func(*store.StoredMessage) {}, true},
+		{"conversation", func(s *store.StoredMessage) { s.ConversationID++ }, false},
+		{"sender", func(s *store.StoredMessage) { s.SenderID.Int64++ }, false},
+		{"sender validity", func(s *store.StoredMessage) { s.SenderID.Valid = false }, false},
+		{"direction", func(s *store.StoredMessage) { s.SourceIsFromMe.Bool = false }, false},
+		{"direction validity", func(s *store.StoredMessage) { s.SourceIsFromMe.Valid = false }, false},
+		{"type", func(s *store.StoredMessage) { s.MessageType = "imessage" }, false},
+		{"sent date", func(s *store.StoredMessage) { s.SentAt.Time = s.SentAt.Time.Add(time.Second) }, false},
+		{"sent date validity", func(s *store.StoredMessage) { s.SentAt.Valid = false }, false},
+		{"internal date", func(s *store.StoredMessage) { s.InternalDate.Time = s.InternalDate.Time.Add(time.Second) }, false},
+		{"internal date validity", func(s *store.StoredMessage) { s.InternalDate.Valid = false }, false},
+		{"snippet", func(s *store.StoredMessage) { s.Snippet.String = "edited" }, false},
+		{"snippet validity", func(s *store.StoredMessage) { s.Snippet.Valid = false }, false},
+		{"size", func(s *store.StoredMessage) { s.SizeEstimate++ }, false},
+		{"raw", func(s *store.StoredMessage) { s.Raw = []byte(`{"body":"edited"}`) }, false},
+		{"microsecond precision", func(s *store.StoredMessage) {
+			s.SentAt.Time = s.SentAt.Time.Truncate(time.Microsecond)
+			s.InternalDate.Time = s.InternalDate.Time.Round(time.Microsecond)
+		}, true},
+		{"microsecond boundary", func(s *store.StoredMessage) { s.SentAt.Time = s.SentAt.Time.Add(time.Microsecond) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := stored
+			tc.change(&candidate)
+			assert.Equal(t, tc.want, candidate.Matches(message, []byte(`{"body":"hello"}`)))
+		})
+	}
 }

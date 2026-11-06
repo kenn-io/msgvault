@@ -32,16 +32,16 @@ func (r *participantResolver) resolve(ctx context.Context, id *Identity) (int64,
 	var err error
 	switch id.UserIdentityType {
 	case "emailUser":
-		pid, err = r.byEmail(id.ID, id.DisplayName)
+		pid, err = r.byEmail(ctx, id.ID, id.DisplayName)
 	case "aadUser", "onPremiseAadUser":
 		email := r.lookupMail(ctx, id.ID)
 		if email != "" {
-			pid, err = r.byEmail(email, id.DisplayName)
+			pid, err = r.byEmail(ctx, email, id.DisplayName)
 		} else {
-			pid, err = r.store.EnsureParticipantByIdentifier("teams", id.ID, id.DisplayName)
+			pid, err = r.store.EnsureParticipantByIdentifierContext(ctx, "teams", id.ID, id.DisplayName)
 		}
 	default:
-		pid, err = r.store.EnsureParticipantByIdentifier("teams", id.ID, id.DisplayName)
+		pid, err = r.store.EnsureParticipantByIdentifierContext(ctx, "teams", id.ID, id.DisplayName)
 	}
 	if err != nil {
 		return 0, err
@@ -50,10 +50,10 @@ func (r *participantResolver) resolve(ctx context.Context, id *Identity) (int64,
 	return pid, nil
 }
 
-func (r *participantResolver) byEmail(email, displayName string) (int64, error) {
+func (r *participantResolver) byEmail(ctx context.Context, email, displayName string) (int64, error) {
 	_, domain, _ := strings.CutLast(email, "@")
 	domain = strings.ToLower(domain)
-	return r.store.EnsureParticipant(strings.ToLower(email), displayName, domain)
+	return r.store.EnsureParticipantContext(ctx, strings.ToLower(email), displayName, domain)
 }
 
 func (r *participantResolver) lookupMail(ctx context.Context, objectID string) string {
@@ -91,7 +91,7 @@ func (r *participantResolver) resolveMember(ctx context.Context, m ChatMember) (
 	var pid int64
 	var err error
 	if m.Email != "" {
-		pid, err = r.byEmail(m.Email, m.DisplayName)
+		pid, err = r.byEmail(ctx, m.Email, m.DisplayName)
 	} else {
 		pid, err = r.resolve(ctx, &Identity{ID: id, DisplayName: m.DisplayName, UserIdentityType: "aadUser"})
 	}

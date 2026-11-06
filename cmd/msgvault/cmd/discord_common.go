@@ -22,6 +22,7 @@ const sourceTypeDiscord = "discord"
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps
 	openStore            func() (*store.Store, func(), error)
+	openReadOnlyStore    func() (*store.Store, func(), error)
 	tokenManager         func() *discord.TokenManager
 	apiBaseURL           func() string
 	providerConfig       func() config.DiscordConfig
@@ -29,7 +30,7 @@ type discordCommandDeps struct {
 	databaseDSN          func() string
 	rebuildCache         func(string) error
 	postSourceMigrations func(*store.Store) error
-	registerGuild        func(*store.Store, discord.Guild, string) error
+	registerGuild        func(context.Context, *store.Store, discord.Guild, string) error
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
@@ -44,11 +45,14 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 	}
 	return discordCommandDeps{
 		bind: defaultDiscordCommandDepsForContext,
+		openReadOnlyStore: func() (*store.Store, func(), error) {
+			return openReadOnlyStoreForInvocation(ctx, state)
+		},
 		openStore: func() (*store.Store, func(), error) {
 			if state == nil || currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
 			}
-			return openWritableStoreAndInitForIngestInvocation(state)
+			return openWritableStoreAndInitForIngestInvocation(ctx, state)
 		},
 		tokenManager: func() *discord.TokenManager {
 			if currentCfg == nil {
@@ -82,7 +86,7 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 			return rebuildCacheAfterManualSync(dbPath, state)
 		},
 		postSourceMigrations: func(st *store.Store) error {
-			return runPostSourceCreateMigrationsForInvocation(st, state)
+			return runPostSourceCreateMigrationsForInvocation(ctx, st, state)
 		},
 		registerGuild: registerDiscordGuild,
 	}
@@ -98,7 +102,11 @@ func matchesDiscordSourceAliasOrDisplayName(source *store.Source, selector strin
 }
 
 func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, error) {
-	sources, err := st.ListSources(sourceTypeDiscord)
+	return resolveDiscordSourcesContext(context.Background(), st, selector)
+}
+
+func resolveDiscordSourcesContext(ctx context.Context, st *store.Store, selector string) ([]*store.Source, error) {
+	sources, err := st.ListSourcesContext(ctx, sourceTypeDiscord)
 	if err != nil {
 		return nil, fmt.Errorf("list Discord sources: %w", err)
 	}

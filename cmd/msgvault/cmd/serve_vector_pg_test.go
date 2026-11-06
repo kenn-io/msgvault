@@ -3,19 +3,56 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestRunServePostgreSQLSkipsSQLiteMaintenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	_, dsn := openServePGSchema(t)
+	clearServerKeyEnvironment(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DatabaseURL = dsn
+	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Analytics.AutoBuildCache = false
+
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(t.Context())
+	state := testInvocationWithConfig(cfg)
+	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	command := &cobra.Command{Use: "serve"}
+	command.SetContext(withInvocation(ctx, state))
+	done := make(chan error, 1)
+	go func() { done <- runServe(command, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(err)
+		case <-time.After(serveLifecycleTestTimeout):
+			require.FailNow("daemon did not stop")
+		}
+		assert.NotContains(logs.String(), "failed to start SQLite maintenance")
+	})
+	waitForServeHealthBounded(t, cfg.Server.APIPort, done)
+}
 
 // openServePGSchema creates an isolated per-test schema on
 // MSGVAULT_TEST_DB and returns a pgx *sql.DB scoped to it plus the
@@ -38,7 +75,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 	setup, err := sql.Open("pgx", url)
 	require.NoError(t, err, "open setup")
 	defer func() { _ = setup.Close() }()
-	_, err = setup.Exec("CREATE SCHEMA " + schemaName)
+	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoError(t, err, "create schema")
 
 	sep := "?"
@@ -49,6 +86,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 
 	db, err := sql.Open("pgx", testURL)
 	require.NoError(t, err, "open")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		_ = db.Close()
 		cleanup, err := sql.Open("pgx", url)
@@ -56,7 +94,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 			return
 		}
 		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.Exec("DROP SCHEMA " + schemaName + " CASCADE")
+		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schemaName+" CASCADE")
 	})
 	return db, testURL
 }
@@ -116,10 +154,10 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	// that the embedding tables exist.
 	var n int
 	require.NoError(
-		db.QueryRow(`SELECT COUNT(*) FROM index_generations`).Scan(&n),
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM index_generations`).Scan(&n),
 		"index_generations must exist after setupVectorFeatures migrated the pgvector schema")
 
 	require.NoError(
-		db.QueryRow(`SELECT COUNT(*) FROM embed_watermark`).Scan(&n),
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embed_watermark`).Scan(&n),
 		"embed_watermark must exist after setupVectorFeatures migrated the pgvector schema")
 }

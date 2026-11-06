@@ -10,9 +10,12 @@ and the things you want to remember in one profile. Start in the Web UI's
 choose **Save** in their header. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
+Google resource addresses not linked to a person are excluded from observed people regardless of `exclude_domain_patterns`; their addresses stay searchable.
+
 | I want to… | Start here |
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| See which conversations still need an answer | [Open loops](open-loops.md) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
 | Find files you exchanged | [Person files](#find-files-related-to-a-person) |

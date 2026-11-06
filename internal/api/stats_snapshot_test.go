@@ -45,7 +45,7 @@ func (s *slowStatsStore) GetStatsContext(ctx context.Context) (*StoreStats, erro
 
 func getStatsResponse(t *testing.T, srv *Server) StatsResponse {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
@@ -64,7 +64,7 @@ func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
 			Store:  st,
 			Logger: testLogger(),
 		})
-		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
 
 		first := getStatsResponse(t, srv)
@@ -105,7 +105,7 @@ func TestHandleStatsVectorTimeoutIsPartial(t *testing.T) {
 			Scheduler: newMockScheduler(),
 			Logger:    testLogger(),
 		})
-		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
 		srv.vectorStatsTimeout = 50 * time.Millisecond
 
 		resp := getStatsResponse(t, srv)
@@ -139,7 +139,7 @@ func newSlowAccountsServer(t *testing.T, st *store.Store) (*Server, *slowCountsS
 	require := require.New(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: convID, SourceMessageID: "msg-1", MessageType: "email",
@@ -162,10 +162,10 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 		defer func() { assert.NoError(st.Close()) }()
 		srv, slow, _ := newSlowAccountsServer(t, st)
 		t.Cleanup(func() { close(slow.release) })
-		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 		srv.statsSnapshotWait = 50 * time.Millisecond
 		getAccounts := func() cliAccountsResponse {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 			require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
@@ -193,11 +193,11 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 		assert := assert.New(t)
 		defer func() { assert.NoError(st.Close()) }()
 		srv, slow, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 		slow.calls.Store(1)
 		srv.statsSnapshotWait = 20 * time.Millisecond
 		get := func(optIn bool) *httptest.ResponseRecorder {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			if optIn {
 				req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
 			}
@@ -245,7 +245,7 @@ func TestHandleCLIAccountsDelegatedCountsLive(t *testing.T) {
 	requirements.NoError(err)
 	slow.calls.Store(1)
 	for _, pending := range []bool{false, true} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, token)
 		if pending {
 			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
@@ -293,7 +293,7 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)

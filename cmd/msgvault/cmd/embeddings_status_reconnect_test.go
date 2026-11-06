@@ -44,7 +44,7 @@ func TestReconnectLocalDaemonFollowsKeyRotationAndPortChange(t *testing.T) {
 	cfg.Server.APIKeyFile = keyFile
 	require.NoError(cfg.ResolveServerKey())
 	ctx := withInvocation(t.Context(), &invocation{cfg: cfg})
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 	require.NotNil(rt)
 	current := daemonclient.LocalDaemonEndpoint{URL: urlFromDaemonRuntime(rt), APIKey: "key-one"}
 

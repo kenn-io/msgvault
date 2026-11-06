@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -242,6 +243,7 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 	return &CLISearch{
 		Results:          results,
 		HybridAvailable:  boolValue(resp.HybridAvailable),
+		HasMore:          boolValue(resp.HasMore),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),
@@ -274,12 +276,14 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 			RetrievalMS:      resp.Timings.RetrievalMs,
 			HydrationMS:      resp.Timings.HydrationMs,
 		},
-		PoolSaturated:    resp.PoolSaturated,
-		Accelerator:      stringValue(resp.Accelerator),
-		ReturnedCount:    int(resp.Returned),
-		ScopeLabel:       stringValue(resp.ScopeLabel),
-		ScopeSourceCount: intValue(resp.ScopeSourceCount),
-		HasMore:          resp.HasMore,
+		PoolSaturated:         resp.PoolSaturated,
+		Accelerator:           stringValue(resp.Accelerator),
+		ReturnedCount:         int(resp.Returned),
+		ScopeLabel:            stringValue(resp.ScopeLabel),
+		ScopeSourceCount:      intValue(resp.ScopeSourceCount),
+		HasMore:               resp.HasMore,
+		RankingLimitReached:   intValue(resp.RankingLimitReached),
+		CandidateLimitReached: intValue(resp.CandidateLimitReached),
 	}, nil
 }
 
@@ -419,6 +423,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	return &query.MessageDetail{
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
+		SenderAuth:           senderAuthFromGenerated(resp.SenderAuth),
 		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,
 		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
@@ -952,4 +957,11 @@ func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *st
 		TimeZone: calendar.TimeZone,
 		ICalUID:  calendar.IcalUID,
 	}
+}
+
+func senderAuthFromGenerated(v *generated.SenderAuthVerdict) *senderauth.Verdict {
+	if v == nil {
+		return nil
+	}
+	return &senderauth.Verdict{Verified: v.Verified, Domain: stringValue(v.Domain), AuthservID: stringValue(v.AuthservID), SPF: stringValue(v.Spf), DKIM: stringValue(v.Dkim), DMARC: stringValue(v.Dmarc)}
 }

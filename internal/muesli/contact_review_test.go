@@ -20,7 +20,7 @@ func TestAmbiguousContactsSupplyOnlyReviewPhones(t *testing.T) {
 	contacts, err := OpenContacts(t.Context(), f.contacts)
 	require.NoError(err)
 	m := Meeting{Participants: []Participant{{Email: "attendee@example.com", Identifier: "email:attendee@example.com"}}}
-	require.NoError(f.imp.resolveParticipants(f.source.ID, &m, contacts, "", contacts.sharedAddresses("")))
+	require.NoError(f.imp.resolveParticipants(t.Context(), f.source.ID, &m, contacts, "", contacts.sharedAddresses("")))
 	p := m.Participants[0]
 	assert.Equal([]string{"+16045550100", "+16045550101"}, p.ContactReviewPhones)
 	assert.Empty(p.Anchor)
@@ -104,7 +104,7 @@ func TestResolvedDuplicateSupersedesCarriedContactEvidence(t *testing.T) {
 	f := newImporterFixture(t)
 	_, err := f.st.EnsureParticipant("attendee@example.com", "Attendee", "example.com")
 	require.NoError(err)
-	_, err = f.st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+	_, err = f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 	require.NoError(err)
 
 	m := remoteTestRequest().Meeting.toMeeting()
@@ -176,7 +176,7 @@ func TestDuplicateContactsNativeReviewedAttribution(t *testing.T) {
 	require.NoError(err)
 	assert.NotContains(members, emailID)
 	var phoneCount int
-	require.NoError(f.st.DB().QueryRow(`SELECT count(*) FROM participants WHERE phone_number IS NOT NULL`).Scan(&phoneCount))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participants WHERE phone_number IS NOT NULL`).Scan(&phoneCount))
 	assert.Equal(1, phoneCount, "an unknown suggested phone must not create a participant")
 	f.project(t)
 	assert.NotContains(f.meetingPersons(t), f.personID)
@@ -210,7 +210,7 @@ func TestRemoteContactReviewRejectionAndLaterPhoneDiscovery(t *testing.T) {
 	candidates, err := f.st.ListIdentityMatchReviewsContext(t.Context(), nil, 100, 0)
 	require.NoError(err)
 	assert.Empty(candidates)
-	_, err = f.st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+	_, err = f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 	require.NoError(err)
 	before, err := f.st.IdentityRevisionContext(t.Context())
 	require.NoError(err)
@@ -234,7 +234,7 @@ func TestRemoteContactReviewRejectionAndLaterPhoneDiscovery(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.IdentityMatchStateRejected, retry.State)
 	assert.Equal(rejected.ReviewToken, retry.ReviewToken)
-	_, err = f.st.EnsureParticipantByPhone("+16045550101", "Other Chat", "imessage")
+	_, err = f.st.EnsureParticipantByPhone(t.Context(), "+16045550101", "Other Chat", "imessage")
 	require.NoError(err)
 	unchanged, err = f.imp.ImportRemote(t.Context(), r)
 	require.NoError(err)
@@ -271,7 +271,7 @@ func TestContactReviewSkipsOwnerAndPartialEvidence(t *testing.T) {
 			require := require.New(t)
 			f := newImporterFixture(t)
 			registerRemoteFixture(t, f)
-			_, err := f.st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+			_, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 			require.NoError(err)
 			if tc.ownerPhone {
 				require.NoError(f.st.AddAccountIdentityContext(t.Context(), f.source.ID, "+16045550100", "self-id"))
@@ -327,9 +327,9 @@ func TestContactReviewSuggestsAbsorbedPhoneAlias(t *testing.T) {
 	require := require.New(t)
 	f := newImporterFixture(t)
 	registerRemoteFixture(t, f)
-	survivor, err := f.st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+	survivor, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 	require.NoError(err)
-	absorbed, err := f.st.EnsureParticipantByPhone("+16045550101", "Older Chat", "imessage")
+	absorbed, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550101", "Older Chat", "imessage")
 	require.NoError(err)
 	require.NoError(f.st.MergeParticipants(absorbed, survivor))
 	r := remoteTestRequest()
@@ -349,7 +349,7 @@ func TestContactReviewCannotAutomaticallyMergePeople(t *testing.T) {
 	require := require.New(t)
 	f := newImporterFixture(t)
 	registerRemoteFixture(t, f)
-	phoneID, err := f.st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+	phoneID, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 	require.NoError(err)
 	_, _, err = f.st.CreatePersonFromParticipantContext(t.Context(), phoneID)
 	require.NoError(err)
@@ -495,6 +495,6 @@ func TestContactReviewDoesNotCreateInvalidEmailIdentity(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(candidates)
 	var count int
-	require.NoError(f.st.DB().QueryRow(`SELECT count(*) FROM participants WHERE email_address='not-an-email'`).Scan(&count))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participants WHERE email_address='not-an-email'`).Scan(&count))
 	assert.Zero(count)
 }

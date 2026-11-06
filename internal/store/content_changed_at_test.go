@@ -133,7 +133,8 @@ func readContentChangedAt(t *testing.T, st *store.Store, id int64) string {
 func readRawContentChangedAt(t *testing.T, st *store.Store, id int64) sql.NullString {
 	t.Helper()
 	var got sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE id = ?`), id).Scan(&got),
 		"read content_changed_at")
 	return got
@@ -145,7 +146,8 @@ func readRawContentChangedAt(t *testing.T, st *store.Store, id int64) sql.NullSt
 // the UPDATE OF column list never matches and the trigger does not fire.
 func stampContentChangedAt(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), contentChangedPast, id)
 	require.NoError(t, err, "stamp content_changed_at")
 	return readContentChangedAt(t, st, id)
@@ -157,7 +159,8 @@ func stampContentChangedAt(t *testing.T, st *store.Store, id int64) string {
 func altConversationID(t *testing.T, st *store.Store, id int64) int64 {
 	t.Helper()
 	var sourceID int64
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), id).Scan(&sourceID),
 		"read source_id")
 	convID, err := st.EnsureConversationWithType(
@@ -223,7 +226,8 @@ func updateMessageColumn(t *testing.T, st *store.Store, id int64, col string) er
 				"column's trigger coverage is actually exercised", col)
 		return nil
 	}
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(fmt.Sprintf(`UPDATE messages SET %s = ? WHERE id = ?`, col)), value, id)
 	return err
 }
@@ -267,7 +271,8 @@ func TestContentChangedAt_BookkeepingUpdateDoesNotBump(t *testing.T) {
 		t.Run(tc.col, func(t *testing.T) {
 			id := seedMessage(t, st, i+1)
 			base := stampContentChangedAt(t, st, id)
-			_, err := st.DB().Exec(
+			_, err := st.DB().ExecContext(
+				t.Context(),
 				st.Rebind(fmt.Sprintf(`UPDATE messages SET %s = ? WHERE id = ?`, tc.col)), tc.value, id)
 			require.NoErrorf(t, err, "update messages.%s", tc.col)
 			assert.Equalf(t, base, readContentChangedAt(t, st, id),
@@ -289,7 +294,7 @@ func TestContentChangedAt_SameValueWriteDoesNotBump(t *testing.T) {
 	// Self-assignment puts five content columns in the SET list -- all that
 	// UPDATE OF inspects on either backend -- while changing no value, NULL
 	// columns included.
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		   SET subject = subject,
 		       snippet = snippet,
@@ -363,7 +368,8 @@ func TestContentChangedAt_BodyWriteBumpsParent(t *testing.T) {
 		"a message_bodies INSERT must bump the parent's content_changed_at")
 
 	updBase := stampContentChangedAt(t, st, id)
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`),
 		"corrected body", id)
 	require.NoError(err, "update body")
@@ -382,7 +388,7 @@ func TestContentChangedAt_NewRowIsStamped(t *testing.T) {
 	id := seedMessage(t, st, 1)
 
 	var nulls int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE id = ? AND content_changed_at IS NULL`),
 		id).Scan(&nulls), "count NULL content_changed_at")
 
@@ -410,7 +416,8 @@ func TestContentChangedAt_LastModifiedUnaffected(t *testing.T) {
 	ccBase := stampContentChangedAt(t, st, id)
 	lmBase := baselineLM(t, st, id)
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET embed_gen = ? WHERE id = ?`), int64(7), id)
 	require.NoError(err, "bookkeeping-only update")
 
@@ -432,7 +439,8 @@ func TestContentChangedAt_LastModifiedUnaffected(t *testing.T) {
 // SQLite's strftime and PostgreSQL's TIMESTAMPTZ parser accept unambiguously.
 func stampLastModified(t *testing.T, st *store.Store, id int64, value string) {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), value, id)
 	require.NoError(t, err, "stamp last_modified")
 }
@@ -470,14 +478,14 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 		if st.IsPostgreSQL() {
 			stmt += ` ON ` + trg.table
 		}
-		_, err := st.DB().Exec(stmt)
+		_, err := st.DB().ExecContext(t.Context(), stmt)
 		require.NoErrorf(t, err, "drop trigger %s", trg.name)
 	}
 	for _, index := range []string{"idx_messages_content_changed_at", "idx_messages_conversation_content_changed"} {
-		_, err := st.DB().Exec(`DROP INDEX IF EXISTS ` + index)
+		_, err := st.DB().ExecContext(t.Context(), `DROP INDEX IF EXISTS `+index)
 		require.NoErrorf(t, err, "drop %s", index)
 	}
-	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN content_changed_at`)
+	_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE messages DROP COLUMN content_changed_at`)
 	require.NoError(t, err, "drop content_changed_at column")
 }
 
@@ -495,7 +503,8 @@ func clearContentChangedBackfillLedger(t *testing.T, st *store.Store) {
 		contentChangedBackfillMigration,
 		messageWatermarkTriggersMigration,
 	} {
-		_, err := st.DB().Exec(
+		_, err := st.DB().ExecContext(
+			t.Context(),
 			st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), name)
 		require.NoErrorf(t, err, "clear migration ledger entry %s", name)
 	}
@@ -682,7 +691,7 @@ func TestContentChangedAt_BackfillStopsWhenTheContextIsCancelled(t *testing.T) {
 
 	// Cancel at the second batch boundary: one batch has committed and the rest
 	// of the table is still ahead, which is where an operator's Ctrl-C lands.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	batches := 0
 	restoreHook := st.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
@@ -755,14 +764,15 @@ func seedMessageAtID(t *testing.T, st *store.Store, n int, id int64) int64 {
 			alter = fmt.Sprintf(
 				`ALTER TABLE messages ALTER COLUMN id SET MINVALUE %d RESTART WITH %d`, id, id)
 		}
-		_, err := st.DB().Exec(alter)
+		_, err := st.DB().ExecContext(t.Context(), alter)
 		require.NoErrorf(t, err, "reposition the messages identity sequence to %d", id)
 		got := seedMessage(t, st, n)
 		require.Equalf(t, id, got, "message %d did not land on the requested id", n)
 		return id
 	}
 	got := seedMessage(t, st, n)
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET id = ? WHERE id = ?`), id, got)
 	require.NoErrorf(t, err, "move message %d to id %d", n, id)
 	return id
@@ -942,7 +952,7 @@ func TestContentChangedAt_BackfillNeverMintsANullWatermark(t *testing.T) {
 	// zero cursor. Settle the clock first — the fallback stamps "now", and the
 	// feed deliberately withholds the instant it is reading in.
 	settleFeedClock(t, st)
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 100)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 100)
 	require.NoError(err)
 	seen := map[int64]bool{}
 	for _, m := range page.Messages {
@@ -1079,7 +1089,7 @@ func TestContentChangedAt_FreshAndUpgradedStampsShareOneFormat(t *testing.T) {
 // what forces SQLite to open a statement journal per INSERT.
 func insertMessagesTriggerPrograms(t *testing.T, st *store.Store, insert string, args ...any) int {
 	t.Helper()
-	rows, err := st.DB().Query("EXPLAIN "+insert, args...)
+	rows, err := st.DB().QueryContext(t.Context(), "EXPLAIN "+insert, args...)
 	require.NoError(t, err, "EXPLAIN insert")
 	defer func() { _ = rows.Close() }()
 	cols, err := rows.Columns()
@@ -1137,7 +1147,7 @@ func TestContentChangedAt_InsertNeedsNoWatermarkTrigger(t *testing.T) {
 	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "insert-cost", "email_thread", "Insert cost")
 	require.NoError(err)
-	_, err = st.DB().Exec(`DROP TRIGGER IF EXISTS messages_metadata_fts_insert`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS messages_metadata_fts_insert`)
 	require.NoError(err)
 
 	const insert = `INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, subject)
@@ -1149,7 +1159,7 @@ func TestContentChangedAt_InsertNeedsNoWatermarkTrigger(t *testing.T) {
 
 	// One pinned connection: total_changes() is per-connection and the pool
 	// would otherwise hand the two readings out of different sessions.
-	ctx := context.Background()
+	ctx := t.Context()
 	conn, err := st.DB().Conn(ctx)
 	require.NoError(err)
 	defer func() { _ = conn.Close() }()
@@ -1197,13 +1207,15 @@ func TestContentChangedAt_UpgradedDatabaseKeepsTheInsertTrigger(t *testing.T) {
 	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "upgraded", "email_thread", "Upgraded")
 	require.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type)
 		 VALUES (?,?,?,?)`, src.ID, "upgraded-1", conv, "email")
 	require.NoError(err)
 
 	var stamp sql.NullString
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE source_message_id = 'upgraded-1'`).
 		Scan(&stamp))
 	require.True(stamp.Valid,
@@ -1223,7 +1235,7 @@ func TestContentChangedAt_UpgradedDatabaseKeepsTheInsertTrigger(t *testing.T) {
 // connection that still refuses it.
 func rewriteMessagesContentChangedAtDefault(t *testing.T, st *store.Store, want string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	conn, err := st.DB().Conn(ctx)
 	require.NoError(t, err, "pin a connection")
 	defer func() { _ = conn.Close() }()
@@ -1261,7 +1273,8 @@ func rewriteMessagesContentChangedAtDefault(t *testing.T, st *store.Store, want 
 func readContentChangedAtDefault(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var dflt sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT dflt_value FROM pragma_table_info('messages') WHERE name = 'content_changed_at'`).
 		Scan(&dflt), "read content_changed_at default")
 	return dflt.String
@@ -1287,14 +1300,14 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 	assert := assert.New(t)
 
 	dbPath := filepath.Join(t.TempDir(), "drifted-default.db")
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "seed InitSchema")
 	const driftedDefault = `'2000-01-01 00:00:00'`
 	rewriteMessagesContentChangedAtDefault(t, seed, driftedDefault)
 	require.NoError(seed.Close(), "close seed store")
 
-	drifted, err := store.OpenForTest(dbPath)
+	drifted, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen the drifted archive")
 	require.Equal(driftedDefault, readContentChangedAtDefault(t, drifted),
 		"precondition: the archive must really carry a drifted default")
@@ -1316,13 +1329,13 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 	// handle because a sqlite_master edit only reaches connections opened after
 	// it — which is also how an operator would do the repair, with the daemon
 	// stopped.
-	repairHandle, err := store.OpenForTest(dbPath)
+	repairHandle, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen for repair")
 	rewriteMessagesContentChangedAtDefault(t, repairHandle,
 		`(strftime('%Y-%m-%d %H:%M:%f','now'))`)
 	require.NoError(repairHandle.Close(), "close the repair handle")
 
-	repaired, err := store.OpenForTest(dbPath)
+	repaired, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen the repaired archive")
 	t.Cleanup(func() { _ = repaired.Close() })
 	require.Equal(`strftime('%Y-%m-%d %H:%M:%f','now')`,
@@ -1333,13 +1346,15 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 	require.NoError(err)
 	conv, err := repaired.EnsureConversationWithType(src.ID, "repaired", "email_thread", "Repaired")
 	require.NoError(err)
-	_, err = repaired.DB().Exec(
+	_, err = repaired.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type)
 		 VALUES (?,?,?,?)`, src.ID, "repaired-1", conv, "email")
 	require.NoError(err)
 
 	var stamp sql.NullString
-	require.NoError(repaired.DB().QueryRow(
+	require.NoError(repaired.DB().QueryRowContext(
+		t.Context(),
 		`SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE source_message_id = 'repaired-1'`).
 		Scan(&stamp))
 	require.True(stamp.Valid, "the repaired archive must still stamp new rows")
@@ -1359,11 +1374,13 @@ func TestContentChangedAt_NullWatermarkIsStamped(t *testing.T) {
 
 	// Naming only content_changed_at keeps the UPDATE OF list from matching, so
 	// this write establishes the NULL precondition instead of being re-stamped.
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET content_changed_at = NULL WHERE id = ?`), id)
 	require.NoError(t, err, "clear content_changed_at")
 
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed subject", id)
 	require.NoError(t, err, "update subject")
 

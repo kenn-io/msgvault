@@ -459,7 +459,7 @@ func (s *Store) retireIMAPDraftMembershipTx(
 	`, receipt.SourceID, receipt.Mailbox, receipt.UIDValidity, receipt.UID, messageID); err != nil {
 		return fmt.Errorf("retire IMAP draft membership: %w", err)
 	}
-	mailboxes, err := imapMembershipMailboxes(ctx, tx, receipt.SourceID, messageID)
+	mailboxes, err := s.imapMembershipMailboxes(ctx, tx, receipt.SourceID, messageID)
 	if err != nil {
 		return err
 	}
@@ -484,7 +484,7 @@ func (s *Store) retireIMAPDraftMembershipTx(
 			return fmt.Errorf("tombstone retired IMAP draft: %w", err)
 		}
 	}
-	if err := s.bumpDerivedDataRevision(tx); err != nil {
+	if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 		return fmt.Errorf("bump derived-data revision for retired IMAP draft: %w", err)
 	}
 	return nil
