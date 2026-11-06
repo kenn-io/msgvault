@@ -108,7 +108,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	}
 	var expansionErr error
 	if reason != "" {
-		if *budget <= 0 || reason == calrecur.ErrBudgetExceeded.Error() {
+		if *budget <= 0 {
 			return nil, calendarRecurrenceBudgetError()
 		}
 		expansionErr = fmt.Errorf("%w: %s", calrecur.ErrUnsupportedRecurrence, reason)

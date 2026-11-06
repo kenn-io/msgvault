@@ -111,6 +111,21 @@ func TestMeetingDecisionReplacesUnexpandableCopy(t *testing.T) {
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: automatic}), links[0].Ref)
 }
 
+func TestMeetingUnlinkReadableCopyAfterSeriesExceedsBudget(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, first := calendarFixture(t, st, "first", linkSeriesRaw)
+	_, second := calendarFixture(t, st, "second", linkSeriesRaw, "second@example.com")
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first, Key: "20270314T100000Z"}))
+	calendarFixture(t, st, "first", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"1800-01-01T10:00:00Z"},"end":{"dateTime":"1800-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second, Key: "20270314T100000Z"}))
+	calendarFixture(t, st, "first", linkSeriesRaw)
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	assert.Empty(t, links)
+}
+
 func TestMeetingRecordNotesAndCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name string
