@@ -25,6 +25,45 @@ func TestImportPNIOnlyChat(t *testing.T) {
 	}, importedMessages(t, st))
 }
 
+func TestReimportRecycledPhoneKeepsSendersSeparate(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 100`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	runImport(t, st, dir, attachments)
+	original, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
+	require.NoError(err)
+	require.NotZero(original)
+
+	const newACI = "0f0f0f0f-0000-4000-8000-000000000008"
+	changeFixture(t, dir,
+		`UPDATE recipient SET aci = '`+newACI+`' WHERE _id = 2`,
+		`UPDATE message SET date_sent = 1700000500000, date_received = 1700000500001 WHERE _id = 100`)
+	runImport(t, st, dir, attachments)
+
+	replacement, hasPhone, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, newACI)
+	require.NoError(err)
+	require.NotZero(replacement)
+	assert.NotEqual(original, replacement)
+	assert.False(hasPhone)
+	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	for _, tc := range []struct {
+		message string
+		sender  int64
+	}{
+		{"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1), original},
+		{"signal:aci:" + newACI + ":peer:1700000500000", replacement},
+	} {
+		var sender int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
+		assert.Equal(tc.sender, sender)
+	}
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
+	require.NoError(err)
+	assert.Equal(original, owner)
+}
+
 func TestImportDirectAuthorWithoutACI(t *testing.T) {
 	for _, tc := range []struct {
 		name, change, chatID string

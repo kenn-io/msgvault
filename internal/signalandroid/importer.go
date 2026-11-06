@@ -303,7 +303,24 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	case recipient.E164 != "":
 		pid, err = r.imp.store.EnsureParticipantByPhone(recipient.E164, recipient.Name, SourceType)
 		if err == nil && recipient.ACI != "" {
-			err = r.bindACI(ctx, pid, recipient.ACI)
+			identity, lookupErr := r.imp.store.GetParticipantIdentityContext(ctx, []int64{pid})
+			if lookupErr != nil {
+				err = lookupErr
+				break
+			}
+			conflictingACI := false
+			for _, identifier := range identity.Identifiers {
+				if identifier.Type == ACIIdentifierType && identifier.Value != recipient.ACI {
+					conflictingACI = true
+					break
+				}
+			}
+			if conflictingACI {
+				// A recycled number must keep the two accounts' histories separate.
+				pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
+			} else {
+				err = r.bindACI(ctx, pid, recipient.ACI)
+			}
 		}
 	case recipient.ACI != "":
 		pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
