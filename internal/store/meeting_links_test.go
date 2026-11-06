@@ -158,6 +158,21 @@ func TestMeetingLinksGranolaOwnCalendar(t *testing.T) {
 	}
 }
 
+func TestMeetingLinksGranolaConflictingCalendarIdentities(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, own := calendarFixture(t, st, "own", singleLinkRaw("event", "own@example.org"))
+	_, shared := calendarFixture(t, st, "shared", singleLinkRaw("event", "shared@example.org"), "shared@example.com")
+	note := granolaLinkFixture(t, st, "event")
+	assert.Empty(t, linkedMeetingRefs(t, st, note)[note])
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	require.NoError(t, err)
+	var refs []string
+	for _, suggestion := range page.Suggestions {
+		refs = append(refs, suggestion.Ref)
+	}
+	assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", own), fmt.Sprintf("evt:%d", shared)}, refs)
+}
+
 func TestMeetingLinksIdentityHasSeparateFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

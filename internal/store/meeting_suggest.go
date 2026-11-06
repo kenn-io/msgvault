@@ -37,14 +37,6 @@ type suggestMember struct {
 	Emails     map[string]bool
 }
 
-func titleTokenSet(title string) map[string]bool {
-	tokens := map[string]bool{}
-	for _, token := range directoryTokens(title) {
-		tokens[token] = true
-	}
-	return tokens
-}
-
 func rankMeetingSuggestion(member suggestMember, event linkOccurrence) (MeetingSuggestion, bool) {
 	if event.Row.Event.Status == meetingCancelledStatus {
 		return MeetingSuggestion{}, false
@@ -68,9 +60,9 @@ func rankMeetingSuggestion(member suggestMember, event linkOccurrence) (MeetingS
 			suggestion.SharedAttendees++
 		}
 	}
-	memberTokens := titleTokenSet(member.Title)
-	for token := range titleTokenSet(event.Row.Subject) {
-		if memberTokens[token] {
+	memberTokens := uniqueChatTokens(member.Title)
+	for _, token := range uniqueChatTokens(event.Row.Subject) {
+		if slices.Contains(memberTokens, token) {
 			suggestion.TitleTokens++
 		}
 	}
