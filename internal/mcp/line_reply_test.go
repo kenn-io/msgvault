@@ -23,6 +23,8 @@ func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
 	require.True(ok)
 	assert.Contains(prompt.Message, "send_line_reply")
 	assert.Contains(prompt.Message, "LINE")
+	assert.Contains(prompt.Message, `"draft_id":"chat-draft-example"`)
+	assert.Contains(prompt.Message, `"revision":1`)
 	sent, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args, RequestState: pending.RequestState, InputResponses: accept})
 	require.NoError(err)
 	assert.False(sent.IsError)

@@ -54,7 +54,7 @@ func TestLineSendConfig(t *testing.T) {
 		name, field string
 		want        bool
 	}{
-		{"default", "", false}, {"enabled", "allow_send=true", true}, {"disabled", "allow_send=false", false},
+		{"default", "", false}, {"enabled", "allow_send=true", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

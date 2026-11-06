@@ -391,65 +391,8 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 	}
 }
 
-func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
-	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
-		t.Run(state, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			if state != store.LineReplyAdmitted {
-				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-				require.NoError(err)
-				outcome := store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
-				if state == store.LineReplyAcceptedUnresolvedExpired || state == store.LineReplySent {
-					outcome = store.LineReplyOutcome{StatusCode: 200, Accepted: true}
-					if state == store.LineReplySent {
-						outcome.MessageID = "200"
-					}
-				}
-				if state != store.LineReplyRemoteUnknownExpired {
-					_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
-					require.NoError(err)
-				}
-				if state == store.LineReplySent {
-					_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-					require.NoError(err)
-				} else if state != store.LineReplyProviderRejected {
-					_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
-					require.ErrorIs(err, store.ErrLineReplyExpired)
-				}
-			}
-			if state != store.LineReplySent {
-				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-			}
-			target, err := st.GetOrCreateSource("line", "2000000002")
-			require.NoError(err)
-			if state == store.LineReplyAdmitted {
-				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID, DryRun: true})
-				require.NoError(err)
-				previewed, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-				require.NoError(err)
-				assert.Equal(store.LineReplyAdmitted, previewed.State)
-			}
-			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
-			require.NoError(err)
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			require.NoError(err)
-			want := state
-			if state == store.LineReplyAdmitted {
-				want = store.LineReplyRemoteUnknownExpired
-			}
-			assert.Equal(want, receipt.State)
-			assert.Equal(attempt.RetryKey, receipt.RetryKey)
-		})
-	}
-}
-
 func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
-	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired} {
+	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
 		t.Run(state, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -464,28 +407,58 @@ func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
 				switch state {
 				case store.LineReplyAcceptedUnresolved, store.LineReplyAcceptedUnresolvedExpired:
 					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200}
-				case store.LineReplyRemoteAccepted:
+				case store.LineReplyRemoteAccepted, store.LineReplySent:
 					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"}
 				case store.LineReplyProviderRejected:
 					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
 				}
-				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
-				require.NoError(err)
+				if state != store.LineReplyRemoteUnknownExpired {
+					attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+					require.NoError(err)
+				}
+				if state == store.LineReplySent {
+					attempt, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+					require.NoError(err)
+				}
 				if state == store.LineReplyRemoteUnknownExpired || state == store.LineReplyAcceptedUnresolvedExpired {
 					attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 					require.ErrorIs(err, store.ErrLineReplyExpired)
 				}
 			}
 			assert.Equal(state, attempt.State)
-			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
-			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			if state != store.LineReplySent {
+				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+				require.ErrorIs(err, store.ErrChatDraftFrozen)
+				require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			}
 			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 			require.ErrorIs(err, store.ErrChatDraftNotFound)
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			assert.Equal(attempt, receipt)
+			switch state {
+			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent:
+				target, err := st.GetOrCreateSource("line", "2000000002")
+				require.NoError(err)
+				if state == store.LineReplyAdmitted {
+					_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID, DryRun: true})
+					require.NoError(err)
+					previewed, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+					require.NoError(err)
+					assert.Equal(store.LineReplyAdmitted, previewed.State)
+				}
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
+				require.NoError(err)
+				receipt, err = st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				want := state
+				if state == store.LineReplyAdmitted {
+					want = store.LineReplyRemoteUnknownExpired
+				}
+				assert.Equal(want, receipt.State)
+				assert.Equal(attempt.RetryKey, receipt.RetryKey)
+			}
 		})
 	}
 }

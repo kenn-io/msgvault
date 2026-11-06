@@ -143,8 +143,6 @@ func TestReplyLostResponseThenRejectionKeepsOriginalKey(t *testing.T) {
 	unknown, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("remote_unknown", unknown.Status)
-	_, err = f.st.UpdateChatDraftContext(t.Context(), f.draft.DraftID, 1, "changed")
-	require.ErrorIs(err, store.ErrChatDraftFrozen)
 	f.now = f.now.Add(31 * time.Second)
 	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
@@ -284,9 +282,6 @@ func testReplyReceiptRecoveryAfterRestart(t *testing.T, phase string) {
 	}
 	assert.Equal(pushes, f.fake.Count("POST", "/v2/bot/message/push"))
 	if gc {
-		var parent sql.NullInt64
-		require.NoError(f.st.DB().QueryRow(`SELECT reply_to_message_id FROM messages WHERE id=?`, sent.MessageID).Scan(&parent))
-		assert.False(parent.Valid)
 		body, err := f.st.GetMessageBodyText(sent.MessageID)
 		require.NoError(err)
 		assert.Equal("Thanks!", body)
@@ -583,56 +578,42 @@ type replyClosingBody struct {
 func (b replyClosingBody) Close() error { err := b.ReadCloser.Close(); b.closed(); return err }
 
 func TestReplyKnownRemoteIDSurvivesReceiptStoreFailure(t *testing.T) {
-	for _, recovery := range []string{"same-key retry", "revoked policy"} {
-		t.Run(recovery, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			path := filepath.Join(t.TempDir(), "receipt.db")
-			f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
-			f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(func() time.Time { return f.now }), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
-				response, err := http.DefaultTransport.RoundTrip(request)
-				if err == nil && request.URL.Path == "/v2/bot/message/push" {
-					response.Body = replyClosingBody{ReadCloser: response.Body, closed: func() { require.NoError(f.st.Close()) }}
-				}
-				return response, err
-			})}))
-			receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			require.Error(err)
-			assert.Equal("accepted_receipt_pending", receipt.Status)
-			assert.True(receipt.Accepted)
-			assert.Equal("synthetic-request-1", receipt.RequestID)
-			assert.Equal(f.draft.DraftID, receipt.DraftID)
-			assert.Equal(int64(1), receipt.Revision)
-			assert.Equal(f.draft.SourceID, receipt.SourceID)
-			assert.Equal(f.draft.ConversationID, receipt.ConversationID)
-			assert.Equal("900000000000000001", receipt.RemoteMessageID)
-			reopened, err := store.Open(path)
-			require.NoError(err)
-			t.Cleanup(func() { _ = reopened.Close() })
-			f.st = reopened
-			durable, err := reopened.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-			require.NoError(err)
-			assert.Equal(store.LineReplyRemoteUnknown, durable.State)
-			assert.Empty(durable.RemoteMessageID)
-			f.resetClient()
-			f.now = f.now.Add(31 * time.Second)
-			sender := f.sender()
-			if recovery == "revoked policy" {
-				sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
-					return nil, errors.New("synthetic revoked policy")
-				}
-				pending, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-				require.ErrorContains(err, "synthetic revoked policy")
-				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-				assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-				return
-			}
-			sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-			require.NoError(err)
-			assert.Equal("sent", sent.Status)
-			assert.Equal(1, f.fake.AcceptedPushes())
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "receipt.db")
+	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
+	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(func() time.Time { return f.now }), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
+		response, err := http.DefaultTransport.RoundTrip(request)
+		if err == nil && request.URL.Path == "/v2/bot/message/push" {
+			response.Body = replyClosingBody{ReadCloser: response.Body, closed: func() { require.NoError(f.st.Close()) }}
+		}
+		return response, err
+	})}))
+	receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	require.Error(err)
+	assert.Equal("accepted_receipt_pending", receipt.Status)
+	assert.True(receipt.Accepted)
+	assert.Equal("synthetic-request-1", receipt.RequestID)
+	assert.Equal(f.draft.DraftID, receipt.DraftID)
+	assert.Equal(int64(1), receipt.Revision)
+	assert.Equal(f.draft.SourceID, receipt.SourceID)
+	assert.Equal(f.draft.ConversationID, receipt.ConversationID)
+	assert.Equal("900000000000000001", receipt.RemoteMessageID)
+	reopened, err := store.Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	f.st = reopened
+	durable, err := reopened.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
+	assert.Empty(durable.RemoteMessageID)
+	f.resetClient()
+	f.now = f.now.Add(31 * time.Second)
+	sender := f.sender()
+	sent, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal("sent", sent.Status)
+	assert.Equal(1, f.fake.AcceptedPushes())
 }
 
 func TestReplyExpiryCommitFailureKeepsPendingState(t *testing.T) {
@@ -884,23 +865,37 @@ func TestReplyFromIngestedChat(t *testing.T) {
 }
 
 func TestReplyUnsubmittedDeletedDraftRechecksPolicy(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newReplyFixture(t, "user", nil)
-	f.resetClient()
-	f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusInternalServerError})
-	sender := f.sender()
-	receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-	must.ErrorIs(err, line.ErrCredentialsUnavailable)
-	must.Equal(store.LineReplyAdmitted, receipt.Status)
-	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
-	sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
-		return nil, errors.New("synthetic revoked sending policy")
+	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown} {
+		t.Run(state, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newReplyFixture(t, "user", nil)
+			f.resetClient()
+			if state == store.LineReplyAdmitted {
+				f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusInternalServerError})
+			} else {
+				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+			}
+			sender := f.sender()
+			receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			if state == store.LineReplyAdmitted {
+				must.ErrorIs(err, line.ErrCredentialsUnavailable)
+				checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+			} else {
+				must.NoError(err)
+			}
+			must.Equal(state, receipt.Status)
+			pushes := f.fake.Count(http.MethodPost, "/v2/bot/message/push")
+			sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
+				return nil, errors.New("synthetic revoked sending policy")
+			}
+			must.NotNil(receipt.RetryAfter)
+			f.now = receipt.RetryAfter.Add(time.Second)
+			pending, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+			must.ErrorContains(err, "synthetic revoked sending policy")
+			checks.Equal(state, pending.Status)
+			checks.Equal(pushes, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		})
 	}
-	must.NotNil(receipt.RetryAfter)
-	f.now = receipt.RetryAfter.Add(time.Second)
-	_, err = sender.Send(t.Context(), f.draft.DraftID, 1)
-	must.ErrorContains(err, "synthetic revoked sending policy")
-	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
 }

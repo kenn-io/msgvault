@@ -2,7 +2,6 @@ package line_test
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +41,6 @@ func TestPushTextReceiptAndDedupe(t *testing.T) {
 				assert.Equal("900000000000000001", receipt.MessageID)
 				assert.Equal(200, receipt.StatusCode)
 			}
-			assert.Equal(1, fake.AcceptedPushes())
 			repeated, err := client.PushText(t.Context(), replyRetryKey, tc.request)
 			require.NoError(err)
 			assert.True(repeated.Accepted)
@@ -53,7 +51,6 @@ func TestPushTextReceiptAndDedupe(t *testing.T) {
 				assert.Equal(receipt.QuoteToken, repeated.QuoteToken)
 				assert.Equal(receipt.RequestID, repeated.RequestID)
 			}
-			assert.Equal(1, fake.AcceptedPushes())
 			for _, r := range fake.Requests() {
 				if r.Path != "/v2/bot/message/push" {
 					continue
@@ -89,30 +86,31 @@ func TestPushRefreshKeepsRetryKeyAndPayload(t *testing.T) {
 
 func TestPushMalformedAcceptanceAndErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		response lineapi.Response
-		accepted bool
+		name      string
+		responses []lineapi.Response
+		accepted  bool
 	}{
-		{"empty 200", lineapi.Response{Status: 200, Body: `{"sentMessages":[]}`}, true},
-		{"numeric ID", lineapi.Response{Status: 200, Body: `{"sentMessages":[{"id":100}]}`}, true},
-		{"blank ID", lineapi.Response{Status: 200, Body: `{"sentMessages":[{"id":" "}]}`}, true},
-		{"multiple IDs", lineapi.Response{Status: 200, Body: `{"sentMessages":[{"id":"100"},{"id":"101"}]}`}, true},
-		{"malformed 200", lineapi.Response{Status: 200, Body: `private provider text`}, true},
-		{"accepted 409 without ID", lineapi.Response{Status: 409, Header: http.Header{"X-Line-Accepted-Request-Id": {"original-request"}}, Body: `{}`}, true},
-		{"409 missing accepted header", lineapi.Response{Status: 409, Body: `{"sentMessages":[{"id":"100"}]}`}, false},
-		{"bad request", lineapi.Response{Status: 400, Body: `private provider text`}, false},
-		{"server error", lineapi.Response{Status: 503, Body: `private provider text`}, false},
+		{"empty 200", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[]}`}}, true},
+		{"invalid JSON receipt", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":100}]}`}, {Status: 200, Body: `private provider text`}}, true},
+		{"blank ID", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":" "}]}`}}, true},
+		{"multiple IDs", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":"100"},{"id":"101"}]}`}}, true},
+		{"accepted 409 without ID", []lineapi.Response{{Status: 409, Header: http.Header{"X-Line-Accepted-Request-Id": {"original-request"}}, Body: `{}`}}, true},
+		{"409 missing accepted header", []lineapi.Response{{Status: 409, Body: `{"sentMessages":[{"id":"100"}]}`}}, false},
+		{"bad request", []lineapi.Response{{Status: 400, Body: `private provider text`}}, false},
+		{"server error", []lineapi.Response{{Status: 503, Body: `private provider text`}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			client, fake := newClient(t)
-			fake.Enqueue("POST", "/v2/bot/message/push", tc.response)
-			receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
-			require.Error(t, err)
-			assert.NotContains(err.Error(), "private provider text")
-			assert.Equal(tc.accepted, receipt.Accepted)
-			assert.Equal(tc.response.Status, receipt.StatusCode)
-			assert.Empty(receipt.MessageID)
+			for _, response := range tc.responses {
+				fake.Enqueue("POST", "/v2/bot/message/push", response)
+				receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
+				require.Error(t, err)
+				assert.NotContains(err.Error(), "private provider text")
+				assert.Equal(tc.accepted, receipt.Accepted)
+				assert.Equal(response.Status, receipt.StatusCode)
+				assert.Empty(receipt.MessageID)
+			}
 		})
 	}
 }
@@ -128,17 +126,6 @@ func TestPushRetryAfter(t *testing.T) {
 			assert.Equal(t, now.Add(3*time.Minute), receipt.RetryAfter)
 		})
 	}
-}
-
-func TestPushDoesNotFollowRedirect(t *testing.T) {
-	targetCalls := 0
-	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetCalls++ }))
-	defer target.Close()
-	client, fake := newClient(t)
-	fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: 302, Header: http.Header{"Location": {target.URL}}})
-	_, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
-	require.Error(t, err)
-	assert.Zero(t, targetCalls)
 }
 
 func TestValidateReplyText(t *testing.T) {

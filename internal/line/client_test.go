@@ -139,14 +139,18 @@ func TestClientRefusesRedirects(t *testing.T) {
 	var calls int
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
 	defer target.Close()
-	for _, path := range []string{"/oauth2/v3/token", "/v2/bot/info", "/v2/bot/message/123/content"} {
+	for _, path := range []string{"/oauth2/v3/token", "/v2/bot/info", "/v2/bot/message/123/content", "/v2/bot/message/push"} {
 		t.Run(path, func(t *testing.T) {
 			client, api := newClient(t, line.WithHTTPClient(target.Client()))
 			method := http.MethodGet
-			if path == "/oauth2/v3/token" {
+			if path == "/oauth2/v3/token" || path == "/v2/bot/message/push" {
 				method = http.MethodPost
 			}
-			api.Enqueue(method, path, lineapi.Response{Status: 307, Header: http.Header{"Location": {target.URL}}})
+			status := http.StatusTemporaryRedirect
+			if path == "/v2/bot/message/push" {
+				status = http.StatusFound
+			}
+			api.Enqueue(method, path, lineapi.Response{Status: status, Header: http.Header{"Location": {target.URL}}})
 			var err error
 			if strings.HasSuffix(path, "content") {
 				var response *http.Response
@@ -154,6 +158,8 @@ func TestClientRefusesRedirects(t *testing.T) {
 				if response != nil {
 					require.NoError(t, response.Body.Close())
 				}
+			} else if path == "/v2/bot/message/push" {
+				_, err = client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
 			} else {
 				_, err = client.BotInfo(context.Background())
 			}
