@@ -631,6 +631,9 @@ func (r *run) writeMessage(
 			return 0, fmt.Errorf("read archived Signal revision: %w", err)
 		}
 		previousValid = json.Unmarshal(archivedRaw, &previous) == nil
+		if previousValid && previous.RevisionDateSent > m.RevisionDateSent {
+			return archivedID, nil
+		}
 	}
 	var found, missing int64
 	body, preservedBody := "", false
