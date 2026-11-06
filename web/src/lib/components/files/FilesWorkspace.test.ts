@@ -1,3 +1,4 @@
+import { MEDIA } from '@kenn-io/kit-ui';
 import type { ComponentProps } from 'svelte';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -77,6 +78,25 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it.each([
+    { label: 'sender', sender: 'Zoe Sender', expected: 'Zoe Sender' },
+    { label: 'roster without a sender', sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
+  ])('shows the $label on a phone', async ({ sender, expected }) => {
+    const originalMatchMedia = window.matchMedia;
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...originalMatchMedia(query), matches: query === MEDIA.compact }));
+    try {
+      const result = response();
+      const client = createAPIClient(async () => Response.json({
+        ...result,
+        files: [{ ...result.files[0], participant_labels: ['Alice Recipient', 'Zoe Sender'], participant_domains: [], ...(sender ? { sender_label: sender } : {}) }]
+      }));
+      const rendered = renderReady({ client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
+      await waitFor(() => expect(rendered.container.querySelector('.phone-sender')?.textContent).toBe(expected));
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it('reports each rejected image selection once as a search failure', async () => {
     const events = telemetryEvents;
     const client = createAPIClient(async () => Response.json(response()));

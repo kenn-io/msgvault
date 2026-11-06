@@ -361,3 +361,13 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		assert.Equal(t, addresses{}, absent)
 	})
 }
+
+func TestVMessagesKeepUnnamedDirectSenderNamesEmpty(t *testing.T) {
+	builder, _, _ := senderLabelFixture(t)
+	engine := builder.BuildEngine()
+	for _, id := range []int64{4, 5} {
+		var fromName string
+		require.NoError(t, engine.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", id).Scan(&fromName))
+		assert.Empty(t, fromName, "other readers keep an empty name for unnamed direct senders")
+	}
+}

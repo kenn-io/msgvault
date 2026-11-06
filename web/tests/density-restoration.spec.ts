@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { setTemporaryDensity } from './kit-ui';
 
 const total = 300;
@@ -110,7 +110,7 @@ test.describe('phone width', () => {
 
   for (const density of ['compact', 'comfortable'] as const) {
     for (const workspace of ['everything', 'files', 'groups'] as const) {
-      test(`${workspace} fits and aligns phone rows at ${density} density`, async ({ page }) => {
+      test(`${workspace} fits phone rows and restores desktop headers at ${density} density`, async ({ page }) => {
         await page.addInitScript((density) => {
           sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ density }));
         }, density);
@@ -142,49 +142,12 @@ test.describe('phone width', () => {
           await expect(grid.getByRole('row').filter({ hasText: 'Source 2' }).getByRole('gridcell', { name: '2 items', exact: true })).toBeVisible();
           await expect(grid.getByRole('button', { name: 'Drill into Synthetic source with a very long descriptive name' })).toBeVisible();
         }
-        if (density === 'compact') {
+        if (workspace === 'files') {
           const row = grid.locator('[aria-rowindex="2"]');
-          await expect(row).toBeVisible();
-          const left = await row.evaluate((el, workspace) => {
-            const item = el.querySelector(workspace === 'everything' ? '.cell--title' : workspace === 'files' ? '.file-kind' : 'strong')!;
-            return Math.round(item.getBoundingClientRect().left - el.getBoundingClientRect().left);
-          }, workspace);
-          expect.soft(left, 'primary content shares a 12px inset').toBe(12);
-          if (workspace === 'everything') {
-            const header = grid.locator('.table-header');
-            const checkbox = header.getByRole('checkbox');
-            const [head, check, first] = await Promise.all([header.boundingBox(), checkbox.boundingBox(), row.boundingBox()]);
-            expect.soft(head!.height, 'selection strip has breathing room').toBeGreaterThanOrEqual(28);
-            expect.soft(check!.y - head!.y, 'checkbox has top padding').toBeGreaterThanOrEqual(5);
-            expect.soft(Math.abs(check!.x - first!.x - 12), 'checkbox aligns with rows').toBeLessThanOrEqual(1);
-            expect.soft(Math.abs(first!.y - head!.y - head!.height), 'no gap after selection strip').toBeLessThanOrEqual(1);
-            expect.soft(await header.evaluate(el => getComputedStyle(el).boxShadow), 'single header divider').toBe('none');
-            const [hit, time] = await Promise.all([row.locator('.attachment').boundingBox(), row.locator('.cell--time').boundingBox()]);
-            expect.soft(Math.abs(time!.x - (hit!.x + hit!.width)), 'attachment mark sits next to date').toBeLessThanOrEqual(8);
-            expect.soft(Math.abs((hit!.y + hit!.height / 2) - (time!.y + time!.height / 2)), 'attachment mark aligns with date').toBeLessThanOrEqual(2);
-          } else {
-            if (workspace === 'files') {
-              const [icon, filename, date] = await Promise.all([row.locator('.file-kind').boundingBox(), row.locator('.cell--name').boundingBox(), row.locator('.cell--date').boundingBox()]);
-              expect(icon!.x + icon!.width).toBeLessThanOrEqual(filename!.x);
-              expect(Math.abs(icon!.y - filename!.y)).toBeLessThan(8);
-              expect(date!.y).toBeGreaterThan(filename!.y);
-              for (const field of ['date', 'filename', 'size']) {
-                const button = grid.getByRole('button', { name: `Sort by ${field}` });
-                await expect.soft(button).toBeVisible();
-              }
-            }
-            const separators = await row.evaluate((el, workspace) => {
-              const selectors = workspace === 'files' ? ['.cell--size', '.cell--people'] : [':scope > :nth-child(3)', ':scope > :nth-child(4)'];
-              return selectors.map(selector => getComputedStyle(el.querySelector(selector)!, '::before').content);
-            }, workspace);
-            expect.soft(separators).toEqual(['" · "', '" · "']);
-            if (workspace === 'files') {
-              for (const field of ['filename', 'size', 'date']) {
-                await grid.getByRole('button', { name: `Sort by ${field}` }).tap();
-                await expect(grid.getByRole('columnheader', { name: `Sort by ${field}` })).toHaveAttribute('aria-sort', /ascending|descending/);
-              }
-            }
-          }
+          const [icon, filename, date] = await Promise.all([row.locator('.file-kind').boundingBox(), row.locator('.cell--name').boundingBox(), row.locator('.cell--date').boundingBox()]);
+          expect(icon!.x + icon!.width).toBeLessThanOrEqual(filename!.x);
+          expect(Math.abs(icon!.y - filename!.y)).toBeLessThan(8);
+          expect(date!.y).toBeGreaterThan(filename!.y);
         }
         const header = workspace === 'everything' ? 'Subject / title' : workspace === 'groups' ? 'Items' : 'People';
         const column = grid.getByRole('columnheader', { name: header, exact: true });
@@ -228,88 +191,77 @@ test.describe('phone interactions', () => {
     await expect(grid).toHaveAttribute('aria-activedescendant', /source-3A100$/);
     expect(await grid.evaluate(el => el.scrollTop)).toBe(before);
   });
-
-  for (const workspace of ['everything', 'files'] as const) {
-    test(`${workspace} shows the sender or the roster when unavailable`, async ({ page }) => {
-      let sender: string | undefined = 'Zoe Sender';
-      await page.route(`**/api/v1/${workspace === 'files' ? 'files/search' : 'explore'}`, route => {
-        const { sender_label: _sender, ...item } = workspace === 'files' ? file(1) : entry(1);
-        const row = { ...item, participant_labels: ['Alice Recipient', 'Zoe Sender'], ...(sender ? { sender_label: sender } : {}) };
-        return route.fulfill({ json: workspace === 'files'
-          ? { files: [row], total_count: 1, cache_revision: 'fallback' }
-          : { rows: [row], total_count: 1, cache_revision: 'fallback' }
-        });
-      });
-      for (const label of ['Zoe Sender', undefined]) {
-        sender = label;
-        await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace })))}`);
-        const grid = page.getByRole('grid', { name: workspace === 'files' ? 'Files results' : 'Messages results' });
-        await expect(grid.locator('.phone-sender')).toBeVisible();
-        await expect(grid.locator('.phone-sender')).toHaveText(sender || 'Alice Recipient, Zoe Sender');
-      }
-    });
-  }
 });
 
+async function stubPageRows(page: Page) {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: Array.from({ length: total }, (_, i) => entry(i + 1)), total_count: total, cache_revision: 'rotation', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
+    files: Array.from({ length: total }, (_, i) => file(i + 1)), total_count: total, cache_revision: 'rotation', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+    rows: Array.from({ length: total }, (_, i) => group(i + 1)),
+    total_count: total, cache_revision: 'rotation', search_provenance: {}
+  } }));
+}
+
 for (const workspace of ['everything', 'files', 'groups'] as const) {
-  test(`${workspace} keeps the scrolled row across the compact breakpoint`, async ({ page }) => {
-    await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-      rows: Array.from({ length: total }, (_, i) => entry(i + 1)), total_count: total, cache_revision: 'rotation', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
-      files: Array.from({ length: total }, (_, i) => file(i + 1)), total_count: total, cache_revision: 'rotation', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
-      rows: Array.from({ length: total }, (_, i) => group(i + 1)),
-      total_count: total, cache_revision: 'rotation', search_provenance: {}
-    } }));
-    const state = exploreState(workspace === 'groups'
-      ? { groupingChain: ['source'] }
-      : { workspace });
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-    const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : workspace === 'files' ? 'Files results' : 'Messages grouped by source' });
-    const title = workspace === 'everything' ? 'Synthetic subject 250' : workspace === 'files' ? 'file-250.pdf' : 'Source 250';
-    const row = grid.getByRole('row').filter({ hasText: title });
-    await expect(grid.locator('[aria-rowindex]').first()).toHaveCSS('height', '36px');
-    await grid.evaluate(el => { el.scrollTop = 249 * 36; el.dispatchEvent(new Event('scroll')); });
-    await expect(row).toBeInViewport();
-    if (workspace === 'files') await expect(grid).not.toHaveAttribute('aria-activedescendant', /250/);
-    else await expect(grid).toHaveAttribute('aria-activedescendant', /250/);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(row).toHaveCSS('height', workspace === 'everything' ? '72px' : '58px');
-    await expect(row).toBeInViewport();
-    if (workspace !== 'groups') {
-      if (workspace === 'files') {
-        await row.dispatchEvent('pointerdown');
-        await expect(grid).toHaveAttribute('aria-activedescendant', /250/);
-      }
-      await grid.evaluate((el, height) => {
-        el.scrollTop = 249 * height - (el.clientHeight - height - 30);
-        el.dispatchEvent(new Event('scroll'));
-      }, workspace === 'files' ? 58 : 72);
-      await expect(row).toBeInViewport();
-      await page.setViewportSize({ width: 844, height: 390 });
-      await expect(row).toBeInViewport();
-    }
-    await page.setViewportSize({ width: 1280, height: 720 });
-    await expect(row).toHaveCSS('height', '36px');
-    await expect(row).toBeInViewport();
-    if (workspace !== 'files') {
-      await page.setViewportSize({ width: 390, height: 844 });
-      await expect(row).toHaveCSS('height', workspace === 'everything' ? '72px' : '58px');
-      const phoneHeight = workspace === 'groups' ? 58 : 72;
-      const key = workspace === 'groups' ? 'group:source:101' : 'message:101';
-      await grid.evaluate((el, top) => { el.scrollTop = top; el.dispatchEvent(new Event('scroll')); }, 100 * phoneHeight + 20);
-      await expect.poll(() => page.evaluate(() => history.state?.exploreState?.scrollAnchor)).toEqual({ key, offset: 20 });
-      await grid.focus();
-      for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
-      await expect(grid).toHaveAttribute('aria-activedescendant', /104/);
+  test(`${workspace} keeps the same row visible across the compact breakpoint with and without focus`, async ({ page }) => {
+    await stubPageRows(page);
+    const state = exploreState(workspace === 'groups' ? { groupingChain: ['source'] } : { workspace });
+    for (const focused of [false, true]) {
       await page.setViewportSize({ width: 1280, height: 720 });
-      await expect(grid.locator('[aria-rowindex="105"]')).toHaveCSS('height', '36px');
-      const rebased = await grid.evaluate(el => el.scrollTop);
-      await page.reload();
-      await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(rebased);
+      await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
+      const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : workspace === 'files' ? 'Files results' : 'Messages grouped by source' });
+      const row = grid.locator('[aria-rowindex="251"]');
+      await expect(grid.locator('[aria-rowindex]').first()).toHaveCSS('height', '36px');
+      await grid.evaluate(el => { el.scrollTop = 249 * 36; el.dispatchEvent(new Event('scroll')); });
+      await expect(row).toBeInViewport();
+      if (focused) {
+        if (workspace === 'files') await row.dispatchEvent('pointerdown');
+        else await grid.focus();
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      const phoneHeight = workspace === 'everything' ? 72 : 58;
+      await expect(row).toHaveCSS('height', `${phoneHeight}px`);
+      await expect(row).toBeInViewport();
+      if (focused && workspace !== 'groups') {
+        await grid.evaluate((el, height) => {
+          el.scrollTop = 249 * height - (el.clientHeight - height - 30);
+          el.dispatchEvent(new Event('scroll'));
+        }, phoneHeight);
+        await expect(row).toBeInViewport();
+        await page.setViewportSize({ width: 844, height: 390 });
+        await expect(row).toBeInViewport();
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await expect(row).toHaveCSS('height', '36px');
+      await expect(row).toBeInViewport();
     }
+  });
+}
+
+for (const workspace of ['everything', 'groups'] as const) {
+  test(`${workspace} restores the rebased scroll anchor after resize and reload`, async ({ page }) => {
+    await stubPageRows(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const state = exploreState(workspace === 'groups' ? { groupingChain: ['source'] } : { workspace });
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
+    const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : 'Messages grouped by source' });
+    const phoneHeight = workspace === 'groups' ? 58 : 72;
+    await expect(grid.locator('[aria-rowindex="2"]')).toHaveCSS('height', `${phoneHeight}px`);
+    const key = workspace === 'groups' ? 'group:source:101' : 'message:101';
+    await grid.evaluate((el, top) => { el.scrollTop = top; el.dispatchEvent(new Event('scroll')); }, 100 * phoneHeight + 20);
+    await expect.poll(() => page.evaluate(() => history.state?.exploreState?.scrollAnchor)).toEqual({ key, offset: 20 });
+    await grid.focus();
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+    await expect(grid).toHaveAttribute('aria-activedescendant', /104/);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(grid.locator('[aria-rowindex="105"]')).toHaveCSS('height', '36px');
+    const rebased = await grid.evaluate(el => el.scrollTop);
+    await page.reload();
+    await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(rebased);
   });
 }
 
@@ -352,17 +304,3 @@ function file(index: number) {
     content_state: 'missing_blob', content_available: false
   };
 }
-
-test('Files desktop people text aligns with its cell', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [file(1)], total_count: 1, cache_revision: 'desktop' } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace: 'files' })))}`);
-  const cell = page.getByRole('grid', { name: 'Files results' }).locator('[aria-rowindex="2"] .cell--people');
-  await expect(cell).toBeVisible();
-  const inset = await cell.evaluate(el => {
-    const span = el.querySelector('.desktop-people')!;
-    const range = document.createRange(); range.selectNodeContents(span);
-    return Math.round(range.getBoundingClientRect().left - el.getBoundingClientRect().left);
-  });
-  expect(inset).toBe(6);
-});

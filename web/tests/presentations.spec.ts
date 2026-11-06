@@ -204,6 +204,12 @@ test.describe('compact toolbar', () => {
       await page.goto(`/?workspace=${workspace}`);
       const grid = page.getByRole('grid', { name: gridName });
       await expect(grid).toBeVisible();
+      if (workspace === 'files') {
+        for (const field of ['filename', 'size', 'date']) {
+          await grid.getByRole('button', { name: `Sort by ${field}` }).tap();
+          await expect(grid.getByRole('columnheader', { name: `Sort by ${field}` })).toHaveAttribute('aria-sort', /ascending|descending/);
+        }
+      }
       for (const key of ['g', 's']) {
         await grid.focus();
         await page.keyboard.press(key);

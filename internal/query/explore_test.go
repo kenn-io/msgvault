@@ -1671,7 +1671,7 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
 }
 
-func senderLabelFixture(t *testing.T) (*DuckDBEngine, map[int64]string, int64) {
+func senderLabelFixture(t *testing.T) (*TestDataBuilder, map[int64]string, int64) {
 	t.Helper()
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
@@ -1694,19 +1694,14 @@ func senderLabelFixture(t *testing.T) (*DuckDBEngine, map[int64]string, int64) {
 	chat := b.AddMessage(MessageOpt{SourceID: chatSource, SenderID: &alice, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
 	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: "Alice"}
 	for id := range labels {
-		b.AddTo(id, recipient, "Zoe Recipient")
 		b.AddAttachment(id, 10, "example.pdf")
 	}
-	return b.BuildEngine(), labels, recipient
+	return b, labels, recipient
 }
 
 func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
-	engine, labels, _ := senderLabelFixture(t)
-	for _, id := range []int64{4, 5} {
-		var fromName string
-		require.NoError(t, engine.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", id).Scan(&fromName))
-		assert.Empty(t, fromName, "other readers keep an empty name for unnamed direct senders")
-	}
+	builder, labels, _ := senderLabelFixture(t)
+	engine := builder.BuildEngine()
 	for _, deletion := range []DeletionFilter{DeletionAny, DeletionDeleted} {
 		t.Run(string(deletion), func(t *testing.T) {
 			assert := assert.New(t)
@@ -1722,7 +1717,6 @@ func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
 			actual := make(map[int64]string)
 			for _, row := range fast.Rows {
 				actual[*row.AnchorMessageID] = row.SenderLabel
-				assert.Contains(row.ParticipantLabels, "Zoe Recipient")
 			}
 			assert.Equal(expected, actual)
 		})

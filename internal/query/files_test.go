@@ -915,7 +915,11 @@ func TestSearchFilesSentOnlyExcludesDraftAttachments(t *testing.T) {
 }
 
 func TestSearchFilesSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
-	engine, labels, recipient := senderLabelFixture(t)
+	builder, labels, recipient := senderLabelFixture(t)
+	for id := range labels {
+		builder.AddTo(id, recipient, "Zoe Recipient")
+	}
+	engine := builder.BuildEngine()
 	for _, scope := range []string{"all", "person", "deleted"} {
 		t.Run(scope, func(t *testing.T) {
 			assert := assert.New(t)
