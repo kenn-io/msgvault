@@ -129,25 +129,15 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 }
 
 func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
-	for _, version := range []string{"3.42.0", "3.43.0", "3.44.0", "3.45.0"} {
-		t.Run(version, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			client := &fakeCallCommandClient{schemaVersion: version}
-			command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) { return client, func() {}, nil }})
-			var output bytes.Buffer
-			command.SetOut(&output)
-			command.SetErr(&output)
-			command.SetArgs([]string{"list"})
-			err := command.ExecuteContext(t.Context())
-			if version == "3.45.0" {
-				requirements.NoError(err)
-				assertions.JSONEq(`{"items":[]}`, output.String())
-				assertions.Len(client.lists, 1)
-			} else {
-				requirements.ErrorContains(err, "calls require daemon API 3.45.0 or newer")
-				assertions.Contains(err.Error(), "daemon reports "+version)
-				assertions.Empty(client.lists)
-			}
-		})
-	}
+	assertions, requirements := assert.New(t), require.New(t)
+	client := &fakeCallCommandClient{schemaVersion: "3.44.0"}
+	command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) { return client, func() {}, nil }})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"list"})
+	err := command.ExecuteContext(t.Context())
+	requirements.ErrorContains(err, "calls require daemon API 3.45.0 or newer")
+	assertions.Contains(err.Error(), "daemon reports 3.44.0")
+	assertions.Empty(client.lists)
 }

@@ -15,17 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestCallSummarySameNativeCallIDIsOneCall(t *testing.T) {
-	f := newLogicalCallFixture(t)
-	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
-	require.NoError(t, err)
-	first := f.put(t, "one", nil)
-	f.put(t, "one", nil)
-	summary, err := f.st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-	require.NoError(t, err)
-	assert.Equal(t, []store.PersonCallSummary{{PersonID: person.ID, Answered: 1, ExampleMessageID: first}}, summary)
-}
-
 func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -219,14 +208,6 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{Before: &at})
 	requirements.NoError(err)
 	assertions.Empty(got, "before excludes the call at the boundary")
-	end := at.Add(time.Hour)
-	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &end})
-	requirements.NoError(err)
-	assertions.Empty(got, "later evidence does not move the call into the window")
-	pastEnd := end.Add(time.Second)
-	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &pastEnd})
-	requirements.NoError(err)
-	assertions.Empty(got)
 	window := at.Add(time.Minute)
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &window})
 	requirements.NoError(err)

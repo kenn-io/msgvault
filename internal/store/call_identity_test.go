@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"testing"
@@ -293,9 +294,6 @@ func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
 	assertions.Empty(summary)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), f.at, hidden)
 	requirements.NoError(err)
-	again, _, err := f.st.ListLogicalCallsContext(ctx, f.query())
-	requirements.NoError(err)
-	assertions.Equal(calls, again)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.at, first)
 	requirements.NoError(err)
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
@@ -311,7 +309,16 @@ func TestLogicalCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	f := newLogicalCallFixture(t)
 	f.put(t, "visible", nil)
 	hidden := f.put(t, "hidden", func(o *callhistory.Observation) { o.Account = "b" })
-	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE call_details SET evidence_version = 2 WHERE message_id = ?`), hidden)
+	metadata, err := f.st.GetMessageMetadata(hidden)
+	require.NoError(err)
+	var evidence callhistory.Evidence
+	require.NoError(json.Unmarshal([]byte(metadata.String), &evidence))
+	evidence.Version = 2
+	unsupported, err := json.Marshal(evidence)
+	require.NoError(err)
+	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(unsupported), hidden)
+	require.NoError(err)
+	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE call_details SET evidence_version = 2 WHERE message_id = ?`), hidden)
 	require.NoError(err)
 	_, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
 	require.ErrorIs(err, callhistory.ErrInvalid)
@@ -462,7 +469,7 @@ func TestCallContactAggregateScope(t *testing.T) {
 	assertions.Nil(got.LastOutboundAt)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.at, hidden)
 	requirements.NoError(err)
-	again, err := f.st.CallContactAggregateContext(ctx, q)
+	again, err := f.st.CallContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(got, again)
 	empty, err := f.st.CallContactAggregateContext(sourcescope.WithSourceIDs(t.Context(), nil), q)

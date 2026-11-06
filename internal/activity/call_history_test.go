@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/callhistory"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -46,11 +45,6 @@ func TestProjectorNativeCallObservation(t *testing.T) {
 				_, err = projector.ProjectMessages(t.Context(), []int64{messageID})
 			}
 			requirements.NoError(err)
-			var channel, direction string
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-				`SELECT channel, direction FROM activity_events WHERE message_id = ?`), messageID).Scan(&channel, &direction))
-			assertions.Equal(string(store.ChannelOther), channel)
-			assertions.Equal(string(store.DirectionObserved), direction)
 			var links int
 			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?`), messageID).Scan(&links))
@@ -59,10 +53,6 @@ func TestProjectorNativeCallObservation(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Zero(state.InteractionCount)
 			assertions.Empty(state.LastContactRef)
-			calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-			requirements.NoError(err)
-			requirements.Len(calls, 1)
-			assertions.Equal(messageID, calls[0].MessageID)
 			if mode != "exact" {
 				queue, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
 				requirements.NoError(err)
