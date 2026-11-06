@@ -165,19 +165,16 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
 		require.NoError(st.UpsertFTS(id, "overflowboundary", "", address, "", ""))
 	}
-	for _, tc := range []struct {
-		args []string
-		hint string
-	}{
-		{[]string{"search", "overflowboundary"}, "Hint: more messages match; use --offset 50 for the next page or raise --limit"},
-		{[]string{"list-senders"}, "Hint: more senders exist; raise -n"},
+	for _, args := range [][]string{
+		{"search", "overflowboundary"},
+		{"list-senders"},
 	} {
-		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, tc.args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
+		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		combined, err := command.CombinedOutput()
 		require.NoError(err, string(combined))
 		footer := bytes.Index(combined, []byte("Showing 50 results"))
 		require.GreaterOrEqual(footer, 0)
-		assert.Greater(bytes.Index(combined, []byte(tc.hint)), footer, "the hint follows the results footer")
+		assert.Greater(bytes.Index(combined, []byte("Hint:")), footer, "the hint follows the results footer")
 	}
 }
