@@ -71,14 +71,11 @@ Multiple identities currently bound to one person count once per call.
 | `answered` | One observation explicitly establishes answered status, owner joined and that person joined. Partial claims from separate observations cannot combine to earn credit. |
 | `missed`, `declined`, `cancelled` | Explicit actual-call outcomes, separate from answered calls. |
 | `unknown` | Associated call evidence lacks sufficient outcome or attendance information. |
-| `conflicting` | Exact-identity observations disagree about an answer versus nonattendance, or report incompatible negative outcomes. |
 | `example_message_id` | One associated observation to inspect, not proof that every counted event was answered. |
 
-Deduplication requires the exact provider/account/native-call ID. Without that
-ID, only reimport of the same source record replaces evidence; time proximity,
-phone numbers and similar titles never merge calls. Group identities are
-formed before the time window is applied, using the earliest active
-observation. `--after` is inclusive and `--before` exclusive.
+Reimporting the same source record replaces its evidence. Time proximity,
+phone numbers and similar titles never merge calls. `--after` is inclusive and
+`--before` exclusive.
 
 Native withdrawal prevents a stale active reimport of that observation.
 Other observations of the call remain usable. Explicit archive deletion or

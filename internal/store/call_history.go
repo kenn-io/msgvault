@@ -112,17 +112,14 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
-		(message_id, canonical_key, kind, direction, outcome,
-		 owner_participation, occurred_at, duration_seconds, withdrawn)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(message_id, outcome, owner_participation, occurred_at, withdrawn)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
-			canonical_key = excluded.canonical_key, kind = excluded.kind,
-			direction = excluded.direction, outcome = excluded.outcome,
+			outcome = excluded.outcome,
 			owner_participation = excluded.owner_participation,
-			occurred_at = excluded.occurred_at, duration_seconds = excluded.duration_seconds,
+			occurred_at = excluded.occurred_at,
 			withdrawn = excluded.withdrawn`,
-		id, e.CanonicalKey(), e.Kind, e.Direction, e.Outcome, e.OwnerParticipation,
-		e.OccurredAt.UTC(), e.DurationSeconds, e.Withdrawn)
+		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Withdrawn)
 	if err != nil {
 		return fmt.Errorf("write call projection: %w", err)
 	}

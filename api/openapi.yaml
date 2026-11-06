@@ -11517,9 +11517,6 @@ components:
         cancelled:
           format: int64
           type: integer
-        conflicting:
-          format: int64
-          type: integer
         declined:
           format: int64
           type: integer
@@ -11542,7 +11539,6 @@ components:
         - declined
         - cancelled
         - unknown
-        - conflicting
         - example_message_id
       type: object
     PersonCategory:

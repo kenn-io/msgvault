@@ -17,24 +17,30 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observation, int64) {
+	t.Helper()
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	return o, src.ID
+}
+
 func TestImportedCallReadableAndSearchable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
 	duration := 600.0
-	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
-		DurationSeconds: &duration, Raw: []byte(`{}`),
-	}
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(err)
+	o, sourceID := validCallObservation(t, st)
+	o.DurationSeconds = &duration
 	for _, tc := range []struct{ direction, text, stale string }{
 		{"incoming", "Call incoming, 600 seconds", "outgoing"},
 		{"outgoing", "Call outgoing, 600 seconds", "incoming"},
 	} {
 		o.Direction = tc.direction
-		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
 		var subject, title string
 		var snippet sql.NullString
@@ -66,7 +72,7 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	o.RecordID = "outgoing"
 	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
 		o.Direction = direction
-		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
 		var isFromMe bool
 		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&isFromMe))
@@ -74,7 +80,7 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	}
 	o.RecordID, o.Direction = "call", "incoming"
 	for range 2 {
-		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
 		var count int
 		var latest sql.NullTime
@@ -85,7 +91,7 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		o.OccurredAt = o.OccurredAt.Add(time.Hour)
 	}
 	o.OccurredAt = time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
 	require.NoError(err)
@@ -93,7 +99,7 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	require.Len(matches, 1)
 	require.Equal(id, matches[0].ID)
 	o.Withdrawn = true
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	again, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	require.Equal(id, again)
 	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
@@ -151,13 +157,8 @@ func TestWithdrawnCallAbsentFromMetadataSearch(t *testing.T) {
 func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
-	}
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	o, sourceID := validCallObservation(t, st)
+	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	// Simulate unsupported persisted evidence, bypassing current write validation.
 	for _, version := range []int{0, 2} {
@@ -177,19 +178,14 @@ func TestCallReimportPreservesLabels(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
-	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
-	}
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	o, sourceID := validCallObservation(t, st)
+	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(err)
-	labelID, err := st.EnsureLabel(src.ID, "important", "Important", "user")
+	labelID, err := st.EnsureLabel(sourceID, "important", "Important", "user")
 	require.NoError(err)
 	require.NoError(st.AddMessageLabels(id, []int64{labelID}))
 
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	again, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	assert.Equal(id, again)
 	labels, err := st.MessageLabelIDsContext(t.Context(), again)
@@ -226,9 +222,6 @@ func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.JSONEq(string(o.Raw), string(raw))
-	var duration sql.NullFloat64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT duration_seconds FROM call_details WHERE message_id = ?`), id).Scan(&duration))
-	assertions.False(duration.Valid, "unknown duration is not zero")
 
 	o.Participants[0].Participation = "unknown"
 	o.Outcome, o.OwnerParticipation = "unknown", "unknown"

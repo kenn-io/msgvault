@@ -5,7 +5,6 @@
 export interface PersonCallSummary {
   answered: number;
   cancelled: number;
-  conflicting: number;
   declined: number;
   example_message_id: number;
   missed: number;
