@@ -230,12 +230,10 @@ describe('appearance preferences', () => {
     expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
   });
 
-  it('keeps a visible focused row at its screen offset and ignores offscreen focus', () => {
+  it('rebases around visible focus, clamps it to a shrinking viewport, and ignores offscreen focus', () => {
     expect(rebaseVirtualScroll(3600, 36, 72, 110, 500)).toBe(7560);
+    expect(rebaseVirtualScroll(3600, 36, 72, 110, 500, 300)).toBe(7692);
     expect(rebaseVirtualScroll(3650, 72, 36, 0, 500)).toBe(1835);
-  });
-
-  it('rebases a virtual scroll offset around the same visible row', () => {
     expect(rebaseVirtualScroll(249 * 36 + 5, 36, 46)).toBe(249 * 46 + 5);
     expect(rebaseVirtualScroll(7250, 72, 36)).toBe(3635);
   });

@@ -143,14 +143,12 @@ if (typeof window.matchMedia !== 'function') {
 
 beforeEach(() => {
   document.documentElement.dataset.density = 'compact';
-  document.documentElement.style.setProperty('--row-height', compactRowHeight);
   document.documentElement.style.setProperty('--table-row-height', compactRowHeight);
   document.documentElement.style.setProperty('--table-short-row-height', compactRowHeight);
 });
 
 afterEach(() => {
   cleanup();
-  document.documentElement.style.removeProperty('--row-height');
   document.documentElement.style.removeProperty('--table-row-height');
   document.documentElement.style.removeProperty('--table-short-row-height');
   localStorage.clear();

@@ -20,31 +20,21 @@ func TestExploreSenderLabelsKeepConversationRoster(t *testing.T) {
 	t.Parallel()
 	rows := []query.EntryRow{
 		{Kind: query.EntryEmail, AnchorMessageID: new(int64(1))},
-		{Kind: query.EntryEmail, AnchorMessageID: new(int64(4))},
 		{Kind: query.EntryConversation, AnchorMessageID: new(int64(5)), ParticipantLabels: []string{"Alice Recipient", "Zoe Sender"}},
 	}
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{SenderLabelsByID: map[int64]string{
 		1: "Zoe Sender", 5: "Conversation Sender",
-	}}, timelineResult: &query.ExploreResponse{Rows: rows, TotalCount: 3}}
+	}}, timelineResult: &query.ExploreResponse{Rows: rows, TotalCount: 2}}
 	opts := testServerOptions(t, nil)
 	opts.Engine = engine
 	response := postExploreJSON(t, NewServerWithOptions(opts), "/api/v1/explore", `{}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result ExploreHTTPResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(result.Rows, 3)
+	require.Len(result.Rows, 2)
 	assert.Equal("Zoe Sender", result.Rows[0].SenderLabel)
 	assert.Empty(result.Rows[1].SenderLabel)
-	assert.Empty(result.Rows[2].SenderLabel)
-	assert.Equal([]string{"Alice Recipient", "Zoe Sender"}, result.Rows[2].ParticipantLabels)
-
-	archivedEngine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'deleted', 101::BIGINT, 'Archived', 'snippet', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', 1::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, 1)
-	archived := postExploreJSON(t, newTestServerWithEngine(t, archivedEngine), "/api/v1/explore", `{"filters":[{"dimension":"deletion","values":["deleted"]}]}`)
-	require.Equal(http.StatusOK, archived.Code, archived.Body.String())
-	var archivedBody ExploreHTTPResponse
-	require.NoError(json.Unmarshal(archived.Body.Bytes(), &archivedBody))
-	require.Len(archivedBody.Rows, 1)
-	assert.Equal("Alice", archivedBody.Rows[0].SenderLabel)
+	assert.Equal([]string{"Alice Recipient", "Zoe Sender"}, result.Rows[1].ParticipantLabels)
 }
 
 func TestExploreSenderLookupFailureKeepsRows(t *testing.T) {

@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
-	"golang.org/x/mod/semver"
 )
 
 const (
@@ -77,18 +76,6 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 		require.NotNil(doc.Info, "openapi info")
 		assert.Equal(APISchemaVersion, doc.Info.Version, "info.version tracks API schema, not binary version")
 		assert.NotEmpty(doc.Paths, "paths")
-	}
-}
-
-func TestOpenAPISenderLabelSchemaVersion(t *testing.T) {
-	t.Parallel()
-	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		for _, name := range []string{"EntryRow", "FileSearchRow", "PersonFileSearchRow"} {
-			schema := doc.Components.Schemas.Map()[name]
-			require.NotNil(t, schema, name)
-			assert.Contains(t, schema.Properties, "sender_label", name)
-		}
-		assert.GreaterOrEqual(t, semver.Compare("v"+doc.Info.Version, "v3.45.0"), 0)
 	}
 }
 

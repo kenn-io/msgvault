@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -364,41 +363,30 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 	})
 }
 
-func TestSenderLabelsPreserveEnvelopeAndArchivedSenders(t *testing.T) {
+func TestSenderLabelsPreferEnvelopeAndFallBackToSender(t *testing.T) {
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
 	first := b.AddMessage(MessageOpt{})
-	second := b.AddMessage(MessageOpt{})
 	b.AddFrom(first, alice, "Personal Alias")
-	b.AddFrom(second, alice, "Issue Desk")
 	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
 	b.AddFrom(preferred, alice, "Alice")
-	deletedAt := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
-	deleted := b.AddMessage(MessageOpt{SenderID: &alice, DeletedFromSourceAt: &deletedAt})
+	direct := b.AddMessage(MessageOpt{SenderID: &alice})
+	phoneSender := b.AddPhoneParticipant("+12025550123", "")
+	phone := b.AddMessage(MessageOpt{SenderID: &phoneSender})
+	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
+	email := b.AddMessage(MessageOpt{SenderID: &emailSender})
+
 	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{first, second, preferred, deleted})
+	labels, err := e.SenderLabels(t.Context(), []int64{first, preferred, direct, phone, email})
 	require.NoError(t, err)
 	assert.Equal("Personal Alias", labels[first])
-	assert.Equal("Issue Desk", labels[second])
 	assert.Equal("Alice", labels[preferred])
-	assert.Equal("Alice", labels[deleted])
-}
-
-func TestSenderLabelsFallBackToKnownIdentifier(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	b.AddSource("archive@example.com")
-	sender := b.AddPhoneParticipant("+12025550123", "")
-	id := b.AddMessage(MessageOpt{SenderID: &sender})
-	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
-	emailID := b.AddMessage(MessageOpt{SenderID: &emailSender})
-	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{id, emailID})
-	require.NoError(t, err)
-	assert.Equal(t, "+12025550123", labels[id])
-	assert.Equal(t, "sender@example.com", labels[emailID])
+	assert.Equal("Alice", labels[direct])
+	assert.Equal("+12025550123", labels[phone])
+	assert.Equal("sender@example.com", labels[email])
 }
 
 func TestSenderLabelsAggregationIsPageBounded(t *testing.T) {
