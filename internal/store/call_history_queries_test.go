@@ -164,6 +164,47 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 }
 
 func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
+	t.Run("mixed-offset legacy call", func(t *testing.T) {
+		requirements := require.New(t)
+		f := storetest.New(t)
+		peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "google_voice")
+		requirements.NoError(err)
+		person, _, err := f.Store.CreatePersonFromParticipant(peer)
+		requirements.NoError(err)
+		at, err := time.Parse(time.RFC3339, "2026-10-01T11:00:00-05:00")
+		requirements.NoError(err)
+		message := f.NewMessage().Build()
+		message.MessageType = store.MessageTypeGoogleVoiceCall
+		message.SentAt = sql.NullTime{Time: at, Valid: true}
+		id, err := f.Store.UpsertMessage(message)
+		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
+		requirements.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
+		utc := time.Date(2026, 10, 1, 16, 0, 0, 0, time.UTC)
+		for _, tc := range []struct {
+			name  string
+			query store.CallQuery
+			count int
+		}{
+			{"inclusive after", store.CallQuery{After: &utc}, 1},
+			{"exclusive before", store.CallQuery{Before: &utc}, 0},
+			{"within window", store.CallQuery{After: new(utc.Add(-30 * time.Minute)), Before: new(utc.Add(30 * time.Minute))}, 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				require := require.New(t)
+				items, err := f.Store.ListCallObservationsContext(t.Context(), tc.query)
+				require.NoError(err)
+				assert.Len(t, items, tc.count)
+				summary, err := f.Store.SummarizeCallsContext(t.Context(), tc.query)
+				require.NoError(err)
+				if tc.count == 0 {
+					assert.Empty(t, summary)
+				} else {
+					assert.Equal(t, []store.PersonCallSummary{{PersonID: person.ID, Answered: 1, ExampleMessageID: id}}, summary)
+				}
+			})
+		}
+	})
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
