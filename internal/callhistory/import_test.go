@@ -101,7 +101,7 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 	}
 }
 
-func TestImportRequestBoundsAndAccountMismatch(t *testing.T) {
+func TestImportRequestBoundsAccountMismatchAndTimestampNormalization(t *testing.T) {
 	requirements := require.New(t)
 	_, err := DecodeImport(strings.NewReader(strings.Repeat(" ", MaxRequestBytes+1)))
 	requirements.ErrorIs(err, ErrImportTooLarge)

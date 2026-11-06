@@ -54,20 +54,26 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 		at := time.Date(2026, 7, 31, 13, 0, 0, 0, time.UTC)
 		source, err := f.Store.GetOrCreateSource(callhistory.SourceType, "signal:example")
 		require.NoError(err)
+		counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
 		_, err = f.Store.PutCallObservationContext(t.Context(), source.ID, callhistory.Observation{
 			Version: 1, Provider: "signal", Account: "example", RecordID: "call",
 			Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 			OccurredAt: at, Raw: []byte(`{}`),
+			Participants: []callhistory.Participant{{ID: counterpart, Participation: "joined"}},
 		})
 		require.NoError(err)
-		counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
+		_, err = projector.RunOnce(t.Context())
+		require.NoError(err)
+		state, err := f.Store.ContactStateContext(t.Context(), personID, at.Add(time.Minute))
+		require.NoError(err)
+		assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
 		laterID := f.NewMessage().WithSentAt(at.Add(time.Hour)).Create(t, f.Store)
 		require.NoError(f.Store.ReplaceMessageRecipients(laterID, "from", []int64{counterpart}, []string{"Counterpart"}))
 		owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 		require.NoError(f.Store.ReplaceMessageRecipients(laterID, "to", []int64{owner}, []string{"Owner"}))
 		_, err = projector.RunOnce(t.Context())
 		require.NoError(err)
-		state, err := f.Store.ContactStateContext(t.Context(), personID, at.Add(2*time.Hour))
+		state, err = f.Store.ContactStateContext(t.Context(), personID, at.Add(2*time.Hour))
 		require.NoError(err)
 		assert.Equal("message:"+formatProjectorID(laterID), state.LastContactRef)
 	})

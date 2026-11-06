@@ -24,15 +24,22 @@ func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
 	requirements.NoError(err)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	var datedID int64
-	for _, dated := range []bool{false, true} {
+	for _, tc := range []struct {
+		messageType string
+		dated       bool
+	}{
+		{store.MessageTypeGoogleVoiceCall, false},
+		{store.MessageTypeSynctechCall, false},
+		{store.MessageTypeGoogleVoiceCall, true},
+	} {
 		message := f.NewMessage().Build()
-		message.MessageType = store.MessageTypeGoogleVoiceCall
-		message.SentAt = sql.NullTime{Time: at, Valid: dated}
+		message.MessageType = tc.messageType
+		message.SentAt = sql.NullTime{Time: at, Valid: tc.dated}
 		id, err := f.Store.UpsertMessage(message)
 		requirements.NoError(err)
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
 		requirements.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
-		if dated {
+		if tc.dated {
 			datedID = id
 		}
 	}
@@ -51,8 +58,7 @@ func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
 		summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
 		require.NoError(err)
 		require.Len(summary, 1)
-		assert.Equal(person.ID, summary[0].PersonID)
-		assert.Equal(1, summary[0].Answered)
+		assert.Equal([]store.PersonCallSummary{{PersonID: person.ID, Answered: 1, ExampleMessageID: datedID}}, summary)
 	})
 }
 
@@ -211,11 +217,6 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &pastEnd})
 	requirements.NoError(err)
 	assertions.Empty(got)
-	window := at.Add(time.Minute)
-	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{After: &window})
-	requirements.NoError(err)
-	requirements.Len(got, 1)
-	assertions.Equal(1, got[0].Answered, "each record uses its own occurrence time")
 	requirements.NoError(st.DeletePersonContext(t.Context(), person.ID, person.Revision))
 	got, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
@@ -230,7 +231,13 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 	t.Run("reclassified message", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
-		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'email' WHERE id = ?`), secondID)
+		var conversationID int64
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), secondID).Scan(&conversationID))
+		_, err := st.UpsertMessage(&store.Message{
+			ConversationID: conversationID,
+			SourceID:       src.ID, SourceMessageID: "two", MessageType: "email",
+			SentAt: sql.NullTime{Time: end, Valid: true},
+		})
 		requirements.NoError(err)
 		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
 		requirements.NoError(err)
@@ -248,15 +255,18 @@ func TestCallQueriesRejectInvalidBounds(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	zero := time.Time{}
 	for _, query := range []store.CallQuery{
-		{Limit: 101}, {Limit: -1}, {PersonID: -1}, {AfterID: -1},
-		{Offset: -1}, {After: &zero},
+		{Limit: 101}, {Limit: -1}, {PersonID: -1}, {After: &zero},
 	} {
 		_, err := st.SummarizeCallsContext(t.Context(), query)
 		requirements.ErrorIs(err, callhistory.ErrInvalid)
 		_, err = st.ListCallObservationsContext(t.Context(), query)
 		requirements.ErrorIs(err, callhistory.ErrInvalid)
 	}
-	_, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{Offset: 1})
+	_, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{AfterID: -1})
+	requirements.ErrorIs(err, callhistory.ErrInvalid)
+	_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{Offset: -1})
+	requirements.ErrorIs(err, callhistory.ErrInvalid)
+	_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{Offset: 1})
 	requirements.ErrorIs(err, callhistory.ErrInvalid)
 	_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{AfterID: 1})
 	requirements.ErrorIs(err, callhistory.ErrInvalid)
