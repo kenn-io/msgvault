@@ -161,3 +161,31 @@ func TestMeetingRecordSparseCancelledCopySkipsUnidentifiedNotes(t *testing.T) {
 	assert.Empty(t, record.MessageIDs)
 	assert.Equal(t, queries, strings.Count(logs.String(), `"msg":"sql"`), "unrelated scheduled-only notes must not add candidate reads")
 }
+
+func TestMeetingRecordCopyIncludesCancelledMasterDecision(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"series","status":"cancelled"}`)
+	calendarFixture(t, st, "exception", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
+	require.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
+	require.NoError(err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
+
+func TestMeetingRecordIncludesSupersededOrphanDecision(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, orphan := calendarFixture(t, st, "orphan", `{"id":"orphan","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	calendarFixture(t, st, "replacement", `{"id":"replacement","iCalUID":"weekly@example.org","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`)
+	require.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"})
+	require.NoError(err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+}
