@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/callhistory"
@@ -16,17 +15,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	// Source locking serializes absent-row creation as well as later updates.
 	// The identity lock held by persistence also orders participant merges.
 	before := func(ctx context.Context, tx *loggedTx) error {
-		var sourceType, identifier string
-		err := tx.QueryRowContext(ctx, `SELECT source_type, identifier FROM sources WHERE id = ?`, sourceID).Scan(&sourceType, &identifier)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrSourceNotFound
-		}
-		if err != nil {
-			return err
-		}
-		if sourceType != callhistory.SourceType || identifier != o.SourceIdentifier() {
-			return fmt.Errorf("%w: source provenance mismatch", callhistory.ErrInvalid)
-		}
 		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
 			return err
 		}
