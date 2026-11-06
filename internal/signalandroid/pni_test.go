@@ -122,6 +122,28 @@ func TestImportGroupAuthorWithoutACI(t *testing.T) {
 	}
 }
 
+func TestReimportGroupPhoneAuthorGainsACI(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir,
+		`UPDATE recipient SET aci = NULL, pni = NULL, e164 = '+15555550102' WHERE _id = 3`,
+		`DELETE FROM message WHERE _id <> 200`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	runImport(t, st, dir, attachments)
+	before := importedMessages(t, st)
+	require.Len(before, 1)
+	require.Contains(before, "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:tel:+15555550102:1700000240000")
+
+	changeFixture(t, dir, `UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`)
+	summary := runImport(t, st, dir, attachments)
+
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	assert.Equal(before, importedMessages(t, st))
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(1), summary.MessagesUpdated)
+}
+
 func TestReimportPNIChatGainsACI(t *testing.T) {
 	for name, updates := range map[string][]string{
 		"same recipient": {`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
