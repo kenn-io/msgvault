@@ -3,11 +3,14 @@ package api
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,12 +18,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
+	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
 )
 
 const lineTestBot = "U00000000000000000000000000000001"
@@ -50,7 +55,7 @@ func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) l
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.BindAddr = "127.0.0.1"
 	cfg.Server.APIKey = apiKey
-	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Logger: testLogger(), LineWebhook: receiver, OperationGate: &recordingOperationGate{allow: false}})
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Logger: testLogger(), LineWebhook: receiver, OperationGate: NewSerialOperationGate()})
 	for _, configureServer := range configure {
 		configureServer(server)
 	}
@@ -96,6 +101,94 @@ func lineEnvelope(events string) string {
 }
 func lineEvent(id string) string {
 	return `{"type":"message","webhookEventId":"` + id + `","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}`
+}
+
+func TestLineReceiptDuringBackupFreeze(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	must := require.New(t)
+	checks := assert.New(t)
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("line", "2000000000")
+	must.NoError(err)
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
+	gate := NewSerialOperationGate()
+	wakes := 0
+	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, func(string) {
+		_, _, held := gate.Holder()
+		checks.False(held, "release the receipt gate before waking processing")
+		wakes++
+	})
+	must.NoError(err)
+	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
+	t.Cleanup(func() { must.NoError(server.Shutdown(context.Background())) })
+	router := server.Router()
+	body := lineEnvelope("[" + lineEvent("freeze-event") + "]")
+	token := beginBackupFreeze(t, server)
+	for _, tc := range []struct {
+		body, signature string
+		status          int
+	}{
+		{body, "invalid-signature", http.StatusUnauthorized},
+		{`{"destination":"` + lineTestBot + `"}`, "", http.StatusBadRequest},
+		{lineEnvelope("[]"), "", http.StatusOK},
+	} {
+		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(tc.body))
+		request.Header = lineSignedHeaders(tc.body)
+		if tc.signature != "" {
+			request.Header.Set("X-Line-Signature", tc.signature)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(tc.status, response.Code, "authentication, validation, and empty checks precede the gate")
+	}
+	observedDB, observer := sqlobserve.OpenFile(t, "file:"+dbPath+"?mode=rw", nil)
+	observer.BeforeQuery = func(_ context.Context, statement string) {
+		if statement != "SELECT count(*) FROM sqlite_master" {
+			return
+		}
+		// Kit has checkpointed the main file, but hasn't pinned its snapshot.
+		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(body))
+		request.Header = lineSignedHeaders(body)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(http.StatusServiceUnavailable, response.Code, "receipt during backup freeze")
+		checks.Zero(wakes)
+	}
+	session, err := backup.OpenFrozenSessionWithOpener(t.Context(), dbPath, backup.NoopFreezeCoordinator{}, backup.SQLiteOpenFunc(func(string, backup.SQLiteOpenOptions) (*sql.DB, error) {
+		return observedDB, nil
+	}))
+	must.NoError(err)
+	t.Cleanup(func() { must.NoError(session.Close()) })
+	var snapshotReceipts int
+	must.NoError(session.Tx().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&snapshotReceipts))
+	checks.Zero(snapshotReceipts)
+	captured, err := os.ReadFile(dbPath)
+	must.NoError(err)
+	capturedPath := filepath.Join(t.TempDir(), "captured.db")
+	must.NoError(os.WriteFile(capturedPath, captured, 0o600))
+	capturedDB, err := sql.Open("sqlite3", "file:"+capturedPath+"?immutable=1&mode=ro")
+	must.NoError(err)
+	t.Cleanup(func() { must.NoError(capturedDB.Close()) })
+	var capturedReceipts int
+	must.NoError(capturedDB.QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&capturedReceipts))
+	checks.Equal(capturedReceipts, snapshotReceipts, "captured main file and pinned snapshot must agree")
+	endResponse := httptest.NewRecorder()
+	router.ServeHTTP(endResponse, endBackupFreeze(t, token))
+	must.Equal(http.StatusOK, endResponse.Code)
+	for range 2 {
+		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(body))
+		request.Header = lineSignedHeaders(body)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(http.StatusOK, response.Code)
+	}
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
+	must.NoError(err)
+	checks.Len(rows, 1, "redelivery after freeze commits exactly once")
+	checks.Equal(2, wakes)
 }
 
 func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {

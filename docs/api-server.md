@@ -40,6 +40,9 @@ including suffixes and encoded-path variations, retain ordinary Host,
 authentication, same-origin, CSRF, and operation-gate protections. Server
 timeouts still apply. Signed webhook routes bypass the API IP rate limiter;
 the receiver applies its own signature checks and concurrency bounds.
+After authentication and validation, nonempty batches acquire the daemon's
+operation gate for the inbox commit. A gate that remains busy, including during
+a backup freeze, returns retryable `503`; processing wakes after gate release.
 
 The body limit is 1 MiB. Across configured channels, at most 16 requests can
 read bodies or commit inbox events at once. Excess requests receive `503` before
@@ -58,7 +61,7 @@ handle, rather than merged into a shared anonymous direct chat.
 | `401` | Missing/invalid signature or a destination that differs from the registered bot |
 | `404` | Unknown or disabled channel on a mounted receiver; empty response body, distinct from the `401` for a bad signature |
 | `413` | Request body exceeds 1 MiB |
-| `503` | Receiver concurrency bound reached, or the inbox transaction failed; delivery can be retried |
+| `503` | Receiver concurrency bound reached, operation gate unavailable, or inbox transaction failed; delivery can be retried |
 
 With no enabled channels, the route is not mounted and ordinary server
 protections apply. Valid batches remove `replyToken` and `markAsReadToken`

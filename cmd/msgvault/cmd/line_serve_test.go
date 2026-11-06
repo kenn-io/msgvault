@@ -105,7 +105,7 @@ func TestLineServeWebhookAckDoesNotWaitForEnrichment(t *testing.T) {
 	acknowledged := make(chan int, 1)
 	go func() {
 		response := httptest.NewRecorder()
-		runtime.receiver.ServeHTTP(response, request)
+		runtime.receiver.Receive(response, request, nil)
 		acknowledged <- response.Code
 	}()
 	select {

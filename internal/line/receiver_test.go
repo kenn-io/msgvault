@@ -77,7 +77,7 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","replyToken":"ephemeral","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic","quoteToken":"retained","nested":[{"markAsReadToken":"ephemeral"}]}}]}`
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(body))
 	request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
-	receiver.ServeHTTP(response, request)
+	receiver.Receive(response, request, nil)
 	checks.Equal(200, response.Code, response.Body.String())
 	checks.Equal(1, wakeCalls)
 }
@@ -90,7 +90,7 @@ func serveSignedReceiver(receiver *line.Receiver, body string) *httptest.Respons
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(body))
 	request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
-	receiver.ServeHTTP(response, request)
+	receiver.Receive(response, request, nil)
 	return response
 }
 
@@ -134,13 +134,13 @@ func TestReceiverEnvelopeValidation(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(tc.body))
 			request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(tc.body)))
 			response := httptest.NewRecorder()
-			receiver.ServeHTTP(response, request)
+			receiver.Receive(response, request, nil)
 			assert.Equal(t, tc.status, response.Code, response.Body.String())
 		})
 	}
 	badSignature := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(receiverEnvelope("[]")))
 	response := httptest.NewRecorder()
-	receiver.ServeHTTP(response, badSignature)
+	receiver.Receive(response, badSignature, nil)
 	checks.Equal(http.StatusUnauthorized, response.Code)
 	checks.Equal(uint64(1), receiver.InvalidSignatures("2000000000"))
 	rows, err := st.DueLineEventsContext(context.Background(), source.ID, time.Now(), 10)
@@ -220,7 +220,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
 				request.Body = io.NopCloser(io.MultiReader(strings.NewReader(strings.Repeat("x", 4096)), &receiverBlockingBody{started: started, release: release}))
 				response := httptest.NewRecorder()
-				receiver.ServeHTTP(response, request)
+				receiver.Receive(response, request, nil)
 				responses <- response.Code
 			})
 			select {
@@ -236,7 +236,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
 			request.Body = &receiverBlockingBody{started: overflowRead, release: release}
 			response := httptest.NewRecorder()
-			receiver.ServeHTTP(response, request)
+			receiver.Receive(response, request, nil)
 			overflowDone <- response.Code
 		})
 		select {
@@ -350,7 +350,7 @@ func TestReceiverChannelBinding(t *testing.T) {
 	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{b, a}, nil)
 	must.NoError(err)
 	unknown := httptest.NewRecorder()
-	receiver.ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000002", nil))
+	receiver.Receive(unknown, httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000002", nil), nil)
 	checks.Equal(http.StatusNotFound, unknown.Code)
 	checks.Empty(unknown.Body.String())
 	body := func(bot string) string {
@@ -361,7 +361,7 @@ func TestReceiverChannelBinding(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/webhooks/line/"+channel, strings.NewReader(raw))
 		request.Header.Set("X-Line-Signature", lineapi.Sign(secret, []byte(raw)))
 		response := httptest.NewRecorder()
-		receiver.ServeHTTP(response, request)
+		receiver.Receive(response, request, nil)
 		return response.Code
 	}
 	checks.Equal(401, send(b.ChannelID, b.BotUserID, a.Secret))

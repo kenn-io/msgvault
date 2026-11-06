@@ -1,6 +1,7 @@
 package line
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -61,7 +62,7 @@ func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string))
 }
 
 // Handles admits only a literal POST route with one nonempty channel segment.
-// Unknown channels receive 404 in ServeHTTP; known channels with bad signatures receive 401.
+// Unknown channels receive 404 in Receive; known channels with bad signatures receive 401.
 func (r *Receiver) Handles(request *http.Request) bool {
 	if r == nil || len(r.channels) == 0 || request.Method != http.MethodPost || request.URL == nil {
 		return false
@@ -87,8 +88,10 @@ func (r *Receiver) InvalidSignatures(channelID string) uint64 {
 	return 0
 }
 
-// ServeHTTP processes requests admitted by Handles.
-func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
+// Receive processes requests admitted by Handles. beginMutation coordinates
+// authenticated inbox writes with the daemon and releases before waking work.
+// A nil beginMutation is for standalone receivers without a daemon.
+func (r *Receiver) Receive(w http.ResponseWriter, request *http.Request, beginMutation func(context.Context) (func(), error)) {
 	channel := r.channels[strings.TrimPrefix(request.URL.Path, webhookPrefix)]
 	if channel == nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -159,7 +162,17 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		batch = append(batch, event)
 	}
 	if len(batch) > 0 {
-		if err := r.store.EnqueueLineEventsContext(request.Context(), channel.config.SourceID, channel.config.ChannelID, channel.config.BotUserID, batch); err != nil {
+		err := func() error {
+			if beginMutation != nil {
+				done, err := beginMutation(request.Context())
+				if err != nil {
+					return err
+				}
+				defer done()
+			}
+			return r.store.EnqueueLineEventsContext(request.Context(), channel.config.SourceID, channel.config.ChannelID, channel.config.BotUserID, batch)
+		}()
+		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
