@@ -81,5 +81,9 @@ refresh requests do not count against the Data API request budget. No live
 YouTube account or archive was used to verify this adapter: tests use synthetic
 HTTP responses and temporary stores.
 
-This archive slice does not send replies, download captions, download video
-files, scrape pages, or consume a Takeout export.
+[Preview and confirm a public reply](youtube-reply.md) to an archived comment
+using the same configured channel. Accepted replies are stored in the video
+conversation.
+
+This source does not download captions or video files, scrape pages, or consume
+a Takeout export.

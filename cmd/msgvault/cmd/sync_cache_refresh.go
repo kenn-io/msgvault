@@ -55,7 +55,39 @@ func manualSyncCLICommand(args []string) bool {
 	}
 }
 
+// manualCLICommandNeedsCacheRefresh includes archive writes routed through the
+// daemon CLI subprocess. Keep sync detection separate because it also drives
+// sync completion telemetry.
+func manualCLICommandNeedsCacheRefresh(args []string) bool {
+	if isYouTubeReplyCLICommand(args) {
+		cmd := newYouTubeReplyCmd()
+		registerRootFlags(cmd)
+		if err := cmd.ParseFlags(args[2:]); err != nil {
+			return false
+		}
+		confirmed, err := cmd.Flags().GetString("confirm")
+		if err != nil {
+			return false
+		}
+		dryRun, err := cmd.Flags().GetBool("dry-run")
+		if err != nil {
+			return false
+		}
+		return confirmed != "" && !dryRun
+	}
+	return manualSyncCLICommand(args)
+}
+
+func isYouTubeReplyCLICommand(args []string) bool {
+	return len(args) >= 2 && args[0] == "youtube" && args[1] == "reply"
+}
+
 func manualSyncCacheFlagValues(args []string) (force, skip bool) {
+	// Reply flags do not expose cache overrides. Ignore all reply arguments here
+	// so a string value such as --body=--no-build-cache cannot suppress refresh.
+	if isYouTubeReplyCLICommand(args) {
+		return false, false
+	}
 	for _, arg := range args {
 		switch arg {
 		case "--build-cache", "--build-cache=true":

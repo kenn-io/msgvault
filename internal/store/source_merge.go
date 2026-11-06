@@ -143,9 +143,18 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if from.MergedIntoSourceID != 0 || into.MergedIntoSourceID != 0 {
 			return ErrSourceRetired
 		}
-		// Active provider receipts and local chat drafts remain bound to their
-		// source. Discarded provider receipts are retained as audit evidence and
-		// do not block retirement unless an operation is still unresolved.
+		if from.SourceType == "youtube" {
+			hasUnresolved, err := s.prepareYouTubeReplyReceiptsForSourceMergeContext(ctx, tx, from.ID, !req.DryRun)
+			if err != nil {
+				return fmt.Errorf("check source reply receipts before merge: %w", err)
+			}
+			if hasUnresolved {
+				return invalidSourceMerge("source has unresolved YouTube reply receipts")
+			}
+		}
+		// Other active provider receipts and local chat drafts remain bound to their
+		// source. Prepared YouTube previews are redacted and tombstoned under the
+		// identity lock; only an operation that may have reached the provider blocks.
 		for _, draftTable := range []struct {
 			table  string
 			active string

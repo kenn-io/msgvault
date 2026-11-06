@@ -343,6 +343,9 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, err
 	}
 
+	if err := redactYouTubeReplyReceiptsContext(ctx, s, sourceID, conn.QueryContext, conn.ExecContext); err != nil {
+		return hadActiveSync, 0, err
+	}
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
@@ -452,6 +455,9 @@ func (s *Store) removeSourceExec(
 		return err
 	}
 	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {
+		return err
+	}
+	if err := redactYouTubeReplyReceiptsContext(ctx, s, sourceID, tx.QueryContext, tx.ExecContext); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)

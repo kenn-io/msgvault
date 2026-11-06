@@ -1713,6 +1713,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if IsCLIRunDraftLifecycle(args) {
 		return len(args) >= 2
 	}
+	if args[0] == "youtube" {
+		return len(args) >= 2 && args[1] == "reply"
+	}
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}

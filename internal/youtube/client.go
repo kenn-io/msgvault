@@ -16,6 +16,7 @@ import (
 const maxAPIBytes = 16 << 20
 
 var ErrQuota = errors.New("YouTube quota exhausted")
+var errAPIRequestNotDispatched = errors.New("YouTube API request was not dispatched")
 
 // APIError contains only HTTP status and a safe machine-readable reason, or
 // unknown when the response body cannot be read. Provider messages and bodies
@@ -134,11 +135,11 @@ func safeReason(body []byte) string {
 // request never retries a mutation, including ambiguous transport outcomes.
 func (c *Client) request(ctx context.Context, method, path string, q url.Values, body io.Reader) (*http.Response, error) {
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
-		return nil, errors.New("invalid YouTube API path")
+		return nil, fmt.Errorf("%w: invalid path", errAPIRequestNotDispatched)
 	}
 	token, err := c.token(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errAPIRequestNotDispatched, err)
 	}
 	endpoint := c.baseURL + path
 	if len(q) > 0 {
@@ -146,7 +147,7 @@ func (c *Client) request(ctx context.Context, method, path string, q url.Values,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return nil, errors.New("construct YouTube API request")
+		return nil, fmt.Errorf("%w: construct request", errAPIRequestNotDispatched)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")

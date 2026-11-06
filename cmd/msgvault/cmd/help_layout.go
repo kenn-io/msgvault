@@ -185,6 +185,7 @@ var topLevelCommandGroups = map[string]string{
 	"update-account":         helpGroupSources,
 	"verify":                 helpGroupSources,
 	"version":                helpGroupOperations,
+	"youtube":                helpGroupWrite,
 }
 
 func ensureHelpLayout(root *cobra.Command) {
