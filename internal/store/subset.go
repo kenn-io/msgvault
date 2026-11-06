@@ -913,14 +913,6 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)
 	}
-	if present, err := sourceTableExists(tx, "call_details"); err != nil {
-		return nil, err
-	} else if present {
-		if _, err := copyByName(tx, "call_details",
-			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
-			return nil, fmt.Errorf("copy call details: %w", err)
-		}
-	}
 
 	// Derived account attribution copies with its delivery evidence and the
 	// confirmed identities its derivation reads, so a copied row stays

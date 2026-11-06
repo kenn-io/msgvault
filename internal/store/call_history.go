@@ -50,7 +50,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 			return &MessagePersistData{
 				Message: &Message{
 					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType, IsFromMe: o.Direction == "outgoing",
-					SentAt:  sql.NullTime{Time: o.OccurredAt, Valid: true},
+					SentAt:  sql.NullTime{Time: o.OccurredAt.UTC(), Valid: true},
 					Subject: sql.NullString{String: text, Valid: true},
 				},
 				Conversation: &ConversationPersistData{
@@ -67,27 +67,4 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 // Imported calls keep their conversation's denormalized stats current.
 func (s *Store) refreshCallConversationStatsWith(ctx context.Context, tx *loggedTx, _ *MessagePersistData, id int64) error {
 	return s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = (SELECT conversation_id FROM messages WHERE id = ?)", id)
-}
-
-// Scalar projections share the message lock and transaction of their metadata.
-// Original provider data remains in message_raw; participant IDs never appear
-// in scalar metadata and follow the existing recipient lifecycle.
-func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id int64, metadata string) error {
-	var e callhistory.Evidence
-	if err := json.Unmarshal([]byte(metadata), &e); err != nil {
-		return fmt.Errorf("%w: scalar metadata", callhistory.ErrInvalid)
-	}
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO call_details
-		(message_id, outcome, owner_participation, occurred_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (message_id) DO UPDATE SET
-			outcome = excluded.outcome,
-			owner_participation = excluded.owner_participation,
-			occurred_at = excluded.occurred_at`,
-		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC())
-	if err != nil {
-		return fmt.Errorf("write call projection: %w", err)
-	}
-	return nil
 }

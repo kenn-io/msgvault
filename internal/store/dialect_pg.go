@@ -2276,7 +2276,6 @@ var exclusiveLockTables = []string{
 	"message_delivery_addresses", "email_link_keys",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
-	"call_details",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	// Ungated attachment updates invalidate publications through triggers.
 	// Drain attachments before fencing those trigger writes.
