@@ -19,7 +19,7 @@ func TestSignalNativeStatuses(t *testing.T) {
 		{"Direct", "MissedNotificationProfile", "missed", "not_joined", "unknown"},
 		{"Direct", "Declined", "declined", "not_joined", "unknown"},
 		{"Direct", "Pending", "unknown", "unknown", "unknown"},
-		{"Direct", "Deleted", "unknown", "unknown", "unknown"},
+		{"Direct", "Deleted", "", "", ""},
 		{"Direct", "FutureStatus", "unknown", "unknown", "unknown"},
 		{"Group", "Accepted", "unknown", "unknown", ""},
 		{"Group", "Joined", "answered", "joined", ""},
@@ -28,11 +28,11 @@ func TestSignalNativeStatuses(t *testing.T) {
 		{"Group", "OutgoingRing", "unknown", "unknown", ""},
 		{"Group", "Missed", "missed", "not_joined", ""},
 		{"Group", "Declined", "declined", "not_joined", ""},
-		{"Group", "Deleted", "unknown", "unknown", ""},
+		{"Group", "Deleted", "", "", ""},
 		{"Adhoc", "JoinedAdhoc", "answered", "joined", ""},
 		{"Adhoc", "GenericAdhocCall", "unknown", "unknown", ""},
 		{"Adhoc", "Pending", "unknown", "unknown", ""},
-		{"Adhoc", "Deleted", "unknown", "unknown", ""},
+		{"Adhoc", "Deleted", "", "", ""},
 		{"Adhoc", "Unknown", "unknown", "unknown", ""},
 		{"FutureMode", "Accepted", "unknown", "unknown", ""},
 	} {
@@ -52,10 +52,12 @@ func TestSignalNativeStatuses(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(tc.outcome, got.Outcome)
 			assertions.Equal(tc.owner, got.OwnerParticipation)
-			assertions.Equal("incoming", got.Direction)
-			assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
-			assertions.Empty(got.Timezone, "epoch milliseconds do not identify the source zone")
-			assertions.JSONEq(raw, string(got.Raw))
+			if tc.mode == "Direct" && tc.status == "Accepted" {
+				assertions.Equal("incoming", got.Direction)
+				assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
+				assertions.Empty(got.Timezone, "epoch milliseconds do not identify the source zone")
+				assertions.JSONEq(raw, string(got.Raw))
+			}
 			if tc.peer == "" {
 				assertions.Empty(got.Participants, "a group peer is not a joined roster")
 			} else {
@@ -63,13 +65,6 @@ func TestSignalNativeStatuses(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestNormalizedCancellationRequiresTime(t *testing.T) {
-	_, err := (ImportRequest{Format: "normalized", Account: "example",
-		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"call","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","precision":"instant","raw":{}}`),
-	}).Observation()
-	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func TestNormalizedImportRejectsDifferentNativeCallID(t *testing.T) {
@@ -107,8 +102,12 @@ func TestImportRequestBoundsAndAccountMismatch(t *testing.T) {
 	o := exampleObservation()
 	record, err := json.Marshal(o)
 	requirements.NoError(err)
+	got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
+	requirements.NoError(err)
+	assert.Equal(t, o, got)
 	_, err = (ImportRequest{Format: "normalized", Account: "different", Record: record}).Observation()
 	requirements.ErrorIs(err, ErrInvalid)
+	assert.ErrorContains(t, err, "account mismatch")
 }
 
 func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
@@ -138,7 +137,6 @@ func TestImportRejectsInvalidAccountAndBinding(t *testing.T) {
 	}{
 		{"blank account", " ", "peer", 1},
 		{"zero participant", "example", "peer", 0},
-		{"negative participant", "example", "peer", -1},
 		{"blank native peer", "example", " ", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

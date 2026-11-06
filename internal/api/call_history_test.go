@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,33 +95,39 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
 	archive := testutil.NewTestStore(t)
-	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
-	gate := NewSerialOperationGate()
-	server := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}},
-		Store:  st, Logger: testLogger(), OperationGate: gate,
+	synctest.Test(t, func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
+		gate := NewSerialOperationGate()
+		server := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}},
+			Store:  st, Logger: testLogger(), OperationGate: gate,
+		})
+		defer func() { requirements.NoError(server.Shutdown(context.Background())) }()
+		release, ok := gate.BeginWork()
+		requirements.True(ok)
+		releaseOnce := sync.OnceFunc(release)
+		defer releaseOnce()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(
+			`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":0}}`))
+		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { server.Router().ServeHTTP(out, req); close(done) }()
+		synctest.Wait()
+		requirements.True(gate.HasRequestWaiters())
+		select {
+		case <-done:
+			requirements.FailNow("import finished while mutation gate was held")
+		default:
+		}
+		releaseOnce()
+		<-done
+		assertions.Equal(200, out.Code, out.Body.String())
 	})
-	release, ok := gate.BeginWork()
-	requirements.True(ok)
-	defer release()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(
-		`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":0}}`))
-	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
-	req.Header.Set("Content-Type", "application/json")
-	out := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() { server.Router().ServeHTTP(out, req); close(done) }()
-	requirements.Eventually(gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
-	release()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		requirements.FailNow("import did not finish after mutation gate release")
-	}
-	assertions.Equal(200, out.Code, out.Body.String())
 }
 
 func TestCallHistoryNormalizedReplacement(t *testing.T) {
