@@ -48,7 +48,7 @@ func TestEmailPollQuotaDeferralRetainsProviderFloor(t *testing.T) {
 			_, err = client.GetProfile(ctx)
 			var quota *ThrottledError
 			require.ErrorAs(err, &quota)
-			assert.NotErrorIs(err, context.DeadlineExceeded, "a quota outcome releases the work gate instead of waiting")
+			require.NotErrorIs(err, context.DeadlineExceeded, "a quota outcome releases the work gate instead of waiting")
 			assert.False(quota.RetryNotBefore().Before(start.Add(time.Hour)))
 			assert.Equal(quota.RetryNotBefore(), client.RetryNotBefore(), "partial-summary callers retain the same floor")
 			_, err = client.GetProfile(ctx)

@@ -114,6 +114,7 @@ func TestAccountPollingOrdinaryIntentSurvivesPollAndFailure(t *testing.T) {
 func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
+		require := require.New(t)
 		var calls, completions atomic.Int32
 		floor := time.Now().Add(time.Hour)
 		s := pollingSchedulerFixture(t, func(context.Context, string) error {
@@ -130,7 +131,7 @@ func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *t
 		assert.False(status.NextEligiblePoll.Before(floor), "provider floor is independent of the 15m adaptive cap")
 		require.NoError(t, s.TriggerSync("sample@example.test", true))
 		synctest.Wait()
-		assert.Error(s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
+		require.Error(s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
 		s.onAccountTick("sample@example.test")
 		synctest.Wait()
 		assert.EqualValues(1, calls.Load(), "manual and cron cannot bypass a known provider prohibition")

@@ -47,7 +47,7 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 	cancel()
 	select {
 	case err := <-finished:
-		assert.ErrorIs(err, context.Canceled)
+		require.ErrorIs(err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		// Bound an observable cancellation transition; release the baseline
 		// command before failing so this regression cannot leak a goroutine.
@@ -125,7 +125,7 @@ func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
 	assert.Nil(client.conn)
 	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
 	line, err = reader.ReadString('\n')
-	assert.Error(err, "cancellation closes the captured transport before another STATUS")
+	require.Error(err, "cancellation closes the captured transport before another STATUS")
 	assert.NotContains(strings.ToUpper(line), "ARCHIVE")
 }
 
@@ -144,7 +144,7 @@ func TestReadCommandCancellationJoinsStalledCleanup(t *testing.T) {
 	cancel()
 	select {
 	case err := <-finished:
-		assert.ErrorIs(err, context.Canceled)
+		require.ErrorIs(err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		_ = conn.Close()
 		<-finished

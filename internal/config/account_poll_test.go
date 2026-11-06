@@ -96,7 +96,6 @@ func TestAccountPollingOffRemainsValid(t *testing.T) {
 }
 
 func TestAccountPollingDaemonValidationPreservesClientLoads(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -108,16 +107,16 @@ poll_interval = "1s"
 `), 0o600))
 	client, err := LoadClientWithOverrides(path, dir, RuntimeOverrides{})
 	require.NoError(err)
-	assert.ErrorContains(client.DaemonConfigError(), "poll_interval")
+	require.ErrorContains(client.DaemonConfigError(), "poll_interval")
 	snapshot, err := ReadConfigFile(path)
 	require.NoError(err)
 	_, err = LoadConfigFile(snapshot, dir)
-	assert.ErrorContains(err, "poll_interval")
+	require.ErrorContains(err, "poll_interval")
 	_, err = LoadConfigFileWithOverrides(snapshot, dir, RuntimeOverrides{})
-	assert.ErrorContains(err, "poll_interval")
+	require.ErrorContains(err, "poll_interval")
 	lenient, err := LoadClientConfigFile(snapshot, dir)
 	require.NoError(err)
-	assert.ErrorContains(lenient.DaemonConfigError(), "poll_interval")
+	require.ErrorContains(lenient.DaemonConfigError(), "poll_interval")
 	_, err = lenient.ReloadConfigFile(snapshot)
-	assert.ErrorContains(err, "poll_interval")
+	require.ErrorContains(err, "poll_interval")
 }

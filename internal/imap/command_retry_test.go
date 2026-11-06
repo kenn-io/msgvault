@@ -55,6 +55,9 @@ func TestRunCommandCancellationAfterLimitResponseRetainsRetryFloor(t *testing.T)
 	err := client.withConn(passCtx, func(conn *imapclient.Client) error {
 		_, err := runCommand(passCtx, client, func() ([]*imap.ListData, error) {
 			result, err := conn.List("", "*", nil).Collect()
+			if err != nil {
+				err = fmt.Errorf("collect IMAP LIST: %w", err)
+			}
 			callbackErr = err
 			cancel()
 			return result, err

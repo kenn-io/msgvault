@@ -32,7 +32,7 @@ func TestEmailPollRetryFloorIsUncappedAndDeferred(t *testing.T) {
 			start := time.Now()
 			err := client.GetJSON(ctx, "/me", &profile)
 			require.Error(err)
-			assert.NotErrorIs(err, context.DeadlineExceeded)
+			require.NotErrorIs(err, context.DeadlineExceeded)
 			assert.False(client.RetryNotBefore().Before(start.Add(time.Hour)))
 			if status == http.StatusTooManyRequests {
 				var quota *ThrottledError
@@ -129,12 +129,12 @@ func TestEmailPollQueuedRequestRechecksProviderFloorBeforeSend(t *testing.T) {
 	firstErr := <-firstResult
 	var firstFloor *ThrottledError
 	require.ErrorAs(firstErr, &firstFloor)
-	assert.NotErrorIs(firstErr, ErrNotSent, "the initial 429 request reached the real HTTP server")
+	require.NotErrorIs(firstErr, ErrNotSent, "the initial 429 request reached the real HTTP server")
 	close(releaseQueued)
 	err := <-queuedResult
 	var queuedFloor *ThrottledError
 	require.ErrorAs(err, &queuedFloor)
-	assert.ErrorIs(err, ErrNotSent, "the queued request is deferred before its first send")
+	require.ErrorIs(err, ErrNotSent, "the queued request is deferred before its first send")
 	assert.Equal(firstFloor.RetryNotBefore(), queuedFloor.RetryNotBefore())
 	assert.Equal(firstFloor.RetryNotBefore(), client.RetryNotBefore())
 	assert.EqualValues(1, requests.Load(), "a floor learned during local admission blocks every still-unsent MIME worker")
@@ -166,7 +166,7 @@ func TestEmailPollOrdinaryGraphRetriesKeepExistingBounds(t *testing.T) {
 			}
 			err := client.GetJSON(ctx, "/throttle", &profile)
 			require.Error(err)
-			assert.NotErrorIs(err, context.DeadlineExceeded)
+			require.NotErrorIs(err, context.DeadlineExceeded)
 			if status == http.StatusTooManyRequests {
 				var quota *ThrottledError
 				require.ErrorAs(err, &quota)

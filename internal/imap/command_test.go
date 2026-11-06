@@ -108,7 +108,7 @@ func TestRunCommandCancellation(t *testing.T) {
 			attempts++
 			return "partial", &imap.Error{Type: imap.StatusResponseTypeNo, Text: "retry in 1000 seconds"}
 		})
-		assert.ErrorIs(err, context.Canceled)
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Empty(result)
 		assert.Equal(1, attempts)
 	})
