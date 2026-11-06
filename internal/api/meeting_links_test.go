@@ -144,3 +144,24 @@ func TestMeetingLinkRoutes(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "cancelled event missing bounds")
 	})
 }
+
+func TestMeetingLinkMalformedEventResponse(t *testing.T) {
+	for _, path := range []string{"/meetings/record", "/meetings/suggestions"} {
+		for _, tc := range []struct{ ref, message string }{
+			{"evt:0", "invalid meeting reference"},
+			{"evt:81@", "invalid meeting reference"},
+			{"evt:81@20270230", "invalid occurrence key"},
+			{"evt:81@extra_20270314", "invalid occurrence key"},
+		} {
+			t.Run(path+"/"+tc.ref, func(t *testing.T) {
+				backend := &meetingLinksTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
+				srv := NewServer(&config.Config{}, backend, nil, testLogger())
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1"+path+"?ref="+tc.ref, nil))
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.JSONEq(t, fmt.Sprintf(`{"error":"invalid_argument","message":%q}`, tc.message), w.Body.String())
+				assert.Zero(t, backend.calls)
+			})
+		}
+	}
+}

@@ -63,13 +63,23 @@ func parseMeetingLinkRef(value string, eventOnly bool) (store.MeetingLinkRef, er
 	}
 	if kind == "evt" {
 		ref, err := store.ParseMeetingIdentityRef("evt:" + value)
-		return store.MeetingLinkRef{Kind: kind, OccurrenceRef: ref}, err
+		return store.MeetingLinkRef{Kind: kind, OccurrenceRef: ref}, meetingLinkParseError(value, err)
 	}
 	id, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || id <= 0 || id > 9007199254740991 {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
 	return store.MeetingLinkRef{Kind: kind, MessageID: id}, nil
+}
+
+func meetingLinkParseError(value string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.HasPrefix(err.Error(), "invalid meeting occurrence key") && !strings.HasSuffix(value, "@") {
+		return errors.New("invalid occurrence key")
+	}
+	return errors.New("invalid meeting reference")
 }
 
 func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Request) {
