@@ -748,7 +748,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		}
 		existingCount++
 		if _, pending := s.pendingAcquisitions[id]; pending &&
-			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) {
+			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && s.pendingAttachmentRepairs[id] == 0 {
 			if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
 				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
 					return nil, err
@@ -1147,7 +1147,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					return nil, recErr
 				}
 				checkpoint.ErrorsCount++
-				continue
+				_, committed := errors.AsType[*committedMessageError](err)
+				if !committed || (s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+					continue
+				}
 			}
 
 			result.added++
@@ -1462,6 +1465,20 @@ func (s *Syncer) full(
 	// List and sync messages
 	var totalEstimate int64
 	var discoveryHealth pageDiscoveryHealth
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		replayed, err := s.replayLocalMaterialization(ctx, state.syncID, source.ID, state.checkpoint)
+		if err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, err
+		}
+		if len(replayed) > 0 {
+			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayed))
+			if err := ctx.Err(); err != nil {
+				s.failStoppedSync(state.syncID, err)
+				return nil, err
+			}
+		}
+	}
 	firstPage := true
 	pageToken := state.pageToken
 
@@ -2001,10 +2018,10 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	// reducing the expected count to the successfully stored subset.
 	var attachmentErr error
 	if gmailMaterialization && work&materializeMIME != 0 && data.mimeIncomplete {
-		attachmentErr = errors.New("MIME extraction is incomplete; retained RAW requires repair")
+		attachmentErr = errors.New("Saved message is incomplete and needs repair.") //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
 	}
 	if work&materializeMIME != 0 && s.opts.AttachmentsDir == "" {
-		attachmentErr = errors.Join(attachmentErr, errors.New("attachments directory is required to finish pending materialization"))
+		attachmentErr = errors.Join(attachmentErr, errors.New("Set an attachments directory to finish saving files.")) //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
 	}
 	if materialize {
 		for _, att := range data.attachments {

@@ -53,7 +53,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 	}
 	// Partial parses cannot certify that every expected occurrence was restored.
 	if parsed.Incomplete {
-		return errors.New("retained MIME has parse diagnostics; attachment repair is inconclusive")
+		return errors.New("Saved message is incomplete; attachment repair is inconclusive.") //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
 	}
 	parsed.OmitNULIdentities()
 	existing, err := s.store.MessageMIMEAttachmentsContext(ctx, target.ID)
@@ -119,7 +119,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 				return err
 			}
 			if location.Pack != nil {
-				return fmt.Errorf("attachment %q requires repair of its missing pack: %w", att.Filename, readErr)
+				return fmt.Errorf("Restore the missing attachment storage file for %q: %w", att.Filename, readErr) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
 			}
 			receipt, err := export.StoreAttachmentFileDurable(s.opts.AttachmentsDir, &att)
 			if receipt.Created {

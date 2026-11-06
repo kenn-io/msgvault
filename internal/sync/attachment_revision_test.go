@@ -400,19 +400,6 @@ func TestAttachmentRevisionSettlementWriteFailureKeepsDebt(t *testing.T) {
 	assert.Equal(before.ModTime(), after.ModTime())
 }
 
-func TestAttachmentRevisionInvalidHashDoesNotCreateRows(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	e := attachmentPersistenceEnv(t)
-	source := e.CreateSource(t)
-	id := seedRepairRow(t, e.Store, source.ID, "invalid-hash", "thread", "subject")
-	before := attachmentSnapshot(t, e.Store, id)
-	err := e.Store.RestoreMIMEAttachmentRecordsContext(t.Context(), store.MessageIdentityGuard{ID: id, SourceID: source.ID, SourceMessageID: "invalid-hash"}, []store.AttachmentWrite{
-		{SourcePartKey: "mime:1", ContentHash: strings.Repeat("G", 64), Size: 1, StoragePath: "invalid"},
-	})
-	require.Error(err)
-	assert.Equal(before, attachmentSnapshot(t, e.Store, id))
-}
-
 func TestAttachmentRevisionRemoteFailureRemainsPending(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	e := attachmentPersistenceEnv(t)

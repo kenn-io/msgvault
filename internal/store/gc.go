@@ -182,7 +182,7 @@ func (s *Store) ExecuteGCContext(
 				  AND NOT (` + managedDraftRetainedMessageSQL + `)
 			  )
 		`); err != nil {
-			return fmt.Errorf("retire acquisition work for source-deleted messages: %w", err)
+			return fmt.Errorf("clear retries for messages deleted at source: %w", err)
 		}
 
 		result, err := q.Exec(`

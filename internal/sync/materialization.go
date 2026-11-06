@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
@@ -132,4 +133,26 @@ func (s *Syncer) repairPendingAttachments(ctx context.Context, sourceID int64, m
 		return pendingErr
 	}
 	return s.settleAcquisition(messageID)
+}
+
+// Replay file obligations independently of Gmail enumeration. The retained
+// message is the authority for this work, including after provider deletion.
+func (s *Syncer) replayLocalMaterialization(ctx context.Context, syncID, sourceID int64, checkpoint *store.Checkpoint) ([]string, error) {
+	ids := make([]string, 0, len(s.pendingAttachmentRepairs))
+	for id := range s.pendingAttachmentRepairs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
+			if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+				return nil, err
+			}
+			if recErr := s.recordAcquisitionFailure(syncID, id, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+				return nil, recErr
+			}
+			checkpoint.ErrorsCount++
+		}
+	}
+	return ids, nil
 }
