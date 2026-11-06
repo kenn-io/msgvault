@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -154,7 +155,7 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 		if err != nil {
 			return "", nil, err
 		}
-		copies = append(copies, aliases...)
+		copies = uniqueMeetingIdentityRows(copies, aliases)
 	}
 	clauses := []string{"1=0"}
 	args := []any{}
@@ -189,6 +190,12 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, scopeArgs...)
 	return query + scope, args, nil
+}
+
+func uniqueMeetingIdentityRows(copies, aliases []CalendarEventRow) []CalendarEventRow {
+	rows := slices.Concat(copies, aliases)
+	slices.SortFunc(rows, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
+	return slices.CompactFunc(rows, func(a, b CalendarEventRow) bool { return a.MessageID == b.MessageID })
 }
 
 // Each calendar copy can move the same occurrence to a different start.
