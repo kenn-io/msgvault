@@ -416,7 +416,7 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	require.NoError(err)
 	counted := &pollingIMAPListener{
 		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
-		limitCount: 4, limitDelays: []string{"0", "0", "0", "1"},
+		limitCount: 4, limitDelays: []string{"0", "0", "0", "60"},
 	}
 	user := testutil.ServeIMAPMemServer(t, counted, map[string]int{"Archive": 0, "INBOX": 0}, nil)
 	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "rapid-floor-archive@example.test")
@@ -425,7 +425,9 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	st := storetest.New(t)
 	src := pollingIMAPSource(t, st.Store, ic)
 	state := testInvocationWithConfig(cfg)
-	err = runRapidEmailSync(withInvocation(t.Context(), state), src.Identifier, st.Store, nil, state)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err = runRapidEmailSync(withInvocation(ctx, state), src.Identifier, st.Store, nil, state)
 	var acquisition *scheduler.AcquisitionError
 	require.ErrorAs(err, &acquisition)
 	require.EqualValues(4, counted.limited.Load(), "one mailbox FETCH exhausted the real command retry budget")
@@ -439,5 +441,5 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	assert.Equal(scheduler.AcquisitionIncomplete, acquisition.Outcome)
 	lastLimit := time.Unix(0, lastLimitNanos)
 	nextCommand := time.Unix(0, nextCommandNanos)
-	assert.GreaterOrEqual(nextCommand.Sub(lastLimit), time.Second, "no later read command is sent while the provider floor is live")
+	assert.GreaterOrEqual(nextCommand.Sub(lastLimit), 60*time.Second, "no later read command is sent while the provider floor is live")
 }
