@@ -111,9 +111,9 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 		requirements.ErrorIs(err, ErrInvalid)
 	}
 	for _, end := range []string{"", `,"endedTimestamp":null`, `,"endedTimestamp":0`} {
-		got, err := (ImportRequest{Format: "signal_desktop", Account: "example", Record: []byte(`{"callId":"x","timestamp":0` + end + `}`)}).Observation()
-		requirements.NoError(err, "explicit epoch zero differs from a missing timestamp")
-		assertions.Equal(int64(0), got.OccurredAt.UnixMilli())
+		_, err := (ImportRequest{Format: "signal_desktop", Account: "example", Record: []byte(`{"callId":"x","timestamp":0` + end + `}`)}).Observation()
+		requirements.ErrorIs(err, ErrInvalid)
+		assertions.ErrorContains(err, "Signal row or timestamp")
 	}
 }
 
@@ -141,7 +141,7 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 	requirements := require.New(t)
 	r := ImportRequest{
 		Format: "signal_desktop", Account: "example",
-		Record: []byte(`{"callId":"x","peerId":"peer","mode":"Direct","direction":"Outgoing","status":"Accepted","timestamp":0}`),
+		Record: []byte(`{"callId":"x","peerId":"peer","mode":"Direct","direction":"Outgoing","status":"Accepted","timestamp":1790841600000}`),
 	}
 	o, err := r.Observation()
 	requirements.NoError(err)
@@ -150,7 +150,7 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 	r.Bindings = map[string]int64{"another-peer": 1}
 	_, err = r.Observation()
 	requirements.ErrorIs(err, ErrInvalid)
-	r.Record = []byte(`{"callId":"x","peerId":"peer","mode":"Group","status":"Joined","timestamp":0}`)
+	r.Record = []byte(`{"callId":"x","peerId":"peer","mode":"Group","status":"Joined","timestamp":1790841600000}`)
 	r.Bindings = map[string]int64{"peer": 1}
 	_, err = r.Observation()
 	requirements.ErrorIs(err, ErrInvalid)
@@ -159,7 +159,7 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 func TestSignalImportRejectsBlankNativePeer(t *testing.T) {
 	_, err := (ImportRequest{
 		Format: "signal_desktop", Account: "example",
-		Record:   []byte(`{"callId":"x","peerId":" ","mode":"Direct","status":"Accepted","timestamp":0}`),
+		Record:   []byte(`{"callId":"x","peerId":" ","mode":"Direct","status":"Accepted","timestamp":1790841600000}`),
 		Bindings: map[string]int64{" ": 1},
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
