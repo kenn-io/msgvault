@@ -107,15 +107,11 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 			WHERE r.message_id = m.id AND pp.person_id = ?)`)
 		args = append(args, q.PersonID)
 	}
-	timestampExpr, boundExpr := "c.occurred_at", "?"
-	if !s.IsPostgreSQL() {
-		timestampExpr, boundExpr = "julianday(c.occurred_at)", "julianday(?)"
-	}
 	if q.After != nil {
-		where, args = append(where, timestampExpr+" >= "+boundExpr), append(args, q.After.UTC())
+		where, args = append(where, "c.occurred_at >= ?"), append(args, q.After.UTC())
 	}
 	if q.Before != nil {
-		where, args = append(where, timestampExpr+" < "+boundExpr), append(args, q.Before.UTC())
+		where, args = append(where, "c.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit)
 	out := []CallObservationView{}
@@ -213,15 +209,11 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	if q.PersonID != 0 {
 		where, args = append(where, "p.person_id = ?"), append(args, q.PersonID)
 	}
-	timestampExpr, boundExpr := "a.occurred_at", "?"
-	if !s.IsPostgreSQL() {
-		timestampExpr, boundExpr = "julianday(a.occurred_at)", "julianday(?)"
-	}
 	if q.After != nil {
-		where, args = append(where, timestampExpr+" >= "+boundExpr), append(args, q.After.UTC())
+		where, args = append(where, "a.occurred_at >= ?"), append(args, q.After.UTC())
 	}
 	if q.Before != nil {
-		where, args = append(where, timestampExpr+" < "+boundExpr), append(args, q.Before.UTC())
+		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
 	out := []PersonCallSummary{}
