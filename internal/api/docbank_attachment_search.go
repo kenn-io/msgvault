@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -33,7 +34,8 @@ type MediaAttachmentSearch struct {
 // that batch, so order across batches is approximate. Versions enter batches
 // newest message first, so equal-rank hits from older batches are dropped first
 // at the result limit. Only visible messages appear.
-// A failed later batch keeps earlier batches' hits and marks the search truncated.
+// A failed first batch returns an error. A failed later batch logs the failure,
+// keeps earlier batches' hits, and marks the search truncated without an error.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
 	versions, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
@@ -57,10 +59,12 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		fence.ContentVersionIDs = chunk
 		report, err := reader.Client.SearchDocuments(remoteCtx, request)
 		if err != nil {
-			response.Error, response.Truncated = attachmentSearchError(err), batchSucceeded
-			if !response.Truncated {
+			if !batchSucceeded {
+				response.Error = attachmentSearchError(err)
 				return response, err
 			}
+			slog.WarnContext(ctx, "search mirrored attachments", "code", attachmentSearchError(err).Error)
+			response.Truncated = true
 			break
 		}
 		batchSucceeded = true

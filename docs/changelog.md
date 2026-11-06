@@ -33,7 +33,7 @@ All notable changes to msgvault, grouped by release.
 
 - Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
 
-  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank newer than v0.16.0), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank v0.17.0 or later), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
 
   A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
 

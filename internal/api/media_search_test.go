@@ -1071,7 +1071,7 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 				require.Len(f.documentRequests, 2)
 				assert.Contains(f.documentRequests[0].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
 				assert.NotContains(f.documentRequests[1].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
-				require.NotNil(response.Attachments.Error)
+				assert.Nil(response.Attachments.Error)
 				assert.NotEmpty(response.Results, "recording matches remain available")
 				assert.True(response.Attachments.Truncated, "the failed batch leaves attachment results incomplete")
 				var messageIDs []int64
