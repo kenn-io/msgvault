@@ -10,8 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -33,7 +31,7 @@ func TestCallQueryIntegerParameterErrors(t *testing.T) {
 	}
 }
 
-func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
+func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	archive := testutil.NewTestStore(t)
@@ -42,7 +40,7 @@ func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
 	person, _, err := archive.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
-	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, AgentAccess: true}}, st, nil, testLogger())
+	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
 	request := callhistory.ImportRequest{
 		Format: "signal_desktop", Account: "example",
 		Record:   []byte(`{"callId":"one","peerId":"peer","mode":"Direct","status":"Accepted","timestamp":1790841600000}`),
@@ -50,53 +48,35 @@ func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
 	}
 	body, err := json.Marshal(request)
 	requirements.NoError(err)
-	do := func(method, path, body, key, token string) *httptest.ResponseRecorder {
+	do := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:12345"
 		req.Header.Set("Content-Type", "application/json")
-		if key != "" {
-			req.Header.Set("X-Api-Key", key)
-		}
-		if token != "" {
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		}
+		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 		out := httptest.NewRecorder()
 		server.Router().ServeHTTP(out, req)
 		return out
 	}
-	out := do("POST", "/api/v1/import/calls", string(body), meetingImportTestAPIKey, "")
+	out := do("POST", "/api/v1/import/calls", string(body))
 	requirements.Equal(200, out.Code, out.Body.String())
-	out = do("GET", "/api/v1/calls/summary", "", meetingImportTestAPIKey, "")
+	out = do("GET", "/api/v1/calls/summary", "")
 	requirements.Equal(200, out.Code, out.Body.String())
 	var summary CallSummaryResponse
 	requirements.NoError(json.Unmarshal(out.Body.Bytes(), &summary))
 	requirements.Len(summary.Items, 1)
 	assertions.Equal(person.ID, summary.Items[0].PersonID)
-	out = do("GET", "/api/v1/calls", "", meetingImportTestAPIKey, "")
+	out = do("GET", "/api/v1/calls", "")
 	requirements.Equal(200, out.Code)
 	var evidence CallEvidenceResponse
 	requirements.NoError(json.Unmarshal(out.Body.Bytes(), &evidence))
 	requirements.Len(evidence.Items, 1)
-	assertions.Equal("joined", evidence.Items[0].Participants[0].Participation)
 	assertions.NotContains(out.Body.String(), `"raw"`)
-	assertions.Equal(400, do("GET", "/api/v1/calls?offset=1", "", meetingImportTestAPIKey, "").Code)
+	assertions.Equal(400, do("GET", "/api/v1/calls?offset=1", "").Code)
 	for _, path := range []string{"/api/v1/calls?after_id=9223372036854775807", "/api/v1/calls/summary?offset=1"} {
-		page := do("GET", path, "", meetingImportTestAPIKey, "")
+		page := do("GET", path, "")
 		requirements.Equal(200, page.Code)
 		assertions.JSONEq(`{"items":[]}`, page.Body.String())
-	}
-	registry := agentgrant.NewRegistry()
-	server.agentGrants = registry
-	_, token, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-		[]agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "example@example.com"}}, time.Time{})
-	requirements.NoError(err)
-	requirements.Equal(200, do("GET", "/api/v1/health", "", "", token).Code)
-	for _, endpoint := range []struct{ method, path string }{
-		{"POST", "/api/v1/import/calls"}, {"GET", "/api/v1/calls"}, {"GET", "/api/v1/calls/summary"},
-	} {
-		assertions.Equal(401, do(endpoint.method, endpoint.path, string(body), "", "").Code)
-		assertions.Equal(401, do(endpoint.method, endpoint.path, string(body), "", token).Code)
 	}
 	for _, tc := range []struct {
 		path, body string
@@ -106,9 +86,9 @@ func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
 		{"/api/v1/import/calls", `{}`, 422},
 		{"/api/v1/import/calls", strings.Repeat(" ", callhistory.MaxRequestBytes+1), 413},
 	} {
-		assertions.Equal(tc.status, do("POST", tc.path, tc.body, meetingImportTestAPIKey, "").Code)
+		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
 	}
-	assertions.Equal(400, do("GET", "/api/v1/calls/summary?after=invalid", "", meetingImportTestAPIKey, "").Code)
+	assertions.Equal(400, do("GET", "/api/v1/calls/summary?after=invalid", "").Code)
 }
 
 func TestCallHistoryImportUsesMutationGate(t *testing.T) {

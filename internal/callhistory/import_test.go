@@ -50,6 +50,9 @@ func TestSignalNativeStatuses(t *testing.T) {
 			assertions.Equal(tc.outcome, got.Outcome)
 			assertions.Equal(tc.owner, got.OwnerParticipation)
 			assertions.Equal(tc.withdrawn, got.Withdrawn)
+			if tc.withdrawn {
+				assertions.Nil(got.EndedAt)
+			}
 			assertions.Equal("incoming", got.Direction)
 			assertions.Nil(got.DurationSeconds, "end minus start is not talk duration")
 			assertions.Empty(got.Timezone, "epoch milliseconds do not identify the source zone")

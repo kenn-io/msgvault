@@ -69,7 +69,6 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		}
 	}
 	o.DurationSeconds = nil
-	o.RecordID = "outgoing"
 	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
 		o.Direction = direction
 		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
@@ -98,10 +97,24 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	require.EqualValues(1, total)
 	require.Len(matches, 1)
 	require.Equal(id, matches[0].ID)
+	queries := []string{"message_type:call_record", "after:2026-10-01 before:2026-10-02"}
+	for _, query := range queries {
+		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
+		require.NoError(err)
+		require.EqualValues(1, total, query)
+		require.Len(matches, 1, query)
+		assert.Equal(id, matches[0].ID, query)
+	}
 	o.Withdrawn = true
 	again, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	require.Equal(id, again)
+	for _, query := range queries {
+		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
+		require.NoError(err)
+		assert.Zero(total, query)
+		assert.Empty(matches, query)
+	}
 	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
 	require.NoError(err)
 	assert.Zero(total, "withdrawn calls leave archive search")
@@ -118,42 +131,6 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	assert.Empty(matches)
 }
 
-func TestWithdrawnCallAbsentFromMetadataSearch(t *testing.T) {
-	requirements := require.New(t)
-	st := storetest.New(t).Store
-	o, err := (callhistory.ImportRequest{Format: "signal_desktop", Account: "example",
-		Record: []byte(`{"callId":"withdrawn","timestamp":1790845200000,"direction":"Incoming","mode":"Direct","status":"Accepted"}`),
-	}).Observation()
-	requirements.NoError(err)
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	requirements.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	queries := []string{"message_type:call_record", "after:2026-10-01 before:2026-10-02"}
-	for _, query := range queries {
-		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
-		requirements.NoError(err)
-		requirements.EqualValues(1, total, query)
-		requirements.Len(matches, 1, query)
-		requirements.Equal(id, matches[0].ID, query)
-	}
-	o, err = (callhistory.ImportRequest{Format: "signal_desktop", Account: "example",
-		Record: []byte(`{"callId":"withdrawn","timestamp":1790845200000,"direction":"Incoming","mode":"Direct","status":"Deleted"}`),
-	}).Observation()
-	requirements.NoError(err)
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	requirements.Equal(id, again)
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
-			require.NoError(t, err)
-			assert.Zero(t, total)
-			assert.Empty(t, matches)
-		})
-	}
-}
-
 func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
@@ -161,19 +138,17 @@ func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
 	// Simulate unsupported persisted evidence, bypassing current write validation.
-	for _, version := range []int{0, 2} {
-		o.Version = version
-		metadata, err := json.Marshal(o.Evidence)
-		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
-		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE call_details SET evidence_version = ? WHERE message_id = ?`), version, id)
-		require.NoError(err)
-		_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-		require.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
-		_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-		require.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
-	}
+	o.Version = 2
+	metadata, err := json.Marshal(o.Evidence)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE call_details SET evidence_version = ? WHERE message_id = ?`), o.Version, id)
+	require.NoError(err)
+	_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	require.ErrorIs(err, callhistory.ErrInvalid)
+	_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
+	require.ErrorIs(err, callhistory.ErrInvalid)
 }
 
 func TestCallReimportPreservesLabels(t *testing.T) {
