@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
@@ -40,6 +41,7 @@ var ErrUnauthorized = errors.New("graph request unauthorized")
 // ThrottledError reports that Graph still answered 429 after every retry.
 // RetryAfter is the delay that Graph asked for last.
 type ThrottledError struct {
+	NotBefore  time.Time
 	RetryAfter time.Duration
 }
 
@@ -80,10 +82,13 @@ type TokenFunc func(context.Context) (string, error)
 // Client is a minimal Microsoft Graph REST client supporting paging and
 // Retry-After back-off.
 type Client struct {
-	baseURL string
-	token   TokenFunc
-	http    *http.Client
-	limiter *rate.Limiter
+	baseURL            string
+	token              TokenFunc
+	http               *http.Client
+	limiter            *rate.Limiter
+	quotaMu            sync.Mutex
+	notBefore          time.Time
+	deferProviderRetry bool
 
 	// Headers are extra request headers, for example the mail connector's
 	// Prefer header. They are set after the defaults and can replace them.
@@ -137,8 +142,17 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 	var lastErr error
 	var retryAfter string
 	for attempt := range maxRetries {
+		delay := max(time.Duration(0), time.Until(c.RetryNotBefore()))
+		if delay > 0 && c.deferProviderRetry {
+			return nil, &ThrottledError{RetryAfter: delay, NotBefore: c.RetryNotBefore()}
+		}
 		if attempt > 0 {
-			delay := httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)
+			delay = max(delay, httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter))
+		}
+		if delay > 0 {
+			if lastErr == nil {
+				lastErr = &ThrottledError{RetryAfter: delay, NotBefore: c.RetryNotBefore()}
+			}
 			// A wait that outlasts the caller's deadline would end as a
 			// cancellation and lose the throttling status.
 			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay {
@@ -248,13 +262,17 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
+			fullDelay := c.recordRetryFloor(retryAfter, attempt)
 			if resp.StatusCode == http.StatusTooManyRequests {
 				lastErr = fmt.Errorf("%w: %w", lastErr, &ThrottledError{
-					RetryAfter: httpretry.RetryAfter(retryAfter, attempt, maxRetryAfter),
+					RetryAfter: fullDelay, NotBefore: c.RetryNotBefore(),
 				})
 				if mode == retryNone {
 					return nil, lastErr
 				}
+			}
+			if c.deferProviderRetry {
+				return nil, lastErr
 			}
 			continue
 		default:

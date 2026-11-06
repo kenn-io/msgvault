@@ -40,11 +40,12 @@ var errWriteOutcomeUnknown = errors.New("gmail write outcome is unknown")
 
 // Client implements the Gmail API interface.
 type Client struct {
-	httpClient  *http.Client
-	rateLimiter *RateLimiter
-	logger      *slog.Logger
-	userID      string // "me" for authenticated user
-	concurrency int    // Max parallel requests for batch operations
+	httpClient         *http.Client
+	rateLimiter        *RateLimiter
+	logger             *slog.Logger
+	userID             string // "me" for authenticated user
+	deferProviderRetry bool
+	concurrency        int // Max parallel requests for batch operations
 }
 
 // ClientOption configures a Client.
@@ -126,13 +127,13 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	for quotaRetries := 0; ; quotaRetries++ {
 		// Quota pauses can exceed the request timeout. Wait under the caller's
 		// context, then start a fresh HTTP/retry budget after tokens are available.
-		if err := c.rateLimiter.Acquire(ctx, op); err != nil {
+		if err := c.acquireQuota(ctx, op); err != nil {
 			return nil, fmt.Errorf("rate limit: %w", retryBudgetError(err, quotaRetries, lastErr))
 		}
 		data, err := c.requestWithRetryBudget(ctx, op, method, path, bodyBytes, lastErr)
 		// A deadline can carry an earlier quota response for diagnostics;
 		// only a fresh throttle response starts another quota retry.
-		if _, throttled := errors.AsType[*ThrottledError](err); !throttled ||
+		if _, throttled := errors.AsType[*ThrottledError](err); !throttled || c.deferProviderRetry ||
 			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return data, err
 		}
@@ -177,7 +178,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 				return nil, retryBudgetError(ctx.Err(), attempt, lastErr)
 			case <-time.After(backoff):
 			}
-			if err := c.rateLimiter.Acquire(ctx, op); err != nil {
+			if err := c.acquireQuota(ctx, op); err != nil {
 				return nil, retryBudgetError(err, attempt, lastErr)
 			}
 		}
@@ -267,7 +268,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 			if remoteMutation {
 				return nil, newStatusError(resp.StatusCode, respBody)
 			}
-			return nil, &ThrottledError{Summary: "rate limited (429)", Detail: detail}
+			return nil, &ThrottledError{Summary: "rate limited (429)", Detail: detail, NotBefore: c.RetryNotBefore()}
 
 		case http.StatusForbidden: // Could be rate limit or permission error
 			// Gmail returns 403 for quota exceeded with "rateLimitExceeded" reason
@@ -282,7 +283,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 				if remoteMutation {
 					return nil, newStatusError(resp.StatusCode, respBody)
 				}
-				return nil, &ThrottledError{Summary: "quota exceeded (403)", Detail: detail}
+				return nil, &ThrottledError{Summary: "quota exceeded (403)", Detail: detail, NotBefore: c.RetryNotBefore()}
 			}
 			// Actual permission error - don't retry
 			return nil, newStatusError(resp.StatusCode, respBody)
@@ -322,8 +323,9 @@ func retryBudgetError(ctxErr error, attempts int, lastErr error) error {
 // ThrottledError is a Gmail 429 or quota 403 response. The client retries it
 // after the shared quota pause, up to maxQuotaRetries times.
 type ThrottledError struct {
-	Summary string // e.g. "quota exceeded (403)"
-	Detail  string // Gmail's stated reason, message and Retry-After, if any
+	NotBefore time.Time
+	Summary   string // e.g. "quota exceeded (403)"
+	Detail    string // Gmail's stated reason, message and Retry-After, if any
 }
 
 func (e *ThrottledError) Error() string {
