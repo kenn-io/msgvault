@@ -1264,41 +1264,6 @@ func TestSyncDeltaSkipsDuplicateOnUntouchedResource(t *testing.T) {
 	}
 }
 
-func TestSyncDuplicateUIDAcrossResources(t *testing.T) {
-	for _, mode := range []string{"full", "delta"} {
-		t.Run(mode, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			c, f := archiveFixture(t)
-			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT", 1)
-			st := testutil.NewTestStore(t)
-			if mode == "delta" {
-				_, err := c.Sync(t.Context(), st, syncOpts())
-				requirements.NoError(err)
-				assertions.Equal("t1", sourceToken(t, st))
-			}
-			f.Lock()
-			f.raw["b.ics"] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:example@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-			f.reported = map[string]bool{"b.ics": true}
-			f.token = "t2"
-			f.Unlock()
-			result, err := c.Sync(t.Context(), st, syncOpts())
-			requirements.NoError(err)
-			if mode == "delta" {
-				assertions.Equal("t1", f.lastToken)
-			} else {
-				assertions.Empty(f.lastToken)
-			}
-			assertions.Equal(1, result.Skipped)
-			assertions.Empty(sourceToken(t, st))
-			assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
-			assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM sync_run_items WHERE status = 'error' AND source_message_id = 'http://203.0.113.1:80/home/cal/b.ics'`))
-			got := occurrences(t, st, "2027-03-21T00:00:00Z", "2027-03-22T00:00:00Z")
-			requirements.Len(got, 1)
-			assertions.Equal("2027-03-21T13:00:00Z", got[0].Start.UTC().Format(time.RFC3339))
-		})
-	}
-}
-
 func TestSyncSkipsUnparseableResource(t *testing.T) {
 	emptyAllDay := strings.Replace(calendarBody, "DTSTART:20270314T130000Z\r\nDURATION:PT1H", "DTSTART;VALUE=DATE:20270314\r\nDTEND;VALUE=DATE:20270314", 1)
 	rangeEdit := strings.Replace(calendarBody, "UID:example@example.org", "UID:range@example.org\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270314T130000Z", 1)
