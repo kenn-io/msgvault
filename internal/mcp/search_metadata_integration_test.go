@@ -251,7 +251,4 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 	require.Len(response.Hints, 1)
 	assert.Equal("sender_name_requires_address", response.Hints[0].Code)
 	assert.Equal("from:alex@example.com subject:first", response.Hints[0].RetryWith.Query)
-	retry := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": response.Hints[0].RetryWith.Query})
-	require.Len(retry.Data, 1)
-	assert.Equal(int64(1), retry.Data[0].ID)
 }

@@ -30,16 +30,30 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	scoped.FromAddrs = nil
 	conditions, args, join := buildParts(ctx, &scoped)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	senderText := strings.TrimPrefix(q.FromAddrs[0], "@")
+	if senderText == "" {
+		senderText = q.FromAddrs[0]
+	}
+	pattern := "%" + escapeSQLiteLike(senderText) + "%"
+	participantIndex, recipientIndex := "", ""
+	candidateArgs := []any{pattern, pattern}
+	if candidate, ok := metadataTermCandidate(senderText); ok && e.hasMetadataFTS(ctx) {
+		participantIndex = " AND p.id IN (SELECT rowid FROM participants_metadata_fts WHERE participants_metadata_fts MATCH ?)"
+		recipientIndex = " AND mr.id IN (SELECT rowid FROM recipients_metadata_fts WHERE recipients_metadata_fts MATCH ?)"
+		candidateArgs = append(candidateArgs, candidate, pattern, candidate)
+	} else {
+		candidateArgs = append(candidateArgs, pattern)
+	}
 	// First find addresses with matching sender metadata. Count all scoped
 	// messages at each address, but require a matching label within that scope.
 	// CROSS JOIN preserves SQLite's candidate-to-message lookup order.
 	sql := fmt.Sprintf(`WITH candidates AS (
  SELECT LOWER(p.email_address) AS address FROM participants p
- WHERE p.email_address <> '' AND (%s OR %s)
+ WHERE p.email_address <> '' AND (%s OR %s)%s
  UNION
  SELECT LOWER(p.email_address) FROM message_recipients mr
  JOIN participants p ON p.id = mr.participant_id
- WHERE mr.recipient_type = 'from' AND p.email_address <> '' AND %s
+ WHERE mr.recipient_type = 'from' AND p.email_address <> '' AND %s%s
  )
  SELECT c.address, COUNT(DISTINCT m.id)
  FROM candidates c
@@ -53,14 +67,9 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
  HAVING MAX(CASE WHEN %s OR %s THEN 1 ELSE 0 END) = 1
  ORDER BY COUNT(DISTINCT m.id) DESC, c.address LIMIT 3`,
 		metadataContainsExpression(e.dialect, "p.display_name"), metadataContainsExpression(e.dialect, "p.email_address"),
-		metadataContainsExpression(e.dialect, "mr.display_name"), join, strings.Join(conditions, " AND "),
+		participantIndex, metadataContainsExpression(e.dialect, "mr.display_name"), recipientIndex, join, strings.Join(conditions, " AND "),
 		metadataContainsExpression(e.dialect, recipientNameExpr("mr_hint", "p_hint")), metadataContainsExpression(e.dialect, "p_hint.email_address"))
-	senderText := strings.TrimPrefix(q.FromAddrs[0], "@")
-	if senderText == "" {
-		senderText = q.FromAddrs[0]
-	}
-	pattern := "%" + escapeSQLiteLike(senderText) + "%"
-	args = append([]any{pattern, pattern, pattern}, args...)
+	args = append(candidateArgs, args...)
 	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
 	if err != nil {

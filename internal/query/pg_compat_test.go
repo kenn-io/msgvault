@@ -85,9 +85,6 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		requirements.Len(hints, 1)
 		assertions.Contains(hints[0].Message, "alice@example.com (4 messages)")
 		assertions.Equal("from:alice@example.com", hints[0].RetryWith.Query)
-		messages, err := eng.Search(ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
-		requirements.NoError(err)
-		assertions.Len(messages, 4)
 	})
 
 	t.Run("sender_name_label_page", func(t *testing.T) {

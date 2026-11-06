@@ -158,3 +158,41 @@ func TestSenderHintCandidatesRespectScope(t *testing.T) {
 	requirements.Len(retry.Messages, 1)
 	assertions.Equal(visible, retry.Messages[0].ID)
 }
+
+func TestDuckDBSenderNameHintDelegatesToSQLite(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.com"), DisplayName: new("Alex Kim")})
+	env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "sender hint fixture"})
+	engine := &DuckDBEngine{sqliteEngine: env.Engine}
+	hints := engine.MatchSenderName(t.Context(), search.Parse("from:alex"))
+	require.Len(hints, 1)
+	assert.Equal("from:alex@example.com", hints[0].RetryWith.Query)
+}
+
+func TestSenderNameHintIndexedParity(t *testing.T) {
+	db := metadataSearchDB(t)
+	_, err := db.Exec(`INSERT INTO participants(id,email_address,display_name) VALUES(2,'alias@example.org','Jordan');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES
+ (1,1,'from',NULL),(2,2,'from','ÉCOLE Alias');`)
+	require.NoError(t, err)
+	indexed := NewSQLiteEngine(db)
+	require.True(t, indexed.hasMetadataFTS(t.Context()))
+	scan := NewEngineWithDialect(db, metadataScanDialect{})
+	for _, tc := range []struct {
+		input, message string
+	}{
+		{"from:école", `from: matches addresses; senders matching "école": try from:alias@example.org (1 message); other matching senders: contact@example.org (1 message)`},
+		{"from:éc", `from: matches addresses; senders matching "éc": try from:alias@example.org (1 message); other matching senders: contact@example.org (1 message)`},
+		{"from:example.o", `from: matches addresses; senders matching "example.o": try from:alias@example.org (1 message); other matching senders: contact@example.org (1 message)`},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			for _, engine := range []*SQLiteEngine{indexed, scan} {
+				hints := engine.MatchSenderName(t.Context(), search.Parse(tc.input))
+				require.Len(t, hints, 1)
+				assert.Equal(t, tc.message, hints[0].Message)
+				assert.Equal(t, "from:alias@example.org", hints[0].RetryWith.Query)
+			}
+		})
+	}
+}

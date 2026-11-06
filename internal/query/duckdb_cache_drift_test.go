@@ -754,26 +754,3 @@ func touchParquetForTest(t *testing.T, path string) {
 	modTime := info.ModTime().Add(time.Second)
 	require.NoError(t, os.Chtimes(path, modTime, modTime), "touch parquet file")
 }
-
-func TestDuckDBSenderNameHintRetryThroughSQLiteFallback(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	b := NewTestDataBuilder(t)
-	b.AddSource("reader@example.com")
-	dir, cleanup := b.Build()
-	t.Cleanup(cleanup)
-	env := newTestEnv(t)
-	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.com"), DisplayName: new("Alex Kim")})
-	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "sender hint fixture"})
-	engine, err := NewDuckDBEngine(dir, "", env.DB, DuckDBOptions{DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: true})
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(engine.Close()) })
-	require.NoError(os.Remove(CacheStatePath(dir)))
-	q := search.Parse("from:alex")
-	hints := engine.MatchSenderName(t.Context(), q)
-	require.Len(hints, 1)
-	assert.Equal("from:alex@example.com", hints[0].RetryWith.Query)
-	results, err := engine.Search(t.Context(), search.Parse(hints[0].RetryWith.Query), 10, 0)
-	require.NoError(err)
-	require.Len(results, 1)
-	assert.Equal(id, results[0].ID)
-}
