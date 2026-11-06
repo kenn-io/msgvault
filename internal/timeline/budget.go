@@ -405,6 +405,13 @@ func boundTimeline(t *Timeline) {
 		t.Candidates[9].Truncated = true
 	}
 	if p := t.Person; p != nil {
+		if len(p.Agenda) > 5 {
+			if t.Omitted.Budget == nil {
+				t.Omitted.Budget = map[string]any{}
+			}
+			t.Omitted.Budget["agenda"] = len(p.Agenda) - 5
+			p.Agenda = p.Agenda[:5]
+		}
 		if p.Brief != nil {
 			boundText(p.Brief, 600)
 		}

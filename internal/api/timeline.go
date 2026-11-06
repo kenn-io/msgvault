@@ -55,7 +55,7 @@ func timelineParameters() []*huma.Param {
 		queryBooleanParam("include_cold", "Include archived cold activity"),
 		queryBooleanParam("include_noise", "Include activity excluded as noise"),
 		queryBooleanParam("brief", "Use shorter sections and a default budget of 6144 bytes"),
-		queryIntegerParam("budget", "Final encoded bytes (2048–65536); default 16384"),
+		queryIntegerParam("budget", "Final encoded bytes (4096–65536); default 16384"),
 		queryStringParam("format", "Response encoding: json (default) or markdown", false),
 		queryStringParam("cursor", "Continue the same request and authorization scope", false),
 	}

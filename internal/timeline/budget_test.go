@@ -52,7 +52,7 @@ func TestFitMeasuresFinalEncoding(t *testing.T) {
 		format          string
 		budget, entries int
 	}{
-		{"json", 4096, 100}, {"markdown", 4096, 100}, {"json", 2048, 50},
+		{"json", 4096, 100}, {"markdown", 4096, 100}, {"json", 8192, 50},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", tc.format, tc.budget), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -73,13 +73,49 @@ func TestFitMeasuresFinalEncoding(t *testing.T) {
 		})
 	}
 }
-func TestFitMinimumEnvelopeSucceedsAt2048(t *testing.T) {
+func TestFitMinimumEnvelopeSucceedsAt4096(t *testing.T) {
 	for _, format := range []string{"json", "markdown"} {
-		out, err := Fit(budgetTimeline(0), format, 2048)
+		out, err := Fit(budgetTimeline(0), format, 4096)
 		require.NoError(t, err)
 		assert.Empty(t, out.Cursor)
-		assert.LessOrEqual(t, encodedSize(t, out, format), 2048)
+		assert.LessOrEqual(t, encodedSize(t, out, format), 4096)
 	}
+}
+
+func TestFitDaySectionsAtMinimumBudget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := sampleTimeline(ModeDay)
+	SetContinuation(v, Continuation{Binding: cursorBinding(), SortKeys: map[string]string{
+		v.Days[0].Meetings[0].Key: "001", v.Days[0].Meetings[1].Key: "002",
+		v.Days[0].Bursts[0].Key: "003", v.Days[0].Calls[0].Key: "004",
+		v.Days[0].Notes[0].Key: "005", "day:2026-10-20": "006",
+	}})
+	out, err := Fit(v, "json", 4096)
+	requirements.NoError(err)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
+	assertions.NotEmpty(out.OpenLoops.Items)
+	assertions.NotEmpty(out.Upcoming)
+	assertions.NotEmpty(out.Days)
+}
+
+func TestFitRelationshipBoundsAgendaAtMinimumBudget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := sampleTimeline(ModeRelationship)
+	v.Person.Agenda = nil
+	for i := range 20 {
+		v.Person.Agenda = append(v.Person.Agenda, UntrustedText{Text: fmt.Sprintf("%02d %s", i, strings.Repeat("a", 80))})
+	}
+	SetContinuation(v, Continuation{Binding: cursorBinding()})
+	out, err := Fit(v, "json", 4096)
+	requirements.NoError(err)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
+	requirements.Len(out.Person.Agenda, 5)
+	assertions.Equal("00 "+strings.Repeat("a", 77), out.Person.Agenda[0].Text)
+	assertions.True(out.Person.Agenda[0].Truncated)
+	assertions.Equal(15, out.Omitted.Budget["agenda"])
+	assertions.NotEmpty(out.OpenLoops.Items)
+	assertions.NotEmpty(out.Upcoming)
+	assertions.NotEmpty(out.History)
 }
 
 func TestFitBudgetsFreshness(t *testing.T) {
@@ -90,9 +126,9 @@ func TestFitBudgetsFreshness(t *testing.T) {
 			for i := range 100 {
 				v.Freshness.Sources = append(v.Freshness.Sources, freshness.SourceFreshness{SourceType: "gmail", Identifier: fmt.Sprintf("account-%d@example.com", i), Reason: "never_synced", SyncCommand: "msgvault sync-incremental account@example.com"})
 			}
-			out, err := Fit(v, format, 2048)
+			out, err := Fit(v, format, 4096)
 			requirements.NoError(err)
-			assertions.LessOrEqual(encodedSize(t, out, format), 2048)
+			assertions.LessOrEqual(encodedSize(t, out, format), 4096)
 			assertions.NotEmpty(out.History)
 			assertions.Equal(100-len(out.Freshness.Sources), out.Omitted.Budget["freshness"])
 			assertions.Empty(out.Cursor)
@@ -136,7 +172,7 @@ func TestFitOmitsOversizedFreshnessWarning(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	v := budgetTimeline(0)
 	v.Freshness.Warnings = []string{strings.Repeat("warning ", 2000)}
-	out, err := Fit(v, "json", 2048)
+	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Empty(out.Freshness.Warnings)
 	assertions.Equal(1, out.Omitted.Budget["freshness"])
@@ -153,6 +189,8 @@ func TestFitForwardProgressStub(t *testing.T) {
 			v.History[0].Message.People = []Person{
 				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
 				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
 			}
 			return v
 		}, check: func(t *testing.T, v, out *Timeline) {
@@ -162,7 +200,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 			assertions.Equal("msg:1", out.History[0].Ref)
 			assertions.Contains(Markdown(out), "13:30 message [details omitted] · #1")
 			assertions.Equal(v.History[0].Open, out.History[0].Open)
-			assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
+			assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
 		}},
 		{name: "burst", build: func() *Timeline {
 			v := budgetTimeline(0)
@@ -202,7 +240,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := tc.build()
-			out, err := Fit(v, "json", 2048)
+			out, err := Fit(v, "json", 4096)
 			require.NoError(t, err)
 			tc.check(t, v, out)
 		})
@@ -212,16 +250,16 @@ func TestFitReportsCountsOrMore(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	v := budgetTimeline(100)
-	out, err := Fit(v, "json", 2048)
+	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Equal(100-len(out.History), out.Omitted.Budget["history"])
 	v.continuation.More = map[string]bool{"history": true}
-	out, err = Fit(v, "json", 2048)
+	out, err = Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Equal("more", out.Omitted.Budget["history"])
 	v = budgetTimeline(0)
 	v.OpenLoops = &OpenLoops{Truncated: true}
-	out, err = Fit(v, "json", 2048)
+	out, err = Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Equal("more", out.Omitted.Budget["open_loops"])
 	assertions.Empty(out.Cursor)
@@ -267,7 +305,7 @@ func TestFitHiddenTextStripsJSONText(t *testing.T) {
 func TestFitExistingMoreStillContinues(t *testing.T) {
 	v := budgetTimeline(80)
 	v.Omitted.Budget = map[string]any{"history": "more"}
-	out, err := Fit(v, "json", 2048)
+	out, err := Fit(v, "json", 4096)
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.Cursor)
 	assert.Equal(t, "more", out.Omitted.Budget["history"])
@@ -279,10 +317,10 @@ func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 	entries := v.History
 	v.History = nil
 	v.Days = []Day{{Date: "2026-10-22", Meetings: entries[:5], Bursts: entries[5:30], Calls: entries[30:45], Notes: entries[45:]}}
-	out, err := Fit(v, "json", 2048)
+	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.NotEmpty(out.Days)
-	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
 	var got []Entry
 	for _, d := range out.Days {
 		got = append(got, d.Meetings...)
@@ -329,7 +367,7 @@ func TestFitBoundsPeoplePreservingCountsAndTierSource(t *testing.T) {
 }
 func TestFitCursorBindsChosenFormat(t *testing.T) {
 	v := budgetTimeline(100)
-	out, err := Fit(v, "markdown", 2048)
+	out, err := Fit(v, "markdown", 4096)
 	require.NoError(t, err)
 	_, err = DecodeCursor(out.Cursor, cursorBinding())
 	require.ErrorIs(t, err, ErrCursorExpired)
@@ -389,7 +427,7 @@ func TestFitTruncatedNoteNamesNoUncallableTool(t *testing.T) {
 	_, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: strings.Repeat("<", 2000), Author: "owner"})
 	require.NoError(err)
 	req := dayRequest()
-	req.Budget = 2048
+	req.Budget = 4096
 	got, err := Build(t.Context(), f.src, req)
 	require.NoError(err)
 	require.Len(got.Days, 1)

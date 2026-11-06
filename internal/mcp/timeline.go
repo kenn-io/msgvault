@@ -40,7 +40,7 @@ func timelineDefinition() toolDefinition {
 			"include_cold":  booleanSchema("Include archived cold activity"),
 			"include_noise": booleanSchema("Include activity excluded as noise"),
 			"brief":         booleanSchema("Use shorter sections and a default budget of 6144 bytes"),
-			"budget":        boundedIntegerSchema("Final encoded bytes; default 16384, or 6144 with brief", 2048, 65536),
+			"budget":        boundedIntegerSchema("Final encoded bytes; default 16384, or 6144 with brief", 4096, 65536),
 			"format":        stringSchema("Response encoding; default markdown", "markdown", "json"),
 			"cursor":        stringSchema("Continue with the same filters, format, and authorization scope"),
 		}),

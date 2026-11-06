@@ -291,7 +291,7 @@ func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
 	f.src.Clock = func() time.Time { clockCalls++; return f.now.In(time.FixedZone("test-west", -7*60*60)) }
 	req := dayRequest()
 	req.Date = ""
-	req.Budget = 2048
+	req.Budget = 4096
 	req.Format = "json"
 	first, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
@@ -397,13 +397,13 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	for _, e := range allDayEntries(full) {
 		expected[e.Key] = true
 	}
-	req.Budget = 2048
+	req.Budget = 4096
 	seenUpcoming := map[string]bool{}
 	seen := map[string]bool{}
 	for range 80 {
 		got, e := Build(t.Context(), f.src, req)
 		requirements.NoError(e)
-		assertions.LessOrEqual(len(Markdown(got)), 2048)
+		assertions.LessOrEqual(len(Markdown(got)), 4096)
 		entries := allDayEntries(got)
 		for _, entry := range got.Upcoming {
 			assertions.False(seenUpcoming[entry.Key])

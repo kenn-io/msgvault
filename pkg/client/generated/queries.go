@@ -1860,7 +1860,7 @@ type GetTimelineQuery struct {
 	// Brief Use shorter sections and a default budget of 6144 bytes
 	Brief *bool `json:"brief,omitempty"`
 
-	// Budget Final encoded bytes (2048–65536); default 16384
+	// Budget Final encoded bytes (4096–65536); default 16384
 	Budget *int64 `json:"budget,omitempty"`
 
 	// Format Response encoding: json (default) or markdown

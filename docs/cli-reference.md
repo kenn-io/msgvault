@@ -88,7 +88,7 @@ msgvault timeline --json --budget 4096
 | `--tier 1,2` | Filter by applied or observed person tiers 1 through 3 |
 | `--include-cold`, `--include-noise` | Include activity omitted by the default cold and noise filters |
 | `--brief` | Smaller output, five loops and 24 hours of upcoming activity |
-| `--budget N` | Final output bytes, 2048–65536; default 16384, or 6144 with `--brief` |
+| `--budget N` | Final output bytes, 4096–65536; default 16384, or 6144 with `--brief` |
 | `--json` | Compact JSON instead of Markdown; ends with a newline |
 | `--cursor C` | Continue with the same filters, format, and authorization scope |
 

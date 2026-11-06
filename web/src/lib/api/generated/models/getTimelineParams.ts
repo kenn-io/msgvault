@@ -60,7 +60,7 @@ export type GetTimelineParams = {
    */
   brief?: boolean;
   /**
-   * Final encoded bytes (2048–65536); default 16384
+   * Final encoded bytes (4096–65536); default 16384
    */
   budget?: number;
   /**

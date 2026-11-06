@@ -57,7 +57,7 @@ func newTimelineCommand() *cobra.Command {
 	flags.BoolVar(&req.IncludeCold, "include-cold", false, "Include archived cold activity")
 	flags.BoolVar(&req.IncludeNoise, "include-noise", false, "Include activity excluded as noise")
 	flags.BoolVar(&req.Brief, "brief", false, "Use shorter sections")
-	flags.IntVar(&req.Budget, "budget", 0, "Final output bytes (2048–65536); default 16384, or 6144 with --brief")
+	flags.IntVar(&req.Budget, "budget", 0, "Final output bytes (4096–65536); default 16384, or 6144 with --brief")
 	flags.StringVar(&req.Cursor, "cursor", "", "Continue with the same filters and format")
 	flags.BoolVar(&jsonOutput, flagJSON, false, "Output compact JSON instead of Markdown")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -65,7 +65,7 @@ func newTimelineCommand() *cobra.Command {
 			return errors.New("--days must be between 1 and 31")
 		}
 		if cmd.Flags().Changed("budget") && req.Budget == 0 {
-			return errors.New("--budget must be between 2048 and 65536")
+			return errors.New("--budget must be between 4096 and 65536")
 		}
 		req.BeforeSet = cmd.Flags().Changed("before")
 		req.AfterSet = cmd.Flags().Changed("after")

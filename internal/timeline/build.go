@@ -152,7 +152,7 @@ func normalizeRequest(req Request) (Request, error) {
 	if req.Brief && (req.Days != 0 || req.From != "" || req.To != "") {
 		return req, fmt.Errorf("%w: brief conflicts with days/from/to", ErrInvalidRequest)
 	}
-	if req.Budget < 2048 || req.Budget > MaxBudget || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 {
+	if req.Budget < 4096 || req.Budget > MaxBudget || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 {
 		return req, ErrInvalidRequest
 	}
 	if req.Before == 0 && !req.BeforeSet {

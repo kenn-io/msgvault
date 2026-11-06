@@ -376,7 +376,7 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 				assert.Equal(t, message.History, conversation.History)
 			})
 
-			req.Budget = 2048
+			req.Budget = 4096
 			seen := map[string]bool{}
 			refs := []string{}
 			pages := 0

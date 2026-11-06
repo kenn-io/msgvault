@@ -181,7 +181,11 @@ func TestRelationshipCuratedProfileFreshnessAndUnavailablePerson(t *testing.T) {
 	requirements.NotEmpty(want.Sources)
 	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
 	requirements.NoError(err)
-	assertions.Equal(want, got.Freshness)
+	assertions.Equal(want.AsOf, got.Freshness.AsOf)
+	assertions.Equal(want.StaleThreshold, got.Freshness.StaleThreshold)
+	assertions.Equal(want.Sources, got.Freshness.Sources)
+	assertions.Equal(want.Projections, got.Freshness.Projections)
+	assertions.ElementsMatch(want.Warnings, got.Freshness.Warnings)
 	assertions.Empty(got.History)
 	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})
 	f.src.People = failedPersonLookup{PeopleSource: f.src.People, err: errors.New("person reader unavailable")}
