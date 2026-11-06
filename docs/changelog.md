@@ -30,6 +30,7 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
 - A saved person's Details tab in People shows that person's open loops in a
   read-only card, with a Check more action when coverage is incomplete.
+- `msgvault import-signal` archives direct and group chats from Signal Android backups decrypted by signalbackup-tools, including edits, replies, reactions, and attachments. See [Text Messages](usage/text-messages.md#import-signal).
 
 ## 0.23.0
 <small>2026-11-04</small>
