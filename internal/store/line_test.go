@@ -117,7 +117,7 @@ func TestLineInboxDueAndStatus(t *testing.T) {
 	must.NoError(st.SetLineBotContext(ctx, src.ID, botID))
 	now := time.Now().UTC().Truncate(time.Second)
 	old := now.Add(-31 * 24 * time.Hour)
-	events := []store.LineWebhookEvent{{WebhookEventID: "original", EventType: "message", EventTimestamp: 20, RawJSON: `{"text":"synthetic"}`, ReceivedAt: old}, {WebhookEventID: "orphan", EventType: "unsend", TargetMessageID: "late", EventTimestamp: 10, RawJSON: `{"unsend":{"messageId":"late"}}`, ReceivedAt: old.Add(-time.Hour)}}
+	events := []store.LineWebhookEvent{{WebhookEventID: "original", EventType: "message", TargetMessageID: "original-message", EventTimestamp: 20, RawJSON: `{"text":"synthetic"}`, ReceivedAt: old}, {WebhookEventID: "orphan", EventType: "unsend", TargetMessageID: "late", EventTimestamp: 10, RawJSON: `{"unsend":{"messageId":"late"}}`, ReceivedAt: old.Add(-time.Hour)}}
 	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, events))
 	rows, err := st.DueLineEventsContext(ctx, src.ID, now, 10)
 	must.NoError(err)
@@ -296,7 +296,7 @@ func TestLineServiceMigrationPreservesCuratedPolicy(t *testing.T) {
 			_, err = st.DB().Exec(`UPDATE communication_services SET scope_policy='none',default_scope_kind=NULL,normalization='lower',updated_at=created_at WHERE slug='line'`)
 			must.NoError(err)
 			if curated {
-				_, err = st.DB().Exec(`UPDATE communication_services SET display_label='Custom LINE',updated_at='2026-01-01 00:00:00' WHERE slug='line'`)
+				_, err = st.DB().Exec(`UPDATE communication_services SET display_label='Custom LINE' WHERE slug='line'`)
 				must.NoError(err)
 			}
 			must.NoError(st.InitSchemaContext(ctx))

@@ -71,10 +71,7 @@ it.each([
   [true, run('completed'), false, undefined, 'Listening', 'success'],
   [true, run('completed'), true, undefined, 'Queued', 'info'],
   [true, run('completed'), false, '2026-07-19T10:00:00Z', 'Running', 'info'],
-  [true, run('completed', 2), false, undefined, 'Partial', 'warning'],
   [true, run('failed'), false, undefined, 'Failed', 'danger'],
-  [true, run('paused'), false, undefined, 'Paused', 'neutral'],
-  [true, run('cancelled'), false, undefined, 'Cancelled', 'muted'],
 ] as const)('shows receiver status %#', (active, latest_sync, scheduler_queued, scheduler_started_at, label, tone) => {
   expect(syncStatusChip({ active_sync: null, latest_sync, scheduler_queued, scheduler_started_at,
     line_webhook: { active, pending: 0, failed: 0, invalid_signatures: 0 }

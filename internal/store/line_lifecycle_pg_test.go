@@ -11,7 +11,7 @@ import (
 )
 
 // Membership writes its inbox clock before projecting conversation membership.
-// Hold that first write while real source removal acquires its maintenance locks.
+// Block the real writer at its projection while source removal waits on its clock.
 func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 	must := require.New(t)
 
@@ -33,21 +33,25 @@ func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 	defer func() { _ = blocker.Rollback() }()
 	_, err = blocker.ExecContext(ctx, `SET LOCAL deadlock_timeout = '100ms'`)
 	must.NoError(err)
-	_, err = blocker.ExecContext(ctx, `UPDATE line_memberships SET joined_at=joined_at WHERE source_id=$1`, source.ID)
+	_, err = blocker.ExecContext(ctx, `UPDATE conversation_participants SET role=role WHERE conversation_id=$1 AND participant_id=$2`, conversation, participant)
 	must.NoError(err)
 	var blockerPID int
 	must.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
 
-	done := make(chan error, 1)
+	membershipDone := make(chan error, 1)
+	go func() {
+		membershipDone <- st.SetLineMembershipContext(ctx, conversation, participant, "channel:2000000001:user:U00000000000000000000000000000001", false, time.Now().UTC().Add(time.Second))
+	}()
+	writerPID := waitForPostgresBlocker(t, st.DB(), blockerPID)
+	removalDone := make(chan error, 1)
 	go func() {
 		_, _, err := st.RemoveSourceSerialized(ctx, source.ID)
-		done <- err
+		removalDone <- err
 	}()
-	waitForPostgresBlocker(t, st.DB(), blockerPID)
-	_, err = blocker.ExecContext(ctx, `UPDATE conversation_participants SET role='member' WHERE conversation_id=$1 AND participant_id=$2`, conversation, participant)
-	must.NoError(err)
+	waitForPostgresBlocker(t, st.DB(), writerPID)
 	must.NoError(blocker.Commit())
-	must.NoError(waitForSourceOperation(t, done))
+	must.NoError(waitForSourceOperation(t, membershipDone))
+	must.NoError(waitForSourceOperation(t, removalDone))
 }
 
 // A first message has no conversation ID yet. Block its inbox-clock write and

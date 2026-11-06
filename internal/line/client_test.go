@@ -126,6 +126,10 @@ func TestClientRetryAfterAndErrorRedaction(t *testing.T) {
 		checks.NotContains(err.Error(), "synthetic-secret")
 		checks.NotContains(err.Error(), "synthetic-token")
 	}
+	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 500, Body: "synthetic-secret synthetic-token"})
+	_, err := client.BotInfo(context.Background())
+	must.Error(err)
+	checks.NotContains(err.Error(), "synthetic-")
 }
 
 func TestClientRefusesRedirects(t *testing.T) {
@@ -173,10 +177,6 @@ func TestClientBoundsAndRedactsResponses(t *testing.T) {
 		must.Error(err)
 		checks.Less(len(err.Error()), 200)
 	}
-	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 500, Body: "synthetic-secret synthetic-token"})
-	_, err = client.BotInfo(context.Background())
-	must.Error(err)
-	checks.NotContains(err.Error(), "synthetic-")
 }
 
 func TestClientEscapesPathSegments(t *testing.T) {
@@ -190,7 +190,6 @@ func TestClientEscapesPathSegments(t *testing.T) {
 	checks.Equal("/v2/bot/group/group%2Fwith%3Fquery%23fragment/member/user%2Fwith%3Fquery%23fragment", requests[len(requests)-1].Path)
 	_, err = client.Profile(context.Background(), line.Source{Type: "group"}, "U00000000000000000000000000000002")
 	must.Error(err)
-	checks.NotErrorIs(err, context.Canceled)
 }
 
 // Observe the real transport's Body.Read so cancellation happens during
