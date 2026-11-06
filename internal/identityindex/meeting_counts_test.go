@@ -18,8 +18,8 @@ func TestMeetingCountsMultipleOccurrences(t *testing.T) {
 	})
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
 	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT * FROM (VALUES
- (100::BIGINT, 'uid:weekly/first'::VARCHAR),
- (100::BIGINT, 'uid:weekly/second'::VARCHAR)) t(message_id,meeting_key)`)
+ (100::BIGINT, 'uid:weekly/first'::VARCHAR, TIMESTAMP '2026-01-01'),
+ (100::BIGINT, 'uid:weekly/second'::VARCHAR, TIMESTAMP '2026-01-08')) t(message_id,meeting_key,occurrence_start)`)
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 	requirements.NoError(err)
 	var meetings, activities int64
@@ -39,7 +39,7 @@ func TestCalendarOnlyDoesNotCountTowardRelationships(t *testing.T) {
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 	requirements.NoError(err)
 	var meetings int64
-	requirements.NoError(db.QueryRow(`SELECT sum(meeting_units) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&meetings))
+	requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_units),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&meetings))
 	assertions.Zero(meetings)
 }
 
@@ -72,7 +72,7 @@ func TestPersonMeetingCountDedupesCopiesGlobalAndSourceFiltered(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT id::BIGINT AS message_id,
   2::BIGINT AS participant_id,'to'::VARCHAR AS recipient_type
   FROM (VALUES(100),(101),(102),(103),(104)) t(id)`)
-	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT * FROM (VALUES
+	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT *, TIMESTAMP '2026-07-20 10:30:00' AS occurrence_start FROM (VALUES
  (100::BIGINT,'uid:planning@example.org/'::VARCHAR),
  (101::BIGINT,'uid:planning@example.org/'::VARCHAR),
  (104::BIGINT,'uid:planning@example.org/'::VARCHAR)) t(message_id,meeting_key)`)
@@ -97,12 +97,12 @@ func TestMeetingContributionsDeduplicateAcrossAppend(t *testing.T) {
 		messageType: "meeting_transcript", conversationType: "meeting",
 	})
 	replaceRelationshipParquet(t, db, committed, "message_recipients", `SELECT 1::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
-	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 1::BIGINT AS message_id, 'uid:shared@example.org/'::VARCHAR AS meeting_key`)
+	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 1::BIGINT AS message_id, 'uid:shared@example.org/'::VARCHAR AS meeting_key, TIMESTAMP '2026-01-01' AS occurrence_start`)
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed})
 	require.NoError(err)
 	staged := t.TempDir()
 	writeRelationshipParquet(t, db, staged, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
-	writeRelationshipParquet(t, db, staged, "meeting_keys", `SELECT message_id::BIGINT AS message_id, 'uid:shared@example.org/'::VARCHAR AS meeting_key FROM (VALUES (1), (101)) t(message_id)`)
+	writeRelationshipParquet(t, db, staged, "meeting_keys", `SELECT message_id::BIGINT AS message_id, 'uid:shared@example.org/'::VARCHAR AS meeting_key, TIMESTAMP '2026-01-01' AS occurrence_start FROM (VALUES (1), (101)) t(message_id)`)
 	writeSyntheticRelationshipFanOut(t, db, staged, syntheticRelationshipFanOutOptions{
 		firstMessageID: 101, messageCount: 1, memberCount: 5, startDate: "2026-01-01",
 		messageType: "meeting_transcript", conversationType: "meeting",
@@ -138,7 +138,7 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
 		messageType: "meeting_transcript", conversationType: "meeting",
 	})
-	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key`)
+	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, TIMESTAMP '2026-01-01' AS occurrence_start`)
 	at := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
 	require.NoError(err)
@@ -154,11 +154,40 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			replaceRelationshipParquet(t, db, staged, "meeting_keys", `SELECT * FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
+			replaceRelationshipParquet(t, db, staged, "meeting_keys", `SELECT *, TIMESTAMP '2026-01-01' AS occurrence_start FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
 			b := builder{db: db, opts: BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged}}
 			reuse, err := b.canReuseTemperatureContributions(t.Context(), at)
 			require.NoError(err)
 			assert.Equal(t, tc.reuse, reuse)
 		})
 	}
+}
+
+func TestMeetingOccurrenceTimeControlsTemperatureWindow(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	committed, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, committed, syntheticRelationshipFanOutOptions{
+		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
+		messageType: "meeting_transcript", conversationType: "meeting",
+	})
+	replaceRelationshipParquet(t, db, committed, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
+	keys := `SELECT 100::BIGINT AS message_id, 'uid:weekly/second'::VARCHAR AS meeting_key, TIMESTAMP '2026-01-08' AS occurrence_start`
+	replaceRelationshipParquet(t, db, committed, "meeting_keys", keys)
+	before := time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC)
+	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: before})
+	requirements.NoError(err)
+	var meetings int64
+	requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_count),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(committed, DatasetTemperatureContributions)).Scan(&meetings))
+	assertions.Zero(meetings, "the linked occurrence is still in the future")
+	staged := t.TempDir()
+	writeRelationshipParquet(t, db, staged, "meeting_keys", keys)
+	at := before.AddDate(0, 0, 1)
+	b := builder{db: db, opts: BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged}}
+	reuse, err := b.canReuseTemperatureContributions(t.Context(), at)
+	requirements.NoError(err)
+	assertions.False(reuse, "the occurrence becomes eligible without a new transcript")
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
+	requirements.NoError(err)
+	requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_count),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(committed, DatasetTemperatureContributions)).Scan(&meetings))
+	assertions.Equal(int64(1), meetings)
 }

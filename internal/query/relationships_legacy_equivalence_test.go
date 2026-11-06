@@ -64,7 +64,7 @@ func buildLegacyRelationshipsSQLForEquivalence(
     CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
     JOIN canon cn ON cn.participant_id = pid.participant_id
     WHERE cn.canonical_id NOT IN (SELECT canonical_id FROM owner_canon)
-      AND NOT (le.entry_kind IN ('event','meeting') AND NOT le.with_owner)
+      AND le.entry_kind <> 'event' AND (le.with_owner OR le.entry_kind <> 'meeting')
 ), aggregated AS (
     SELECT
         canonical_id,
