@@ -7942,25 +7942,45 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	assert.Contains(timings, "query_embedding_ms")
 	assert.Contains(timings, "retrieval_ms")
 	assert.Contains(timings, "hydration_ms")
+}
+
+func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
+	t.Parallel()
+	srv, store := newTestServerWithMockStore(t)
+	backend := &fakeVectorBackend{active: &vector.Generation{
+		ID: 1, Model: "fake", Dimension: 4, Fingerprint: "fake:4", State: vector.GenerationActive,
+	}}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
 
 	store.messages = []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}
 	srv.SetVectorFeatures(engine, nil, backend, vector.Config{
 		Search: vector.SearchConfig{MaxPageSizeHybrid: new(2)},
 	})
-	for _, count := range []int{2, 3} {
-		backend.searchHits = []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}
-		backend.searchHits = backend.searchHits[:count]
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		var page hybridSearchResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
-		assert.False(page.HasMore, "offset 2 would be rejected at the configured cap")
-		require.Len(page.Results, 1)
-		assert.Equal(int64(2), page.Results[0].ID)
-		assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
-		assert.Equal(map[int]int{2: 0, 3: 2}[count], page.RankingLimitReached)
+	for _, tc := range []struct {
+		name    string
+		hits    []vector.Hit
+		wantCap int
+	}{
+		{name: "complete", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
+		{name: "overflow", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			backend.searchHits = tc.hits
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			var page hybridSearchResponse
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+			assert.False(page.HasMore, "offset 2 would be rejected at the configured cap")
+			require.Len(page.Results, 1)
+			assert.Equal(int64(2), page.Results[0].ID)
+			assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
+			assert.Equal(tc.wantCap, page.RankingLimitReached)
+		})
 	}
 }
 

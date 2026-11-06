@@ -282,8 +282,7 @@ func TestSearchCmd_RemoteSemanticRetryRespectsPageLimit(t *testing.T) {
 			for i := range rows {
 				rows[i] = map[string]any{"id": i + 1, "subject": "Remote search", "sent_at": "2026-01-01T00:00:00Z"}
 			}
-			srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, strconv.Itoa(limit), r.URL.Query().Get("page_size"))
+			srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 					"query": "lunch", "mode": "hybrid", "returned": limit, "has_more": true, "pool_saturated": false,

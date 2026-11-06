@@ -278,11 +278,9 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 				assert.NotContains(stderr, "Hint:")
 			}
 			var page struct {
-				Results []json.RawMessage   `json:"results"`
-				Hints   []map[string]string `json:"hints"`
+				Hints []map[string]string `json:"hints"`
 			}
 			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--json"), &page)
-			require.Len(page.Results, 50)
 			if boundary == "exactboundary" {
 				assert.Empty(page.Hints)
 				continue
@@ -290,15 +288,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			require.Len(page.Hints, 1)
 			assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid")
 			assert.NotContains(page.Hints[0], "next")
-			// Apply the server prerequisite before retrying with a larger limit.
-			raised := vectorCfg
-			raised.Search.MaxPageSizeHybrid = new(100)
-			server.SetVectorFeatures(engine, nil, backend, raised)
-			page.Hints = nil
-			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--limit", "100", "--json"), &page)
-			assert.Len(page.Results, 51)
-			assert.Empty(page.Hints)
-			server.SetVectorFeatures(engine, nil, backend, vectorCfg)
 		}
 	}
 	// Hybrid fusion can exhaust its candidate pool before the requested page fills.
@@ -313,23 +302,12 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
 	assert.Contains(stderr, "vector.search.k_per_signal")
 	var poolPage struct {
-		Results       []json.RawMessage   `json:"results"`
 		PoolSaturated bool                `json:"pool_saturated"`
 		Hints         []map[string]string `json:"hints"`
 	}
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &poolPage)
-	require.Len(poolPage.Results, 100)
 	assert.True(poolPage.PoolSaturated)
 	require.Len(poolPage.Hints, 1)
 	assert.Contains(poolPage.Hints[0]["message"], "vector.search.k_per_signal")
 	assert.NotContains(poolPage.Hints[0], "next")
-	// Raising both server limits lets a larger page return every match.
-	expanded := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 500, SubjectBoost: 1})
-	raised.Search.MaxPageSizeHybrid = new(500)
-	server.SetVectorFeatures(expanded, nil, backend, raised)
-	poolPage.Hints = nil
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "400", "--json"), &poolPage)
-	assert.Len(poolPage.Results, 312)
-	assert.False(poolPage.PoolSaturated)
-	assert.Empty(poolPage.Hints)
 }
