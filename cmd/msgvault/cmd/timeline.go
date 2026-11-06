@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/timeline"
 )
 
-const timelineMinAPISchemaVersion = "3.46.0"
+const timelineMinAPISchemaVersion = "3.47.0"
 
 type timelineClient interface {
 	APISchemaVersion(ctx context.Context) (string, error)

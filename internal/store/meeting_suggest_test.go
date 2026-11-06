@@ -193,25 +193,20 @@ func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	assert.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		links := record.Links
 		require.NoError(err)
 		require.Len(links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
 		assert.True(listed.Start.Equal(links[0].Start), "resolved start must match the calendar listing")
 		assert.True(listed.End.Equal(links[0].End), "resolved end must match the calendar listing")
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref}, 10)
 		require.NoError(err)
-		if assert.Len(suggestions.Suggestions, 1) {
-			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-			assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
-			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
-		}
+		assert.Empty(suggestions.Suggestions)
 	}
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	if assert.Len(suggestions.Suggestions, 1) {
-		assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
-		assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
-	}
+	assert.Empty(suggestions.Suggestions)
 }
 
 func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
@@ -238,7 +233,8 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 
 	t.Run("saved link", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		links := record.Links
 		require.NoError(err)
 		require.Len(links, 1)
 		assert.Equal(formatMeetingOccurrence(ref), links[0].Ref)
@@ -250,17 +246,15 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 			require.NoError(err)
-			require.Len(suggestions.Suggestions, 1)
-			assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
-			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
+			assert.Empty(suggestions.Suggestions)
 		})
 	}
 	for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
 		t.Run(fmt.Sprintf("link/%d", target.MessageID), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			require.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			links, err := st.MeetingLinksContext(t.Context(), note)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			links := record.Links
 			require.NoError(err)
 			require.Len(links, 1)
 			assert.Equal(formatMeetingOccurrence(ref), links[0].Ref)
@@ -270,7 +264,7 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 	}
 }
 
-func TestMeetingAllDayExceptionStates(t *testing.T) {
+func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T)
@@ -454,6 +448,20 @@ func TestMeetingAllDayExceptionStates(t *testing.T) {
 				})
 			}
 		}},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingAllDayExceptionStates(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksAllDayExceptionUsesCalendarZone", testMeetingLinksAllDayExceptionUsesCalendarZone},
+		{"MeetingLinksAllDayExceptionWithUnsupportedRecurrence", testMeetingLinksAllDayExceptionWithUnsupportedRecurrence},
+		{"MeetingLinksAllDayExceptionWithTombstoneMaster", testMeetingLinksAllDayExceptionWithTombstoneMaster},
+		{"MeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget", testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget},
 	} {
 		t.Run(tc.name, tc.run)
 	}

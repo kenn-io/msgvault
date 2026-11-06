@@ -262,23 +262,25 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 
 func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	loc, err := time.LoadLocation("America/Santiago")
-	require.NoError(t, err)
+	require := require.New(t)
+	require.NoError(err)
 	ref, err := ParseAnchor("2026-09-06", loc)
-	require.NoError(t, err)
-	assert.Equal(t, "2026-09-06T01:00:00-03:00", ref.Time.Format(time.RFC3339))
+	require.NoError(err)
+	assert := assert.New(t)
+	assert.Equal("2026-09-06T01:00:00-03:00", ref.Time.Format(time.RFC3339))
 	f := newTimelineFixture(t)
 	f.src.Location = loc
 	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Civil date", Author: "owner"})
-	require.NoError(t, err)
+	require.NoError(err)
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
-	require.NoError(t, err)
-	assert.Equal(t, "2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
-	require.Len(t, got.History, 2)
+	require.NoError(err)
+	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
+	require.Len(got.History, 2)
 	for _, entry := range got.History {
-		assert.Equal(t, "2026-09-06", entry.Time.In(loc).Format(time.DateOnly))
+		assert.Equal("2026-09-06", entry.Time.In(loc).Format(time.DateOnly))
 	}
 	meeting, err := Build(t.Context(), f.src, anchorRequest(fmt.Sprintf("evt:%d", id)))
-	require.NoError(t, err)
-	assert.Equal(t, "2026-09-06", meeting.Anchor.Time.In(loc).Format(time.DateOnly))
+	require.NoError(err)
+	assert.Equal("2026-09-06", meeting.Anchor.Time.In(loc).Format(time.DateOnly))
 }

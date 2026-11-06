@@ -569,12 +569,33 @@ type meetingLinkDecision struct {
 	Decision string
 }
 
+type meetingMemberCandidate struct {
+	linkOccurrence
+
+	Exact bool
+}
+
 func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+	candidates, err := s.meetingMemberCandidates(ctx, r, memberID, budget)
+	if err != nil {
+		return nil, err
+	}
+	var out []linkOccurrence
+	for _, c := range candidates {
+		if c.Exact {
+			out = append(out, c.linkOccurrence)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) meetingMemberCandidates(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]meetingMemberCandidate, error) {
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
 		return nil, err
 	}
 	var out []linkOccurrence
+	manual := map[meetingIdentity]bool{}
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
 		if d.Decision == "split" {
@@ -603,6 +624,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			return nil, err
 		}
 		out = append(out, o)
+		manual[o.Identity] = true
 	}
 	key, err := memberLinkKey(ctx, r, memberID)
 	if err != nil {
@@ -612,16 +634,24 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range matches {
-		if o.Identity != matches[0].Identity {
-			matches = nil
-			break
-		}
-	}
 	out = slices.DeleteFunc(append(out, matches...), func(o linkOccurrence) bool {
 		return splits[o.Identity]
 	})
-	return uniqueMeetingOccurrences(out), nil
+	exact := meetingOccurrencesExact(matches)
+	var candidates []meetingMemberCandidate
+	for _, o := range uniqueMeetingOccurrences(out) {
+		candidates = append(candidates, meetingMemberCandidate{o, manual[o.Identity] || exact})
+	}
+	return candidates, nil
+}
+
+func meetingOccurrencesExact(out []linkOccurrence) bool {
+	for _, o := range out {
+		if o.Identity != out[0].Identity {
+			return false
+		}
+	}
+	return len(out) > 0
 }
 
 func (s *Store) meetingReader(ctx context.Context) reboundReader {

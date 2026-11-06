@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
@@ -49,13 +50,13 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.message_type='meeting_transcript' AND m.list_id IS NULL
  AND ` + strings.Replace(s.activityLiveEligibleSQL(), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1) + `
  AND EXISTS(SELECT 1 FROM calendar_events e JOIN messages cm ON cm.id=e.message_id
- WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm") + `
+ WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm", "") + `
  AND EXISTS(SELECT 1 FROM calendar_event_attendees a WHERE a.message_id=e.message_id AND a.is_copy_self=FALSE AND a.role<>'room' AND LOWER(TRIM(a.email)) IN (` + marks + `))` + calendarScope + `
  AND (EXISTS(SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND
  ((k.kind='ical_uid' AND k.value<>'' AND k.value=` + uid + `) OR
  (k.kind='google_event_id' AND e.provider_event_id<>'' AND (k.value=e.provider_event_id OR SUBSTR(k.value,1,LENGTH(e.provider_event_id)+1)=e.provider_event_id||'_'))))
  OR EXISTS(SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id AND d.decision='link'
- AND (d.target_message_id=cm.id OR (d.target_ical_uid<>'' AND d.target_ical_uid=` + uid + `)))))` + transcriptScope + ` ORDER BY m.id DESC LIMIT ?`
+ AND d.target_message_id=cm.id)))` + transcriptScope + ` ORDER BY m.id DESC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("discover calendar attended transcripts: %w", err)
@@ -158,4 +159,47 @@ func (s *Store) contactSubjectEmails(ctx context.Context, subject ActivitySubjec
 	}
 	slices.Sort(emails)
 	return slices.Compact(emails), nil
+}
+
+// CalendarMessageDisplayContext reads archived event titles within the source scope.
+func (s *Store) CalendarMessageDisplayContext(ctx context.Context, ids []int64) (map[int64]MessageDisplay, error) {
+	result := make(map[int64]MessageDisplay, len(ids))
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	for start := 0; start < len(ids); start += activityCandidateIDChunk {
+		batch := ids[start:min(start+activityCandidateIDChunk, len(ids))]
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, 0, len(batch)+len(scopeArgs))
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, scopeArgs...)
+		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
+   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,`+matrixPendingEncryptedSQL+`,m.message_type
+   FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.id IN (`+marks+`) AND m.message_type='calendar_event' AND m.deleted_at IS NULL`+scope), args...)
+		if err != nil {
+			return nil, fmt.Errorf("read calendar message display: %w", err)
+		}
+		for rows.Next() {
+			var d MessageDisplay
+			var sent, received, internal nullableTimestamp
+			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &d.Encrypted, &d.MessageType); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan calendar message display: %w", err)
+			}
+			date, dateErr := activitydate.DateEvent(activitydate.Timestamps{SentAt: nullableTimePointer(sent), ReceivedAt: nullableTimePointer(received), InternalDate: nullableTimePointer(internal)}, time.UTC)
+			if dateErr == nil {
+				d.OccurredAt = &date.OccurredAt
+			}
+			if d.HiddenText || d.Encrypted {
+				d.Snippet = ""
+			}
+			result[d.MessageID] = d
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("iterate calendar message display: %w", err)
+		}
+	}
+	return result, nil
 }

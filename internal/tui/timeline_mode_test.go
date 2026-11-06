@@ -60,7 +60,7 @@ func timelineModeModel() Model {
 
 func TestTimelineRequestDefaultBudget(t *testing.T) {
 	for _, budget := range []int{0, 4096} {
-		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+		t.Run(strconv.Itoa(budget), func(t *testing.T) {
 			m := timelineModeModel()
 			defer m.cancelTimelineRequest()
 			cmd := m.startTimelineRequest(timeline.Request{Budget: budget}, false)
@@ -70,7 +70,9 @@ func TestTimelineRequestDefaultBudget(t *testing.T) {
 			if want == 0 {
 				want = 65536
 			}
-			assert.Equal(t, want, m.timelineBackend.(*timelineModeBackend).requests[0].Budget)
+			backend, ok := m.timelineBackend.(*timelineModeBackend)
+			require.True(t, ok)
+			assert.Equal(t, want, backend.requests[0].Budget)
 		})
 	}
 }

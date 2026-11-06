@@ -17,18 +17,21 @@ func TestTimelineRefreshFailureRestoresLastResult(t *testing.T) {
 	m.timelineState.scroll = 1
 	refreshed, cmd := sendKey(t, m, key('r'))
 	defer refreshed.cancelTimelineRequest()
-	require.NotNil(t, cmd)
-	msg := cmd().(timelineLoadedMsg)
+	require := require.New(t)
+	require.NotNil(cmd)
+	msg, ok := cmd().(timelineLoadedMsg)
+	require.True(ok)
 	failure := errors.New("daemon temporarily unavailable")
 	msg.result, msg.err = nil, failure
 	refreshed = sendMsg(t, refreshed, msg)
-	assert.Contains(t, stripANSI(refreshed.renderView()), failure.Error())
+	assert := assert.New(t)
+	assert.Contains(stripANSI(refreshed.renderView()), failure.Error())
 	restored, _ := sendKey(t, refreshed, keyEsc())
-	assert.Same(t, original, restored.timelineState.result)
-	assert.Equal(t, originalRequest, restored.timelineState.request)
-	assert.Equal(t, 1, restored.timelineState.scroll)
-	assert.NotEmpty(t, restored.timelineState.entries)
-	assert.Contains(t, stripANSI(restored.renderView()), "Project update")
+	assert.Same(original, restored.timelineState.result)
+	assert.Equal(originalRequest, restored.timelineState.request)
+	assert.Equal(1, restored.timelineState.scroll)
+	assert.NotEmpty(restored.timelineState.entries)
+	assert.Contains(stripANSI(restored.renderView()), "Project update")
 }
 
 func TestTimelineInitialLoadFailureKeepsErrorAfterEscape(t *testing.T) {
@@ -36,14 +39,17 @@ func TestTimelineInitialLoadFailureKeepsErrorAfterEscape(t *testing.T) {
 	m.timelineState.result = nil
 	cmd := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay}, false)
 	defer m.cancelTimelineRequest()
-	require.NotNil(t, cmd)
-	msg := cmd().(timelineLoadedMsg)
+	require := require.New(t)
+	require.NotNil(cmd)
+	msg, ok := cmd().(timelineLoadedMsg)
+	require.True(ok)
 	failure := errors.New("daemon temporarily unavailable")
 	msg.result, msg.err = nil, failure
 	m = sendMsg(t, m, msg)
 	m, _ = sendKey(t, m, keyEsc())
-	assert.ErrorIs(t, m.timelineState.err, failure)
-	assert.Contains(t, stripANSI(m.renderView()), failure.Error())
+	require.ErrorIs(m.timelineState.err, failure)
+	assert := assert.New(t)
+	assert.Contains(stripANSI(m.renderView()), failure.Error())
 }
 
 func TestTimelineInitialLoadCancellationIsVisible(t *testing.T) {

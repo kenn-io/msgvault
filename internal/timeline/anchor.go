@@ -123,8 +123,8 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		if representative.err == nil && representative.value > 0 && representative.value != target.messageID {
 			resolved := c.readDisplays([]int64{representative.value})
 			c.gap("anchor", resolved.err, false)
-			if copy, ok := resolved.value[representative.value]; ok && copy.OccurredAt != nil {
-				target.messageID, d = representative.value, copy
+			if representativeDisplay, ok := resolved.value[representative.value]; ok && representativeDisplay.OccurredAt != nil {
+				target.messageID, d = representative.value, representativeDisplay
 			}
 		}
 	}
@@ -329,8 +329,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			after = append(after, e)
 		}
 	}
-	entries = append(before[max(0, len(before)-c.req.Before):], anchors...)
-	entries = append(entries, after[:min(len(after), c.req.After)]...)
+	entries = slices.Concat(before[max(0, len(before)-c.req.Before):], anchors, after[:min(len(after), c.req.After)])
 	c.sortAndContinue("history", entries, false)
 	c.t.History = c.afterPosition("history", entries)
 	if !c.req.Scope.Owner {

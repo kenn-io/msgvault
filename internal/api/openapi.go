@@ -403,7 +403,7 @@ import (
 // sender labels, and owner-only call evidence import, inspection, and person summaries.
 // 3.46.0 adds owner meeting records, link decisions, suggestions, and occurrence references.
 // 3.47.0 adds bounded timeline JSON and Markdown with delegated source admission.
-const APISchemaVersion = "3.46.0"
+const APISchemaVersion = "3.47.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

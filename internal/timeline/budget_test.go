@@ -133,6 +133,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 			}
 			return v
 		}, check: func(t *testing.T, v, out *Timeline) {
+			t.Helper()
 			assertions, requirements := assert.New(t), require.New(t)
 			requirements.NotEmpty(out.History)
 			assertions.Equal("msg:1", out.History[0].Ref)
@@ -151,6 +152,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 			v.History = []Entry{entry}
 			return v
 		}, check: func(t *testing.T, v, out *Timeline) {
+			t.Helper()
 			assertions, requirements := assert.New(t), require.New(t)
 			requirements.Len(out.History, 1)
 			requirements.NotNil(out.History[0].Burst)
@@ -168,6 +170,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 			}}
 			return v
 		}, check: func(t *testing.T, v, out *Timeline) {
+			t.Helper()
 			assertions, requirements := assert.New(t), require.New(t)
 			requirements.Len(out.Upcoming, 1)
 			assertions.Empty(out.Upcoming[0].Meeting.Title.Text)
@@ -345,10 +348,12 @@ func TestFitMarksClippedInvalidUTF8(t *testing.T) {
 	v.History[0].Message.Snippet.Text = strings.Repeat("\xff", 81)
 	v.History[0].Message.People[0].Name = strings.Repeat("\xff", 81)
 	out, err := Fit(v, "json", 8192)
-	require.NoError(t, err)
-	require.Len(t, out.History, 1)
-	assert.True(t, out.History[0].Message.Snippet.Truncated)
-	assert.Equal(t, strings.Repeat("\ufffd", 80), out.History[0].Message.Snippet.Text)
-	assert.True(t, out.History[0].Message.People[0].Truncated)
-	assert.Equal(t, strings.Repeat("\ufffd", 80), out.History[0].Message.People[0].Name)
+	require := require.New(t)
+	require.NoError(err)
+	require.Len(out.History, 1)
+	assert := assert.New(t)
+	assert.True(out.History[0].Message.Snippet.Truncated)
+	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.Snippet.Text)
+	assert.True(out.History[0].Message.People[0].Truncated)
+	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.People[0].Name)
 }

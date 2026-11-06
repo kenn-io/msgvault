@@ -71,7 +71,6 @@ func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 		requirements.ErrorIs(err, ErrInvalidRequest, ref)
 		assertions.Nil(got)
 	}
-
 }
 
 func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -108,7 +109,8 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	assertions.True(from.AddDate(0, 0, 1).Equal(listed.End))
 	t.Run("saved link", func(t *testing.T) {
 		requirements, assertions := require.New(t), assert.New(t)
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		links := record.Links
 		requirements.NoError(err)
 		requirements.Len(links, 1)
 		assertions.Equal(formatMeetingOccurrence(ref), links[0].Ref)
@@ -127,12 +129,14 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 		t.Run(fmt.Sprintf("link and unlink/%d", target.MessageID), func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
-			links, err := st.MeetingLinksContext(t.Context(), note)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			links := record.Links
 			requirements.NoError(err)
 			requirements.Len(links, 1)
 			assertions.Equal(formatMeetingOccurrence(ref), links[0].Ref)
 			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
-			links, err = st.MeetingLinksContext(t.Context(), note)
+			record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			links = record.Links
 			requirements.NoError(err)
 			assertions.Empty(links)
 		})
@@ -156,19 +160,17 @@ func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-		links, err := st.MeetingLinksContext(t.Context(), note)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		links := record.Links
 		requirements.NoError(err)
 		requirements.Len(links, 1)
+		assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), links[0].Ref)
 		assertions.True(listed.Start.Equal(links[0].Start))
 		assertions.True(listed.End.Equal(links[0].End))
 	}
 	for _, target := range []MeetingLinkRef{{Kind: "evt", MessageID: master, Key: "20270314"}, {Kind: "msg", MessageID: note}} {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
-		if assertions.Len(suggestions.Suggestions, 1) {
-			assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
-			assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-			assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
-		}
+		assertions.Empty(suggestions.Suggestions)
 	}
 }

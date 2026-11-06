@@ -183,7 +183,6 @@ func (m *Model) activateTimeline() tea.Cmd {
 				m.loading = false
 				return nil
 			}
-
 		}
 		return m.loadTimelineReader(m.timelineState.reader, m.timelineState.readerID)
 	}

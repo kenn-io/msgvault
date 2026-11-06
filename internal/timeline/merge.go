@@ -74,6 +74,7 @@ func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageD
 
 func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.ActivityMessage, occurrences []store.CalendarOccurrence, calls []store.LogicalCall, notes []store.DailyNoteEntry) ([]Entry, []Entry) {
 	ids := []int64{}
+	calendarIDs := []int64{}
 	refs := []string{}
 	transcriptIDs := []int64{}
 	for _, b := range bursts {
@@ -86,7 +87,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	for _, o := range occurrences {
 		refs = append(refs, o.Ref)
-		ids = append(ids, o.MessageID)
+		calendarIDs = append(calendarIDs, o.MessageID)
 	}
 	for _, call := range calls {
 		ids = append(ids, call.MessageID)
@@ -102,7 +103,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	for _, o := range occurrences {
 		if resolved, ok := c.canonicalOccurrence(o, identity.ByOccurrence[o.Ref]); ok {
 			canonical = append(canonical, resolved)
-			ids = append(ids, resolved.MessageID)
+			calendarIDs = append(calendarIDs, resolved.MessageID)
 		}
 	}
 	occurrences = canonical
@@ -114,6 +115,12 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		ids = append(ids, info.LinkedTranscriptIDs...)
 	}
 	display := c.displays(ids)
+	calendarIDs = slices.Compact(slices.Sorted(slices.Values(calendarIDs)))
+	calendarDisplay := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
+		return c.src.Calendar.CalendarMessageDisplayContext(ctx, calendarIDs)
+	})
+	c.gap("text", calendarDisplay.err, false)
+
 	actionIDs := []int64{}
 	for id := range identity.ByTranscript {
 		if _, ok := display[id]; ok {
@@ -188,7 +195,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		linked := []int64{}
-		d, present := display[o.MessageID]
+		d, present := calendarDisplay.value[o.MessageID]
 		hidden := !present || d.HiddenText
 		count := 0
 		for _, id := range info.LinkedTranscriptIDs {

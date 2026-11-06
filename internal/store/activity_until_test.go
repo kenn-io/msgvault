@@ -33,12 +33,14 @@ func TestBurstsUntilBoundsMessagesBeforeGrouping(t *testing.T) {
 				read = f.Store.ListColdActivityBurstsContext
 			}
 			got, err := read(t.Context(), q)
-			require.NoError(t, err)
-			require.Len(t, got.Bursts, 1)
-			assert.WithinDuration(t, now, got.Bursts[0].LastAt, time.Microsecond)
-			assert.Equal(t, 1, got.Bursts[0].Inbound)
-			assert.Equal(t, 1, got.Bursts[0].Outbound)
-			assert.Equal(t, anchor, got.Bursts[0].AnchorMessageID)
+			require := require.New(t)
+			require.NoError(err)
+			require.Len(got.Bursts, 1)
+			assert := assert.New(t)
+			assert.WithinDuration(now, got.Bursts[0].LastAt, time.Microsecond)
+			assert.Equal(1, got.Bursts[0].Inbound)
+			assert.Equal(1, got.Bursts[0].Outbound)
+			assert.Equal(anchor, got.Bursts[0].AnchorMessageID)
 		})
 	}
 }

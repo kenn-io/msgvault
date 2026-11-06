@@ -59,14 +59,16 @@ func TestCursorPinsFractionalNow(t *testing.T) {
 				return Window{From: now.AddDate(0, 0, -1).Format(time.DateOnly), To: now.Format(time.DateOnly)}, nil
 			}
 			encoded, err := EncodeCursor(b, map[string]string{"history": "key"})
-			require.NoError(t, err)
+			require := require.New(t)
+			require.NoError(err)
 			b.Now = b.Now.Add(tc.advance)
 			b.Window = Window{From: b.Now.AddDate(0, 0, -1).Format(time.DateOnly), To: b.Now.Format(time.DateOnly)}
 			got, err := DecodeCursor(encoded, b)
-			require.NoError(t, err)
-			assert.Equal(t, tc.now, got.Now)
-			assert.Equal(t, tc.now, windowNow)
-			assert.Equal(t, Window{From: "2026-10-21", To: "2026-10-22"}, got.Window)
+			require.NoError(err)
+			assert := assert.New(t)
+			assert.Equal(tc.now, got.Now)
+			assert.Equal(tc.now, windowNow)
+			assert.Equal(Window{From: "2026-10-21", To: "2026-10-22"}, got.Window)
 		})
 	}
 }

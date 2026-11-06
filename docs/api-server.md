@@ -112,7 +112,7 @@ Bad input returns 400, including `cursor_expired` for invalid continuation.
 Ambiguous references return 409 `ambiguous_reference` with typed `candidates`.
 Owner requests share the open-loop mutation gate because loop reads can cache
 evidence. No archive schema or cache format changes are needed. The route
-requires API schema 3.46.0. See [Timeline](usage/timeline.md) for views,
+requires API schema 3.47.0. See [Timeline](usage/timeline.md) for views,
 freshness, gaps, and continuation. `freshness.sources` lists only sources with a stale, never-synced, or unmeasured status, a failed, cancelled, or paused last run, or sync warnings. Current sources without warnings are omitted, matching Markdown.
 
 ### Archived calendar occurrences, unreleased
@@ -221,12 +221,12 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.46.0**.
+it is separate from the binary release version. The current schema is **3.47.0**.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
 Schema 3.46.0 adds owner-only call evidence import, inspection, and person summaries.
-Schema 3.46.0 adds the [timeline](#timeline-unreleased) route and its typed JSON,
+Schema 3.47.0 adds the [timeline](#timeline-unreleased) route and its typed JSON,
 Markdown, ambiguity candidates, and source-scoped reads.
 
 Schema 3.46.0 adds archive calendar paging, detail, and source-scoped agent reads.

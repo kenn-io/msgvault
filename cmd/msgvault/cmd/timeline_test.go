@@ -33,7 +33,7 @@ type timelineFakeClient struct {
 	err   error
 }
 
-func (f *timelineFakeClient) APISchemaVersion(context.Context) (string, error) { return "3.46.0", nil }
+func (f *timelineFakeClient) APISchemaVersion(context.Context) (string, error) { return "3.47.0", nil }
 func (f *timelineFakeClient) Timeline(_ context.Context, req timeline.Request) (*timeline.Timeline, string, error) {
 	f.req = req
 	f.calls++
@@ -112,7 +112,7 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs(nil)
-	require.EqualError(t, command.ExecuteContext(ctx), `timeline requires daemon API schema 3.46.0 or newer (daemon reports "3.45.0"); upgrade and restart the daemon`)
+	require.EqualError(t, command.ExecuteContext(ctx), `timeline requires daemon API schema 3.47.0 or newer (daemon reports "3.45.0"); upgrade and restart the daemon`)
 	assert.Zero(t, timelineCalls.Load())
 }
 

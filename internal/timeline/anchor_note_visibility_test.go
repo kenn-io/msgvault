@@ -29,11 +29,13 @@ func TestAnchorPersonLookupFailureStopsRequest(t *testing.T) {
 	req := anchorRequest(fmt.Sprintf("evt:%d", event))
 	req.With = "person:7"
 	got, err := Build(t.Context(), f.src, req)
-	require.ErrorIs(t, err, failure)
-	assert.Nil(t, got)
+	require := require.New(t)
+	require.ErrorIs(err, failure)
+	assert := assert.New(t)
+	assert.Nil(got)
 	got, err = Build(t.Context(), f.src, relationshipRequest("person:1"))
-	require.NoError(t, err)
-	assert.Contains(t, got.Gaps, Gap{Section: "person", Code: "unavailable"})
+	require.NoError(err)
+	assert.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
 }
 
 func TestCalendarMissingDisplayKeepsTextSuppressed(t *testing.T) {
@@ -46,9 +48,9 @@ func TestCalendarMissingDisplayKeepsTextSuppressed(t *testing.T) {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id=?`), event)
 			requirements.NoError(err)
 			if missing == "failed read" {
-				f.src.Activity = anchorReadFailure{ActivitySource: f.src.Activity, display: context.DeadlineExceeded}
+				f.src.Calendar = missingCalendarDisplay{CalendarSource: f.src.Calendar, err: context.DeadlineExceeded}
 			} else {
-				f.src.Activity = missingCalendarDisplay{ActivitySource: f.src.Activity, id: event}
+				f.src.Calendar = missingCalendarDisplay{CalendarSource: f.src.Calendar, id: event}
 			}
 			got, err := Build(t.Context(), f.src, dayRequest())
 			requirements.NoError(err)
@@ -62,13 +64,17 @@ func TestCalendarMissingDisplayKeepsTextSuppressed(t *testing.T) {
 }
 
 type missingCalendarDisplay struct {
-	ActivitySource
+	CalendarSource
 
-	id int64
+	err error
+	id  int64
 }
 
-func (s missingCalendarDisplay) MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error) {
-	rows, err := s.ActivitySource.MessageDisplayContext(ctx, ids)
+func (s missingCalendarDisplay) CalendarMessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	rows, err := s.CalendarSource.CalendarMessageDisplayContext(ctx, ids)
 	delete(rows, s.id)
 	return rows, err
 }

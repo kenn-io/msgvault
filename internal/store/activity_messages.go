@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -42,7 +43,7 @@ func (s *Store) ActivityMessageRepresentativeContext(ctx context.Context, messag
 	args = append(args, messageID)
 	var id int64
 	err = s.db.QueryRowContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r JOIN copies anchor ON anchor.copy_key=r.copy_key WHERE anchor.message_id=?`), args...).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -133,7 +134,7 @@ func (s *Store) LatestEligibleMessageContext(ctx context.Context, conversationID
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
  WHERE m.conversation_id=? AND m.message_type<>'call_record' AND `+s.activityLiveEligibleSQL()+scope+`
  ORDER BY ae.occurred_at DESC,m.id DESC LIMIT 1`), args...).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {

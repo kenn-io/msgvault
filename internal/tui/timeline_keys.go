@@ -26,13 +26,13 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		switch msg.String() {
 		case "a":
 			if entry := m.highlightedTimelineEntry(); entry != nil && entry.AnchorRef != "" {
-				return m.requestTimeline(timeline.Request{Mode: timeline.ModeAnchor, Around: entry.AnchorRef}, true)
+				return m.requestTimeline(timeline.Request{Mode: timeline.ModeAnchor, Around: entry.AnchorRef})
 			}
 			return m, nil
 		case "w":
 			if entry := m.highlightedTimelineEntry(); entry != nil {
 				if ref := timelineFirstPerson(*entry); ref != "" {
-					return m.requestTimeline(timeline.Request{Mode: timeline.ModeRelationship, With: ref}, true)
+					return m.requestTimeline(timeline.Request{Mode: timeline.ModeRelationship, With: ref})
 				}
 			}
 			return m, nil
@@ -76,18 +76,17 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m.handleMessageDetailKeys(msg)
 	case timelineReaderMeeting:
 		return m.handleTimelineMeetingKey(msg)
-
 	}
 	switch msg.String() {
 	case "r":
 		req := m.timelineState.request
 		req.Cursor = ""
-		return m.requestTimeline(req, true)
+		return m.requestTimeline(req)
 	case "n":
 		if result := m.timelineState.result; result != nil && result.Cursor != "" {
 			req := m.timelineState.request
 			req.Cursor = result.Cursor
-			return m.requestTimeline(req, true)
+			return m.requestTimeline(req)
 		}
 		return m, nil
 	case keyNameEnter:
@@ -148,7 +147,7 @@ func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)}, true)
+	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)})
 }
 
 func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -280,8 +279,8 @@ func timelineFirstPerson(entry timeline.Entry) string {
 	return ""
 }
 
-func (m Model) requestTimeline(req timeline.Request, remember bool) (tea.Model, tea.Cmd) {
-	cmd := m.startTimelineRequest(req, remember)
+func (m Model) requestTimeline(req timeline.Request) (tea.Model, tea.Cmd) {
+	cmd := m.startTimelineRequest(req, true)
 	return m, cmd
 }
 

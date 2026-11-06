@@ -70,7 +70,7 @@ The HTTP endpoint is `GET /api/v1/timeline`, with the flags as query parameters
 and `mode=day|relationship|anchor`. JSON is the API default;
 `format=markdown` returns `text/markdown`. The MCP `timeline` tool defaults to
 Markdown and accepts `format: "json"`. It is available when the daemon serves
-API schema 3.46.0 or newer. The CLI uses the configured remote, delegated
+API schema 3.47.0 or newer. The CLI uses the configured remote, delegated
 endpoint, or local daemon and reports an upgrade message for older daemons.
 
 A delegated token needs `message.read` on at least one admitted source.

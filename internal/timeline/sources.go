@@ -49,6 +49,7 @@ type ColdSource interface {
 	ListColdActivityMessagesContext(ctx context.Context, q store.MessageQuery) ([]store.ActivityMessage, error)
 }
 type CalendarSource interface {
+	CalendarMessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error)
 	ListCalendarOccurrencesContext(ctx context.Context, q store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error)
 	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
 }
