@@ -137,9 +137,7 @@ func (m Model) handleTimelineReaderLoaded(msg timelineReaderLoadedMsg) (tea.Mode
 	if msg.err != nil {
 		return m, nil
 	}
-	switch m.timelineState.reader {
-	case timelineReaderNone:
-		return m, nil
+	switch m.timelineState.reader { //nolint:exhaustive // timelineReaderNone is handled above.
 	case timelineReaderCalendar:
 		m.timelineState.calendar = msg.calendar
 		m.timelineState.calendarScroll = 0
@@ -156,9 +154,7 @@ func (m Model) handleTimelineReaderLoaded(msg timelineReaderLoadedMsg) (tea.Mode
 func (m *Model) activateTimeline() tea.Cmd {
 	// Re-entering resumes a cancelled load, including a parked reader load.
 	if m.timelineState.reader != timelineReaderNone {
-		switch m.timelineState.reader {
-		case timelineReaderNone:
-			return nil
+		switch m.timelineState.reader { //nolint:exhaustive // timelineReaderNone is excluded above.
 		case timelineReaderCalendar:
 			if m.timelineState.calendar != nil {
 				m.loading = false

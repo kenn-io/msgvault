@@ -31,7 +31,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		return target, nil
 	case "meeting":
 
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
+		r := readWithin(c.ctx, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
 			return c.src.Calendar.GetCalendarOccurrenceContext(ctx, ref.Ref)
 		})
 		if r.err != nil {
@@ -43,7 +43,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		}
 		o := r.value.CalendarOccurrence
 
-		identity := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+		identity := readWithin(c.ctx, func(ctx context.Context) (store.MeetingIdentityResult, error) {
 			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: []string{o.Ref}})
 		})
 		c.gap("meetings", identity.err, false)
@@ -72,14 +72,14 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	case entryKindBurst:
 		q := store.BurstQuery{FromDate: ref.LocalDate, ToDate: ref.LocalDate, ConversationID: ref.ConversationID, Limit: 5000, Filters: c.filters()}
 		q.Filters.IncludeNoise = true
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+		r := readWithin(c.ctx, func(ctx context.Context) (store.BurstPage, error) {
 			return c.src.Activity.ListActivityBurstsContext(ctx, q)
 		})
 		c.gap("anchor", r.err, false)
 		failed := r.err != nil
 		candidates := r.value.Bursts
 
-		cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+		cold := readWithin(c.ctx, func(ctx context.Context) (store.BurstPage, error) {
 			return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
 		})
 		c.gap("anchor", cold.err, false)
@@ -116,7 +116,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	if !c.req.Conversation {
 		from := d.OccurredAt.In(c.loc).AddDate(0, 0, -1)
 		to := d.OccurredAt.In(c.loc).AddDate(0, 0, 1).Add(time.Nanosecond)
-		representative := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+		representative := readWithin(c.ctx, func(ctx context.Context) (int64, error) {
 			return c.src.Activity.ActivityMessageRepresentativeContext(ctx, target.messageID, store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters()})
 		})
 		c.gap("anchor", representative.err, false)
@@ -138,7 +138,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 // back to the cold reader when include_cold admits conversations kept out of
 // the live projection.
 func (c *composer) conversationAnchor(id int64) readResult[int64] {
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (int64, error) {
 		return c.src.Activity.LatestEligibleMessageContext(ctx, id)
 	})
 	if r.err != nil || r.value > 0 || !c.req.IncludeCold {
@@ -146,7 +146,7 @@ func (c *composer) conversationAnchor(id int64) readResult[int64] {
 	}
 	q := store.MessageQuery{ConversationID: id, Descending: true, Limit: 1, Filters: c.filters()}
 	q.Filters.IncludeNoise = true
-	return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+	return readWithin(c.ctx, func(ctx context.Context) (int64, error) {
 		page, err := c.src.Cold.ListColdActivityMessagesContext(ctx, q)
 		if len(page) == 0 {
 			return 0, err
@@ -173,7 +173,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	var calls readResult[[]store.LogicalCall]
 	c.parallel(
 		func() {
-			activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+			activity = readWithin(c.ctx, func(ctx context.Context) (activityWindow, error) {
 				if c.req.Conversation {
 					page, err := c.src.Activity.ListActivityBurstsContext(ctx, q)
 					return activityWindow{noise: page.NoiseOmitted, more: page.NextKey != nil}, err
@@ -185,11 +185,11 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 		},
 		func() {
 			if c.req.IncludeCold {
-				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+				cold = readWithin(c.ctx, func(ctx context.Context) (store.BurstPage, error) {
 					return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
 				})
 			} else {
-				coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+				coldCount = readWithin(c.ctx, func(ctx context.Context) (int, error) {
 					return c.src.Cold.CountColdActivityMessagesContext(ctx, q)
 				})
 			}
@@ -201,7 +201,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 		},
 		func() {
 			if c.req.Scope.Owner && !c.req.Conversation {
-				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				calls = readWithin(c.ctx, func(ctx context.Context) ([]store.LogicalCall, error) {
 					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
 				})
 			}
@@ -343,13 +343,13 @@ func (c *composer) conversationEntries(conversation int64, from, to time.Time) (
 	var r, cold readResult[[]store.ActivityMessage]
 	c.parallel(
 		func() {
-			r = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
+			r = readWithin(c.ctx, func(ctx context.Context) ([]store.ActivityMessage, error) {
 				return readMessages(ctx, c.src.Activity.ListActivityMessagesContext)
 			})
 		},
 		func() {
 			if c.req.IncludeCold {
-				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
+				cold = readWithin(c.ctx, func(ctx context.Context) ([]store.ActivityMessage, error) {
 					return readMessages(ctx, c.src.Cold.ListColdActivityMessagesContext)
 				})
 			}

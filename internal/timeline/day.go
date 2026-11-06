@@ -70,7 +70,7 @@ func (c *composer) collectDay() dayRead {
 	var r dayRead
 	c.parallel(
 		func() {
-			r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+			r.activity = readWithin(c.ctx, func(ctx context.Context) (activityWindow, error) {
 				cc := *c
 				cc.ctx = ctx
 				return cc.readActivity(query)
@@ -78,11 +78,11 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.req.IncludeCold {
-				r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+				r.cold = readWithin(c.ctx, func(ctx context.Context) (store.BurstPage, error) {
 					return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
 				})
 			} else {
-				r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
+				r.coldCount = readWithin(c.ctx, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
 			}
 		},
 		func() {
@@ -101,7 +101,7 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.req.Scope.Owner {
-				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				r.calls = readWithin(c.ctx, func(ctx context.Context) ([]store.LogicalCall, error) {
 					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
 				})
 			}
@@ -112,13 +112,13 @@ func (c *composer) collectDay() dayRead {
 			}
 		},
 		func() {
-			r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
+			r.inventory = readWithin(c.ctx, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
 		},
 	)
 	return r
 }
 func (c *composer) readCalendar(from, to time.Time) readResult[store.CalendarOccurrencePage] {
-	return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrencePage, error) {
+	return readWithin(c.ctx, func(ctx context.Context) (store.CalendarOccurrencePage, error) {
 		result := store.CalendarOccurrencePage{}
 		limit := 500
 		query := store.CalendarOccurrenceQuery{From: from, To: to, Limit: &limit}

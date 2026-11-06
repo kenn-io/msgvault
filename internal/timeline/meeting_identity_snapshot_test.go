@@ -331,7 +331,9 @@ func TestSnapshotReadWaitsForCanceledReaderAndPreservesTimeout(t *testing.T) {
 				finished bool
 				queryErr error
 			}
-			got := readWithin(ctx, timeout, func(ctx context.Context) (completion, error) {
+			ctx, deadlineCancel := context.WithTimeout(ctx, timeout)
+			defer deadlineCancel()
+			got := readWithin(ctx, func(ctx context.Context) (completion, error) {
 				_, queryErr := f.Store.GetSourceByIDContext(ctx, f.Source.ID)
 				// A driver may report its own cancellation error during cleanup.
 				return completion{finished: true, queryErr: queryErr}, errors.New("driver canceled its read")

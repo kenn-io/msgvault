@@ -15,7 +15,7 @@ import (
 )
 
 func (c *composer) resolvePerson() (store.PersonCandidate, error) {
-	r := readWithin(c.ctx, requestTimeout, c.personCandidates)
+	r := readWithin(c.ctx, c.personCandidates)
 	switch {
 	case errors.Is(r.err, store.ErrInvalidActivityRequest):
 		return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
@@ -110,17 +110,17 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Until: &c.t.Now, Descending: true, Limit: maxBursts}
 	c.parallel(
 		func() {
-			messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+			messages = readWithin(c.ctx, func(ctx context.Context) (store.ContactAggregate, error) {
 				return c.src.Activity.MessageContactAggregateContext(ctx, q)
 			})
-			transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.AttendedTranscripts, error) {
+			transcripts = readWithin(c.ctx, func(ctx context.Context) (store.AttendedTranscripts, error) {
 				ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
 				if more && err == nil {
 					err = errors.New("attended meeting limit reached")
 				}
 				return ids, err
 			})
-			history = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+			history = readWithin(c.ctx, func(ctx context.Context) (activityWindow, error) {
 				cc := *c
 				cc.ctx = ctx
 				return cc.readActivity(historyQuery)
@@ -128,20 +128,20 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() {
 			if c.req.IncludeCold {
-				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+				cold = readWithin(c.ctx, func(ctx context.Context) (store.BurstPage, error) {
 					return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
 				})
 			} else {
-				coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+				coldCount = readWithin(c.ctx, func(ctx context.Context) (int, error) {
 					return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
 				})
 			}
 		},
 		func() {
-			calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+			calls = readWithin(c.ctx, func(ctx context.Context) (store.ContactAggregate, error) {
 				return c.src.Calls.CallContactAggregateContext(ctx, store.CallContactQuery{Subject: q.Subject, Now: q.Now, Location: q.Location})
 			})
-			logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+			logicalCalls = readWithin(c.ctx, func(ctx context.Context) ([]store.LogicalCall, error) {
 				return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
 			})
 		},
@@ -264,7 +264,7 @@ func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	}
 }
 func (c *composer) loadFreshness() {
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
+	r := readWithin(c.ctx, func(ctx context.Context) (Freshness, error) { return c.readFreshness(ctx) })
 	if r.err != nil {
 		c.gap("freshness", r.err, false)
 	} else {
@@ -276,7 +276,7 @@ func (c *composer) relationshipExtras(person int64) {
 	c.gap("cadence", err, false)
 	c.t.Person.CadenceStatus, c.t.Person.DueAt = status, due
 
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (*store.PersonBrief, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (*store.PersonBrief, error) {
 		return c.src.Briefs.GetPersonBriefContext(ctx, person, 0)
 	})
 	c.gap("brief", r.err, false)
@@ -287,7 +287,7 @@ func (c *composer) relationshipExtras(person int64) {
 	if c.src.Agenda == nil {
 		c.unavailable("agenda")
 	} else {
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (personagenda.Result, error) { return c.src.Agenda.List(ctx, person) })
+		r := readWithin(c.ctx, func(ctx context.Context) (personagenda.Result, error) { return c.src.Agenda.List(ctx, person) })
 		c.gap("agenda", r.err, false)
 		for _, item := range r.value.Items {
 			c.t.Person.Agenda = append(c.t.Person.Agenda, UntrustedText{Text: item.Title})

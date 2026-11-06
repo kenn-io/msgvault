@@ -60,7 +60,7 @@ func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageD
 	ids = slices.Clone(ids)
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
 		return c.src.Activity.MessageDisplayContext(ctx, ids)
 	})
 	if !c.req.Scope.Owner {
@@ -103,7 +103,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		identity.ByTranscript = map[int64]store.MeetingIdentityInfo{}
 	}
 	if len(refs) > 0 || len(transcriptIDs) > 0 {
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+		r := readWithin(c.ctx, func(ctx context.Context) (store.MeetingIdentityResult, error) {
 			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: slices.Compact(slices.Sorted(slices.Values(refs))), TranscriptIDs: slices.Compact(slices.Sorted(slices.Values(transcriptIDs))), IncludeSuggestions: c.req.Scope.Owner})
 		})
 		c.gap("meetings", r.err, false)
@@ -129,7 +129,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	display := c.displays(ids)
 	calendarIDs = slices.Compact(slices.Sorted(slices.Values(calendarIDs)))
-	calendarDisplay := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
+	calendarDisplay := readWithin(c.ctx, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
 		return c.src.Calendar.CalendarMessageDisplayContext(ctx, calendarIDs)
 	})
 	c.gap("text", calendarDisplay.err, false)
@@ -140,7 +140,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			actionIDs = append(actionIDs, id)
 		}
 	}
-	actionCounts := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]int, error) {
+	actionCounts := readWithin(c.ctx, func(ctx context.Context) (map[int64]int, error) {
 		return c.src.Meetings.MeetingActionItemCountsContext(ctx, slices.Compact(slices.Sorted(slices.Values(actionIDs))))
 	})
 	actions := actionCounts.value
@@ -349,7 +349,7 @@ func (c *composer) canonicalOccurrence(o store.CalendarOccurrence, info store.Me
 		return resolved, true
 	}
 
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
 		return c.src.Calendar.GetCalendarOccurrenceContext(ctx, info.OccurrenceRef)
 	})
 	c.gap("meetings", r.err, false)
@@ -360,7 +360,7 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	emails := []string{}
 	for _, a := range o.Attendees {
 		if a.Role != "room" && !a.IsCopySelf && !calevent.IsRoomAttendee(a.Email, false) && c.src.Filters.Exclusions.ExcludesAddress(a.Email) == "" {
-			owner := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (bool, error) {
+			owner := readWithin(c.ctx, func(ctx context.Context) (bool, error) {
 				return c.src.Meetings.IsAccountIdentityAddressContext(ctx, strings.TrimSpace(a.Email))
 			})
 			c.gap("people", owner.err, false)
@@ -370,7 +370,7 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 			emails = append(emails, a.Email)
 		}
 	}
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[string]store.AddressParticipant, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (map[string]store.AddressParticipant, error) {
 		return c.src.Meetings.ParticipantsByEmailContext(ctx, emails)
 	})
 	resolved := r.value
@@ -401,7 +401,7 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 func (c *composer) participantPerson(participant, person int64) Person {
 	p := Person{PersonID: person, ParticipantID: participant, TierSource: "none"}
 
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.PersonCandidate, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) ([]store.PersonCandidate, error) {
 		return c.src.People.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(participant, 10), nil, 10)
 	})
 	c.gap("people", r.err, false)

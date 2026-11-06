@@ -669,6 +669,9 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 			t.Run(tc.name+string(step.key), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
 				m := timelineModeModel()
+				if tc.mode == timeline.ModeRelationship {
+					m.timelineState.request = timeline.Request{Mode: timeline.ModeRelationship, With: "person:42"}
+				}
 				m.timelineState.result.Timezone = tc.zone
 				m.timelineState.result.Mode = tc.mode
 				m.timelineState.result.Window = timeline.Window{From: tc.from, To: tc.to}
@@ -700,6 +703,23 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestTimelineAroundKeyClearsRelationshipFilter(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	m := timelineModeModel()
+	m.timelineState.request = timeline.Request{Mode: timeline.ModeRelationship, With: "person:42"}
+	m.timelineState.result.Mode = timeline.ModeRelationship
+	updated, cmd := sendKey(t, m, key('a'))
+	requirements.NotNil(cmd)
+	defer updated.cancelTimelineRequest()
+	cmd()
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	requirements.True(ok)
+	requirements.Len(backend.requests, 1)
+	assertions.Equal(timeline.ModeAnchor, backend.requests[0].Mode)
+	assertions.Equal("burst:1:7:2027-03-14", backend.requests[0].Around)
+	assertions.Empty(backend.requests[0].With)
 }
 
 func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {

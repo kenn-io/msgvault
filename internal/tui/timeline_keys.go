@@ -29,6 +29,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				req := m.timelineState.request
 				req.Mode, req.Around, req.Cursor = timeline.ModeAnchor, entry.AnchorRef, ""
 				req.Date, req.From, req.To, req.Days = "", "", "", 0
+				req.With = ""
 				return m.requestTimeline(req)
 			}
 			return m, nil
@@ -171,6 +172,7 @@ func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
 	req := m.timelineState.request
 	req.Mode, req.Date, req.Cursor = timeline.ModeDay, date, ""
 	req.From, req.To, req.Days, req.Around = "", "", 0, ""
+	req.With = ""
 	req.Before, req.After, req.BeforeSet, req.AfterSet, req.Conversation = 0, 0, false, false, false
 	return m.requestTimeline(req)
 }

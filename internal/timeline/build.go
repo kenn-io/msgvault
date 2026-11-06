@@ -256,9 +256,7 @@ type readResult[T any] struct {
 }
 
 // A buffered result lets a cancelled reader finish without holding up the page.
-func readWithin[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) readResult[T] {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+func readWithin[T any](ctx context.Context, fn func(context.Context) (T, error)) readResult[T] {
 	if store.HasReadSnapshotContext(ctx) {
 		// Finish the reader before another task or snapshot release uses its
 		// transaction. Store operations honor this context's deadline.
@@ -335,7 +333,7 @@ func (c *composer) loadTiers(ids []int64) {
 		return
 	}
 	slices.Sort(missing)
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.PersonTier, error) {
+	r := readWithin(c.ctx, func(ctx context.Context) (map[int64]store.PersonTier, error) {
 		return c.src.People.PersonTiersContext(ctx, missing, store.PersonTierOptions{Config: c.src.Filters.Exclusions, AsOf: c.t.Now})
 	})
 	c.gap("people", r.err, false)
@@ -389,7 +387,9 @@ func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
 	if len(c.req.Tiers) > 0 {
 		limit = loops.MaxLimit
 	}
-	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
+	ctx, cancel := context.WithTimeout(c.ctx, loopsTimeout)
+	defer cancel()
+	return readWithin(ctx, func(ctx context.Context) (loops.Result, error) {
 		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, ParticipantIDs: c.subject.ParticipantIDs, Limit: limit}, c.t.Now)
 	})
 }
