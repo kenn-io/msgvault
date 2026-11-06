@@ -401,7 +401,8 @@ import (
 // 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
 // 3.45.0 adds sender labels to message and file search rows.
 // 3.46.0 adds owner meeting link decisions, suggestions, and occurrence references.
-const APISchemaVersion = "3.46.0"
+// 3.47.0 reports cache freshness after saved meeting link decisions.
+const APISchemaVersion = "3.47.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,49 @@ type meetingLinksTestStore struct {
 	ref      store.MeetingLinkRef
 	err      error
 	calls    int
+}
+
+func TestReviewMeetingDecisionReportsStaleCache(t *testing.T) {
+	for _, decision := range []string{"link", "unlink"} {
+		for _, state := range []string{"ready", "stale"} {
+			t.Run(decision+"/"+state, func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				srv, backend := newIdentityLinkTestServer(t)
+				source, err := backend.GetOrCreateSource("gcal", "calendar@example.org")
+				requirements.NoError(err)
+				event, err := backend.PersistMessage(&store.MessagePersistData{
+					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event"},
+					Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
+					RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`),
+				})
+				requirements.NoError(err)
+				note, err := backend.PersistMessage(&store.MessagePersistData{
+					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript"},
+					Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"},
+					RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
+				})
+				requirements.NoError(err)
+				if decision == "unlink" {
+					requirements.NoError(backend.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+				}
+				if state == "stale" {
+					backend.refreshErr = errors.New("synthetic cache refresh failure")
+				}
+				response := postExploreJSON(t, srv, "/api/v1/meetings/links/decisions", fmt.Sprintf(`{"message_id":%d,"event":"evt:%d","decision":%q}`, note, event, decision))
+				requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+				assertions.JSONEq(fmt.Sprintf(`{"message_id":%d,"event":"evt:%d","decision":%q,"cache_state":%q}`, note, event, decision, state), response.Body.String())
+				assertions.Equal(1, backend.refreshCalls)
+				record, err := backend.MeetingRecordContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: note})
+				requirements.NoError(err)
+				if decision == "link" {
+					requirements.Len(record.Links, 1)
+					assertions.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+				} else {
+					assertions.Empty(record.Links)
+				}
+			})
+		}
+	}
 }
 
 func (s *meetingLinksTestStore) LinkMeetingContext(_ context.Context, id int64, ref store.OccurrenceRef) error {
@@ -117,7 +161,7 @@ func TestMeetingLinkRoutes(t *testing.T) {
 				assertions.Equal(int64(42), backend.member)
 				assertions.Equal(store.OccurrenceRef{MessageID: 81, Key: "20270314T100000Z"}, backend.event)
 				assertions.Equal(tc.name, backend.decision)
-				assertions.JSONEq(tc.body, w.Body.String())
+				assertions.JSONEq(fmt.Sprintf(`{"message_id":42,"event":"evt:81@20270314T100000Z","decision":%q,"cache_state":"stale"}`, tc.name), w.Body.String())
 			} else if tc.name == "links" || tc.name == "event record" {
 				want := store.MeetingLinkRef{Kind: "msg", MessageID: 42}
 				if tc.name == "event record" {

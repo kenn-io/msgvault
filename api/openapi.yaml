@@ -8161,6 +8161,11 @@ components:
     MeetingLinkDecisionResponse:
       additionalProperties: true
       properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
         decision:
           type: string
         event:
@@ -8172,6 +8177,7 @@ components:
         - message_id
         - event
         - decision
+        - cache_state
       type: object
     MeetingMetricsRequest:
       additionalProperties: false

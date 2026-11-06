@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestMeetingLinksClient(t *testing.T) {
@@ -34,7 +35,10 @@ func TestMeetingLinksClient(t *testing.T) {
 			assertions.Equal(int64(42), body.MessageID)
 			assertions.Equal("evt:81@20270314T100000Z", body.Event)
 			decisions = append(decisions, body.Decision)
-			assertions.NoError(json.MarshalWrite(w, body))
+			assertions.NoError(json.MarshalWrite(w, generated.MeetingLinkDecisionResponse{
+				CacheState: generated.MeetingLinkDecisionResponseCacheStateReady,
+				Decision:   body.Decision, Event: body.Event, MessageID: body.MessageID,
+			}))
 			return
 		}
 		if r.URL.Path == "/api/v1/meetings/record" {
