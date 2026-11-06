@@ -6247,7 +6247,8 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 			return 0, err
 		}
 		if _, err := q.Exec(`INSERT INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (message_id, participant_id, reaction_type, reaction_value)
-			DO UPDATE SET created_at = excluded.created_at WHERE reactions.created_at IS DISTINCT FROM excluded.created_at`, messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
+			DO UPDATE SET created_at = excluded.created_at, removed_at = NULL
+			WHERE reactions.created_at IS DISTINCT FROM excluded.created_at OR reactions.removed_at IS NOT NULL`, messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
 			return 0, err
 		}
 		if !exists {

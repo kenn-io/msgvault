@@ -137,30 +137,33 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 
 	progress := &signalCLIProgress{}
 	summary, err := signalandroid.NewImporter(s, progress).Import(ctx, dbPath, opts)
-	if err != nil {
-		if ctx.Err() != nil {
-			fmt.Println("\nImport interrupted. Run again to continue.")
-			return rebuildCacheAfterWrite(archiveDSN, state)
+	var postErr error
+	if summary != nil && summary.SourceID != 0 {
+		if !flags.noDefaultIdentity {
+			source, sourceErr := s.GetSourceByIDContext(context.WithoutCancel(ctx), summary.SourceID)
+			if sourceErr != nil {
+				postErr = sourceErr
+			} else {
+				phone := source.Identifier
+				confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
+			}
+		}
+		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+			postErr = errors.Join(postErr, fmt.Errorf("post-source-create migrations: %w", err))
+		}
+	}
+	if err != nil || postErr != nil {
+		if err != nil {
+			if ctx.Err() != nil {
+				fmt.Println("\nImport interrupted. Run again to continue.")
+			}
+			err = fmt.Errorf("import failed: %w", err)
 		}
 		var cacheErr error
 		if summary != nil && summary.SourceID != 0 {
 			cacheErr = rebuildCacheAfterWrite(archiveDSN, state)
 		}
-		return errors.Join(fmt.Errorf("import failed: %w", err), cacheErr)
-	}
-
-	if !flags.noDefaultIdentity && summary.SourceID != 0 {
-		source, err := s.GetSourceByIDContext(ctx, summary.SourceID)
-		if err != nil {
-			return err
-		}
-		phone := source.Identifier
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
-	}
-	if summary.SourceID != 0 {
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
-			return fmt.Errorf("post-source-create migrations: %w", err)
-		}
+		return errors.Join(err, postErr, cacheErr)
 	}
 
 	fmt.Println()

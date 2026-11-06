@@ -87,10 +87,14 @@ func TestImportSignalRejectsRemoteLocalFiles(t *testing.T) {
 }
 
 func TestImportSignalRefreshesCacheAfterPartialFailure(t *testing.T) {
-	cfg, require := lifecycleTestConfig(t.TempDir()), require.New(t)
+	assert, require := assert.New(t), require.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Identity.Addresses = []string{"legacy@example.com"}
 	command := &cobra.Command{Use: "import-signal"}
 	command.SetContext(withStoreResolverConfig(t, cfg))
 	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(invocationFromCommand(command))
+	require.NoError(err)
+	emailSource, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
 	_, err = st.DB().Exec(`CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`)
 	cleanup()
@@ -99,10 +103,26 @@ func TestImportSignalRefreshesCacheAfterPartialFailure(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	err = runSignalImport(command, dir, importSignalFlags{phone: signalfixture.OwnPhone})
 	require.ErrorContains(err, "stats failure")
+	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	source, err := st.GetOrCreateSource("signal", signalfixture.OwnPhone)
+	require.NoError(err)
+	identities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal(signalfixture.OwnPhone, identities[0].Address)
+	identities, err = st.ListAccountIdentities(emailSource.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal("legacy@example.com", identities[0].Address)
+	applied, err := st.IsMigrationApplied("legacy_identity_to_per_account")
+	require.NoError(err)
+	assert.True(applied)
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(db.Close()) })
 	var count int
 	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&count))
-	assert.Positive(t, count)
+	assert.Positive(count)
 }

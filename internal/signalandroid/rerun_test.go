@@ -59,46 +59,6 @@ func TestImportOwnerChangesNumber(t *testing.T) {
 	assert.Equal(newPhone, source.Identifier)
 }
 
-func TestImportOlderBackupPreservesArchivedState(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	newer, older, storage := t.TempDir(), t.TempDir(), t.TempDir()
-	signalfixture.Write(t, newer, signalfixture.Current, 0)
-	signalfixture.Write(t, older, signalfixture.Current, 0)
-	// The older copy predates the edit and Carol's latest message, but has
-	// an earlier message absent from the newer copy.
-	changeFixture(t, older,
-		`DELETE FROM message WHERE _id IN (104, 105, 106, 300, 400)`,
-		`UPDATE message SET latest_revision_id = NULL WHERE _id = 102`,
-		`UPDATE reaction SET message_id = 102, emoji = 'old' WHERE message_id = 106`,
-		`UPDATE reaction SET emoji = 'old' WHERE message_id = 200`,
-		`UPDATE attachment SET file_name = 'old.jpg', caption = 'Old caption' WHERE _id = 500`,
-		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
-		 VALUES (99, 1699999999000, 1699999999001, 10, 2, 1, `+ms(signalfixture.TypeIncoming)+`, 'Earlier message')`)
-	first := runImport(t, st, newer, storage)
-	before := importedMessages(t, st)
-	var editedID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
-		"signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TEditOld)).Scan(&editedID))
-
-	summary := runImport(t, st, older, storage)
-	assert.Equal(int64(1), summary.MessagesAdded)
-	got := importedMessages(t, st)
-	for id, message := range before {
-		assert.Equal(message, got[id], id)
-	}
-	assert.Len(got, len(before)+1)
-	var reaction string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT reaction_value FROM reactions WHERE message_id = ?`), editedID).Scan(&reaction))
-	assert.Equal("\u2764", reaction)
-	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
-	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'old'`))
-	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE filename = 'old.jpg'`))
-	source, err := st.GetSourceByID(first.SourceID)
-	require.NoError(err)
-	assert.Equal(ms(signalfixture.TSMS+1), source.SyncCursor.String)
-}
-
 func TestRerunReplacesReactions(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -131,6 +91,28 @@ func TestRerunReplacesReactions(t *testing.T) {
 	}
 	assert.Equal([]string{"\U0001F602"}, reactionsOf("signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)))
 	assert.Empty(reactionsOf("signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:" + ms(signalfixture.TEditOld)))
+}
+
+func TestRerunAfterNewestRowsExpireUpdatesMessages(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	dir, storage := t.TempDir(), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	runImport(t, st, dir, storage)
+	changeFixture(t, dir,
+		`DELETE FROM message WHERE date_sent > `+ms(signalfixture.TGroup),
+		`UPDATE message SET body = 'Revised group text' WHERE _id = 200`,
+		`UPDATE reaction SET emoji = 'x' WHERE message_id = 200`,
+		`INSERT INTO attachment (_id, message_id, content_type, file_name) VALUES (504, 200, 'image/jpeg', 'new.jpg')`)
+	require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("new photo"), 0o600))
+
+	summary := runImport(t, st, dir, storage)
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(1), summary.AttachmentsStored)
+	id := "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
+	assert.Equal("Revised group text\n\nBeach", importedMessages(t, st)[id].body)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'x'`))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE filename = 'new.jpg'`))
 }
 
 func TestRerunClearsEmptiedBody(t *testing.T) {

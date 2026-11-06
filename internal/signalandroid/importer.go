@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -53,7 +52,6 @@ type run struct {
 	participantErrs map[int64]error
 	pendingReplies  map[string]bool
 	written         int64
-	olderBackup     bool
 }
 
 // Import reads the Signal database at dbPath and writes its chats, messages,
@@ -109,24 +107,15 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		}
 	}
 
-	var newestDate int64
-	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(date_sent), 0) FROM message`).Scan(&newestDate); err != nil {
-		return nil, fmt.Errorf("read Signal backup date: %w", err)
-	}
 	source, err := r.source(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get or create source: %w", err)
 	}
-	if source.SyncCursor.Valid && source.SyncCursor.String != "" {
-		previousDate, err := strconv.ParseInt(source.SyncCursor.String, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("read archived Signal backup date: %w", err)
-		}
-		r.olderBackup = newestDate < previousDate
-	}
+	r.sourceID = source.ID
+	r.summary.SourceID = source.ID
 	conversationIDs, err := imp.store.ListSourceConversationIDsContext(ctx, source.ID)
 	if err != nil {
-		return nil, err
+		return r.summary, err
 	}
 	archived := make(map[string]bool, len(conversationIDs))
 	for _, id := range conversationIDs {
@@ -135,12 +124,9 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	if opts.DisplayName != "" {
 		_ = imp.store.UpdateSourceDisplayName(source.ID, opts.DisplayName)
 	}
-	r.sourceID = source.ID
-	r.summary.SourceID = source.ID
-
 	syncID, err := imp.store.StartSync(source.ID, "signal_import")
 	if err != nil {
-		return nil, fmt.Errorf("start sync: %w", err)
+		return r.summary, fmt.Errorf("start sync: %w", err)
 	}
 	r.syncID = syncID
 	scoped := *imp
@@ -156,9 +142,6 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 			retErr = errors.Join(retErr, fmt.Errorf("recompute conversation stats: %w", err))
 		}
 		r.checkpoint()
-		if retErr == nil && !r.olderBackup {
-			retErr = r.imp.store.UpdateSourceSyncCursor(source.ID, strconv.FormatInt(newestDate, 10))
-		}
 		if retErr != nil {
 			_ = r.imp.store.FailSync(syncID, retErr.Error())
 		} else {
@@ -568,11 +551,6 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		rowAttachments := attachments[p.row.RowID]
 		preferredID := p.id
 		archivedID, isExisting := keepArchivedID(existing, &p)
-		if isExisting && r.olderBackup {
-			r.written++
-			r.summary.MessagesUpdated++
-			continue
-		}
 		if isExisting && p.id != preferredID {
 			rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
 			if err != nil {

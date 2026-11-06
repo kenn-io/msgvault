@@ -2308,11 +2308,11 @@ msgvault import-signal <directory | database.sqlite> --phone <your-number>
 | `--limit` | No | Limit number of messages (for testing) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
-The source type and message type are `signal`. Conversations are
-`signal:aci:<account ID>` or `signal:group:<group ID>` (unpadded base64url).
-Messages are `<conversation ID>:<author account ID>:<original sent timestamp in ms>`.
-Supported Signal Android database versions are 185 through 330; newer and older
-versions fail with an error.
+Source and message type: `signal`. Chats: `signal:{aci|pni}:<UUID>` or
+`signal:{group|group-v1}:<unpadded base64url ID>`. Messages:
+`<chat>:<author>:<original sent ms>`. Authors: `self`/`peer` in direct chats;
+`self`, ACI, `pni:<UUID>`, or `tel:<E.164>` in groups.
+Database versions 185 through 330 import; others fail with an error.
 
 See [Text Messages](/docs/usage/text-messages/#import-signal) for what is
 imported and usage examples.
