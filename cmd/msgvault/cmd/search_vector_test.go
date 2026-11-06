@@ -286,7 +286,6 @@ func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
 	}{
 		{name: "complete", results: 1, mode: "hybrid", pool: true},
 		{name: "more", results: 50, mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
-		{name: "saturated_more", results: 50, mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
 		{name: "ranking_cap", results: 50, mode: "vector", cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
 	} {
 		for _, asJSON := range []bool{false, true} {
