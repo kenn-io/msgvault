@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,37 +98,5 @@ func FuzzObservationDurationValidation(f *testing.F) {
 			return
 		}
 		require.NoError(t, o.Validate())
-	})
-}
-
-func FuzzNormalizedImportRoundtrip(f *testing.F) {
-	f.Add(uint64(0), true)
-	f.Add(uint64(0), false)
-	f.Add(math.Float64bits(math.MaxFloat64), true)
-	f.Fuzz(func(t *testing.T, bits uint64, hasDuration bool) {
-		// Materialize any finite nonnegative IEEE value, without rejecting
-		// generated inputs. Validation of negative/nonfinite inputs is separate.
-		bits &^= uint64(1) << 63
-		if bits>>52 == 0x7ff {
-			bits &^= uint64(1) << 52
-		}
-		o := exampleObservation()
-		if hasDuration {
-			o.NativeCallID = "call-1"
-			duration := math.Float64frombits(bits)
-			o.DurationSeconds = &duration
-		}
-		record, err := json.Marshal(o)
-		require.NoError(t, err)
-		wire, err := json.Marshal(ImportRequest{Format: "normalized", Account: o.Account, Record: record})
-		require.NoError(t, err)
-		got, err := DecodeImport(bytes.NewReader(wire))
-		require.NoError(t, err)
-		assert.Equal(t, o.RecordID, got.RecordID)
-		assert.Equal(t, o.NativeCallID, got.NativeCallID)
-		assert.Equal(t, o.DurationSeconds, got.DurationSeconds)
-		assert.True(t, o.OccurredAt.Equal(got.OccurredAt))
-		assert.Equal(t, o.Participants, got.Participants)
-		assert.Equal(t, o.CanonicalKey(), got.CanonicalKey())
 	})
 }

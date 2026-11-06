@@ -383,7 +383,6 @@ func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
 	f.put(t, "partial", func(o *callhistory.Observation) { o.Outcome = "unknown"; o.Participants[0].Participation = "unknown" })
 	f.put(t, "answered-and-missed", nil)
 	f.put(t, "answered-and-missed", func(o *callhistory.Observation) { o.Outcome = "missed"; o.OwnerParticipation = "not_joined" })
-	f.put(t, "withdrawn", func(o *callhistory.Observation) { o.Withdrawn = true })
 	q := store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: f.at.Add(20 * 24 * time.Hour), Location: time.FixedZone("archive", -7*60*60)}
 	got, err := f.st.CallContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)

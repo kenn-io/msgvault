@@ -242,7 +242,7 @@ func (s *Store) callScopedIdentityCTEs(ctx context.Context, candidateWhere strin
 		" UNION ALL " + s.callActiveSQL(scope+` AND c.message_id IN (SELECT message_id FROM candidates WHERE canonical_key = '')`)
 	ctes := `candidates AS (
  SELECT c.canonical_key, c.message_id FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
- WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + scope + `
+ WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + scope + `
  AND (` + candidateWhere + `)), ` + callIdentityCTEs(active) + `, ` + s.callParticipantsCTE()
 	args := append([]any{}, scopeArgs...)
 	args = append(args, candidateArgs...)
