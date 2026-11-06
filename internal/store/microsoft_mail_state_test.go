@@ -27,34 +27,36 @@ func microsoftStateIDs(tb testing.TB, st *store.Store, message int64) []string {
 
 func TestMicrosoftMailStateSurvivesMovesCategoriesAndNameCollisions(t *testing.T) {
 	st, source, id := tagFixture(t, "msmail", "m1")
+	assert := assert.New(t)
+	require := require.New(t)
 	folders, err := st.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
 		"inbox": {Name: "Provider: Unread", Type: "system"}, "archive": {Name: "Provider: Flagged", Type: "user"},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	read, flag := false, "flagged"
 	inbox, archive := folders["inbox"], folders["archive"]
 	categories := []string{"Provider: Unread", "Next"}
 	_, err = st.ReconcileMicrosoftMailStateContext(t.Context(), id, &inbox, &categories, store.MicrosoftMailState{IsRead: &read, FlagStatus: &flag})
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"inbox", "msmail-category:Provider: Unread", "msmail-category:Next", "msmail-state:unread", "msmail-state:flagged"}, microsoftStateIDs(t, st, id))
+	require.NoError(err)
+	assert.ElementsMatch([]string{"inbox", "msmail-category:Provider: Unread", "msmail-category:Next", "msmail-state:unread", "msmail-state:flagged"}, microsoftStateIDs(t, st, id))
 	changed, err := st.ReconcileMicrosoftMailLabelsContext(t.Context(), id, &archive, nil)
-	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NoError(err)
+	assert.True(changed)
 	target, err := st.EmailTagTargetContext(t.Context(), id, "")
-	require.NoError(t, err)
-	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "msmail", Verified: true, Tags: []string{"Other"}}))
+	require.NoError(err)
+	require.NoError(st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "msmail", Verified: true, Tags: []string{"Other"}}))
 	want := []string{"archive", "msmail-category:Other", "msmail-state:unread", "msmail-state:flagged"}
-	assert.ElementsMatch(t, want, microsoftStateIDs(t, st, id))
+	assert.ElementsMatch(want, microsoftStateIDs(t, st, id))
 	// Later native folders may claim a display name previously assigned to state.
 	_, err = st.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
 		"later": {Name: "Provider: Unread (2)", Type: "user"},
 	})
-	require.NoError(t, err)
-	assert.ElementsMatch(t, want, microsoftStateIDs(t, st, id))
+	require.NoError(err)
+	assert.ElementsMatch(want, microsoftStateIDs(t, st, id))
 	var kind, name string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT label_type,name FROM labels WHERE source_id=? AND source_label_id='msmail-state:unread'`), source.ID).Scan(&kind, &name))
-	assert.Equal(t, "system", kind)
-	assert.NotEqual(t, "Provider: Unread (2)", name)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT label_type,name FROM labels WHERE source_id=? AND source_label_id='msmail-state:unread'`), source.ID).Scan(&kind, &name))
+	assert.Equal("system", kind)
+	assert.NotEqual("Provider: Unread (2)", name)
 }
 
 func TestMicrosoftMailStatePartialObservationsPreserveLastKnownProjection(t *testing.T) {

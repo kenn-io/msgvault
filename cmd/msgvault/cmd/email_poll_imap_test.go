@@ -180,38 +180,40 @@ func TestRapidEmailIMAPRefreshesFlagsWithoutBodyDownload(t *testing.T) {
 				require.NotNil(t, summary)
 				require.Zero(t, summary.Errors)
 			}
+			assert := assert.New(t)
+			require := require.New(t)
 			run()
 			bodies := counted.bodies.Load()
-			require.Positive(t, bodies)
+			require.Positive(bodies)
 			client, err := imapclient.DialInsecure(ln.Addr().String(), nil)
-			require.NoError(t, err)
-			require.NoError(t, client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+			require.NoError(err)
+			require.NoError(client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
 			_, err = client.Select("INBOX", nil).Wait()
-			require.NoError(t, err)
+			require.NoError(err)
 			var uids imap.UIDSet
 			uids.AddNum(1)
-			require.NoError(t, client.Store(uids, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen, imap.FlagFlagged}}, nil).Close())
-			require.NoError(t, client.Close())
+			require.NoError(client.Store(uids, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen, imap.FlagFlagged}}, nil).Close())
+			require.NoError(client.Close())
 			run()
-			assert.Equal(t, bodies, counted.bodies.Load(), "flag refresh of known exact IDs uses metadata only")
+			assert.Equal(bodies, counted.bodies.Load(), "flag refresh of known exact IDs uses metadata only")
 			var rawFlags string
-			require.NoError(t, st.Store.DB().QueryRow(st.Store.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox='INBOX' AND uid=1`), src.ID).Scan(&rawFlags))
+			require.NoError(st.Store.DB().QueryRow(st.Store.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox='INBOX' AND uid=1`), src.ID).Scan(&rawFlags))
 			var flags []string
-			require.NoError(t, json.Unmarshal([]byte(rawFlags), &flags))
+			require.NoError(json.Unmarshal([]byte(rawFlags), &flags))
 			if rapid {
-				assert.Contains(t, flags, `\Seen`)
-				assert.Contains(t, flags, `\Flagged`)
+				assert.Contains(flags, `\Seen`)
+				assert.Contains(flags, `\Flagged`)
 			} else {
-				assert.NotContains(t, flags, `\Seen`, "ordinary accounts retain the UIDNEXT/count shortcut")
-				assert.NotContains(t, flags, `\Flagged`)
+				assert.NotContains(flags, `\Seen`, "ordinary accounts retain the UIDNEXT/count shortcut")
+				assert.NotContains(flags, `\Flagged`)
 			}
 			// Each new pass rediscovers topology and mail delivered outside INBOX.
-			require.NoError(t, user.Create("Later", nil))
+			require.NoError(user.Create("Later", nil))
 			testutil.AppendIMAPMessage(t, user, "Later")
 			run()
 			var messages int
-			require.NoError(t, st.Store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
-			assert.Equal(t, 3, messages)
+			require.NoError(st.Store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+			assert.Equal(3, messages)
 		})
 	}
 }
@@ -241,8 +243,10 @@ func TestRapidEmailIMAPRejectsEffectiveFilterBeforeMutation(t *testing.T) {
 }
 
 func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	counted := &pollingIMAPListener{Listener: ln, limitCommand: "LIST"}
 	counted.limitNext.Store(true)
 	testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 0}, nil)
@@ -265,32 +269,32 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 		return firstErr
 	})
 	defer func() { <-s.Stop().Done() }()
-	require.NoError(t, s.AddAccount(src.Identifier, "0 0 1 1 *"))
-	require.NoError(t, s.SetAccountPollInterval(src.Identifier, 30*time.Second))
-	require.NoError(t, s.TriggerSync(src.Identifier, false))
+	require.NoError(s.AddAccount(src.Identifier, "0 0 1 1 *"))
+	require.NoError(s.SetAccountPollInterval(src.Identifier, 30*time.Second))
+	require.NoError(s.TriggerSync(src.Identifier, false))
 	select {
 	case <-firstDone:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the first rapid IMAP acquisition did not finish")
+		require.FailNow("the first rapid IMAP acquisition did not finish")
 	}
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		status := s.Status()[0]
 		return !status.Running && !status.Queued
 	}, 5*time.Second, 10*time.Millisecond, "the scheduler records the completed acquisition")
 	var acquisition *scheduler.AcquisitionError
-	require.ErrorAs(t, firstErr, &acquisition)
-	assert.Equal(t, scheduler.AcquisitionCancelled, acquisition.Outcome)
-	assert.EqualValues(t, 1, retryWaits.Load(), "the server-directed retry wait was interrupted")
-	assert.EqualValues(t, 1, counted.limited.Load(), "the real IMAP response carried the provider limit")
-	require.True(t, acquisition.NotBefore.After(time.Now()), "the cancelled pass retains the server retry deadline")
-	assert.False(t, s.Status()[0].NextEligiblePoll.Before(acquisition.NotBefore), "the account lane preserves the provider floor")
+	require.ErrorAs(firstErr, &acquisition)
+	assert.Equal(scheduler.AcquisitionCancelled, acquisition.Outcome)
+	assert.EqualValues(1, retryWaits.Load(), "the server-directed retry wait was interrupted")
+	assert.EqualValues(1, counted.limited.Load(), "the real IMAP response carried the provider limit")
+	require.True(acquisition.NotBefore.After(time.Now()), "the cancelled pass retains the server retry deadline")
+	assert.False(s.Status()[0].NextEligiblePoll.Before(acquisition.NotBefore), "the account lane preserves the provider floor")
 
-	require.NoError(t, s.TriggerSync(src.Identifier, false))
-	require.Eventually(t, func() bool {
+	require.NoError(s.TriggerSync(src.Identifier, false))
+	require.Eventually(func() bool {
 		status := s.Status()[0]
 		return status.Pending && !status.Running && !status.Queued
 	}, 5*time.Second, 10*time.Millisecond, "the accepted follow-up remains deferred until the provider floor")
-	assert.EqualValues(t, 1, callbacks.Load(), "another manual acquisition waits for the provider floor")
-	assert.EqualValues(t, 1, counted.accepted.Load(), "the deferred acquisition opens no second IMAP connection")
-	assert.True(t, s.Status()[0].Pending, "the accepted manual retry remains pending")
+	assert.EqualValues(1, callbacks.Load(), "another manual acquisition waits for the provider floor")
+	assert.EqualValues(1, counted.accepted.Load(), "the deferred acquisition opens no second IMAP connection")
+	assert.True(s.Status()[0].Pending, "the accepted manual retry remains pending")
 }

@@ -26,24 +26,26 @@ func TestAccountPollingRemovedDispatchedCallbackCannotResurrect(t *testing.T) {
 
 func TestAccountPollingReplacedGateWaiterCannotIngest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		gate := newSerialWorkTracker()
 		hold, ok := gate.BeginWork()
-		require.True(t, ok)
+		require.True(ok)
 		var calls atomic.Int32
 		s := pollingSchedulerFixture(t, func(context.Context, string) error { calls.Add(1); return nil }).WithWorkTracker(gate)
 		defer func() { hold(); <-s.Stop().Done() }()
 		go s.onAccountTick("sample@example.test")
 		synctest.Wait()
-		require.True(t, s.Status()[0].Queued)
+		require.True(s.Status()[0].Queued)
 		s.RemoveAccount("sample@example.test")
-		require.NoError(t, s.AddAccount("sample@example.test", "0 0 1 1 *"))
-		require.NoError(t, s.TriggerSync("sample@example.test", false), "replacement has its own reservation")
+		require.NoError(s.AddAccount("sample@example.test", "0 0 1 1 *"))
+		require.NoError(s.TriggerSync("sample@example.test", false), "replacement has its own reservation")
 		synctest.Wait()
 		hold()
 		synctest.Wait()
-		assert.EqualValues(t, 1, calls.Load(), "obsolete gate waiter must not ingest")
-		assert.False(t, s.Status()[0].Running)
-		assert.False(t, s.Status()[0].Pending)
+		assert.EqualValues(1, calls.Load(), "obsolete gate waiter must not ingest")
+		assert.False(s.Status()[0].Running)
+		assert.False(s.Status()[0].Pending)
 	})
 }
 

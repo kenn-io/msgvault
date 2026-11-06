@@ -17,16 +17,18 @@ import (
 )
 
 func TestRunCommandRetryFloorSurvivesRetryExhaustion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var attempts atomic.Int32
 	_, err := runCommand(t.Context(), &Client{logger: slog.New(slog.DiscardHandler)}, func() (struct{}, error) {
 		attempts.Add(1)
 		return struct{}{}, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeLimit, Text: "retry in 1 second"}
 	})
-	require.Error(t, err)
-	assert.EqualValues(t, 4, attempts.Load(), "one command keeps its existing bounded retry budget")
+	require.Error(err)
+	assert.EqualValues(4, attempts.Load(), "one command keeps its existing bounded retry budget")
 	var limited interface{ RetryNotBefore() time.Time }
-	require.ErrorAs(t, err, &limited)
-	assert.True(t, limited.RetryNotBefore().After(time.Now()), "the final server retry hint remains live on terminal failure")
+	require.ErrorAs(err, &limited)
+	assert.True(limited.RetryNotBefore().After(time.Now()), "the final server retry hint remains live on terminal failure")
 }
 
 // The real IMAP parser must deliver typed errors to each production read path.

@@ -27,6 +27,8 @@ func (t emailPollTransport) RoundTrip(request *http.Request) (*http.Response, er
 func TestEmailPollQuotaDeferralRetainsProviderFloor(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -36,7 +38,7 @@ func TestEmailPollQuotaDeferralRetainsProviderFloor(t *testing.T) {
 			}))
 			defer server.Close()
 			target, err := url.Parse(server.URL)
-			require.NoError(t, err)
+			require.NoError(err)
 			client := NewClient(nil)
 			client.httpClient = &http.Client{Transport: emailPollTransport{target, http.DefaultTransport}}
 			client.DeferProviderRetries()
@@ -45,13 +47,13 @@ func TestEmailPollQuotaDeferralRetainsProviderFloor(t *testing.T) {
 			start := time.Now()
 			_, err = client.GetProfile(ctx)
 			var quota *ThrottledError
-			require.ErrorAs(t, err, &quota)
-			assert.NotErrorIs(t, err, context.DeadlineExceeded, "a quota outcome releases the work gate instead of waiting")
-			assert.False(t, quota.RetryNotBefore().Before(start.Add(time.Hour)))
-			assert.Equal(t, quota.RetryNotBefore(), client.RetryNotBefore(), "partial-summary callers retain the same floor")
+			require.ErrorAs(err, &quota)
+			assert.NotErrorIs(err, context.DeadlineExceeded, "a quota outcome releases the work gate instead of waiting")
+			assert.False(quota.RetryNotBefore().Before(start.Add(time.Hour)))
+			assert.Equal(quota.RetryNotBefore(), client.RetryNotBefore(), "partial-summary callers retain the same floor")
 			_, err = client.GetProfile(ctx)
-			require.ErrorAs(t, err, &quota)
-			assert.EqualValues(t, 1, requests.Load(), "a known floor prevents another request on this client")
+			require.ErrorAs(err, &quota)
+			assert.EqualValues(1, requests.Load(), "a known floor prevents another request on this client")
 		})
 	}
 }

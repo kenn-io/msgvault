@@ -17,28 +17,30 @@ import (
 
 func TestAccountPollingStartupCatchup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		dir := t.TempDir()
 		path := filepath.Join(dir, "config.toml")
-		require.NoError(t, os.WriteFile(path, []byte(`[[accounts]]
+		require.NoError(os.WriteFile(path, []byte(`[[accounts]]
 email = "sample@example.test"
 schedule = "0 0 1 1 *"
 enabled = true
 poll_interval = "30s"
 `), 0o600))
 		cfg, err := config.Load(path, dir)
-		require.NoError(t, err)
+		require.NoError(err)
 		var calls atomic.Int32
 		s := New(func(context.Context, string) error { calls.Add(1); return nil })
 		n, errs := s.AddAccountsFromConfig(cfg)
-		require.Empty(t, errs)
-		require.Equal(t, 1, n)
-		assert.Zero(t, calls.Load(), "registration must not run before Start")
+		require.Empty(errs)
+		require.Equal(1, n)
+		assert.Zero(calls.Load(), "registration must not run before Start")
 		s.Start()
 		synctest.Wait()
-		assert.EqualValues(t, 1, calls.Load(), "rapid accounts catch up when the scheduler starts")
+		assert.EqualValues(1, calls.Load(), "rapid accounts catch up when the scheduler starts")
 		time.Sleep(30 * time.Second)
 		synctest.Wait()
-		assert.EqualValues(t, 2, calls.Load(), "typed polling joins the account runner")
+		assert.EqualValues(2, calls.Load(), "typed polling joins the account runner")
 		<-s.Stop().Done()
 	})
 }
@@ -111,6 +113,7 @@ func TestAccountPollingOrdinaryIntentSurvivesPollAndFailure(t *testing.T) {
 
 func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
 		var calls, completions atomic.Int32
 		floor := time.Now().Add(time.Hour)
 		s := pollingSchedulerFixture(t, func(context.Context, string) error {
@@ -122,21 +125,21 @@ func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *t
 		s.Start()
 		synctest.Wait()
 		status := s.Status()[0]
-		assert.True(t, status.LastCompleted.IsZero(), "partial acquisition is not catchup")
-		assert.True(t, status.LastRun.IsZero())
-		assert.False(t, status.NextEligiblePoll.Before(floor), "provider floor is independent of the 15m adaptive cap")
+		assert.True(status.LastCompleted.IsZero(), "partial acquisition is not catchup")
+		assert.True(status.LastRun.IsZero())
+		assert.False(status.NextEligiblePoll.Before(floor), "provider floor is independent of the 15m adaptive cap")
 		require.NoError(t, s.TriggerSync("sample@example.test", true))
 		synctest.Wait()
-		assert.Error(t, s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
+		assert.Error(s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
 		s.onAccountTick("sample@example.test")
 		synctest.Wait()
-		assert.EqualValues(t, 1, calls.Load(), "manual and cron cannot bypass a known provider prohibition")
-		assert.Zero(t, completions.Load())
+		assert.EqualValues(1, calls.Load(), "manual and cron cannot bypass a known provider prohibition")
+		assert.Zero(completions.Load())
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.EqualValues(t, 2, calls.Load())
-		assert.EqualValues(t, 1, completions.Load(), "accepted manual work completes after the floor")
-		assert.False(t, s.Status()[0].LastCompleted.IsZero())
+		assert.EqualValues(2, calls.Load())
+		assert.EqualValues(1, completions.Load(), "accepted manual work completes after the floor")
+		assert.False(s.Status()[0].LastCompleted.IsZero())
 		<-s.Stop().Done()
 	})
 }
@@ -148,6 +151,7 @@ func TestAccountPollingOffDoesNotRetainProviderFloor(t *testing.T) {
 			name = "disabled-after-floor"
 		}
 		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
 			var calls atomic.Int32
 			floor := time.Now().Add(time.Hour)
 			s := New(func(context.Context, string) error {
@@ -157,16 +161,16 @@ func TestAccountPollingOffDoesNotRetainProviderFloor(t *testing.T) {
 				return nil
 			})
 			defer func() { <-s.Stop().Done() }()
-			require.NoError(t, s.AddAccount("sample@example.test", "0 0 1 1 *"))
+			require.NoError(s.AddAccount("sample@example.test", "0 0 1 1 *"))
 			if enabledBeforeFailure {
-				require.NoError(t, s.SetAccountPollInterval("sample@example.test", 30*time.Second))
+				require.NoError(s.SetAccountPollInterval("sample@example.test", 30*time.Second))
 			}
-			require.NoError(t, s.TriggerSync("sample@example.test", false))
+			require.NoError(s.TriggerSync("sample@example.test", false))
 			s.wg.Wait()
 			if enabledBeforeFailure {
-				require.NoError(t, s.SetAccountPollInterval("sample@example.test", 0))
+				require.NoError(s.SetAccountPollInterval("sample@example.test", 0))
 			}
-			require.NoError(t, s.TriggerSync("sample@example.test", false))
+			require.NoError(s.TriggerSync("sample@example.test", false))
 			s.wg.Wait()
 			assert.EqualValues(t, 2, calls.Load(), "polling-off manual sync keeps cron-only retry behavior")
 		})
@@ -177,6 +181,8 @@ func TestAccountPollingOrdinaryNonSuccessPreservesAdaptiveDeadline(t *testing.T)
 	for _, outcome := range []error{ErrDeferUntilNextTrigger, &AcquisitionError{Outcome: AcquisitionDeferred}, &AcquisitionError{Outcome: AcquisitionCancelled}} {
 		t.Run(outcome.Error(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
 				var calls atomic.Int32
 				s := pollingSchedulerFixture(t, func(context.Context, string) error {
 					if calls.Add(1) <= 2 {
@@ -188,15 +194,15 @@ func TestAccountPollingOrdinaryNonSuccessPreservesAdaptiveDeadline(t *testing.T)
 				synctest.Wait()
 				time.Sleep(90 * time.Second)
 				synctest.Wait()
-				require.EqualValues(t, 2, calls.Load())
+				require.EqualValues(2, calls.Load())
 				deadline := s.Status()[0].NextEligiblePoll
 				time.Sleep(time.Second)
 				s.onAccountTick("sample@example.test")
 				synctest.Wait()
-				assert.False(t, s.Status()[0].NextEligiblePoll.Before(deadline), "ordinary bypass cannot reset poll backoff without complete acquisition")
+				assert.False(s.Status()[0].NextEligiblePoll.Before(deadline), "ordinary bypass cannot reset poll backoff without complete acquisition")
 				time.Sleep(60 * time.Second)
 				synctest.Wait()
-				assert.EqualValues(t, 3, calls.Load(), "poll cannot run before the retained adaptive deadline")
+				assert.EqualValues(3, calls.Load(), "poll cannot run before the retained adaptive deadline")
 				<-s.Stop().Done()
 			})
 		})
@@ -205,6 +211,8 @@ func TestAccountPollingOrdinaryNonSuccessPreservesAdaptiveDeadline(t *testing.T)
 
 func TestAccountPollingStartupPreservesDeferredManualIntent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		var calls, completions atomic.Int32
 		floor := time.Now().Add(time.Hour)
 		s := pollingSchedulerFixture(t, func(context.Context, string) error {
@@ -213,17 +221,17 @@ func TestAccountPollingStartupPreservesDeferredManualIntent(t *testing.T) {
 			}
 			return nil
 		}).WithCompletion(func() { completions.Add(1) })
-		require.NoError(t, s.TriggerSync("sample@example.test", false))
+		require.NoError(s.TriggerSync("sample@example.test", false))
 		synctest.Wait()
-		require.NoError(t, s.TriggerSync("sample@example.test", true))
+		require.NoError(s.TriggerSync("sample@example.test", true))
 		synctest.Wait()
 		s.Start()
 		synctest.Wait()
-		assert.EqualValues(t, 1, calls.Load())
+		assert.EqualValues(1, calls.Load())
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.EqualValues(t, 2, calls.Load())
-		assert.EqualValues(t, 1, completions.Load(), "startup cannot replace an accepted ordinary manual request with poll-only intent")
+		assert.EqualValues(2, calls.Load())
+		assert.EqualValues(1, completions.Load(), "startup cannot replace an accepted ordinary manual request with poll-only intent")
 		<-s.Stop().Done()
 	})
 }
@@ -236,20 +244,21 @@ func TestAccountPollingOutcomeStatusAndManualCompletion(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
 				var events atomic.Int32
 				s := pollingSchedulerFixture(t, func(context.Context, string) error { return outcome }).WithCompletion(func() { events.Add(1) })
 				require.NoError(t, s.TriggerSync("sample@example.test", true))
 				synctest.Wait()
 				status := s.Status()[0]
-				assert.False(t, status.LastAttempted.IsZero())
-				assert.NotContains(t, status.LastError, "synthetic-secret-marker")
+				assert.False(status.LastAttempted.IsZero())
+				assert.NotContains(status.LastError, "synthetic-secret-marker")
 				if outcome == nil {
-					assert.False(t, status.LastCompleted.IsZero())
-					assert.EqualValues(t, 1, events.Load())
+					assert.False(status.LastCompleted.IsZero())
+					assert.EqualValues(1, events.Load())
 				} else {
-					assert.True(t, status.LastCompleted.IsZero())
-					assert.True(t, status.LastRun.IsZero())
-					assert.Zero(t, events.Load())
+					assert.True(status.LastCompleted.IsZero())
+					assert.True(status.LastRun.IsZero())
+					assert.Zero(events.Load())
 				}
 				<-s.Stop().Done()
 			})
@@ -259,6 +268,7 @@ func TestAccountPollingOutcomeStatusAndManualCompletion(t *testing.T) {
 
 func TestAccountPollingStopJoinsStartupAndRejectsCapturedTimer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
 		cancelled, release := make(chan struct{}), make(chan struct{})
 		var calls atomic.Int32
 		s := pollingSchedulerFixture(t, func(ctx context.Context, _ string) error {
@@ -278,30 +288,32 @@ func TestAccountPollingStopJoinsStartupAndRejectsCapturedTimer(t *testing.T) {
 		<-cancelled
 		select {
 		case <-stopped.Done():
-			assert.Fail(t, "Stop completed before the admitted callback unwound")
+			assert.Fail("Stop completed before the admitted callback unwound")
 		default:
 		}
 		close(release)
 		<-stopped.Done()
 		entry.Run()
-		assert.EqualValues(t, 1, calls.Load())
-		assert.True(t, s.Status()[0].LastCompleted.IsZero(), "a nil return after cancellation is not catchup")
-		assert.Error(t, s.TriggerSync("sample@example.test", true))
+		assert.EqualValues(1, calls.Load())
+		assert.True(s.Status()[0].LastCompleted.IsZero(), "a nil return after cancellation is not catchup")
+		assert.Error(s.TriggerSync("sample@example.test", true))
 	})
 }
 
 func TestAccountPollingIncompleteSkipsPostSyncAndKeepsIndependentIndexing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		var post, index atomic.Int32
 		s := pollingSchedulerFixture(t, func(context.Context, string) error { return &AcquisitionError{Outcome: AcquisitionIncomplete} })
 		s.SetVisualPostSyncJob(func(context.Context) error { post.Add(1); return nil })
-		require.NoError(t, s.AddJob(Job{Name: "index backstop", Schedule: "0 0 1 1 *", Run: func(context.Context) error { index.Add(1); return nil }}))
-		require.NoError(t, s.TriggerSync("sample@example.test", false))
+		require.NoError(s.AddJob(Job{Name: "index backstop", Schedule: "0 0 1 1 *", Run: func(context.Context) error { index.Add(1); return nil }}))
+		require.NoError(s.TriggerSync("sample@example.test", false))
 		synctest.Wait()
-		assert.Zero(t, post.Load(), "incomplete acquisition is not a successful post-sync trigger")
-		require.True(t, s.IsJobScheduled("index backstop"))
-		require.NoError(t, s.TriggerJob("index backstop"))
-		assert.EqualValues(t, 1, index.Load(), "independent indexing remains usable and the gate is released")
+		assert.Zero(post.Load(), "incomplete acquisition is not a successful post-sync trigger")
+		require.True(s.IsJobScheduled("index backstop"))
+		require.NoError(s.TriggerJob("index backstop"))
+		assert.EqualValues(1, index.Load(), "independent indexing remains usable and the gate is released")
 		<-s.Stop().Done()
 	})
 }

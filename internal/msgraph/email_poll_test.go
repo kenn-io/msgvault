@@ -15,6 +15,8 @@ import (
 func TestEmailPollRetryFloorIsUncappedAndDeferred(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -29,23 +31,25 @@ func TestEmailPollRetryFloorIsUncappedAndDeferred(t *testing.T) {
 			var profile struct{ Mail string }
 			start := time.Now()
 			err := client.GetJSON(ctx, "/me", &profile)
-			require.Error(t, err)
-			assert.NotErrorIs(t, err, context.DeadlineExceeded)
-			assert.False(t, client.RetryNotBefore().Before(start.Add(time.Hour)))
+			require.Error(err)
+			assert.NotErrorIs(err, context.DeadlineExceeded)
+			assert.False(client.RetryNotBefore().Before(start.Add(time.Hour)))
 			if status == http.StatusTooManyRequests {
 				var quota *ThrottledError
-				require.ErrorAs(t, err, &quota)
-				assert.Equal(t, time.Hour, quota.RetryAfter)
-				assert.Equal(t, client.RetryNotBefore(), quota.RetryNotBefore())
+				require.ErrorAs(err, &quota)
+				assert.Equal(time.Hour, quota.RetryAfter)
+				assert.Equal(client.RetryNotBefore(), quota.RetryNotBefore())
 			}
 			err = client.GetJSON(ctx, "/me", &profile)
-			require.Error(t, err)
-			assert.EqualValues(t, 1, requests.Load())
+			require.Error(err)
+			assert.EqualValues(1, requests.Load())
 		})
 	}
 }
 
 func TestEmailPollMIMEFloorIsSharedWithOriginalClient(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -57,11 +61,11 @@ func TestEmailPollMIMEFloorIsSharedWithOriginalClient(t *testing.T) {
 	client.DeferProviderRetries()
 	start := time.Now()
 	_, err := client.GetRawWithTimeout(t.Context(), "/mime", time.Minute)
-	require.Error(t, err)
-	assert.False(t, client.RetryNotBefore().Before(start.Add(time.Hour)), "per-request timeout clones share floor evidence with the acquisition client")
+	require.Error(err)
+	assert.False(client.RetryNotBefore().Before(start.Add(time.Hour)), "per-request timeout clones share floor evidence with the acquisition client")
 	_, err = client.GetRawWithTimeout(t.Context(), "/mime", time.Minute)
-	require.Error(t, err)
-	assert.EqualValues(t, 1, requests.Load(), "a new MIME timeout clone must respect the existing shared floor")
+	require.Error(err)
+	assert.EqualValues(1, requests.Load(), "a new MIME timeout clone must respect the existing shared floor")
 }
 
 type emailPollQueuedContextKey struct{}
@@ -111,6 +115,8 @@ func TestEmailPollQueuedRequestRechecksProviderFloorBeforeSend(t *testing.T) {
 			require.NoError(t, ctx.Err(), "expected request transition did not occur")
 		}
 	}
+	assert := assert.New(t)
+	require := require.New(t)
 	firstResult, queuedResult := make(chan error, 1), make(chan error, 1)
 	go func() { _, err := client.GetRawWithTimeout(ctx, "/first", time.Minute); firstResult <- err }()
 	await(firstStarted)
@@ -122,21 +128,23 @@ func TestEmailPollQueuedRequestRechecksProviderFloorBeforeSend(t *testing.T) {
 	close(releaseFirst)
 	firstErr := <-firstResult
 	var firstFloor *ThrottledError
-	require.ErrorAs(t, firstErr, &firstFloor)
-	assert.NotErrorIs(t, firstErr, ErrNotSent, "the initial 429 request reached the real HTTP server")
+	require.ErrorAs(firstErr, &firstFloor)
+	assert.NotErrorIs(firstErr, ErrNotSent, "the initial 429 request reached the real HTTP server")
 	close(releaseQueued)
 	err := <-queuedResult
 	var queuedFloor *ThrottledError
-	require.ErrorAs(t, err, &queuedFloor)
-	assert.ErrorIs(t, err, ErrNotSent, "the queued request is deferred before its first send")
-	assert.Equal(t, firstFloor.RetryNotBefore(), queuedFloor.RetryNotBefore())
-	assert.Equal(t, firstFloor.RetryNotBefore(), client.RetryNotBefore())
-	assert.EqualValues(t, 1, requests.Load(), "a floor learned during local admission blocks every still-unsent MIME worker")
+	require.ErrorAs(err, &queuedFloor)
+	assert.ErrorIs(err, ErrNotSent, "the queued request is deferred before its first send")
+	assert.Equal(firstFloor.RetryNotBefore(), queuedFloor.RetryNotBefore())
+	assert.Equal(firstFloor.RetryNotBefore(), client.RetryNotBefore())
+	assert.EqualValues(1, requests.Load(), "a floor learned during local admission blocks every still-unsent MIME worker")
 }
 
 func TestEmailPollOrdinaryGraphRetriesKeepExistingBounds(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
@@ -157,17 +165,17 @@ func TestEmailPollOrdinaryGraphRetriesKeepExistingBounds(t *testing.T) {
 				Mail string `json:"mail"`
 			}
 			err := client.GetJSON(ctx, "/throttle", &profile)
-			require.Error(t, err)
-			assert.NotErrorIs(t, err, context.DeadlineExceeded)
+			require.Error(err)
+			assert.NotErrorIs(err, context.DeadlineExceeded)
 			if status == http.StatusTooManyRequests {
 				var quota *ThrottledError
-				require.ErrorAs(t, err, &quota)
-				assert.Equal(t, 15*time.Minute, quota.RetryAfter, "ordinary retries retain the existing cap")
+				require.ErrorAs(err, &quota)
+				assert.Equal(15*time.Minute, quota.RetryAfter, "ordinary retries retain the existing cap")
 			}
-			assert.True(t, client.RetryNotBefore().IsZero(), "ordinary clients do not retain the rapid cross-request floor")
-			require.NoError(t, client.GetJSON(ctx, "/next", &profile), "a later ordinary first attempt retains its existing admission behavior")
-			assert.Equal(t, "sample@example.test", profile.Mail)
-			assert.EqualValues(t, 2, requests.Load())
+			assert.True(client.RetryNotBefore().IsZero(), "ordinary clients do not retain the rapid cross-request floor")
+			require.NoError(client.GetJSON(ctx, "/next", &profile), "a later ordinary first attempt retains its existing admission behavior")
+			assert.Equal("sample@example.test", profile.Mail)
+			assert.EqualValues(2, requests.Load())
 		})
 	}
 }

@@ -81,6 +81,8 @@ poll_interval = "30s"
 	defer server.Close()
 	loopback, err := url.Parse(server.URL)
 	require.NoError(t, err)
+	assert := assert.New(t)
+	require := require.New(t)
 	transport := http.DefaultTransport
 	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
 		clone := r.Clone(r.Context())
@@ -90,17 +92,17 @@ poll_interval = "30s"
 	t.Cleanup(func() { http.DefaultTransport = transport })
 	st := storetest.New(t)
 	src, err := st.Store.GetOrCreateSource("gmail", "sample@example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, "100"))
+	require.NoError(err)
+	require.NoError(st.Store.UpdateSourceSyncCursor(src.ID, "100"))
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	err = runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
-	assert.ErrorContains(t, err, "reauthorize", "authenticated mismatch must fail closed with stable remediation")
+	assert.ErrorContains(err, "reauthorize", "authenticated mismatch must fail closed with stable remediation")
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int
-		require.NoError(t, st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
-		assert.Zero(t, count, "profile verification precedes every %s mutation", table)
+		require.NoError(st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		assert.Zero(count, "profile verification precedes every %s mutation", table)
 	}
 	current, err := st.Store.GetSourceByID(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "100", current.SyncCursor.String)
+	require.NoError(err)
+	assert.Equal("100", current.SyncCursor.String)
 }

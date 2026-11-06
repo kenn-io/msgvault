@@ -16,6 +16,8 @@ import (
 )
 
 func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	local, remote := net.Pipe()
 	conn := imapclient.New(local, nil)
 	defer func() { _ = conn.Close(); _ = remote.Close() }()
@@ -24,7 +26,7 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 		_, _ = remote.Write([]byte("* PREAUTH [CAPABILITY IMAP4rev1] fixture ready\r\n"))
 		close(greeted)
 	}()
-	require.NoError(t, conn.WaitGreeting())
+	require.NoError(conn.WaitGreeting())
 	<-greeted
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
 	client := newTestClient(t, addr)
@@ -40,28 +42,28 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 		finished <- err
 	}()
 	line, err := bufio.NewReader(remote).ReadString('\n')
-	require.NoError(t, err, "command is blocked awaiting a server response")
-	require.Contains(t, line, " NOOP\r\n", "cancel the target read, not an initial capability request")
+	require.NoError(err, "command is blocked awaiting a server response")
+	require.Contains(line, " NOOP\r\n", "cancel the target read, not an initial capability request")
 	cancel()
 	select {
 	case err := <-finished:
-		assert.ErrorIs(t, err, context.Canceled)
+		assert.ErrorIs(err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		// Bound an observable cancellation transition; release the baseline
 		// command before failing so this regression cannot leak a goroutine.
 		_ = conn.Close()
 		<-finished
-		assert.Fail(t, "cancelled read command did not terminate its captured transport")
+		assert.Fail("cancelled read command did not terminate its captured transport")
 	}
-	require.Nil(t, client.conn, "the cancelled current transport must not be reused")
-	require.NoError(t, client.withConn(t.Context(), func(active *imapclient.Client) error {
+	require.Nil(client.conn, "the cancelled current transport must not be reused")
+	require.NoError(client.withConn(t.Context(), func(active *imapclient.Client) error {
 		return active.Noop().Wait()
 	}), "the next read reconnects through the real loopback server")
-	assert.NotSame(t, conn, client.conn)
+	assert.NotSame(conn, client.conn)
 	select {
 	case <-conn.Closed():
 	default:
-		assert.Fail(t, "command returned before the decoder terminated")
+		assert.Fail("command returned before the decoder terminated")
 	}
 }
 
@@ -83,6 +85,8 @@ func commandContextPipe(t *testing.T) (*imapclient.Client, net.Conn) {
 }
 
 func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	conn, peer := commandContextPipe(t)
 	client := &Client{conn: conn, logger: slog.Default()}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -104,9 +108,9 @@ func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
 	}()
 	reader := bufio.NewReader(peer)
 	line, err := reader.ReadString('\n')
-	require.NoError(t, err)
-	require.Contains(t, strings.ToUpper(line), "STATUS")
-	require.Contains(t, strings.ToUpper(line), "INBOX")
+	require.NoError(err)
+	require.Contains(strings.ToUpper(line), "STATUS")
+	require.Contains(strings.ToUpper(line), "INBOX")
 	cancel()
 	var got result
 	select {
@@ -114,18 +118,20 @@ func TestObserveFolderStatesStopsAfterCanceledStatus(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		_ = conn.Close()
 		<-finished
-		require.FailNow(t, "cancelled STATUS did not terminate")
+		require.FailNow("cancelled STATUS did not terminate")
 	}
-	assert.Nil(t, got.panicValue, "cancellation must stop mailbox enumeration before the invalidated connection is reused")
-	assert.Empty(t, got.states)
-	assert.Nil(t, client.conn)
+	assert.Nil(got.panicValue, "cancellation must stop mailbox enumeration before the invalidated connection is reused")
+	assert.Empty(got.states)
+	assert.Nil(client.conn)
 	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
 	line, err = reader.ReadString('\n')
-	assert.Error(t, err, "cancellation closes the captured transport before another STATUS")
-	assert.NotContains(t, strings.ToUpper(line), "ARCHIVE")
+	assert.Error(err, "cancellation closes the captured transport before another STATUS")
+	assert.NotContains(strings.ToUpper(line), "ARCHIVE")
 }
 
 func TestReadCommandCancellationJoinsStalledCleanup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	conn, peer := commandContextPipe(t)
 	client := &Client{conn: conn, logger: slog.Default()}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -133,21 +139,21 @@ func TestReadCommandCancellationJoinsStalledCleanup(t *testing.T) {
 	finished := make(chan error, 1)
 	go func() { finished <- client.CloseContext(ctx) }()
 	line, err := bufio.NewReader(peer).ReadString('\n')
-	require.NoError(t, err)
-	require.Contains(t, line, " LOGOUT\r\n")
+	require.NoError(err)
+	require.Contains(line, " LOGOUT\r\n")
 	cancel()
 	select {
 	case err := <-finished:
-		assert.ErrorIs(t, err, context.Canceled)
+		assert.ErrorIs(err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		_ = conn.Close()
 		<-finished
-		require.FailNow(t, "cleanup did not terminate after cancellation")
+		require.FailNow("cleanup did not terminate after cancellation")
 	}
-	assert.Nil(t, client.conn)
+	assert.Nil(client.conn)
 	select {
 	case <-conn.Closed():
 	default:
-		assert.Fail(t, "cleanup returned before decoder termination")
+		assert.Fail("cleanup returned before decoder termination")
 	}
 }

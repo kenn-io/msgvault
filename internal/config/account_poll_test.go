@@ -64,26 +64,27 @@ enabled = true
 }
 
 func TestAccountPollingSaveLoad(t *testing.T) {
+	require := require.New(t)
 	cfg, err := loadPollFixture(t, `[[accounts]]
 email = "sample@example.test"
 schedule = "0 * * * *"
 enabled = true
 poll_interval = "30s"
 `)
-	require.NoError(t, err)
-	require.NoError(t, cfg.Save())
+	require.NoError(err)
+	require.NoError(cfg.Save())
 	reloaded, err := Load(cfg.configPath, cfg.HomeDir)
-	require.NoError(t, err)
+	require.NoError(err)
 	var encoded bytes.Buffer
-	require.NoError(t, toml.NewEncoder(&encoded).Encode(reloaded))
+	require.NoError(toml.NewEncoder(&encoded).Encode(reloaded))
 	var saved struct {
 		Accounts []struct {
 			PollInterval string `toml:"poll_interval"`
 		} `toml:"accounts"`
 	}
 	_, err = toml.Decode(encoded.String(), &saved)
-	require.NoError(t, err)
-	require.Len(t, saved.Accounts, 1)
+	require.NoError(err)
+	require.Len(saved.Accounts, 1)
 	assert.Equal(t, "30s", saved.Accounts[0].PollInterval)
 }
 
@@ -95,26 +96,28 @@ func TestAccountPollingOffRemainsValid(t *testing.T) {
 }
 
 func TestAccountPollingDaemonValidationPreservesClientLoads(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(`[[accounts]]
+	require.NoError(os.WriteFile(path, []byte(`[[accounts]]
 email = "sample@example.test"
 schedule = "0 * * * *"
 enabled = true
 poll_interval = "1s"
 `), 0o600))
 	client, err := LoadClientWithOverrides(path, dir, RuntimeOverrides{})
-	require.NoError(t, err)
-	assert.ErrorContains(t, client.DaemonConfigError(), "poll_interval")
+	require.NoError(err)
+	assert.ErrorContains(client.DaemonConfigError(), "poll_interval")
 	snapshot, err := ReadConfigFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = LoadConfigFile(snapshot, dir)
-	assert.ErrorContains(t, err, "poll_interval")
+	assert.ErrorContains(err, "poll_interval")
 	_, err = LoadConfigFileWithOverrides(snapshot, dir, RuntimeOverrides{})
-	assert.ErrorContains(t, err, "poll_interval")
+	assert.ErrorContains(err, "poll_interval")
 	lenient, err := LoadClientConfigFile(snapshot, dir)
-	require.NoError(t, err)
-	assert.ErrorContains(t, lenient.DaemonConfigError(), "poll_interval")
+	require.NoError(err)
+	assert.ErrorContains(lenient.DaemonConfigError(), "poll_interval")
 	_, err = lenient.ReloadConfigFile(snapshot)
-	assert.ErrorContains(t, err, "poll_interval")
+	assert.ErrorContains(err, "poll_interval")
 }

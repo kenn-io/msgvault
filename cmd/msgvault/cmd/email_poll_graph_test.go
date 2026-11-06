@@ -26,15 +26,17 @@ func TestRapidEmailGraphProfileMismatchPrecedesArchiveMutation(t *testing.T) {
 		_, _ = w.Write([]byte(`{"mail":"other@example.test"}`))
 	}))
 	defer server.Close()
+	assert := assert.New(t)
+	require := require.New(t)
 	client := msmail.NewClient(server.URL, func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
 	dir := t.TempDir()
 	ctx := testInvocationContext(t.Context(), &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, invocationOptions{})
 	err = runRapidGraphSource(ctx, src, f.Store, client, invocationFromContext(ctx))
-	assert.ErrorContains(t, err, "reauthorize")
-	assert.EqualValues(t, 1, calls.Load())
+	assert.ErrorContains(err, "reauthorize")
+	assert.EqualValues(1, calls.Load())
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int
-		require.NoError(t, f.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
-		assert.Zero(t, count, "authenticated evidence precedes %s writes", table)
+		require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		assert.Zero(count, "authenticated evidence precedes %s writes", table)
 	}
 }
