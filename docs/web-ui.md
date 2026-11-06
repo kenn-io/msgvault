@@ -129,12 +129,10 @@ toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+Selecting rows opens a selection bar with the selection's estimated size beside the count. **Review deletion…** opens a review dialog over Messages; see
 [Deletions](#deletions). The button is disabled when the daemon
-reports that staging is unavailable for the selection, and the bar states the
-reason beside it, for example "None of the selected items can be deleted from
-their source." Export and **Open selection in source** explain their
-unavailability the same way.
+reports that staging is unavailable for the selection. Hover over or focus the
+disabled button to see why. Export shows unavailable reasons the same way.
 
 Search mode is always explicit:
 
@@ -233,8 +231,9 @@ Each expanded message lists its files, recordings, linked tasks, and Kata issues
 ## Meeting context and follow-ups
 
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
-Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
+Select meeting rows and choose **Meeting context…** in the selection bar.
+In its popover, choose JSON or Markdown, optionally turn on **Include transcript**,
+and choose **Export meeting context**. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.

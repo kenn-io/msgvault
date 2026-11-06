@@ -104,8 +104,9 @@ test("production imports expose archived actions, summary totals, and exact cont
   expect(explicit.meetings[0].content.actions).toEqual([]);
   expect(JSON.stringify(explicit)).not.toContain("Generic transcript evidence");
   await page
-    .getByRole("button", { name: "Select all 5 matching items", exact: true })
+    .getByRole("button", { name: "Select all 5 matching", exact: true })
     .click();
+  await meetingContext.click();
   const all = await downloadContext(page, info, "all-matching-context");
   expect(
     all.meetings
