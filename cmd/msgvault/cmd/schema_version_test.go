@@ -65,14 +65,14 @@ func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
 			configPath := filepath.Join(dir, "config.toml")
 			require.NoError(os.WriteFile(configPath, fmt.Appendf(nil, "[data]\ndatabase_url = %q\n", dbPath), 0o600))
 			if tc.name != "missing" {
-				s, err := store.OpenForTest(dbPath)
+				s, err := store.OpenForTest(t.Context(), dbPath)
 				require.NoError(err)
-				_, err = s.DB().Exec("CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep')")
+				_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep')")
 				require.NoError(err)
 				if tc.marker != "" {
-					_, err = s.DB().Exec("CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+					_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 					require.NoError(err)
-					_, err = s.DB().Exec("INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", tc.marker)
+					_, err = s.DB().ExecContext(t.Context(), "INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", tc.marker)
 					require.NoError(err)
 				}
 				require.NoError(s.Close())
@@ -99,7 +99,7 @@ func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(s.Close()) })
 			var count int
-			require.NoError(s.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE name='messages'").Scan(&count))
+			require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name='messages'").Scan(&count))
 			assert.Zero(count, "probe must not migrate the archive")
 		})
 	}
@@ -108,7 +108,7 @@ func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
 func TestSchemaVersionDatabaseCancellationBeforeOpen(t *testing.T) {
 	require := require.New(t)
 	conf := lifecycleTestConfig(t.TempDir())
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	cmd := newSchemaVersionCommand()
 	cmd.SetContext(testInvocationContext(ctx, conf, invocationOptions{}))
@@ -129,7 +129,7 @@ func TestArchiveMaintenanceRemoteRefusal(t *testing.T) {
 			newCommand := newMigrateCommand
 			if name == "schema-version" {
 				newCommand = newSchemaVersionCommand
-				s, err := store.OpenForTest(conf.DatabaseDSN())
+				s, err := store.OpenForTest(t.Context(), conf.DatabaseDSN())
 				require.NoError(err)
 				require.NoError(s.Close())
 			}

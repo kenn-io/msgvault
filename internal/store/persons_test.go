@@ -200,7 +200,7 @@ func TestRepromotionThatFillsBindingBumpsIdentityRevisionOnce(t *testing.T) {
 
 	// Simulate a pre-chokepoint archive where the cluster edge exists but its
 	// newly connected member was never carried into person_participants.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)
 	`), participantID, aliasID)
 	require.NoError(err)
@@ -497,7 +497,8 @@ func mustClusterMembers(t *testing.T, st *store.Store, id int64) []int64 {
 func participantCount(t *testing.T, st *store.Store, id int64) int64 {
 	t.Helper()
 	var count int64
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM participants WHERE id = ?`), id,
 	).Scan(&count))
 	return count

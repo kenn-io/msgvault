@@ -42,14 +42,14 @@ func TestImportEmlxUnchangedFileRestoresRemovedLabel(t *testing.T) {
 	opts := EmlxImportOptions{Identifier: "owner@example.test"}
 	_, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
-	_, err = st.DB().Exec(`DELETE FROM message_labels`)
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM message_labels`)
 	r.NoError(err)
 
 	warm, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
 	a.Equal(int64(1), warm.FilesUnchanged)
 	var labels int
-	r.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&labels))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels`).Scan(&labels))
 	a.Equal(1, labels, "the mailbox label returns without reading the file")
 }
 
@@ -131,14 +131,14 @@ func TestImportEmlxLabelFailureFailsRun(t *testing.T) {
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "Inbox.mbox")
 	mkMailboxDir(t, root, map[string][]byte{"1.emlx": email.NewMessage().From("sender@example.test").Body("label").Bytes()})
-	_, err := st.DB().Exec(`CREATE TRIGGER block_labels BEFORE INSERT ON labels
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_labels BEFORE INSERT ON labels
  BEGIN SELECT RAISE(ABORT, 'synthetic label failure'); END`)
 	r.NoError(err)
 	summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
 	r.NoError(err)
 	a.True(summary.HardErrors, "a mailbox skipped by a database failure must fail the run")
 	var status string
-	r.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 	a.Equal(store.SyncStatusFailed, status)
 }
 
@@ -156,10 +156,10 @@ func TestImportEmlxSkipsFileWithoutContent(t *testing.T) {
 		a.False(summary.HardErrors)
 		a.Zero(summary.Errors, "an empty file has nothing to archive")
 		var status string
-		r.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+		r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 		a.Equal(store.SyncStatusCompleted, status)
 	}
 	var messages int
-	r.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	a.Equal(1, messages)
 }

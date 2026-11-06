@@ -1,13 +1,14 @@
 package imazingcsv
 
 import (
+	"context"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
-func importContacts(st *store.Store, path string) (matched, total int, retErr error) {
+func importContacts(ctx context.Context, st *store.Store, path string) (matched, total int, retErr error) {
 	contacts, err := vcard.ParseFile(path)
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse iMazing contacts: %w", err)
@@ -19,7 +20,7 @@ func importContacts(st *store.Store, path string) (matched, total int, retErr er
 		total++
 		contactMatched := false
 		for _, phone := range contact.Phones {
-			updated, err := st.UpdateParticipantDisplayNameByPhone(phone, contact.FullName)
+			updated, err := st.UpdateParticipantDisplayNameByPhone(ctx, phone, contact.FullName)
 			if err != nil {
 				return matched, total, fmt.Errorf("update contact phone %q: %w", phone, err)
 			}
@@ -28,7 +29,7 @@ func importContacts(st *store.Store, path string) (matched, total int, retErr er
 			}
 		}
 		for _, email := range contact.Emails {
-			updated, err := st.UpdateParticipantDisplayNameByEmail(email, contact.FullName)
+			updated, err := st.UpdateParticipantDisplayNameByEmail(ctx, email, contact.FullName)
 			if err != nil {
 				return matched, total, fmt.Errorf("update contact email %q: %w", email, err)
 			}

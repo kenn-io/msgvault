@@ -50,7 +50,7 @@ func TestImportEmlxReconcilePreservesArchivedPlistDate(t *testing.T) {
 			r.False(first.HardErrors)
 			var messageID int64
 			var sent, internal sql.NullTime
-			r.NoError(st.DB().QueryRow("SELECT id, sent_at, internal_date FROM messages").Scan(&messageID, &sent, &internal))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id, sent_at, internal_date FROM messages").Scan(&messageID, &sent, &internal))
 			r.Equal(sql.NullTime{Time: tc.wantSent, Valid: true}, sent)
 			r.Equal(sql.NullTime{Time: plistDate, Valid: true}, internal)
 
@@ -65,7 +65,7 @@ func TestImportEmlxReconcilePreservesArchivedPlistDate(t *testing.T) {
 			r.False(reconciled.HardErrors)
 			a.Zero(reconciled.MessagesAdded, "identical MIME must retain the shared archived message")
 			a.Equal(int64(1), reconciled.MessagesUpdated, "reconciliation ingests the remaining copy")
-			r.NoError(st.DB().QueryRow("SELECT sent_at, internal_date FROM messages WHERE id = ?", messageID).Scan(&sent, &internal))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sent_at, internal_date FROM messages WHERE id = ?", messageID).Scan(&sent, &internal))
 			a.Equal(sql.NullTime{Time: tc.wantSent, Valid: true}, sent)
 			a.Equal(sql.NullTime{Time: plistDate, Valid: true}, internal)
 		})

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -98,6 +99,18 @@ func runWhatsAppIdentityCommand(
 	noDefaultIdentity bool,
 ) (string, error) {
 	t.Helper()
+	return runWhatsAppIdentityCommandContext(t, func(ctx context.Context) context.Context { return ctx }, home, fixture, noDefaultIdentity)
+}
+
+// runWhatsAppIdentityCommandContext runs the import with the context that
+// wrap derives from the test's invocation context.
+func runWhatsAppIdentityCommandContext(
+	t *testing.T,
+	wrap func(context.Context) context.Context,
+	home, fixture string,
+	noDefaultIdentity bool,
+) (string, error) {
+	t.Helper()
 	cfg := testConfigValue()
 
 	oldCfg := cfg
@@ -136,8 +149,7 @@ func runWhatsAppIdentityCommand(
 
 	var output strings.Builder
 	cmd := &cobra.Command{}
-	cmd.SetContext(testCtx)
-	cmd.SetContext(testCtx)
+	cmd.SetContext(wrap(testCtx))
 	cmd.SetOut(&output)
 	cmd.SetErr(io.Discard)
 	oldStdout := os.Stdout
@@ -165,7 +177,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE ZWACHATSESSION (
 			Z_PK INTEGER PRIMARY KEY,
 			ZCONTACTJID TEXT,
@@ -192,7 +204,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 	`)
 	require.NoError(t, err)
 	if !hardError {
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			CREATE TABLE ZWAGROUPMEMBER (
 				Z_PK INTEGER PRIMARY KEY,
 				ZCHATSESSION INTEGER,
@@ -204,7 +216,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 		`)
 		require.NoError(t, err)
 		if recoverable {
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO ZWAMESSAGE VALUES
 					(2, 1, NULL, 'duplicate-message', 0, 700000001, 'duplicate one', 0,
 					 '15555550101@s.whatsapp.net'),
@@ -223,7 +235,7 @@ func createWhatsAppUnknownDatabaseFixture(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "unknown.sqlite")
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+	_, err = db.ExecContext(t.Context(), "CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	return path

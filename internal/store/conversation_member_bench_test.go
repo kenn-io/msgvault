@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -24,10 +25,11 @@ func BenchmarkGrowingChatImport(b *testing.B) {
 					s = newUninitializedPGStoreInternal(b, dbURL)
 				} else {
 					var err error
-					s, err = OpenForTest(filepath.Join(b.TempDir(), "growing.db"))
+					s, err = OpenForTest(b.Context(), filepath.Join(b.TempDir(), "growing.db"))
 					require.NoError(b, err)
+					// Cleanup runs after b.Context() is canceled.
 					b.Cleanup(func() {
-						if s.DB().Ping() == nil {
+						if s.DB().PingContext(context.WithoutCancel(b.Context())) == nil {
 							_ = s.Close()
 						}
 					})

@@ -110,7 +110,7 @@ func TestMCPTracePropagationDaemonClientInjectsW3CHeaders(t *testing.T) {
 	ctx := propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
-	).Extract(context.Background(), carrier)
+	).Extract(t.Context(), carrier)
 	response, err := client.DoGeneratedRequestWithContext(
 		ctx,
 		http.MethodGet,
@@ -332,7 +332,7 @@ func TestNewAgentTokenClientRejectsRedirects(t *testing.T) {
 	c, err := New(Config{URL: redirector.URL, AgentToken: "mva1_token", AllowInsecure: true})
 	require.NoError(t, err)
 
-	resp, err := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+	resp, err := c.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -404,7 +404,7 @@ func TestCLIModeGeneratedRequestCarriesClassAndAPIKey(t *testing.T) {
 		RequestMode: RequestModeCLI,
 	})
 	require.NoError(t, err, "New")
-	_, err = c.RunSQLQuery(context.Background(), "SELECT 1")
+	_, err = c.RunSQLQuery(t.Context(), "SELECT 1")
 	require.NoError(t, err, "RunSQLQuery")
 }
 
@@ -429,7 +429,7 @@ func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
 	apiClient, err := c.GeneratedClient()
 	require.NoError(err, "generated client")
 
-	got, err := apiClient.RunQuery(context.Background(), &generated.RunQueryRequestOptions{
+	got, err := apiClient.RunQuery(t.Context(), &generated.RunQueryRequestOptions{
 		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
 	})
 
@@ -457,7 +457,7 @@ func TestRunSQLQueryPreservesIntegerPrecision(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	got, err := c.RunSQLQuery(context.Background(), "SELECT name, message_count, id FROM v_labels")
+	got, err := c.RunSQLQuery(t.Context(), "SELECT name, message_count, id FROM v_labels")
 	require.NoError(err, "RunSQLQuery")
 
 	assert.Equal([]string{"name", "message_count", "id"}, got.Columns, "columns")
@@ -526,7 +526,7 @@ func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
 	apiClient, err := c.GeneratedClient()
 	require.NoError(t, err, "generated client")
 
-	_, err = apiClient.RunQuery(context.Background(), &generated.RunQueryRequestOptions{
+	_, err = apiClient.RunQuery(t.Context(), &generated.RunQueryRequestOptions{
 		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
 	})
 
@@ -687,7 +687,7 @@ func TestRunCLICommandRetriesWhileOperationInProgress(t *testing.T) {
 	c.SetBusyNotifier(func(message string) { notified = append(notified, message) })
 
 	var stdout strings.Builder
-	err = c.RunCLICommand(context.Background(), CLIRunRequest{Args: []string{"embeddings", "list"}}, func(stream, data string) error {
+	err = c.RunCLICommand(t.Context(), CLIRunRequest{Args: []string{"embeddings", "list"}}, func(stream, data string) error {
 		if stream == "stdout" {
 			stdout.WriteString(data)
 		}
@@ -729,7 +729,7 @@ func TestRebuildCLIFTSRetriesWhileOperationInProgress(t *testing.T) {
 	require.NoError(err, "New")
 
 	var progressCalls int
-	indexed, err := c.RebuildCLIFTS(context.Background(), func(_, _ int64) { progressCalls++ })
+	indexed, err := c.RebuildCLIFTS(t.Context(), func(_, _ int64) { progressCalls++ })
 	require.NoError(err, "RebuildCLIFTS")
 
 	assert.Equal(int64(10), indexed, "indexed count after retries")
@@ -754,7 +754,7 @@ func TestGeneratedNonStreamingBusyRetryReturnsRootContextCancellation(t *testing
 	}))
 	t.Cleanup(srv.Close)
 
-	rootCtx, cancel := context.WithCancel(context.Background())
+	rootCtx, cancel := context.WithCancel(t.Context())
 	c, err := New(Config{
 		URL:           srv.URL,
 		APIKey:        "key",
@@ -795,7 +795,7 @@ func TestRawAndStreamingRequestsUseClientRootContext(t *testing.T) {
 			name: "raw",
 			request: func(c *Client) (*http.Response, error) {
 				return c.DoGeneratedRequestWithContext(
-					context.Background(),
+					t.Context(),
 					http.MethodGet,
 					"/api/v1/stats",
 					&generated.RunCLIRequestOptions{},
@@ -806,7 +806,7 @@ func TestRawAndStreamingRequestsUseClientRootContext(t *testing.T) {
 			name: "streaming",
 			request: func(c *Client) (*http.Response, error) {
 				return c.DoGeneratedStreamingRequestWithContext(
-					context.Background(),
+					t.Context(),
 					http.MethodPost,
 					"/api/v1/cli/run",
 					&generated.RunCLIRequestOptions{},
@@ -833,7 +833,7 @@ func TestRawAndStreamingRequestsUseClientRootContext(t *testing.T) {
 				}
 			})
 
-			rootCtx, cancelRoot := context.WithCancel(context.Background())
+			rootCtx, cancelRoot := context.WithCancel(t.Context())
 			t.Cleanup(cancelRoot)
 			c, err := New(Config{
 				URL:           srv.URL,
@@ -888,7 +888,7 @@ func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	waiting := make(chan struct{})
 	c.SetBusyNotifier(func(string) { close(waiting) })
 	done := make(chan error, 1)
@@ -943,7 +943,7 @@ func TestRequestEditorDelegatedMode(t *testing.T) {
 		require.NoError(t, err)
 
 		// Make a request via the generated client to trigger requestEditor.
-		resp, _ := c.DoGeneratedRequestWithContext(context.Background(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
+		resp, _ := c.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/health", &generated.RunCLIRequestOptions{})
 		if resp != nil {
 			_ = resp.Body.Close()
 		}

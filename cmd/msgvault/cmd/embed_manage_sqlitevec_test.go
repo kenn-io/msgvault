@@ -85,7 +85,7 @@ func TestFillFullCoverageKeepsSnapshotAcrossEmbeddingBatchCommit(t *testing.T) {
 	dataDir := t.TempDir()
 	vecPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
 	main := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
-	_, err := main.DB().Exec(`
+	_, err := main.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
@@ -113,7 +113,7 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 			}); err != nil {
 				return err
 			}
-			main, err := store.Open(cfg.DatabaseDSN())
+			main, err := store.OpenContext(ctx, cfg.DatabaseDSN())
 			if err != nil {
 				return err
 			}

@@ -82,7 +82,7 @@ func TestAppendPersonNoteResolvesSeedByUniversalIDAfterSlugCollision(t *testing.
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET slug = 'notes_system'
 		WHERE universal_id = ?

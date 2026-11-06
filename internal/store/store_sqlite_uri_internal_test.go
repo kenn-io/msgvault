@@ -22,7 +22,7 @@ func TestOpenForTestCreatesFileURIParentAndPreservesQuery(t *testing.T) {
 		RawQuery: "cache=shared",
 	}).String()
 
-	st, err := OpenForTest(dsn)
+	st, err := OpenForTest(t.Context(), dsn)
 	require.NoError(t, err, "open SQLite file URI")
 	require.NoError(t, st.Close(), "close SQLite file URI")
 	_, err = os.Stat(dbPath)
@@ -32,7 +32,7 @@ func TestOpenForTestCreatesFileURIParentAndPreservesQuery(t *testing.T) {
 func TestOpenReadOnlyAcceptsFileURIWithExistingQuery(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
-	writable, err := OpenForTest(dbPath)
+	writable, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed database")
 	require.NoError(writable.InitSchema(), "initialize seed database")
 	require.NoError(writable.Close(), "close seed database")

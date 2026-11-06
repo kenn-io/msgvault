@@ -51,7 +51,7 @@ func TestMCPServerIconHTTP(t *testing.T) {
 	for _, config := range []struct{ name, key string }{{"without key", ""}, {"with key", "synthetic-icon-key"}} {
 		t.Run(config.name, func(t *testing.T) {
 			handler := newMCPHTTPServer(ServeOptions{Engine: &querytest.MockEngine{}}, HTTPOptions{APIKey: config.key}).Handler
-			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(iconInitialize))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(iconInitialize))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Accept", "application/json, text/event-stream")
 			if config.key != "" {
@@ -64,7 +64,7 @@ func TestMCPServerIconHTTP(t *testing.T) {
 				for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
 					t.Run(method+path, func(t *testing.T) {
 						assert := assert.New(t)
-						req := httptest.NewRequest(method, path, nil)
+						req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 						req.Header.Set("Origin", "https://client.example")
 						got := httptest.NewRecorder()
 						handler.ServeHTTP(got, req)
@@ -89,12 +89,12 @@ func TestMCPServerIconHTTP(t *testing.T) {
 			}
 			if config.key != "" {
 				got := httptest.NewRecorder()
-				handler.ServeHTTP(got, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+				handler.ServeHTTP(got, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil))
 				assert.Equal(t, http.StatusUnauthorized, got.Code)
 				assert.Equal(t, "no-store", got.Header().Get("Cache-Control"))
 			}
 			got := httptest.NewRecorder()
-			handler.ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/unknown-icon", nil))
+			handler.ServeHTTP(got, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unknown-icon", nil))
 			assert.Equal(t, http.StatusNotFound, got.Code)
 		})
 	}

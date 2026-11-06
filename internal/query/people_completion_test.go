@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	require := require.New(t)
 	engine, exact, prefix, substring, when := newPeopleRankingFixture(t)
 
-	response, err := engine.CompletePeople(context.Background(), PeopleCompletionRequest{
+	response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{
 		Query: "alice", Limit: 8,
 	})
 	require.NoError(err)
@@ -86,7 +85,7 @@ func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 	b.AddFrom(message, alias, "")
 	engine := b.BuildEngine()
 
-	response, err := engine.CompletePeople(context.Background(), PeopleCompletionRequest{
+	response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{
 		Query: "(202) 555-0123", Limit: 8,
 	})
 	require.NoError(t, err)
@@ -133,7 +132,7 @@ func TestPeopleCompletionValidatesQueryAndLimit(t *testing.T) {
 		{Query: "alice", Limit: 21},
 	}
 	for _, request := range tests {
-		_, err := engine.CompletePeople(context.Background(), request)
+		_, err := engine.CompletePeople(t.Context(), request)
 		assert.ErrorIs(t, err, ErrInvalidExploreRequest, request)
 	}
 }

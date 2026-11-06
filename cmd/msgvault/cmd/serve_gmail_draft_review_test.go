@@ -133,7 +133,7 @@ func newGmailDraftTestFixtureWithStore(t *testing.T, newStore func(*testing.T) *
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(t, err)
 	require.NoError(t, st.AddAccountIdentity(source.ID, source.Identifier, "manual"))
-	conversationID, err := st.EnsureConversation(source.ID, "gmail-thread-1", "Question")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "gmail-thread-1", "Question")
 	require.NoError(t, err)
 	senderID, err := st.EnsureParticipant("sender@example.test", "Sender", "example.test")
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.Equal(created.GmailMessageID, draft.CurrentReceipt.GmailMessageID)
 
 	var labelCount int
-	require.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	require.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ? AND l.source_label_id = 'DRAFT'
@@ -821,7 +821,7 @@ func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *test
 			if test.absent {
 				fixture.client.getErr = &gmail.NotFoundError{Path: "/drafts/gmail-draft-managed"}
 			}
-			_, err := fixture.store.DB().Exec(`
+			_, err := fixture.store.DB().ExecContext(t.Context(), `
 				CREATE TRIGGER fail_gmail_draft_finish
 				BEFORE UPDATE OF discarded_at ON gmail_drafts
 				WHEN NEW.discarded_at IS NOT NULL
@@ -850,14 +850,14 @@ func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *test
 			getCalls := fixture.client.getCalls
 			deleteCalls := fixture.client.deleteCalls
 
-			_, err = fixture.store.DB().Exec("DROP TRIGGER fail_gmail_draft_finish")
+			_, err = fixture.store.DB().ExecContext(t.Context(), "DROP TRIGGER fail_gmail_draft_finish")
 			require.NoError(err)
 			if test.blockedBy != "" {
 				switch test.blockedBy {
 				case "grant":
 					fixture.adapter.gmailDraftPolicy = []config.GmailDraftSource{{SourceID: fixture.source.ID, Enabled: false}}
 				case "source":
-					_, err = fixture.store.DB().Exec("UPDATE sources SET source_type = ? WHERE id = ?", "imap", fixture.source.ID)
+					_, err = fixture.store.DB().ExecContext(t.Context(), "UPDATE sources SET source_type = ? WHERE id = ?", "imap", fixture.source.ID)
 					require.NoError(err)
 				}
 
@@ -877,7 +877,7 @@ func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *test
 				if test.blockedBy == "grant" {
 					fixture.adapter.gmailDraftPolicy = []config.GmailDraftSource{{SourceID: fixture.source.ID, Enabled: true}}
 				} else {
-					_, err = fixture.store.DB().Exec("UPDATE sources SET source_type = ? WHERE id = ?", sourceTypeGmail, fixture.source.ID)
+					_, err = fixture.store.DB().ExecContext(t.Context(), "UPDATE sources SET source_type = ? WHERE id = ?", sourceTypeGmail, fixture.source.ID)
 					require.NoError(err)
 				}
 			}
@@ -903,7 +903,7 @@ func TestGmailDraftUncertainOutcomeRecordFailureReturnsLocalPersistenceCode(t *t
 	assert := assert.New(t)
 	fixture := newSQLiteGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
-	_, err := fixture.store.DB().Exec(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_gmail_draft_uncertain_outcome
 		BEFORE UPDATE OF pending_code ON gmail_drafts
 		WHEN NEW.pending_code = 'remote_unknown'
@@ -940,7 +940,7 @@ func TestGmailDraftDeleteOutcomeRecordFailureIsRetryableAfterReinspection(t *tes
 	assert := assert.New(t)
 	fixture := newSQLiteGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
-	_, err := fixture.store.DB().Exec(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_gmail_draft_delete_outcome
 		BEFORE UPDATE OF pending_code ON gmail_drafts
 		WHEN NEW.pending_code = 'deleted'
@@ -960,7 +960,7 @@ func TestGmailDraftDeleteOutcomeRecordFailureIsRetryableAfterReinspection(t *tes
 	assert.Empty(pending.Pending.Code)
 	deleteCalls := fixture.client.deleteCalls
 
-	_, err = fixture.store.DB().Exec("DROP TRIGGER fail_gmail_draft_delete_outcome")
+	_, err = fixture.store.DB().ExecContext(t.Context(), "DROP TRIGGER fail_gmail_draft_delete_outcome")
 	require.NoError(err)
 	fixture.client.getErr = &gmail.NotFoundError{Path: "/drafts/gmail-draft-managed"}
 	events, err = fixture.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
@@ -1317,7 +1317,7 @@ func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenOutcomeRecordFails(t *t
 	assert := assert.New(t)
 	fixture := newSQLiteGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
-	_, err := fixture.store.DB().Exec(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_gmail_draft_outcome
 		BEFORE UPDATE OF pending_code ON gmail_drafts
 		WHEN NEW.pending_code = 'accepted_local_failed'
@@ -1365,7 +1365,7 @@ func TestGmailDraftRemoteUnknownCreateHumanOutputIncludesRFC822ID(t *testing.T) 
 	assert.Contains(events[0].Data, "RFC822 Message-ID: <")
 	assert.Contains(events[0].Data, "inspect operation")
 	var count int
-	require.NoError(fixture.store.DB().QueryRow("SELECT COUNT(*) FROM gmail_drafts").Scan(&count))
+	require.NoError(fixture.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM gmail_drafts").Scan(&count))
 	assert.Zero(count)
 }
 
@@ -1502,7 +1502,7 @@ func TestGmailDraftSendAsRefusesDelegatedGrant(t *testing.T) {
 func TestGmailDraftLifecycleReportsStoreReadFailure(t *testing.T) {
 	f := newSQLiteGmailDraftTestFixture(t)
 	draft := f.seedDraft(t)
-	_, err := f.store.DB().Exec("DROP TABLE gmail_drafts")
+	_, err := f.store.DB().ExecContext(t.Context(), "DROP TABLE gmail_drafts")
 	require.NoError(t, err)
 	err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID}}, nil)
 	require.ErrorContains(t, err, "draft_read_failed")

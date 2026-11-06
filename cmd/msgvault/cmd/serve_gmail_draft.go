@@ -1216,7 +1216,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return err
 	}
-	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
+	source, err := sourceops.ResolveExactOneContext(ctx, a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}

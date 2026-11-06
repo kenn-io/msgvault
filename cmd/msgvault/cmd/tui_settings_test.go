@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -43,7 +42,7 @@ func TestTUISettingsBackendLoadsSelfDescribingCatalog(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	snapshot, err := backend.LoadSettings(context.Background())
+	snapshot, err := backend.LoadSettings(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(`"config-1"`, snapshot.ETag)
 	assertions.Equal(`"credentials-1"`, snapshot.CredentialETag)
@@ -105,7 +104,7 @@ func TestTUISettingsBackendSeparatesConfigAndCredentialWrites(t *testing.T) {
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 	value := false
 
-	snapshot, err := backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	snapshot, err := backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag:     `"config-old"`,
 		CredentialETag: `"credentials-old"`,
 		Updates: []tui.SettingUpdate{{
@@ -150,7 +149,7 @@ func TestTUISettingsBackendClassifiesStaleCredentialETag(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	_, err := backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	_, err := backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag:     `"config-current"`,
 		CredentialETag: `"credentials-stale"`,
 		Credentials: []tui.CredentialUpdate{{
@@ -195,7 +194,7 @@ func TestTUISettingsBackendUsesDaemonCredentialIDsForNamedProviders(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-	loaded, err := backend.LoadSettings(context.Background())
+	loaded, err := backend.LoadSettings(t.Context())
 	requirements.NoError(err)
 	requirements.Len(loaded.Fields, 2)
 	assertions.Equal("exa-primary API key", loaded.Fields[0].Label)
@@ -206,7 +205,7 @@ func TestTUISettingsBackendUsesDaemonCredentialIDsForNamedProviders(t *testing.T
 	assertions.Contains(loaded.Fields[1].Description, "Status: disabled")
 	assertions.Equal("people.enrichment/sixtyfour-primary", loaded.Fields[1].CredentialID)
 
-	_, err = backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	_, err = backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag: loaded.ETag, CredentialETag: loaded.CredentialETag,
 		Credentials: []tui.CredentialUpdate{
 			{
@@ -246,7 +245,7 @@ enabled = false
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	loaded, err := backend.LoadSettings(context.Background())
+	loaded, err := backend.LoadSettings(t.Context())
 	requirements.NoError(err)
 	requirements.NotEmpty(loaded.CredentialETag)
 	var credentialField tui.SettingField
@@ -258,7 +257,7 @@ enabled = false
 	}
 	requirements.Equal("people.enrichment/"+providerName, credentialField.CredentialID)
 	assertions.Contains(credentialField.Description, "Kind: exa")
-	stored, err := backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	stored, err := backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag: loaded.ETag, CredentialETag: loaded.CredentialETag,
 		Credentials: []tui.CredentialUpdate{{
 			Key: credentialField.Key, CredentialID: credentialField.CredentialID,
@@ -268,7 +267,7 @@ enabled = false
 	requirements.NoError(err)
 	assertions.NotEqual(loaded.CredentialETag, stored.CredentialETag)
 
-	cleared, err := backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	cleared, err := backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag: stored.ETag, CredentialETag: stored.CredentialETag,
 		Credentials: []tui.CredentialUpdate{{
 			Key: credentialField.Key, CredentialID: credentialField.CredentialID,
@@ -291,7 +290,7 @@ func TestTUISettingsBackendMapsValidationMetadataFromRegisteredRouter(t *testing
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	loaded, err := backend.LoadSettings(context.Background())
+	loaded, err := backend.LoadSettings(t.Context())
 	requirements.NoError(err)
 	var activityBatch tui.SettingField
 	for _, field := range loaded.Fields {
@@ -327,7 +326,7 @@ func TestTUISettingsBackendReportsPartialSaveWithoutSecretLeak(t *testing.T) {
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 	value := true
 
-	_, err := backend.SaveSettings(context.Background(), tui.SettingsSaveRequest{
+	_, err := backend.SaveSettings(t.Context(), tui.SettingsSaveRequest{
 		ConfigETag:     `"config-old"`,
 		CredentialETag: `"credentials-old"`,
 		Updates: []tui.SettingUpdate{{

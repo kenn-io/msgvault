@@ -8,7 +8,6 @@
 package taskclient
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +24,7 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
 
-		client, err := Discover(context.Background(), DiscoveryOptions{
+		client, err := Discover(t.Context(), DiscoveryOptions{
 			DescriptorPath: path,
 			APIKey:         "configured-test-key",
 		})
@@ -44,7 +43,7 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 		link := filepath.Join(t.TempDir(), "descriptor.json")
 		require.NoError(t, os.Symlink(target, link))
 
-		_, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: link, APIKey: "test-key"})
+		_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: link, APIKey: "test-key"})
 
 		assert.ErrorIs(t, err, ErrInsecureDescriptor)
 	})
@@ -70,7 +69,7 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o644)
 
-		_, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: path, APIKey: "test-key"})
+		_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path, APIKey: "test-key"})
 
 		assert.ErrorIs(t, err, ErrInsecureDescriptor)
 	})
@@ -82,7 +81,7 @@ func TestDiscoverDescriptorSecurityAndProtocol(t *testing.T) {
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
 
-		_, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: path, APIKey: "test-key"})
+		_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path, APIKey: "test-key"})
 
 		assert.ErrorIs(t, err, ErrIncompatible)
 	})
@@ -96,7 +95,7 @@ func TestDiscoverLoopbackAuthentication(t *testing.T) {
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
 
-		client, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: path, APIKey: "configured-test-key"})
+		client, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path, APIKey: "configured-test-key"})
 
 		require.NoError(t, err)
 		assert.True(t, client.HasAuthentication())
@@ -114,7 +113,7 @@ func TestDiscoverLoopbackAuthentication(t *testing.T) {
 			TokenFile:       tokenPath,
 		}, 0o600)
 
-		client, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: path})
+		client, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path})
 
 		require.NoError(t, err)
 		assert.True(t, client.HasAuthentication())
@@ -127,7 +126,7 @@ func TestDiscoverLoopbackAuthentication(t *testing.T) {
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
 
-		_, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: path})
+		_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: path})
 
 		assert.ErrorIs(t, err, ErrAuthenticationRequired)
 	})

@@ -99,7 +99,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 	if err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, warning)
 	}
 
-	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,
+	result, err := store.CopySubsetWithOptions(cmd.Context(), srcDBPath, dstDir, subsetRows,
 		store.CopySubsetOptions{
 			IncludeIdentity:       subsetIncludeIdentity,
 			IncludeAttributes:     subsetIncludeAttributes,

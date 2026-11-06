@@ -144,7 +144,7 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 			"source_ids":  []int64{sourceID},
 		})
 		require.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
 		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "owner-test-key")
@@ -164,7 +164,7 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 		}
 		body, err := json.Marshal(map[string]any{"args": args})
 		require.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Msgvault-Agent-Token", secret)
@@ -233,7 +233,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 		}
 		body, err := json.Marshal(request)
 		require.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
 		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "owner-test-key")
@@ -248,7 +248,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 	run := func(secret string, args []string) (int, []api.CLIRunEvent) {
 		body, err := json.Marshal(map[string]any{"args": args})
 		require.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Msgvault-Agent-Token", secret)

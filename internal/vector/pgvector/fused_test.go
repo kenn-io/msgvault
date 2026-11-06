@@ -32,15 +32,15 @@ func newFusedFixture(t *testing.T) *fusedFixture {
 	// The shared minimal test schema lacks the inline search_fts column
 	// the fused query reads, so add it here. In production this column
 	// lives on the messages table from the main store schema.
-	_, err := db.Exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`)
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`)
 	require.NoError(t, err, "add search_fts")
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS attachments (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE IF NOT EXISTS attachments (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         message_id BIGINT NOT NULL,
         filename TEXT
     )`)
 	require.NoError(t, err, "create attachments")
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
 	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
@@ -599,7 +599,7 @@ func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			_, err := f.db.Exec(`UPDATE messages SET deleted_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
+			_, err := f.db.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
 			require.NoError(err)
 			if tc.unembedded {
 				require.NoError(b.Delete(ctx, gen, []int64{5}))

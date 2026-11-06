@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -288,7 +287,7 @@ func TestDailyNoteConcurrentAppendsUseConsecutiveOrdinals(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			entry, err := f.Store.CreateDailyNoteEntryContext(context.Background(), store.DailyNoteEntryInput{
+			entry, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{
 				LocalDate: "2026-08-01", Body: fmt.Sprintf("note %d", i),
 			})
 			if err != nil {

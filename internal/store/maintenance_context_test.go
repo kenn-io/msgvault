@@ -99,7 +99,7 @@ func TestRunMaintenancePreservesCanceledContextAfterAsyncRollback(t *testing.T) 
 		dialect: &SQLiteDialect{},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	err := st.runMaintenance(ctx, func(context.Context, *loggedTx) error {
 		cancel()
 		select {
@@ -116,7 +116,7 @@ func TestRunMaintenancePreservesCanceledContextAfterAsyncRollback(t *testing.T) 
 
 func TestRunMaintenancePreservesCommitErrorWhenContextIsCanceledDuringCommit(t *testing.T) {
 	commitErr := errors.New("commit failed")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	connector := &rollbackSignalConnector{
 		rolledBack: make(chan struct{}),
 		once:       &sync.Once{},

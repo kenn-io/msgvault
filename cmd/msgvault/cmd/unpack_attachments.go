@@ -76,7 +76,7 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	if err := refuseUnpackWithLiveDaemon(cfg.Data.DataDir); err != nil {
 		return err
 	}
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}

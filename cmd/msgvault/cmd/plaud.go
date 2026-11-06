@@ -140,7 +140,7 @@ func runAddPlaudLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validatePlaudOwnerBeforeAuthorization(state, src.Identifier, email); err != nil {
+	if err := validatePlaudOwnerBeforeAuthorization(cmd.Context(), state, src.Identifier, email); err != nil {
 		return err
 	}
 	checkOnly, err := cmd.Flags().GetBool(plaudCheckOwnerOnlyFlag)
@@ -176,15 +176,15 @@ func runAddPlaudLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	if _, err = registerPlaudAccount(st, src.Identifier, email, live); err != nil {
+	if _, err = registerPlaudAccount(cmd.Context(), st, src.Identifier, email, live); err != nil {
 		return err
 	}
-	if err = runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	if err = runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Plaud account %s authorized. Confirmed account email: %s. Run msgvault sync-plaud %s\n", src.Identifier, email, src.Identifier)
@@ -226,21 +226,21 @@ func validatePlaudLiveEmail(configured, live string) error {
 	return nil
 }
 
-func registerPlaudAccount(st *store.Store, identifier, email, live string) (*store.Source, error) {
+func registerPlaudAccount(ctx context.Context, st *store.Store, identifier, email, live string) (*store.Source, error) {
 	if err := validatePlaudLiveEmail(email, live); err != nil {
 		return nil, err
 	}
-	return plaud.RegisterSource(st, identifier, email)
+	return plaud.RegisterSource(ctx, st, identifier, email)
 }
 
-func validatePlaudOwnerBeforeAuthorization(state *invocation, identifier, email string) error {
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+func validatePlaudOwnerBeforeAuthorization(ctx context.Context, state *invocation, identifier, email string) error {
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 	if err != nil {
 		return fmt.Errorf("open archive before Plaud authorization: %w", err)
 	}
 	defer cleanup()
 
-	registered, err := st.GetSourceByTypeAndIdentifier(sourceTypePlaud, identifier)
+	registered, err := st.GetSourceByTypeAndIdentifier(ctx, sourceTypePlaud, identifier)
 	if errors.Is(err, store.ErrSourceNotFound) {
 		return nil
 	}
@@ -331,13 +331,13 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 		}
 		return probePlaud(cmd, src)
 	}
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	explicitSource := len(args) > 0
-	sources, err = resolvePlaudSyncSources(st, sources, explicitSource)
+	sources, err = resolvePlaudSyncSources(cmd.Context(), st, sources, explicitSource)
 	if err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 	total := &plaud.ImportSummary{}
 	refresh := func() error { return rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state) }
 	for _, src := range sources {
-		if err = registeredPlaudSource(st, src); err != nil {
+		if err = registeredPlaudSource(ctx, st, src); err != nil {
 			if errors.Is(err, store.ErrSourceRetired) && !explicitSource {
 				continue
 			}
@@ -391,8 +391,10 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 	}
 	return refresh()
 }
-func registeredPlaudSource(st *store.Store, src config.PlaudSource) error {
-	registered, err := st.GetSourceByTypeAndIdentifier(sourceTypePlaud, src.Identifier)
+func registeredPlaudSource(ctx context.Context, st *store.Store, src config.PlaudSource) error {
+	// The lookup is a short local read. It ignores cancellation, as it did
+	// before, so a canceled run still reports a missing registration.
+	registered, err := st.GetSourceByTypeAndIdentifier(context.WithoutCancel(ctx), sourceTypePlaud, src.Identifier)
 	if errors.Is(err, store.ErrSourceNotFound) {
 		return fmt.Errorf("plaud source %q is not registered; run msgvault add-plaud %s first", src.Identifier, src.Identifier)
 	}
@@ -409,10 +411,10 @@ func registeredPlaudSource(st *store.Store, src config.PlaudSource) error {
 	return plaud.ValidateOwner(registered, email)
 }
 
-func resolvePlaudSyncSources(st *store.Store, sources []config.PlaudSource, explicit bool) ([]config.PlaudSource, error) {
+func resolvePlaudSyncSources(ctx context.Context, st *store.Store, sources []config.PlaudSource, explicit bool) ([]config.PlaudSource, error) {
 	active := make([]config.PlaudSource, 0, len(sources))
 	for _, src := range sources {
-		if err := registeredPlaudSource(st, src); err != nil {
+		if err := registeredPlaudSource(ctx, st, src); err != nil {
 			if errors.Is(err, store.ErrSourceRetired) && !explicit {
 				continue
 			}
@@ -437,7 +439,7 @@ func finishPlaudImport(ctx context.Context, identifier string, sum *plaud.Import
 	return operationErr
 }
 func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.PlaudSource) error {
-	if err := registeredPlaudSource(st, src); err != nil {
+	if err := registeredPlaudSource(ctx, st, src); err != nil {
 		if errors.Is(err, store.ErrSourceRetired) {
 			return nil
 		}

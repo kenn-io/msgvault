@@ -45,7 +45,7 @@ func TestNativeMCPAdmissionAndCatalogs(t *testing.T) {
 					cfg.Server.APIKey = ""
 				}
 				server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
-				defer func() { require.NoError(server.Shutdown(context.Background())) }()
+				defer func() { require.NoError(server.Shutdown(t.Context())) }()
 				if phase != "starting" && phase != "keyless" {
 					read := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 					var write http.Handler
@@ -55,7 +55,7 @@ func TestNativeMCPAdmissionAndCatalogs(t *testing.T) {
 					require.NoError(server.InstallMCPHandlers(read, write, nil))
 				}
 				for _, path := range []string{"/mcp", "/mcp/writes"} {
-					request := httptest.NewRequest(http.MethodGet, path, nil)
+					request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 					if credential.headers != nil {
 						request.Header = credential.headers.Clone()
 					}
@@ -99,11 +99,11 @@ func TestNativeMCPEnvelopeDeadlineAndGate(t *testing.T) {
 
 		gate := NewSerialOperationGate()
 		s := NewServerWithOptions(ServerOptions{Logger: slog.New(slog.DiscardHandler), Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, RequestTimeout: time.Second, OperationGate: gate})
-		t.Cleanup(func() { require.NoError(s.Shutdown(context.Background())) })
+		t.Cleanup(func() { require.NoError(s.Shutdown(context.WithoutCancel(t.Context()))) })
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, bounded := r.Context().Deadline()
 			assert.False(bounded, "native MCP must preserve the nested CLI execution policy")
-			nested := httptest.NewRequest(http.MethodPost, "/api/v1/saved-views", nil)
+			nested := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/saved-views", nil)
 			gated, _, err := operationGateRequest(nested, requestAuthentication{Mode: AuthModeAPIKey})
 			if !assert.NoError(err) {
 				http.Error(w, "gate classification failed", http.StatusInternalServerError)
@@ -132,7 +132,7 @@ func TestNativeMCPEnvelopeDeadlineAndGate(t *testing.T) {
 		require.NoError(s.InstallMCPHandlers(handler, handler, nil))
 		for _, path := range []string{"/mcp", "/mcp/writes"} {
 			for _, authorization := range []string{"Bearer owner", "bearer owner"} {
-				r := httptest.NewRequest(http.MethodPost, path, nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil)
 				r.Header.Set("Authorization", authorization)
 				w := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 				started := time.Now()
@@ -152,11 +152,11 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	require := require.New(t)
 
 	s := NewServerWithOptions(ServerOptions{Logger: slog.New(slog.DiscardHandler), Config: &config.Config{Server: config.ServerConfig{BindAddr: "127.0.0.1", APIKey: "owner"}}})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	serving := make(chan error, 1)
 	go func() { serving <- s.StartOnListener(listener) }()
-	require.NoError(s.WaitStarted(context.Background()))
+	require.NoError(s.WaitStarted(t.Context()))
 	entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	cleanups := 0
 	require.NoError(s.InstallMCPHandlers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +167,7 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	requestDone := make(chan struct{})
 	go func() {
 		defer close(requestDone)
-		r, err := http.NewRequest(http.MethodPost, "http://"+listener.Addr().String()+"/mcp", nil)
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+listener.Addr().String()+"/mcp", nil)
 		if !assert.NoError(err) {
 			return
 		}
@@ -180,7 +180,7 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	}()
 	<-entered
 	shutdownDone := make(chan error, 1)
-	go func() { shutdownDone <- s.Shutdown(context.Background()) }()
+	go func() { shutdownDone <- s.Shutdown(t.Context()) }()
 	require.ErrorIs(<-serving, http.ErrServerClosed)
 	select {
 	case <-closed:
@@ -191,7 +191,7 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	<-requestDone
 	require.NoError(<-shutdownDone)
 	<-closed
-	require.NoError(s.Shutdown(context.Background()))
+	require.NoError(s.Shutdown(t.Context()))
 	assert.Equal(1, cleanups)
 }
 

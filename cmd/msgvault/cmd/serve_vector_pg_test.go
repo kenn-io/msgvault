@@ -75,7 +75,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 	setup, err := sql.Open("pgx", url)
 	require.NoError(t, err, "open setup")
 	defer func() { _ = setup.Close() }()
-	_, err = setup.Exec("CREATE SCHEMA " + schemaName)
+	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoError(t, err, "create schema")
 
 	sep := "?"
@@ -86,6 +86,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 
 	db, err := sql.Open("pgx", testURL)
 	require.NoError(t, err, "open")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		_ = db.Close()
 		cleanup, err := sql.Open("pgx", url)
@@ -93,7 +94,7 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 			return
 		}
 		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.Exec("DROP SCHEMA " + schemaName + " CASCADE")
+		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schemaName+" CASCADE")
 	})
 	return db, testURL
 }
@@ -153,10 +154,10 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	// that the embedding tables exist.
 	var n int
 	require.NoError(
-		db.QueryRow(`SELECT COUNT(*) FROM index_generations`).Scan(&n),
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM index_generations`).Scan(&n),
 		"index_generations must exist after setupVectorFeatures migrated the pgvector schema")
 
 	require.NoError(
-		db.QueryRow(`SELECT COUNT(*) FROM embed_watermark`).Scan(&n),
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embed_watermark`).Scan(&n),
 		"embed_watermark must exist after setupVectorFeatures migrated the pgvector schema")
 }

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -285,7 +284,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 				root.SetOut(io.Discard)
 				root.SetErr(io.Discard)
 				root.SetIn(os.Stdin)
-				require.NoError(executeRootContext(context.Background(), root))
+				require.NoError(executeRootContext(t.Context(), root))
 				elapsed := time.Since(exitStart)
 				synctest.Wait()
 				assert.Equal(tc.want, elapsed)

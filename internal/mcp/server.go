@@ -464,7 +464,7 @@ func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Tra
 // ServeHTTPWithOptions creates an MCP server from opts and serves over
 // StreamableHTTP on the given address.
 func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, httpOpts HTTPOptions) (result error) {
-	listener, err := net.Listen("tcp", httpOpts.Addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", httpOpts.Addr)
 	if err != nil {
 		return fmt.Errorf("listen for MCP HTTP: %w", err)
 	}

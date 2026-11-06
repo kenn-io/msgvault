@@ -102,7 +102,7 @@ func TestMCPHTTPConfirmationIsBoundToAuthenticatedListener(t *testing.T) {
 				}
 				body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
 				must.NoError(err)
-				request := task3ModernRequest("tools/call", "sync_source", string(body))
+				request := task3ModernRequest(t.Context(), "tools/call", "sync_source", string(body))
 				request.Header.Set("Authorization", "Bearer "+key)
 				return task3Serve(handler, request)
 			}

@@ -522,7 +522,7 @@ func embedScopeDriftDetail(resolved, initialized vector.BuildScope) string {
 // as errors so the preflight logs and retries them instead of latching.
 func embedScopeDriftCheck(s *store.Store, initialized vector.BuildScope, state *invocation) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		resolved, err := configuredEmbedBuildScope(s, state)
+		resolved, err := configuredEmbedBuildScope(ctx, s, state)
 		if errors.Is(err, vector.ErrScopeUnresolvable) {
 			return err.Error() + "; fix [vector.embed.scope] accounts and restart the daemon", nil
 		}
@@ -579,8 +579,8 @@ func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Stor
 	}
 	embedJob := newSchedulerEmbedJob(vf, s, logger)
 	scopeState := &invocation{cfg: cfg}
-	embedJob.ResolveBuildScope = func() (vector.BuildScope, error) {
-		return configuredEmbedBuildScope(s, scopeState)
+	embedJob.ResolveBuildScope = func(ctx context.Context) (vector.BuildScope, error) {
+		return configuredEmbedBuildScope(ctx, s, scopeState)
 	}
 	// Scope drift also has to reach searchers, not just the log: the
 	// installed components still match the active generation's

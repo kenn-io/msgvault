@@ -51,29 +51,29 @@ func TestCardDAVConflictSafeReadModelsUseCompactHeadersAndExactBaseFence(t *test
 		{name: "exact tuple", baseAvailable: true},
 		{name: "wrong revision", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
 			require.NoError(t, err)
 		}},
 		{name: "wrong semantic hash", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET remote_semantic_hash = ? WHERE id = ?`), "different", mapping.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET remote_semantic_hash = ? WHERE id = ?`), "different", mapping.ID)
 			require.NoError(t, err)
 		}},
 		{name: "wrong etag", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET remote_etag = ? WHERE id = ?`), `"different"`, mapping.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET remote_etag = ? WHERE id = ?`), `"different"`, mapping.ID)
 			require.NoError(t, err)
 		}},
 		{name: "missing mapping", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, _ *store.CardDAVConflict) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`DELETE FROM carddav_resources WHERE id = ?`), mapping.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM carddav_resources WHERE id = ?`), mapping.ID)
 			require.NoError(t, err)
 		}},
 		{name: "resolved and remapped", mutate: func(t *testing.T, st *store.Store, mapping *store.CardDAVResource, conflict *store.CardDAVConflict) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET status = 'resolved', resolution = 'keep_local', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`), conflict.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET status = 'resolved', resolution = 'keep_local', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`), conflict.ID)
 			require.NoError(t, err)
-			_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET mapping_revision = mapping_revision + 1 WHERE id = ?`), mapping.ID)
 			require.NoError(t, err)
 		}},
 	}
@@ -288,7 +288,7 @@ func TestCardDAVKeepLocalUsesCapableSubscribedSourceBook(t *testing.T) {
 	capture := conflictCapture(mapping)
 	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET
 		is_write_target = FALSE, is_subscribed = TRUE, can_update = FALSE WHERE id = ?`), book.ID)
 	require.NoError(err)
 
@@ -298,7 +298,7 @@ func TestCardDAVKeepLocalUsesCapableSubscribedSourceBook(t *testing.T) {
 	}
 	_, err = st.PrepareCardDAVConflictLocalContext(t.Context(), plan)
 	require.ErrorIs(err, store.ErrCardDAVNoWriteTarget)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET can_update = TRUE WHERE id = ?`), book.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET can_update = TRUE WHERE id = ?`), book.ID)
 	require.NoError(err)
 
 	prepared, err := st.PrepareCardDAVConflictLocalContext(t.Context(), plan)
@@ -328,7 +328,7 @@ func TestCardDAVKeepRemoteRevalidatesAfterUnlockedConflictIdentityRead(t *testin
 	t.Cleanup(func() { st.SetCardDAVConflictResolutionSnapshotHookForTest(nil) })
 	resolved := make(chan error, 1)
 	go func() {
-		_, resolveErr := st.ResolveCardDAVConflictRemoteContext(context.Background(), store.CardDAVConflictRemoteResolution{
+		_, resolveErr := st.ResolveCardDAVConflictRemoteContext(t.Context(), store.CardDAVConflictRemoteResolution{
 			ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
 			Remote: retained,
 		})
@@ -385,7 +385,7 @@ func TestCardDAVTombstonePreparationRevalidatesAfterUnlockedConflictIdentityRead
 			prepared := make(chan error, 1)
 			go func() {
 				_, prepareErr := st.PrepareCardDAVConflictLocalTombstoneContext(
-					context.Background(), conflict.ID, conflict.MappingRevision, remote)
+					t.Context(), conflict.ID, conflict.MappingRevision, remote)
 				prepared <- prepareErr
 			}()
 			select {
@@ -426,7 +426,7 @@ func TestCardDAVTombstonePreparationAndPullUseCanonicalPostgresLockOrder(t *test
 		t.Skip("PostgreSQL row locks are required for the CardDAV tombstone preparation/pull deadlock regression")
 	}
 	plan, latestRemote := refreshedCardDAVTombstonePlan(t, st, account, book, mapping)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	blocker, err := st.DB().BeginTx(ctx, nil)
 	require.NoError(err)
@@ -500,7 +500,7 @@ func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
 	require.NoError(err)
 	require.Len(books, 1)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	blocker, err := st.DB().BeginTx(ctx, nil)
 	require.NoError(err)
@@ -586,7 +586,7 @@ func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {
 			require.NoError(err)
 			require.NoError(st.DeletePersonContext(t.Context(), person.ID, person.Revision))
 			if !test.subscribed {
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET
 					is_write_target = FALSE, is_subscribed = FALSE,
 					is_lookup_source = TRUE WHERE id = ?`), book.ID)
 				require.NoError(err)

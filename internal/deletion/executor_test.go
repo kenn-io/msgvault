@@ -116,7 +116,7 @@ func TestExecutorValidationFailuresFinalizeClaimedManifest(t *testing.T) {
 				require.NoError(t, err)
 				live, err := tc.Store.GetOrCreateSource("gmail", "live@example.test")
 				require.NoError(t, err)
-				conversationID, err := tc.Store.EnsureConversation(history.ID, "history-thread", "History")
+				conversationID, err := tc.Store.EnsureConversation(t.Context(), history.ID, "history-thread", "History")
 				require.NoError(t, err)
 				messageID, err := tc.Store.UpsertMessage(&store.Message{
 					SourceID: history.ID, ConversationID: conversationID,
@@ -252,7 +252,7 @@ func TestExecutorValidationCancellationRemainsResumable(t *testing.T) {
 			})
 			require.NoError(tc.Mgr.SaveManifest(manifest))
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			require.ErrorIs(method.run(tc.Exec, ctx, manifest.ID), context.Canceled)
 			inProgress, err := tc.Mgr.ListInProgress()
@@ -267,7 +267,7 @@ func TestExecutorValidationCancellationRemainsResumable(t *testing.T) {
 			tc.AssertDeleteCalls(0)
 			assert.Empty(tc.MockAPI.BatchDeleteCalls)
 
-			require.NoError(method.run(tc.Exec, context.Background(), manifest.ID), "resume after context cancellation")
+			require.NoError(method.run(tc.Exec, t.Context(), manifest.ID), "resume after context cancellation")
 			_, status, err = tc.Mgr.GetManifestWithStatus(manifest.ID)
 			require.NoError(err)
 			assert.Equal(StatusCompleted, status)
@@ -306,7 +306,7 @@ func TestExecutorMissingLegacySourceFinalizesClaimedManifest(t *testing.T) {
 			require.NoError(tc.Mgr.SaveManifest(manifest))
 			tc.Exec.WithSourceID(source.ID)
 
-			require.ErrorIs(method.run(tc.Exec, context.Background(), manifest.ID), store.ErrSourceNotFound)
+			require.ErrorIs(method.run(tc.Exec, t.Context(), manifest.ID), store.ErrSourceNotFound)
 			inProgress, err := tc.Mgr.ListInProgress()
 			require.NoError(err)
 			assert.Empty(inProgress, "a deleted source cannot be resumed")
@@ -707,7 +707,7 @@ func TestExecutor_Execute_ContextCancelled(t *testing.T) {
 	manifest := ctx.CreateManifest("interrupt test", msgIDs(100))
 
 	// Cancel context immediately
-	execCtx, cancel := context.WithCancel(context.Background())
+	execCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := ctx.Exec.Execute(execCtx, manifest.ID, nil)
@@ -824,7 +824,7 @@ func TestExecutor_DeleteOne_LocalTombstoneFailureIsRetryable(t *testing.T) {
 	tc := NewTestContext(t)
 	require.NoError(tc.Store.Close(), "close store")
 
-	result, err := tc.Exec.deleteOne(context.Background(), 1, "msg-1", MethodDelete)
+	result, err := tc.Exec.deleteOne(t.Context(), 1, "msg-1", MethodDelete)
 
 	assert.Equal(resultFailed, result)
 	require.Error(err)
@@ -1226,7 +1226,7 @@ func TestExecutor_ExecuteBatch_ContextCancelled(t *testing.T) {
 	manifest := ctx.CreateManifest("cancel batch", msgIDs(2500))
 
 	// Cancel context immediately
-	execCtx, cancel := context.WithCancel(context.Background())
+	execCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := ctx.Exec.ExecuteBatch(execCtx, manifest.ID)
@@ -1339,7 +1339,7 @@ func (c *TestContext) SeedMessages(gmailIDs []string) {
 	c.t.Helper()
 	source, err := c.Store.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(c.t, err, "GetOrCreateSource")
-	convID, err := c.Store.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := c.Store.EnsureConversation(c.t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(c.t, err, "EnsureConversation")
 	for _, id := range gmailIDs {
 		_, err := c.Store.UpsertMessage(&store.Message{
@@ -1397,7 +1397,7 @@ func TestExecutor_ExecuteBatch_CancelDuringRetry(t *testing.T) {
 	}
 	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest")
 
-	execCtx, cancel := context.WithCancel(context.Background())
+	execCtx, cancel := context.WithCancel(t.Context())
 	callCount := 0
 	tc.MockAPI.BeforeDelete = func(id string) error {
 		callCount++
@@ -1429,7 +1429,7 @@ func TestExecutor_ExecuteBatch_CancelDuringFallback(t *testing.T) {
 	// Force batch delete to fail so it falls back to individual
 	tc.SimulateBatchDeleteError()
 
-	execCtx, cancel := context.WithCancel(context.Background())
+	execCtx, cancel := context.WithCancel(t.Context())
 	callCount := 0
 	tc.MockAPI.BeforeDelete = func(id string) error {
 		callCount++

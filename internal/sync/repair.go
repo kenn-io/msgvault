@@ -144,7 +144,7 @@ func (s *Syncer) cleanupRepairAttachments(
 	return s.store.WithExclusiveLock(ctx, func() error {
 		var cleanupErr error
 		for _, storagePath := range paths {
-			referenced, err := s.store.IsAttachmentPathReferenced(storagePath)
+			referenced, err := s.store.IsAttachmentPathReferenced(ctx, storagePath)
 			if err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("check attachment %q references: %w", storagePath, err))
 				continue

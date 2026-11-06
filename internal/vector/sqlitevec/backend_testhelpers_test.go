@@ -26,14 +26,14 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME,
 		embed_gen INTEGER
 	)`)
 	require.NoError(t, err, "create messages")
-	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(t, err, "insert message")
 	return db
 }
@@ -47,17 +47,17 @@ func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME,
 		embed_gen INTEGER
 	)`)
 	require.NoError(t, err, "create messages")
-	_, err = db.Exec(`INSERT INTO messages (id, deleted_from_source_at) VALUES (1, CURRENT_TIMESTAMP)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, deleted_from_source_at) VALUES (1, CURRENT_TIMESTAMP)`)
 	require.NoError(t, err, "insert deleted message")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := Open(ctx, Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension: 768,
@@ -117,7 +117,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 
 	rows := []struct {
@@ -130,9 +130,10 @@ CREATE TABLE message_recipients (
 		{3, "travel itinerary", "flight confirmation"},
 	}
 	for _, r := range rows {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES (?)`, r.id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (?)`, r.id)
 		require.NoError(t, err, "insert msg")
-		_, err = db.Exec(
+		_, err = db.ExecContext(
+			t.Context(),
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
 			r.id, r.subject, r.body)
 		require.NoError(t, err, "insert fts")
@@ -144,7 +145,7 @@ CREATE TABLE message_recipients (
 // with FTS content and the minimum schema FusedSearch needs.
 func newFusedBackendForTest(t *testing.T) (*Backend, context.Context) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	main, mainPath := openFusedMainDB(t)
 	vecPath := filepath.Join(t.TempDir(), "vectors.db")
 	b, err := Open(ctx, Options{
@@ -164,7 +165,7 @@ func newFusedBackendForTest(t *testing.T) (*Backend, context.Context) {
 func seedAndEmbed(t *testing.T, b *Backend, vecs map[int64][]float32) vector.GenerationID {
 	t.Helper()
 	require.NotEmpty(t, vecs, "seedAndEmbed: no vectors supplied")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ids := make([]int64, 0, len(vecs))
 	for id := range vecs {

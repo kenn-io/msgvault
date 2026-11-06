@@ -38,7 +38,7 @@ func TestNewMessage_Create(t *testing.T) {
 
 	// Verify it's in the database.
 	var count int
-	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), id).Scan(&count)
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), id).Scan(&count)
 	require.NoError(t, err, "query message")
 	assert.Equal(t, 1, count, "message count")
 }

@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"compress/zlib"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -34,28 +33,28 @@ func TestCapturePersonMergeSnapshotIncludesRootsBindingsAndReferencedRows(t *tes
 	require.NoError(err)
 	require.True(created)
 
-	_, err = st.AddPersonNameContext(context.Background(), survivor.ID, PersonNameInput{
+	_, err = st.AddPersonNameContext(t.Context(), survivor.ID, PersonNameInput{
 		NameKind: PersonNameFormatted, Formatted: new("Survivor Name"),
 		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
 	})
 	require.NoError(err)
-	_, err = st.AddPersonNameContext(context.Background(), absorbed.ID, PersonNameInput{
+	_, err = st.AddPersonNameContext(t.Context(), absorbed.ID, PersonNameInput{
 		NameKind: PersonNameFormatted, Formatted: new("Absorbed Name"),
 		Envelope: ValueEnvelopeInput{Source: ProvenanceVCardImport, SourceRef: new("card-2")},
 	})
 	require.NoError(err)
-	_, err = st.RetirePersonUIDAliasContext(context.Background(), "retired-before-merge", &survivor.ID, "test")
+	_, err = st.RetirePersonUIDAliasContext(t.Context(), "retired-before-merge", &survivor.ID, "test")
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "snapshot@example.com")
 	require.NoError(err)
-	candidate, _, err := st.UpsertIdentityMatchCandidateContext(context.Background(), IdentityMatchCandidateInput{
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
 		LeftKind: IdentityMatchPerson, LeftID: survivor.ID,
 		RightKind: IdentityMatchPerson, RightID: absorbed.ID,
 		Basis: IdentityMatchDisplayName, State: IdentityMatchStateCandidate,
 		Source: ProvenanceUser, SourceID: &source.ID,
 	})
 	require.NoError(err)
-	evidence, err := st.AddIdentityMatchEvidenceContext(context.Background(), candidate.ID, IdentityMatchEvidenceInput{
+	evidence, err := st.AddIdentityMatchEvidenceContext(t.Context(), candidate.ID, IdentityMatchEvidenceInput{
 		EvidenceKind: "shared_name", Source: ProvenanceUser, SourceID: &source.ID,
 	})
 	require.NoError(err)
@@ -65,10 +64,10 @@ func TestCapturePersonMergeSnapshotIncludesRootsBindingsAndReferencedRows(t *tes
 	require.NoError(err)
 
 	var snapshot personMergeSnapshot
-	require.NoError(st.withTxContext(context.Background(), func(tx *loggedTx) error {
+	require.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
 		var captureErr error
 		snapshot, captureErr = st.capturePersonMergeSnapshotTx(
-			context.Background(), tx, survivor.ID, absorbed.ID,
+			t.Context(), tx, survivor.ID, absorbed.ID,
 		)
 		return captureErr
 	}))

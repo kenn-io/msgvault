@@ -28,7 +28,7 @@ func readBacklogMarker(t *testing.T, st *store.Store, sourceID int64) backlogMar
 	key := "identity_discovery_backlog:" + strconv.FormatInt(sourceID, 10)
 	var value string
 	require.NoError(t,
-		st.DB().QueryRow(`SELECT value FROM archive_metadata WHERE key = '`+key+`'`).Scan(&value),
+		st.DB().QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key = '`+key+`'`).Scan(&value),
 		"read backlog metadata row")
 	var marker backlogMarker
 	require.NoError(t, json.Unmarshal([]byte(value), &marker), "decode backlog marker JSON")
@@ -42,8 +42,9 @@ func readBacklogMarker(t *testing.T, st *store.Store, sourceID int64) backlogMar
 func writeRawBacklogValue(t *testing.T, st *store.Store, sourceID int64, value string) {
 	t.Helper()
 	key := "identity_discovery_backlog:" + strconv.FormatInt(sourceID, 10)
-	_, err := st.DB().Exec(
-		`INSERT INTO archive_metadata (key, value) VALUES ('` + key + `', '` + value + `')`)
+	_, err := st.DB().ExecContext(
+		t.Context(),
+		`INSERT INTO archive_metadata (key, value) VALUES ('`+key+`', '`+value+`')`)
 	require.NoError(t, err, "seed raw backlog metadata row")
 }
 
@@ -120,7 +121,7 @@ func TestIdentityDiscoveryBacklogClearRemovesMarker(t *testing.T) {
 	var rows int
 	key := "identity_discovery_backlog:" + strconv.FormatInt(sourceID, 10)
 	require.NoError(
-		st.DB().QueryRow(`SELECT COUNT(*) FROM archive_metadata WHERE key = '`+key+`'`).Scan(&rows),
+		st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM archive_metadata WHERE key = '`+key+`'`).Scan(&rows),
 		"count backlog metadata rows")
 	assert.Equal(0, rows, "clear deletes the metadata row")
 }

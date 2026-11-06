@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -39,7 +38,7 @@ func TestDiscordExportReturnsBoundedStableHistory(t *testing.T) {
 	insertDiscordExportMessage(t, st, source.ID, firstConversation, "1003", start.Add(time.Hour), "dedup hidden", "alice", false, true)
 	insertDiscordExportMessage(t, st, other.ID, otherConversation, "1000", start, "other source", "mallory", false, false)
 
-	got, err := st.DiscordExport(context.Background(), source.ID, start, end)
+	got, err := st.DiscordExport(t.Context(), source.ID, start, end)
 	require.NoError(err)
 	require.Len(got, 2)
 	assert.Equal([]string{"100", "200"}, []string{got[0].ID, got[1].ID})
@@ -83,7 +82,7 @@ func TestDiscordExportPagesMetadataAndLoadsBodiesByPrimaryKey(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
 	got, err := st.DiscordExport(
-		context.Background(), source.ID, start, start.Add(time.Hour),
+		t.Context(), source.ID, start, start.Add(time.Hour),
 	)
 	requirements.NoError(err)
 	requirements.Len(got, 1)
@@ -117,7 +116,7 @@ func insertDiscordExportConversation(
 ) int64 {
 	t.Helper()
 	var conversationID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO conversations (
 			source_id, source_conversation_id, conversation_type, title
 		) VALUES (?, ?, 'channel', ?)
@@ -150,7 +149,7 @@ func insertDiscordExportMessage(
 		deletedAt = sentAt.Add(time.Hour)
 	}
 	var messageID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
 			sent_at, received_at, deleted_from_source_at, deleted_at
@@ -166,7 +165,7 @@ func insertDiscordExportMessage(
 			Valid:  true,
 		},
 	))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, body)
 	require.NoError(t, err)

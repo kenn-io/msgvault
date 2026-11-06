@@ -105,7 +105,7 @@ func TestRunMatrixSyncSkipsRetiredSourcesForAllAccounts(t *testing.T) {
 	st, _ := retiredMatrixSyncFixture(t)
 	dataDir := t.TempDir()
 	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
-	active, err := st.GetSourceByTypeAndIdentifier(sourceTypeMatrix, "@active:example.org")
+	active, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeMatrix, "@active:example.org")
 	require.NoError(err)
 	var syncRequests int
 	mux := http.NewServeMux()
@@ -160,7 +160,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(source.ID, "!room:example.org", "Room")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "!room:example.org", "Room")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{ConversationID: convID, SourceID: source.ID, SourceMessageID: "$kept", MessageType: sourceTypeMatrix})
 	require.NoError(err)

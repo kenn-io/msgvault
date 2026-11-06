@@ -21,7 +21,8 @@ import (
 // WHEN guard (OLD != NEW), not re-bumped.
 func setBaselineLM(t *testing.T, db *sql.DB, id int64) {
 	t.Helper()
-	_, err := db.Exec(
+	_, err := db.ExecContext(
+		t.Context(),
 		`UPDATE messages SET last_modified = '2000-01-01 00:00:00' WHERE id = ?`, id)
 	require.NoError(t, err, "baseline last_modified")
 }
@@ -36,7 +37,7 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 2)
 
 	// Pin both rows' last_modified to a fixed far-past token (= what the worker
@@ -49,10 +50,11 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 	// last_modified via trigger; CAS for id 1 will miss) and reset its
 	// embed_gen. Message 2 is untouched and stamps normally.
 	f.FakeClient.preReturn = func() {
-		_, err := f.MainDB.Exec(
+		_, err := f.MainDB.ExecContext(
+			t.Context(),
 			`UPDATE message_bodies SET body_text = 'corrected content' WHERE message_id = 1`)
 		require.NoError(err, "race: rewrite body of msg 1")
-		_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 1`)
+		_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 1`)
 		require.NoError(err, "race: reset embed_gen of msg 1")
 	}
 
@@ -95,9 +97,9 @@ func TestWorker_CASMissAccounting(t *testing.T) {
 	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)),
 		"exactly the raced row remains")
 	var saved int
-	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&saved))
+	require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&saved))
 	assert.Equal(1, saved, "a missed content stamp retains its response until the next pass invalidates it")
-	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:2'`).Scan(&saved))
+	require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = 'message:2'`).Scan(&saved))
 	assert.Zero(saved, "the completed sibling releases its response")
 
 	// (d) A backstop pass (scans from 0, ignoring the watermark) recovers the
@@ -137,16 +139,16 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 2)
 
 	// Make msg 1 EMPTY (no subject, blank body) so embedBatch reports it in
 	// `empty` and the singleton drain takes the len(eb.chunks)==0 skip branch.
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = NULL WHERE id = 1`)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = NULL WHERE id = 1`)
 	require.NoError(
 		err, "null subject of msg 1")
 
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '' WHERE message_id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '' WHERE message_id = 1`)
 	require.NoError(
 		err, "blank body of msg 1")
 
@@ -239,7 +241,7 @@ func TestWorker_Downshift_CASMissNotAllDrop(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 2)
 
 	// Pin msg 1's last_modified to a fixed far-past token so the mid-embed
@@ -263,7 +265,8 @@ func TestWorker_Downshift_CASMissNotAllDrop(t *testing.T) {
 		}
 		// msg 1: race a content edit in BETWEEN the worker's read (which
 		// captured last_modified) and its stamp, so the CAS stamp misses.
-		_, err := f.MainDB.Exec(
+		_, err := f.MainDB.ExecContext(
+			t.Context(),
 			`UPDATE message_bodies SET body_text = 'corrected content' WHERE message_id = 1`)
 		require.NoError(err, "race: rewrite body of msg 1")
 		v := make([]float32, f.FakeClient.dim)

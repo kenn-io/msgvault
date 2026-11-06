@@ -122,7 +122,7 @@ func TestVisualOperationPassScopeFailurePreventsExecution(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: config.NewDefaultConfig(), Store: testutil.NewSQLiteTestStore(t), Logger: testLogger(),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/multimodal/run", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/multimodal/run", nil)
 	response := httptest.NewRecorder()
 	srv.runVisualOperation(response, request,
 		func(context.Context, operations.PassScope) error {
@@ -270,7 +270,7 @@ func TestVisualInvocationIsFreshAfterProcessRestart(t *testing.T) {
 		handler := requestIDMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			scope, scopeErr = visualOperationPassScope(r.Context(), visualOperationResume, nil, time.Now().UTC())
 		}))
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/multimodal/run", nil))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/multimodal/run", nil))
 		require.NoError(scopeErr)
 		require.NoError(os.WriteFile(outputPath, []byte(scope.Key), 0o600))
 		return

@@ -2,7 +2,6 @@ package peoplesweep
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"os"
@@ -136,7 +135,7 @@ func TestCodexCleanupBoundsStderrDrainAfterStreamClose(t *testing.T) {
 	require.NoError(t, client.initialize())
 
 	started := time.Now()
-	err := finishCodexProcess(context.Background(), process, client, false)
+	err := finishCodexProcess(t.Context(), process, client, false)
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(started), 500*time.Millisecond)

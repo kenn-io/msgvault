@@ -78,8 +78,8 @@ func configuredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.D
 	}, nil
 }
 
-func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec, state *invocation, purpose string) (store.DocumentVectorConsentSpec, error) {
-	state = invocationState(context.Background(), state)
+func configuredDocumentVectorConsentSpec(ctx context.Context, spec store.DocumentVectorGenerationSpec, state *invocation, purpose string) (store.DocumentVectorConsentSpec, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return store.DocumentVectorConsentSpec{}, errors.New("configuration is unavailable")
 	}
@@ -156,7 +156,7 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 				if consentPurpose == "" {
 					return errors.New("document vector consent purpose must be documents or queries")
 				}
-				consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), consentPurpose)
+				consentSpec, err := configuredDocumentVectorConsentSpec(command.Context(), spec, invocationFromCommand(command), consentPurpose)
 				if err != nil {
 					return err
 				}
@@ -286,7 +286,7 @@ func requireDocumentVectorConsent(ctx context.Context, st *store.Store, spec sto
 }
 
 func hasDocumentVectorConsent(ctx context.Context, st *store.Store, spec store.DocumentVectorGenerationSpec) (bool, error) {
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(ctx), "document_embedding")
+	consentSpec, err := configuredDocumentVectorConsentSpec(ctx, spec, invocationFromContext(ctx), "document_embedding")
 	if err != nil {
 		return false, err
 	}
@@ -402,11 +402,11 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				documentConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), "document_embedding")
+				documentConsentSpec, err := configuredDocumentVectorConsentSpec(command.Context(), spec, invocationFromCommand(command), "document_embedding")
 				if err != nil {
 					return err
 				}
-				queryConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), "query_embedding")
+				queryConsentSpec, err := configuredDocumentVectorConsentSpec(command.Context(), spec, invocationFromCommand(command), "query_embedding")
 				if err != nil {
 					return err
 				}

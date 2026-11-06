@@ -1910,7 +1910,7 @@ enabled = %t
 				loaded.Attachments.Documents.Index.Embeddings.Enabled = true
 				_, err = fixture.store.EnsureDocumentExtractionProfile(t.Context(), profile)
 				require.NoError(err)
-				_, err = fixture.store.DB().Exec(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`, profile.ID)
+				_, err = fixture.store.DB().ExecContext(t.Context(), `UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`, profile.ID)
 				require.NoError(err)
 				ctx := testInvocationContext(t.Context(), loaded, invocationOptions{})
 				spec, err := desiredDocumentVectorSpec(ctx, fixture.store)

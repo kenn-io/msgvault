@@ -34,7 +34,7 @@ func TestFull_LimitDoesNotAdvanceCursor(t *testing.T) {
 	m.FullSyncToken["primary"] = "TOKEN1"
 
 	s, st := newSyncer(t, m, Options{Limit: 2})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 
 	src := primarySource(t, st)
@@ -43,7 +43,7 @@ func TestFull_LimitDoesNotAdvanceCursor(t *testing.T) {
 
 	// A later unlimited full sync re-traverses everything and DOES advance.
 	s2 := New(m, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
-	_, err = s2.Full(context.Background())
+	_, err = s2.Full(t.Context())
 	require.NoError(err)
 	src = primarySource(t, st)
 	assert.Equal(5, countMessages(t, st, src.ID), "unlimited run ingests all events")
@@ -59,7 +59,7 @@ func TestFull_CompletionFailureDoesNotPublishCursor(t *testing.T) {
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
 	m.FullSyncToken["primary"] = "T1"
 	s, st := newSyncer(t, m, Options{})
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_calendar_sync_completion
 		BEFORE UPDATE OF status ON sync_runs
 		FOR EACH ROW WHEN NEW.status = 'completed'
@@ -87,10 +87,10 @@ func TestIncremental_CompletionFailureDoesNotPublishCursor(t *testing.T) {
 	s, st := newSyncer(t, m, Options{})
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	requirements.NoError(err)
-	requirements.NoError(st.UpdateSourceSyncConfig(src.ID,
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"account_email":"alice@example.com","calendar_id":"primary"}`))
 	requirements.NoError(st.UpdateSourceSyncCursor(src.ID, "T1"))
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_calendar_sync_completion
 		BEFORE UPDATE OF status ON sync_runs
 		FOR EACH ROW WHEN NEW.status = 'completed'
@@ -123,7 +123,7 @@ func TestReingest_ClearsStaleRecipients(t *testing.T) {
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	row, ok := getMsg(t, st, src.ID, "e1")
@@ -139,7 +139,7 @@ func TestReingest_ClearsStaleRecipients(t *testing.T) {
 		Start:   gcal.EventDateTime{DateTime: time.Date(2024, 5, 1, 16, 0, 0, 0, time.UTC)},
 		End:     gcal.EventDateTime{DateTime: time.Date(2024, 5, 1, 16, 30, 0, 0, time.UTC)},
 	}}}
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 
 	row2, ok := getMsg(t, st, src.ID, "e1")
@@ -168,7 +168,7 @@ func TestFull_DuplicateAttendeesDoNotCollide(t *testing.T) {
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err, "an event with duplicate attendees must not abort the sync")
 
 	src := primarySource(t, st)
@@ -205,7 +205,7 @@ func TestFull_NormalizesCalendarParticipantEmails(t *testing.T) {
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	require.NoError(err)
 
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 
 	src := primarySource(t, st)
@@ -220,7 +220,8 @@ func TestFull_NormalizesCalendarParticipantEmails(t *testing.T) {
 		"attendee must reuse lower-case email participant")
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants WHERE LOWER(TRIM(email_address)) IN ('alice@example.com', 'bob@example.com')`,
 	).Scan(&participantCount))
 	assert.Equal(2, participantCount, "calendar sync must not create casing-only duplicate participants")
@@ -230,7 +231,8 @@ func TestFull_NormalizesCalendarParticipantEmails(t *testing.T) {
 
 	if st.FTS5Available() && !st.IsPostgreSQL() {
 		var fromAddr, toAddr string
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(
+			t.Context(),
 			`SELECT from_addr, to_addr FROM messages_fts WHERE message_id = ?`, row.id).Scan(&fromAddr, &toAddr))
 		assert.Equal("alice@example.com", fromAddr)
 		assert.Equal("bob@example.com", toAddr)
@@ -255,7 +257,7 @@ func TestFull_BoundedSyncDoesNotAdvanceCursor(t *testing.T) {
 	m.FullSyncToken["primary"] = "TOKEN1"
 
 	s, st := newSyncer(t, m, Options{TimeMin: "2024-01-01T00:00:00Z"})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 
 	src := primarySource(t, st)
@@ -278,12 +280,12 @@ func TestIncremental_AppliesAccessRoleSelection(t *testing.T) {
 	m.FullSyncToken["holidays"] = "H1"
 
 	s, st := newSyncer(t, m, Options{AllCalendars: true})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 
-	primary, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	primary, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 	require.NoError(err)
-	holidays, err := st.GetSourceByIdentifier(testAccount + "/holidays")
+	holidays, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 	require.NoError(err)
 	require.Equal("P1", primary.SyncCursor.String)
 	require.Equal("H1", holidays.SyncCursor.String)
@@ -294,14 +296,14 @@ func TestIncremental_AppliesAccessRoleSelection(t *testing.T) {
 	m.IncNextToken["H1"] = "H2"
 
 	defaultSelection := New(m, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
-	res, err := defaultSelection.Incremental(context.Background())
+	res, err := defaultSelection.Incremental(t.Context())
 
 	require.NoError(err)
 	assert.Equal(1, res.CalendarsSynced, "default incremental sync should keep owner+writer only")
 	assert.Equal(2, countMessages(t, st, primary.ID), "owner calendar should receive its delta")
 	assert.Equal(1, countMessages(t, st, holidays.ID), "reader calendar should be skipped by default")
 
-	holidays, err = st.GetSourceByIdentifier(testAccount + "/holidays")
+	holidays, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/holidays")
 	require.NoError(err)
 	assert.Equal("H1", holidays.SyncCursor.String, "skipped reader calendar cursor must not advance")
 }
@@ -317,16 +319,16 @@ func TestIncremental_MissingAccessRoleOnRegisteredSourceStillSyncs(t *testing.T)
 	s, st := newSyncer(t, m, Options{AccountEmail: testAccount})
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/legacy")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"account_email":"alice@example.com","calendar_id":"legacy"}`))
 	require.NoError(st.UpdateSourceSyncCursor(src.ID, "T1"))
 
-	res, err := s.Incremental(context.Background())
+	res, err := s.Incremental(t.Context())
 
 	require.NoError(err)
 	assert.Equal(1, res.CalendarsSynced, "legacy registered source should not be filtered by missing access_role")
 	assert.Equal(1, res.EventsAdded)
-	src, err = st.GetSourceByIdentifier(testAccount + "/legacy")
+	src, err = st.GetSourceByIdentifier(t.Context(), testAccount+"/legacy")
 	require.NoError(err)
 	assert.Equal("T2", src.SyncCursor.String)
 	assert.Equal(1, countMessages(t, st, src.ID))
@@ -345,10 +347,10 @@ func TestFull_FTSFailureDoesNotAbortCalendarSync(t *testing.T) {
 	if !st.FTS5Available() || st.IsPostgreSQL() {
 		t.Skip("SQLite FTS5-specific regression")
 	}
-	_, err := st.DB().Exec("DROP TABLE messages_fts")
+	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE messages_fts")
 	require.NoError(err, "break FTS table")
 
-	res, err := s.Full(context.Background())
+	res, err := s.Full(t.Context())
 
 	require.NoError(err, "FTS indexing failure must not abort event persistence")
 	assert.Equal(1, res.EventsAdded)
@@ -381,7 +383,7 @@ func TestFull_BoundedInterruptedRunDoesNotWriteResumePageToken(t *testing.T) {
 		TimeMin:      "2025-01-01T00:00:00Z",
 	}).WithLogger(quietLogger())
 
-	_, err := bounded.Full(context.Background())
+	_, err := bounded.Full(t.Context())
 	require.Error(err)
 
 	src := primarySource(t, st)
@@ -392,7 +394,7 @@ func TestFull_BoundedInterruptedRunDoesNotWriteResumePageToken(t *testing.T) {
 
 	recorder := &listEventsRecorder{MockAPI: m}
 	unbounded := New(recorder, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
-	_, err = unbounded.Full(context.Background())
+	_, err = unbounded.Full(t.Context())
 	require.NoError(err)
 	require.NotEmpty(recorder.params)
 	assert.Empty(recorder.params[0].PageToken, "later unbounded sync must restart from the first page")
@@ -413,7 +415,7 @@ func TestFull_LegacyResumeCheckpointIgnored(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`))
 	oldSyncID, err := st.StartSync(src.ID, "full")
 	require.NoError(err)
 	require.NoError(st.UpdateSyncCheckpoint(oldSyncID, &store.Checkpoint{
@@ -423,7 +425,7 @@ func TestFull_LegacyResumeCheckpointIgnored(t *testing.T) {
 
 	recorder := &listEventsRecorder{MockAPI: m}
 	s := New(recorder, st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 
 	require.NotEmpty(recorder.params)
@@ -467,7 +469,7 @@ func TestFull_RecurringConversationTitleFromMasterNotException(t *testing.T) {
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 
@@ -496,20 +498,20 @@ func TestIncremental_PersistErrorDoesNotAdvanceCursor(t *testing.T) {
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	src := primarySource(t, st)
 	require.Equal("T1", src.SyncCursor.String)
 
 	// Force a persist failure during the incremental: drop a table the ingest
 	// path writes to, so the new event's UpsertMessageRawWithFormat errors.
-	_, err = st.DB().Exec("DROP TABLE message_raw")
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
 	require.NoError(err)
 
 	m.IncEvents["T1"] = [][]gcal.Event{{timedEvent("e2", "Second")}}
 	m.IncNextToken["T1"] = "T2"
 
-	_, err = s.Incremental(context.Background())
+	_, err = s.Incremental(t.Context())
 	require.Error(err, "a per-item persist failure must surface, not be swallowed")
 
 	src2 := primarySource(t, st)
@@ -534,7 +536,7 @@ func TestFull_ResumeFailedRunAndSeedsCounters(t *testing.T) {
 	// processed, checkpointed to resume from the first page ("").
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`))
 	oldSyncID, err := st.StartSync(src.ID, "full")
 	require.NoError(err)
 	require.NoError(st.UpdateSyncCheckpoint(oldSyncID, &store.Checkpoint{
@@ -542,18 +544,19 @@ func TestFull_ResumeFailedRunAndSeedsCounters(t *testing.T) {
 	}))
 	require.NoError(st.FailSync(oldSyncID, "worker stopped"))
 
-	_, err = s.Full(context.Background())
+	_, err = s.Full(t.Context())
 	require.NoError(err)
 
 	// The old run remains failed.
 	var oldStatus string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT status FROM sync_runs WHERE id = ?"), oldSyncID).Scan(&oldStatus))
 	assert.Equal(store.SyncStatusFailed, oldStatus)
 
 	// The completed run's counter includes the 2 seeded + 1 newly ingested.
 	var processed int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		"SELECT messages_processed FROM sync_runs WHERE source_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1"),
 		src.ID).Scan(&processed))
 	assert.Equal(int64(3), processed, "resumed run seeds prior counters (2) + new (1)")
@@ -571,6 +574,7 @@ func TestFull_ResumesCheckpointAfterWorkerExit(t *testing.T) {
 	src, err := first.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	require.NoError(err)
 	require.NoError(first.UpdateSourceSyncConfig(
+		t.Context(),
 		src.ID, `{"account_email":"`+testAccount+`","calendar_id":"primary"}`,
 	))
 	runID, err := first.StartSync(src.ID, "full")
@@ -606,7 +610,7 @@ func TestIncremental_ExpiredCursorCannotEraseNewerGeneration(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
 	requirements.NoError(err)
-	requirements.NoError(st.UpdateSourceSyncConfig(src.ID,
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"account_email":"alice@example.com","calendar_id":"primary","access_role":"owner"}`))
 	requirements.NoError(st.UpdateSourceSyncCursor(src.ID, "expired-token"))
 	api := &supersedingExpiredTokenAPI{
@@ -636,7 +640,7 @@ func (a *supersedingExpiredTokenAPI) ListEvents(
 ) (*gcal.EventsPage, error) {
 	if params.SyncToken != "" && !a.superseded {
 		a.superseded = true
-		runID, err := a.store.StartSync(a.sourceID, "newer-calendar-sync")
+		runID, err := a.store.StartSyncContext(ctx, a.sourceID, "newer-calendar-sync")
 		if err != nil {
 			return nil, err
 		}

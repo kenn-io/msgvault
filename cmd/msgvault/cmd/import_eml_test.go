@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"io"
 	"os"
@@ -19,7 +18,7 @@ import (
 func TestImportEMLCommandRequiresIdentifier(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	cmd := newImportEMLCommand()
-	cmd.SetContext(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
+	cmd.SetContext(testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{}))
 	cmd.SetArgs([]string{t.TempDir()})
 
 	err := cmd.Execute()
@@ -46,7 +45,7 @@ func TestImportEMLCommandRefreshesCacheAfterPostMigrationFailure(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
 	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_legacy_identity
 		BEFORE INSERT ON account_identities
 		WHEN NEW.source_signal = 'config_migration'
@@ -94,7 +93,7 @@ func TestRunEMLPostImportMigrationsConfirmsIdentityAfterHardErrors(t *testing.T)
 	src, err := st.GetOrCreateSource("eml", "archive@example.com")
 	require.NoError(err, "create source")
 
-	err = runEMLPostImportMigrations(io.Discard, st, &importer.EMLImportSummary{
+	err = runEMLPostImportMigrations(t.Context(), io.Discard, st, &importer.EMLImportSummary{
 		SourceID:   src.ID,
 		HardErrors: true,
 	}, importEMLFlags{
@@ -121,7 +120,7 @@ func TestRunEMLPostImportMigrationsSkipsDefaultIdentityForNonEmailSource(t *test
 	src, err := st.GetOrCreateSource("whatsapp", "+15550001111")
 	require.NoError(err, "create source")
 
-	err = runEMLPostImportMigrations(io.Discard, st, &importer.EMLImportSummary{
+	err = runEMLPostImportMigrations(t.Context(), io.Discard, st, &importer.EMLImportSummary{
 		SourceID: src.ID,
 	}, importEMLFlags{
 		identifier: "+15550001111",
