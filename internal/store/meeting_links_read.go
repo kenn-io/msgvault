@@ -165,16 +165,11 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 		return "", nil, err
 	}
 	for _, copy := range copies {
-		clauses = append(clauses, `(d.target_message_id=? AND (d.occurrence_key=? OR d.occurrence_key=''))`)
-		args = append(args, copy.MessageID, o.Identity.OccurrenceKey)
-		// Saved decisions keep the historical target ID after a source merge.
-		// Resolve its source-local provider alias just as forward reads do.
-		clauses = append(clauses, `(EXISTS (SELECT 1 FROM calendar_events h
- JOIN messages hm ON hm.id=h.message_id
- JOIN source_merge_archive_only_messages ha ON ha.message_id=h.message_id
- WHERE h.message_id=d.target_message_id AND h.provider_event_id=? AND hm.source_id=?)
+		clauses = append(clauses, `(EXISTS (
+ SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN calendar_events f ON f.message_id = d.target_message_id JOIN messages fm ON fm.id = f.message_id
+ WHERE e.message_id=? AND fm.source_id = m.source_id AND COALESCE(NULLIF(f.series_provider_id, ''), f.provider_event_id) = COALESCE(NULLIF(e.series_provider_id, ''), e.provider_event_id))
  AND (d.occurrence_key=? OR d.occurrence_key=''))`)
-		args = append(args, copy.Event.ProviderEventID, copy.SourceID, o.Identity.OccurrenceKey)
+		args = append(args, copy.MessageID, o.Identity.OccurrenceKey)
 		if provider := copy.Event.ProviderEventID; provider != "" {
 			keyClauses = append(keyClauses, `(k.kind='`+meetingGoogleEventIDKey+`' AND k.value IN (?,?))`)
 			instance := provider
