@@ -24,6 +24,21 @@ func TestMeetingChosenLinkRejectsBroadAutomaticEvidence(t *testing.T) {
 	assert.Zero(decisions, "a choice the reader cannot return must not be committed")
 }
 
+func TestMeetingChosenLinkRejectsBroadTargetCopies(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, chosen := calendarFixture(t, st, "copy-0", singleLinkRaw("copy-0", "crowded@example.org"))
+	for i := range 200 {
+		id := fmt.Sprintf("copy-%d", i+1)
+		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
+	}
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`)
+	require.ErrorIs(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: chosen}), ErrQueryTooBroad)
+	var decisions int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&decisions))
+	assert.Zero(decisions, "a choice the reader cannot return must not be committed")
+}
+
 func TestMeetingSuggestOverBudgetKeepsReadableCandidates(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

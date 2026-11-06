@@ -70,6 +70,11 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		if err != nil {
 			return fmt.Errorf("resolve meeting decision target: %w", err)
 		}
+		if decision == "link" {
+			if _, err := s.meetingOccurrenceMembers(ctx, r, target, &budget); err != nil {
+				return err
+			}
+		}
 		for _, d := range decisions {
 			previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
 			identity := previous.Identity
