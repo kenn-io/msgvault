@@ -448,18 +448,14 @@ func TestSetupDependentReasonsNameSearchByMeaning(t *testing.T) {
 	require.NoError(err, output)
 	var result setupProvidersOutput
 	require.NoError(json.Unmarshal([]byte(output), &result))
-	for _, name := range []string{lanePersonSearch} {
-		index := slices.IndexFunc(result.Plan, func(lane setupLanePlan) bool { return lane.Lane == name })
-		require.NotEqual(-1, index, "provider plan: %s", name)
-		assert.Contains(result.Plan[index].Reason, "search by meaning", "provider plan: %s", name)
-	}
+	index := slices.IndexFunc(result.Plan, func(lane setupLanePlan) bool { return lane.Lane == lanePersonSearch })
+	require.NotEqual(-1, index, "provider plan: %s", lanePersonSearch)
+	assert.Contains(result.Plan[index].Reason, "search by meaning", "provider plan: %s", lanePersonSearch)
 	output, err = fixture.run(t, "status", "--json")
 	require.NoError(err, output)
 	var report laneReport
 	require.NoError(json.Unmarshal([]byte(output), &report))
-	for _, name := range []string{lanePersonSearch} {
-		assert.Contains(findLane(t, report, name).Reason, "search by meaning", "status: %s", name)
-	}
+	assert.Contains(findLane(t, report, lanePersonSearch).Reason, "search by meaning", "status: %s", lanePersonSearch)
 }
 
 func TestSetupProvidersPreservesPosturesUnlessFlagsOverride(t *testing.T) {

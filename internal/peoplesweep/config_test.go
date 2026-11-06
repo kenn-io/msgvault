@@ -912,6 +912,8 @@ func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
 			cfg.ApplyDefaults()
 			if documentOnly {
 				assert.Contains(warnings.String(), "people sweep disabled because allowed_sources contains only retired sources")
+			} else {
+				assert.NotContains(warnings.String(), "people sweep disabled because allowed_sources contains only retired sources")
 			}
 			assert.Contains(warnings.String(), "document_text was removed; drop it from allowed_sources")
 			original.ApplyDefaults()

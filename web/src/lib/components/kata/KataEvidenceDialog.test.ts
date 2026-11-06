@@ -75,10 +75,11 @@ describe('KataEvidenceDialog', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  it('narrows a message citation to the selected text, counting runes', async () => {
-    const text = 'Café 🙂 send the budget by Friday';
+  it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {
+    const passage = 'Café 🙂 send the budget by Friday';
+    const text = earlier ? 'x'.repeat(500) + passage + 'y'.repeat(500) : passage;
     const quote = 'send the budget';
-    const initial = selector;
+    const initial = { ...selector, start_rune: earlier ? 1000 : 0 };
     type Wanted = { kind: string; start_rune: number; end_rune?: number; max_chars?: number };
     const requests: Wanted[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -94,8 +95,15 @@ describe('KataEvidenceDialog', () => {
       return Response.json({ evidence: [{ id: `${wanted.start_rune}`.padStart(64, '0'), passage: `${wanted.start_rune}:${end}`.padStart(64, 'p'), reference, excerpt, display: { filename: 'transcript.txt' }, content_trust: 'untrusted', ...(end < runes.length ? { next_rune: end } : {}) }] });
     });
     render(KataEvidenceDialog, { client: createAPIClient(fetchFn), selector: initial, defaultTitle: 'Follow up' });
-    const node = (await screen.findByText(text)).firstChild as Text;
-    const from = text.indexOf(quote);
+    await screen.findByText([...text].slice(initial.start_rune).join(''));
+    if (earlier) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Earlier passage' }));
+      await screen.findByText(passage + 'y'.repeat(500));
+      expect(requests.at(-1)).toEqual({ ...initial, start_rune: 500 });
+    }
+    const preview = earlier ? passage + 'y'.repeat(500) : passage;
+    const node = (await screen.findByText(preview)).firstChild as Text;
+    const from = preview.indexOf(quote);
     const selection = document.createRange();
     selection.setStart(node, from);
     selection.setEnd(node, from + quote.length);
@@ -105,9 +113,9 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
     expect(await screen.findByText(quote)).toBeDefined();
     const { max_chars: _window, ...exact } = initial;
-    const start = [...text.slice(0, from)].length;
+    const start = (earlier ? 500 : 0) + [...preview.slice(0, from)].length;
     expect(requests.at(-1)).toEqual({ ...exact, start_rune: start, end_rune: start + [...quote].length });
-    // The selection ends the text, so a narrowed citation leaves nothing later to page to.
+    // The preview reaches the end of the text, so narrowing keeps later paging disabled.
     expect(screen.getByRole('button', { name: 'Later passage' })).toHaveProperty('disabled', true);
   });
 

@@ -89,10 +89,10 @@ func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
 				lookupKeys = append(lookupKeys, keys[len(keys)-1])
 			}
 			assert.Contains(lookupKeys, savedKeys[len(savedKeys)-1])
-			_, err = f.Store.KataCitationSource(t.Context(), other, 4201)
-			require.ErrorIs(err, kataevidence.ErrUnavailable)
 		})
 	}
+	_, err = f.Store.KataCitationSource(t.Context(), other, 4201)
+	requirements.ErrorIs(err, kataevidence.ErrUnavailable)
 	_, err = f.Store.ReadKataEvidenceSource(t.Context(), citation)
 	requirements.ErrorIs(err, kataevidence.ErrUnavailable)
 }
