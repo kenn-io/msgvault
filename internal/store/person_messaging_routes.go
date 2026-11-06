@@ -307,6 +307,7 @@ type archivedMessagingRoute struct {
 // They identify it independently of labels or participant identifiers, and
 // still need roster/self proof to verify.
 var nativeRouteNetworks = map[string]string{
+	lineSourceType:      lineSourceType,
 	"telegram":          "telegram",
 	"whatsapp":          "whatsapp",
 	sourceTypeSlack:     sourceTypeSlack,
