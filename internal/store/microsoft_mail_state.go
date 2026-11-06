@@ -28,6 +28,17 @@ func microsoftStateLabelBase(providerID string) string {
 	}
 }
 
+func microsoftMailObservedState(state MicrosoftMailState) map[string]bool {
+	observed := make(map[string]bool, 2)
+	if state.IsRead != nil {
+		observed[microsoftStatePrefix+"unread"] = !*state.IsRead
+	}
+	if state.FlagStatus != nil {
+		observed[microsoftStatePrefix+"flagged"] = *state.FlagStatus == "flagged"
+	}
+	return observed
+}
+
 // ReconcileMicrosoftMailStateContext independently reconciles the native folder,
 // categories and optional state in one attribution transaction.
 func (s *Store) ReconcileMicrosoftMailStateContext(ctx context.Context, messageID int64, folderID *int64, categories *[]string, state MicrosoftMailState) (bool, error) {
@@ -46,53 +57,19 @@ func (s *Store) ReconcileMicrosoftMailStateContext(ctx context.Context, messageI
 			return fmt.Errorf("resolve Microsoft message state: %w", err)
 		}
 		var err error
-		folderChanged, err = s.reconcileMicrosoftMailLabelsTx(ctx, tx, sourceID, messageID, folderID, categories)
-		if err != nil {
-			return err
-		}
-		return s.reconcileMicrosoftMailStateTx(ctx, tx, sourceID, messageID, state)
+		folderChanged, err = s.reconcileMicrosoftMailLabelsAndStateTx(ctx, tx, sourceID, messageID, folderID, categories, state)
+		return err
 	})
 	return folderChanged, err
 }
 
-func (s *Store) reconcileMicrosoftMailStateTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, state MicrosoftMailState) error {
-	if state.IsRead == nil && state.FlagStatus == nil {
-		return nil
+func (s *Store) reconcileMicrosoftMailStateTx(ctx context.Context, tx *loggedTx, sourceID int64, state MicrosoftMailState) ([]int64, bool, error) {
+	observed := microsoftMailObservedState(state)
+	if len(observed) == 0 {
+		return nil, false, nil
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
-	observed := map[string]bool{}
-	if state.IsRead != nil {
-		observed[microsoftStatePrefix+"unread"] = !*state.IsRead
-	}
-	if state.FlagStatus != nil {
-		observed[microsoftStatePrefix+"flagged"] = *state.FlagStatus == "flagged"
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.source_id,l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`, messageID)
-	if err != nil {
-		return fmt.Errorf("read Microsoft state labels: %w", err)
-	}
-	var desired []int64
-	for rows.Next() {
-		var id int64
-		var source sql.NullInt64
-		var provider sql.NullString
-		if err := rows.Scan(&id, &source, &provider); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		_, replace := observed[provider.String]
-		if replace && source.Valid && source.Int64 == sourceID {
-			continue
-		}
-		desired = append(desired, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
+	var stateLabels []int64
 	catalogChanged := false
 	for providerID, active := range observed {
 		if !active {
@@ -103,11 +80,11 @@ func (s *Store) reconcileMicrosoftMailStateTx(ctx context.Context, tx *loggedTx,
 		var kind sql.NullString
 		err := q.QueryRow(`SELECT id,name,label_type FROM labels WHERE source_id=? AND source_label_id=?`, sourceID, providerID).Scan(&id, &prior, &kind)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+			return nil, false, err
 		}
 		name, nameErr := microsoftMailLabelName(q, sourceID, id, microsoftStateLabelBase(providerID), nil)
 		if nameErr != nil {
-			return nameErr
+			return nil, false, nameErr
 		}
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -118,16 +95,9 @@ func (s *Store) reconcileMicrosoftMailStateTx(ctx context.Context, tx *loggedTx,
 			catalogChanged = true
 		}
 		if err != nil {
-			return fmt.Errorf("save Microsoft state label: %w", err)
+			return nil, false, fmt.Errorf("save Microsoft state label: %w", err)
 		}
-		desired = append(desired, id)
+		stateLabels = append(stateLabels, id)
 	}
-	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, desired, true)
-	if err != nil {
-		return err
-	}
-	if changed || catalogChanged {
-		return s.bumpDerivedDataRevision(tx, true)
-	}
-	return nil
+	return stateLabels, catalogChanged, nil
 }

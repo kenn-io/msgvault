@@ -92,6 +92,10 @@ func (s *Store) ReconcileMicrosoftMailLabelsContext(ctx context.Context, message
 }
 
 func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, folderID *int64, categories *[]string) (bool, error) {
+	return s.reconcileMicrosoftMailLabelsAndStateTx(ctx, tx, sourceID, messageID, folderID, categories, MicrosoftMailState{})
+}
+
+func (s *Store) reconcileMicrosoftMailLabelsAndStateTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, folderID *int64, categories *[]string, state MicrosoftMailState) (bool, error) {
 	q := boundQuerier{ctx: ctx, q: tx}
 	if folderID != nil {
 		var source int64
@@ -110,6 +114,7 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 	}
 	desired := make([]int64, 0)
 	var folders []int64
+	observedState := microsoftMailObservedState(state)
 	for rows.Next() {
 		var id int64
 		var source sql.NullInt64
@@ -117,6 +122,11 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		if err := rows.Scan(&id, &source, &providerID); err != nil {
 			_ = rows.Close()
 			return false, err
+		}
+		if source.Valid && source.Int64 == sourceID {
+			if _, replace := observedState[providerID.String]; replace {
+				continue
+			}
 		}
 		category := source.Valid && source.Int64 == sourceID && strings.HasPrefix(providerID.String, microsoftCategoryPrefix)
 		nativeFolder := source.Valid && source.Int64 == sourceID && providerID.String != "" && !category && !strings.HasPrefix(providerID.String, microsoftStatePrefix)
@@ -198,11 +208,20 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			}
 		}
 	}
+	stateLabels, stateCatalogChanged, err := s.reconcileMicrosoftMailStateTx(ctx, tx, sourceID, state)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range stateLabels {
+		if !slices.Contains(desired, id) {
+			desired = append(desired, id)
+		}
+	}
 	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, desired, true)
 	if err != nil {
 		return false, err
 	}
-	if changed || catalogChanged {
+	if changed || catalogChanged || stateCatalogChanged {
 		if err := s.bumpDerivedDataRevisionContext(ctx, tx, true); err != nil {
 			return false, err
 		}
