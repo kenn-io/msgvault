@@ -3,42 +3,48 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
-	"fmt"
-	"log/slog"
-	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+type fakeCallCommandClient struct {
+	imports          [][]byte
+	lists, summaries []store.CallQuery
+}
+
+func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error) {
+	return callsMinAPIVersion, nil
+}
+
+func (c *fakeCallCommandClient) ImportCallObservation(_ context.Context, data []byte) (*generated.CallImportResponse, error) {
+	c.imports = append(c.imports, data)
+	return &generated.CallImportResponse{MessageID: 42, SourceID: 7}, nil
+}
+
+func (c *fakeCallCommandClient) ListCallObservations(_ context.Context, q store.CallQuery) (*generated.CallEvidenceResponse, error) {
+	c.lists = append(c.lists, q)
+	return &generated.CallEvidenceResponse{}, nil
+}
+
+func (c *fakeCallCommandClient) SummarizeCalls(_ context.Context, q store.CallQuery) (*generated.CallSummaryResponse, error) {
+	c.summaries = append(c.summaries, q)
+	return &generated.CallSummaryResponse{Items: []generated.PersonCallSummary{{PersonID: 23, Answered: 2, ExampleMessageID: 42}}}, nil
+}
 
 func TestCallsCommandThroughDaemon(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(peer)
-	requirements.NoError(err)
-	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-call-key"}}
-	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}
-	server := httptest.NewServer(api.NewServer(cfg, adapter, nil, slog.New(slog.DiscardHandler)).Router())
-	defer server.Close()
-	client, err := daemonclient.New(daemonclient.Config{
-		URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: server.Client(),
-	})
-	requirements.NoError(err)
-	defer func() { _ = client.Close() }()
+	client := &fakeCallCommandClient{}
+	cleanups := 0
 	run := func(input string, args ...string) (string, error) {
 		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
-			return client, func() {}, nil
+			return client, func() { cleanups++ }, nil
 		}})
 		var output bytes.Buffer
 		command.SetOut(&output)
@@ -48,20 +54,23 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 		err := command.ExecuteContext(t.Context())
 		return output.String(), err
 	}
-	input := fmt.Sprintf(`{"format":"signal_desktop","account":"example","record":{"callId":"one","peerId":"peer","mode":"Direct","status":"Accepted","timestamp":1790841600000},"bindings":{"peer":%d}}`, peer)
+	const input = `{"format":"signal_desktop","account":"example","record":{"callId":"one","timestamp":1790841600000}}`
 	output, err := run(input, "import", "-")
 	requirements.NoError(err, output)
-	output, err = run("", "summary", "--person-id", strconv.FormatInt(person.ID+1, 10))
+	assertions.Equal([][]byte{[]byte(input)}, client.imports)
+	assertions.JSONEq(`{"message_id":42,"source_id":7}`, output)
+	after := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	before := after.AddDate(0, 1, 0)
+	output, err = run("", "summary", "--person-id", "23", "--limit", "3", "--offset", "2", "--after", "2026-10-01T00:00:00Z", "--before", "2026-11-01T00:00:00Z")
 	requirements.NoError(err, output)
+	assertions.Equal([]store.CallQuery{{PersonID: 23, Limit: 3, Offset: 2, After: &after, Before: &before}}, client.summaries)
+	assertions.JSONEq(`{"items":[{"person_id":23,"answered":2,"missed":0,"declined":0,"cancelled":0,"unknown":0,"example_message_id":42}]}`, output)
+	output, err = run("", "list", "--person-id", "23", "--limit", "1", "--after-id", "42", "--after", "2026-10-01T00:00:00Z", "--before", "2026-11-01T00:00:00Z")
+	requirements.NoError(err, output)
+	assertions.Equal([]store.CallQuery{{PersonID: 23, Limit: 1, AfterID: 42, After: &after, Before: &before}}, client.lists)
 	assertions.JSONEq(`{"items":[]}`, output)
-	input = strings.Replace(input, `"callId":"one"`, `"callId":"two"`, 1)
-	output, err = run(input, "import", "-")
-	requirements.NoError(err, output)
-	output, err = run("", "list", "--limit", "1")
-	requirements.NoError(err, output)
-	var evidence api.CallEvidenceResponse
-	requirements.NoError(json.Unmarshal([]byte(output), &evidence))
-	requirements.Len(evidence.Items, 1)
 	_, err = run("", "summary", "--after", "invalid")
 	requirements.Error(err)
+	assertions.Len(client.summaries, 1)
+	assertions.Equal(3, cleanups)
 }

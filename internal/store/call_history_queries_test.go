@@ -93,7 +93,13 @@ func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
 					message.SentAt = sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}
 					id, err = f.Store.UpsertMessage(message)
 					require.NoError(err)
-					require.NoError(f.Store.ReplaceMessageRecipients(id, role, []int64{owner, alias, peer}, nil))
+					counterparties := []int64{peer}
+					if outgoing {
+						counterparties = append(counterparties, owner, alias)
+					} else {
+						require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, alias}, nil))
+					}
+					require.NoError(f.Store.ReplaceMessageRecipients(id, role, counterparties, nil))
 					require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
 				}
 
@@ -143,7 +149,7 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 	assertions.Equal(first, put("one", "a", "answered", "joined", "joined"))
 	put("one", "b", "answered", "joined", "joined")
 	put("partial-1", "a", "answered", "unknown", "joined")
-	put("partial-2", "a", "unknown", "joined", "unknown")
+	put("partial-2", "a", "answered", "joined", "invited")
 	put("separate-1", "a", "answered", "joined", "joined")
 	put("separate-2", "a", "missed", "not_joined", "unknown")
 	put("missed", "a", "missed", "not_joined", "unknown")
@@ -155,16 +161,6 @@ func TestCallSummaryRequiresWholeObservationPerRecord(t *testing.T) {
 	assertions.Equal(2, got[0].Unknown)
 	assertions.Equal(2, got[0].Missed)
 	assertions.Equal(first, got[0].ExampleMessageID)
-
-	list, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 2})
-	requirements.NoError(err)
-	requirements.Len(list, 2)
-	assertions.Equal("joined", list[0].Participants[0].Participation)
-	assertions.Equal(first, list[0].MessageID)
-	next, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{AfterID: list[1].MessageID, Limit: 2})
-	requirements.NoError(err)
-	requirements.Len(next, 2)
-	assertions.Greater(next[0].MessageID, list[1].MessageID)
 }
 
 func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
@@ -287,4 +283,13 @@ func TestCallsReadImportedPhoneCalls(t *testing.T) {
 	assert.Equal([]callhistory.Participant{{ID: remote, Participation: "joined"}}, items[0].Participants)
 	assert.Equal("unknown", items[1].Outcome)
 	assert.Equal([]callhistory.Participant{{ID: remote, Participation: "unknown"}}, items[1].Participants)
+
+	page, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 1})
+	require.NoError(err)
+	require.Len(page, 1)
+	assert.Equal(items[0].MessageID, page[0].MessageID)
+	next, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID, AfterID: page[0].MessageID, Limit: 1})
+	require.NoError(err)
+	require.Len(next, 1)
+	assert.Equal(items[1].MessageID, next[0].MessageID)
 }
