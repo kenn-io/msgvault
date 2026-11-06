@@ -32,10 +32,6 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	assertions, requirements := assert.New(t), require.New(t)
 	h, ok := CaptureHandler(reporter, opts.DataDir).(*screenCaptureHandler)
 	requirements.True(ok)
-	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") == "timeline" {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"screen_viewed","properties":{"screen":"timeline","surface":"tui"}}`).Code)
-		return
-	}
 	day := time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC)
 	h.now = func() time.Time { return day }
 	valid := `{"event":"screen_viewed","properties":{"screen":"settings","surface":"web"}}`
@@ -89,6 +85,9 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	} {
 		assertions.Equal(http.StatusAccepted, screenRequest(h, body).Code)
 	}
+	for range 2 {
+		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"screen_viewed","properties":{"screen":"timeline","surface":"tui"}}`).Code)
+	}
 	assertions.Equal(http.StatusBadRequest, screenRequest(h, valid+`{}`).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"Event":"unknown","event":"screen_viewed","Properties":{"screen":"private","screen":"settings","surface":"web"}}`).Code)
 	assertions.Equal(http.StatusRequestEntityTooLarge, screenRequest(h, strings.Repeat(" ", 64<<10)+valid).Code)
@@ -138,19 +137,6 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
 }
 
-func TestTimelineScreenViewReachesReporter(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	stub := newWireStub(t)
-	runWireHelper(t, stub.server.URL, t.TempDir(), "MSGVAULT_SCREEN_VIEWS_TEST=timeline")
-	events := batchEvents(t, stub)
-	requirements.Len(events, 1)
-	assertions.Equal(EventScreenViewed, events[0]["event"])
-	props, ok := events[0]["properties"].(map[string]any)
-	requirements.True(ok)
-	assertions.Equal("timeline", props["screen"])
-	assertions.Equal("tui", props["surface"])
-}
-
 func TestMixedLedgerUpgradePreservesSearchClaims(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	stub := newWireStub(t)
@@ -170,7 +156,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	screenMessages := func() []map[string]any {
 		return slices.DeleteFunc(batchEvents(t, stub), func(event map[string]any) bool { return event["event"] != EventScreenViewed })
 	}
-	requirements.Len(batchEvents(t, stub), 19)
+	requirements.Len(batchEvents(t, stub), 20)
 	counts := map[string]int{}
 	for _, event := range batchEvents(t, stub) {
 		if event["event"] == EventScreenViewed || event["event"] == EventAppOpened {
@@ -187,7 +173,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	assertions.Equal(2, counts["sync_finished:cli:<nil>"], "successful CLI syncs count individually")
 	assertions.Len(counts, 10)
 	messages := screenMessages()
-	requirements.Len(messages, 3)
+	requirements.Len(messages, 4)
 	screens := []string{}
 	for _, event := range messages {
 		assertions.Equal(EventScreenViewed, event["event"])
@@ -196,19 +182,23 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 		screens = append(screens, fmt.Sprint(props["screen"]))
 		assertions.NotContains(props, "content")
 		assertions.Contains([]string{"web", "tui"}, props["surface"])
+		if props["screen"] == "timeline" {
+			assertions.Equal("tui", props["surface"])
+		}
 	}
 	assertions.Contains(screens, "directory")
+	assertions.Equal(1, strings.Count(strings.Join(screens, ","), "timeline"))
 	assertions.Equal(1, strings.Count(strings.Join(screens, ","), "settings"))
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
-	assertions.Len(screenMessages(), 3)
-	assertions.Len(batchEvents(t, stub), 19)
+	assertions.Len(screenMessages(), 4)
+	assertions.Len(batchEvents(t, stub), 20)
 	install, err := posthog.LoadOrCreateInstall(dir)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(filepath.Join(dir, posthog.InstallFileName)))
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
 	messages = screenMessages()
-	requirements.Len(messages, 4)
-	assertions.NotEqual(install.ID, messages[3]["distinct_id"])
+	requirements.Len(messages, 5)
+	assertions.NotEqual(install.ID, messages[4]["distinct_id"])
 }
 
 func TestDailyViewsResumeAfterUTCMidnight(t *testing.T) {

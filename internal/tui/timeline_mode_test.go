@@ -93,7 +93,7 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 			defer m.cancelTimelineRequest()
 			tc.req.Cursor = "parked-page"
 			m.timelineState.request = tc.req
-			m.timelineState.result.Now = time.Now().AddDate(0, 0, -1)
+			m.timelineState.result.Now = time.Date(2027, 3, 13, 8, 30, 0, 0, time.UTC)
 			m.timelineState.history = []timelineNavigation{{result: timelineModeFixture()}}
 			cmd := m.activateTimeline()
 			assertions.Equal(tc.reload, cmd != nil)
@@ -115,7 +115,7 @@ func TestTimelineReentryRefreshesDefaultDuringSameDay(t *testing.T) {
 			m := timelineModeModel()
 			defer m.cancelTimelineRequest()
 			m.timelineState.request = timeline.Request{Mode: mode}
-			m.timelineState.result.Now = time.Now()
+			m.timelineState.result.Now = time.Date(2027, 3, 14, 8, 30, 0, 0, time.UTC)
 			original := m.timelineState.result
 			cmd := m.activateTimeline()
 			requirements.NotNil(cmd)
@@ -144,26 +144,25 @@ func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 }
 func TestTimelineKeysSwitchModes(t *testing.T) {
 	for _, tc := range []struct {
-		key                rune
-		mode               timeline.Mode
-		date, around, with string
-		modal              modalType
-		appMode            tuiMode
+		key          rune
+		mode         timeline.Mode
+		around, with string
 	}{
-		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14", appMode: modeTimeline},
-		{key: 'w', mode: timeline.ModeRelationship, with: "person:42", appMode: modeTimeline},
+		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14"},
+		{key: 'w', mode: timeline.ModeRelationship, with: "person:42"},
 	} {
 		t.Run(string(tc.key), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			m := timelineModeModel()
 			updated, cmd := sendKey(t, m, key(tc.key))
-			assert.Equal(tc.modal, updated.modal)
+			defer updated.cancelTimelineRequest()
+			assert.Equal(modalNone, updated.modal)
 			assert.Equal(allSourceScope(), updated.sourceScope)
-			assert.Equal(tc.appMode, updated.mode)
+			assert.Equal(modeTimeline, updated.mode)
 			require.NotNil(cmd)
 			assert.Equal(tc.mode, updated.timelineState.pending.Mode)
-			assert.Equal(tc.date, updated.timelineState.pending.Date)
+			assert.Empty(updated.timelineState.pending.Date)
 			assert.Equal(tc.around, updated.timelineState.pending.Around)
 			assert.Equal(tc.with, updated.timelineState.pending.With)
 			assert.Equal("json", updated.timelineState.pending.Format)

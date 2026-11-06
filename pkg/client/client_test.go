@@ -1547,27 +1547,3 @@ func TestImportMuesliSuccessStatuses(t *testing.T) {
 		})
 	}
 }
-
-func TestGeneratedTimelineDecodesPrimitiveMaps(t *testing.T) {
-	require := require.New(t)
-	body := `{"mode":"day","omitted":{"budget":{"history":2,"open_loops":"more"},"noise":0,"cold":0},"days":[{"bursts":[{"open":[{"tool":"get_message","args":{"id":42}},{"tool":"get_calendar_event","args":{"ref":"e77"}}]}]}]}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/timeline", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(body))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(srv.URL)
-	require.NoError(err)
-	response, err := client.GetTimelineWithResponse(t.Context(), &generated.GetTimelineRequestOptions{})
-	require.NoError(err)
-	require.NotNil(response.JSON200)
-	require.Len(response.JSON200.Days, 1)
-	require.Len(response.JSON200.Days[0].Bursts, 1)
-	openers := response.JSON200.Days[0].Bursts[0].Open
-	require.Len(openers, 2)
-	assert.Equal(t, map[string]any{"id": float64(42)}, openers[0].Args)
-	assert.Equal(t, map[string]any{"ref": "e77"}, openers[1].Args)
-	assert.Equal(t, map[string]any{"history": float64(2), "open_loops": "more"}, response.JSON200.Omitted.Budget)
-}

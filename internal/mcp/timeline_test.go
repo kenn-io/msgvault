@@ -183,7 +183,7 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 }
 
 func TestTimelineToolRejectsEmptySelectors(t *testing.T) {
-	for _, name := range []string{"with", "around", "conversation", "date", "from", "to", "cursor"} {
+	for _, name := range []string{"with", "around", "date", "from", "to", "cursor"} {
 		t.Run(name, func(t *testing.T) {
 			backend := &timelineTestBackend{}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, Timeline: backend}

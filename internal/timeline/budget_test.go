@@ -66,6 +66,7 @@ func TestFitMeasuresFinalEncoding(t *testing.T) {
 			assertions.NotEmpty(out.Cursor)
 			assertions.NotEmpty(out.History)
 			assertions.Less(len(out.History), tc.entries)
+			assertions.Equal(tc.entries-len(out.History), out.Omitted.Budget["history"])
 			assertions.Len(v.History, tc.entries)
 			assertions.Empty(v.Cursor)
 		})
@@ -267,11 +268,8 @@ func TestFitReportsCountsOrMore(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	v := budgetTimeline(100)
-	out, err := Fit(v, "json", 4096)
-	requirements.NoError(err)
-	assertions.Equal(100-len(out.History), out.Omitted.Budget["history"])
 	v.continuation.More = map[string]bool{"history": true}
-	out, err = Fit(v, "json", 4096)
+	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Equal("more", out.Omitted.Budget["history"])
 	v = budgetTimeline(0)
@@ -322,15 +320,21 @@ func TestFitJSONEscapingAndMultibyte(t *testing.T) {
 	}
 }
 func TestFitSectionSharesFlowForward(t *testing.T) {
-	assertions := assert.New(t)
+	assertions, requirements := assert.New(t), require.New(t)
 	v := budgetTimeline(50)
-	v.OpenLoops = &OpenLoops{Items: []Entry{sampleTimeline(ModeDay).OpenLoops.Items[0]}}
-	v.Upcoming = []Entry{sampleTimeline(ModeAnchor).History[0]}
-	out, err := Fit(v, "json", 4096)
-	require.NoError(t, err)
-	assertions.Len(out.OpenLoops.Items, 1)
-	assertions.Len(out.Upcoming, 1)
+	v.OpenLoops = &OpenLoops{}
+	for range 20 {
+		v.OpenLoops.Items = append(v.OpenLoops.Items, sampleTimeline(ModeDay).OpenLoops.Items[0])
+		v.Upcoming = append(v.Upcoming, sampleTimeline(ModeAnchor).History[0])
+	}
+	out, err := Fit(v, "json", 8192)
+	requirements.NoError(err)
+	assertions.NotEmpty(out.OpenLoops.Items)
+	assertions.Less(len(out.OpenLoops.Items), 20)
+	assertions.NotEmpty(out.Upcoming)
+	assertions.Less(len(out.Upcoming), 20)
 	assertions.NotEmpty(out.History)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 8192)
 }
 func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

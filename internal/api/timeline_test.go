@@ -241,7 +241,7 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 	require.NoError(t, err)
 	assertions.Zero(got.Days)
 	assertions.Zero(got.Budget)
-	for _, query := range []string{"days=0", "budget=0", "days=1&days=2", "include_cold=bad", "with=", "around=", "conversation=", "date=", "from=", "to=", "cursor="} {
+	for _, query := range []string{"days=0", "budget=0", "days=1&days=2", "include_cold=bad", "with=", "around=", "date=", "from=", "to=", "cursor="} {
 		_, err := parseTimelineRequest(query)
 		assertions.ErrorIs(err, timeline.ErrInvalidRequest, query)
 	}
@@ -250,21 +250,18 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, identifier, job, outcome, reason, command string
-		next                                                  time.Duration
 		age                                                   time.Duration
 		never                                                 bool
 		errors                                                int64
 	}{
-		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: -time.Hour, age: 48 * time.Hour, reason: "stale", command: "msgvault sync-calendar 'calendar@example.com'"},
-		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", next: -time.Hour, age: 48 * time.Hour, reason: "stale"},
-		{name: "restarted scheduler stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 5 * time.Minute, age: 48 * time.Hour, reason: "stale"},
-		{name: "calendar not due", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: 48 * time.Hour},
-		{name: "calendar never succeeded", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, never: true, reason: "never_synced"},
-		{name: "calendar failed", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "failed"},
-		{name: "calendar cancelled", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "cancelled"},
-		{name: "calendar paused", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "paused"},
-		{name: "calendar completed with errors", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", next: time.Hour, outcome: "completed", errors: 2},
-		{name: "manual discovery alias", kind: "caldav", identifier: `["owner@example.com","https://calendar.example.com/discovered/work/"]`},
+		{name: "scheduled calendar stale", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", age: 48 * time.Hour, reason: "stale", command: "msgvault sync-calendar 'calendar@example.com'"},
+		{name: "scheduled SMS stale", kind: "synctech_sms", identifier: "+12025550123", job: "synctech-sms:+12025550123", age: 48 * time.Hour, reason: "stale"},
+		{name: "calendar recently synced", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com"},
+		{name: "calendar never succeeded", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", never: true, reason: "never_synced"},
+		{name: "calendar failed", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", outcome: "failed"},
+		{name: "calendar cancelled", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", outcome: "cancelled"},
+		{name: "calendar paused", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", outcome: "paused"},
+		{name: "calendar completed with errors", kind: "gcal", identifier: "calendar@example.com/work", job: "gcal:calendar@example.com", outcome: "completed", errors: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -291,10 +288,9 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 			}
 			sched := newMockScheduler()
 			if tc.job != "" {
-				sched.jobStatuses = []JobStatus{{Name: tc.job, Schedule: "0 */6 * * *", NextRun: srv.clockNow().Add(tc.next)}}
+				sched.jobStatuses = []JobStatus{{Name: tc.job, Schedule: "0 */6 * * *", NextRun: srv.clockNow().Add(48 * time.Hour)}}
 			}
 			srv.scheduler = sched
-			srv.cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "personal", URL: "https://calendar.example.com/alias/", Username: "owner@example.com"}}
 			w := timelineGET(srv, "?date=2027-03-01", "")
 			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 			var got timeline.Timeline

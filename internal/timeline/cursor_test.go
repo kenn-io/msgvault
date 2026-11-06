@@ -68,15 +68,24 @@ func TestCursorPinsFractionalNow(t *testing.T) {
 		})
 	}
 }
-func TestCursorRejectsInvalidNanoseconds(t *testing.T) {
+func cursorFields(t *testing.T) map[string]any {
+	t.Helper()
 	requirements := require.New(t)
-	b := cursorBinding()
-	encoded, err := EncodeCursor(b, nil)
+	encoded, err := EncodeCursor(cursorBinding(), map[string]string{"history": "key"})
+	requirements.NoError(err)
+	_, err = DecodeCursor(encoded, cursorBinding())
 	requirements.NoError(err)
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	requirements.NoError(err)
 	var fields map[string]any
 	requirements.NoError(json.Unmarshal(raw, &fields))
+	return fields
+}
+
+func TestCursorRejectsInvalidNanoseconds(t *testing.T) {
+	requirements := require.New(t)
+	b := cursorBinding()
+	fields := cursorFields(t)
 	for _, nanos := range []int{-1, 1000000000} {
 		fields["ns"] = nanos
 		raw, err := json.Marshal(fields)
@@ -176,15 +185,10 @@ func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
 func TestTimelineCursorRejectsOutOfRangeTime(t *testing.T) {
 	requirements := require.New(t)
 	b := cursorBinding()
-	encoded, err := EncodeCursor(b, map[string]string{})
-	requirements.NoError(err)
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	requirements.NoError(err)
-	var wire cursorWire
-	requirements.NoError(json.Unmarshal(raw, &wire))
+	fields := cursorFields(t)
 	for _, seconds := range []int64{253402300800, 9223372036854775807} {
-		wire.Now = seconds
-		raw, err = json.Marshal(wire)
+		fields["n"] = seconds
+		raw, err := json.Marshal(fields)
 		requirements.NoError(err)
 		_, err = DecodeCursor(base64.RawURLEncoding.EncodeToString(raw), b)
 		requirements.ErrorIs(err, ErrCursorExpired)

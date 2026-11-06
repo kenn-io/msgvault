@@ -281,18 +281,25 @@ func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
 }
 
 func TestCalendarAttendanceExcludesUnflaggedAccountIdentity(t *testing.T) {
-	f, now, _, _ := calendarAttendanceFixture(t, "owner@example.com", "none")
-	q := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.owner}}, Now: now, Location: time.UTC}
-	ids, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
-	require.NoError(t, err)
-	assert.Empty(t, ids.IDs)
+	assertions, requirements := assert.New(t), require.New(t)
+	f, now, _, notes := calendarAttendanceFixture(t, "alice@example.com", "none")
+	q := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Now: now, Location: time.UTC}
+	ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	requirements.NoError(err)
+	assertions.ElementsMatch(notes, ids.IDs)
+	assertions.False(more)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+	ids, more, err = f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	requirements.NoError(err)
+	assertions.Empty(ids.IDs)
+	assertions.False(more)
 }
 
 func TestCalendarAttendanceAgreesOnEmailIdentifierType(t *testing.T) {
 	for _, identifierType := range []string{"email", "username"} {
 		t.Run(identifierType, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			f, now, _, _ := calendarAttendanceFixture(t, "alias@example.com", "empty")
+			f, now, _, notes := calendarAttendanceFixture(t, "alias@example.com", "empty")
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value) VALUES (?, ?, 'alias@example.com')`), f.peer, identifierType)
 			requirements.NoError(err)
@@ -304,7 +311,11 @@ func TestCalendarAttendanceAgreesOnEmailIdentifierType(t *testing.T) {
 			_, resolved := byEmail["alias@example.com"]
 			// Day/history attendance and the relationship count must agree.
 			assertions.Equal(identifierType == "email", resolved)
-			assertions.Equal(resolved, len(attended.IDs) > 0)
+			if identifierType == "email" {
+				assertions.ElementsMatch(notes, attended.IDs)
+			} else {
+				assertions.Empty(attended.IDs)
+			}
 		})
 	}
 }

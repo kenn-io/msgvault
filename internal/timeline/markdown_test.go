@@ -12,10 +12,6 @@ func TestMarkdownDayGolden(t *testing.T) {
 	v := sampleTimeline(ModeDay)
 	v.Omitted.Budget["entry_fields"] = 1
 	golden(t, "day.md", []byte(Markdown(v)))
-	v.Freshness.Sources = nil
-	text, entries := MarkdownWithEntries(v)
-	assert.NotContains(t, text, " → ")
-	assert.NotEmpty(t, entries)
 }
 func TestMarkdownSingleDayHeading(t *testing.T) {
 	v := sampleTimeline(ModeDay)

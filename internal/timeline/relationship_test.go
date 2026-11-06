@@ -140,8 +140,7 @@ func TestRelationshipLinkedTranscriptRetainsPeople(t *testing.T) {
 			f := newTimelineFixture(t)
 			f.EnsureParticipant("other@example.com", "Other", "example.com")
 			event := f.calendar("attended", `{"id":"attended","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":`+tc.attendees+`}`)
-			note := f.transcript("attended", "", f.now.Add(-time.Hour))
-			requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+			note := f.linkTranscript("attended", event)
 			f.project()
 			got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
 			requirements.NoError(err)
@@ -250,10 +249,8 @@ func TestTimelineRelationshipOnlyCreditsSubjectMeetings(t *testing.T) {
 	f := newTimelineFixture(t)
 	first := f.calendar("first", singleDayEvent)
 	second := f.calendar("second", strings.NewReplacer("planning", "second", "2026-10-22", "2026-09-22", "alice@example.com", "other@example.com", "Alice", "Other").Replace(singleDayEvent))
-	note := f.transcript("shared", "", f.now.Add(-time.Hour))
+	note := f.linkTranscript("shared", first, second)
 	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
-	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: first}))
-	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: second}))
 	f.project()
 	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
 	requirements.NoError(err)
@@ -280,8 +277,7 @@ func TestTimelineRelationshipCountsLinkedCalendarCopiesOnce(t *testing.T) {
 	})
 	requirements.NoError(err)
 	for i, event := range []int64{first, second} {
-		note := f.transcript(fmt.Sprintf("note-%d", i), "", f.now.Add(-time.Hour))
-		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+		f.linkTranscript(fmt.Sprintf("note-%d", i), event)
 	}
 	f.project()
 	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
@@ -299,9 +295,7 @@ func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
 	first := f.calendar("first", singleDayEvent)
 	second := f.calendar("second", strings.NewReplacer("planning", "second", "2026-10-22", "2026-09-22").Replace(singleDayEvent))
 	for _, key := range []string{"one", "two"} {
-		note := f.transcript(key, "", f.now.Add(-time.Hour))
-		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: first}))
-		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: second}))
+		f.linkTranscript(key, first, second)
 	}
 	f.project()
 	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
@@ -337,4 +331,13 @@ func TestRelationshipHistoryKeepsPastPartOfBurst(t *testing.T) {
 	assert.WithinDuration(past, got.History[0].Time, time.Microsecond)
 	assert.Equal(1, got.History[0].Burst.Inbound)
 	assert.Equal([]int64{id}, got.History[0].Burst.LatestMessageIDs)
+}
+
+func (f *timelineFixture) linkTranscript(key string, events ...int64) int64 {
+	f.T.Helper()
+	note := f.transcript(key, "", f.now.Add(-time.Hour))
+	for _, event := range events {
+		require.NoError(f.T, f.Store.LinkMeetingContext(f.T.Context(), note, store.OccurrenceRef{MessageID: event}))
+	}
+	return note
 }
