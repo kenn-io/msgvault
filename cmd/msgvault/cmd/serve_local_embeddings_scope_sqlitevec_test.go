@@ -32,9 +32,14 @@ import (
 
 func newScheduledLocalEmbeddingsFixture(t *testing.T, account, extra string, syncAccount func(*store.Store) error) (*localActivationFixture, int64) {
 	t.Helper()
+	f := &localActivationFixture{}
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": []map[string]string{{"name": "my-model"}}}))
+			return
+		}
+		if key := f.embeddingKey.Load(); key != nil && r.Header.Get("Authorization") != "Bearer "+key.(string) {
+			http.Error(w, "embedding key was replaced", http.StatusUnauthorized)
 			return
 		}
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
@@ -60,7 +65,7 @@ dimension = 4
 [chat]
 server = %q
 `, endpoint.URL+"/v1", endpoint.URL)+extra)
-	f := &localActivationFixture{cfg: fixture.load(t)}
+	f.cfg = fixture.load(t)
 	require.NoError(t, os.MkdirAll(filepath.Dir(f.cfg.DatabaseDSN()), 0o700))
 	var err error
 	f.store, err = store.Open(f.cfg.DatabaseDSN())
@@ -183,4 +188,36 @@ func TestLocalEmbeddingsPublishesVisualRecoveryAfterFailedStartup(t *testing.T) 
 		assert.Equal(tc.code, response.Code, "%s: %s", tc.path, response.Body.String())
 	}
 	require.NoError(f.scheduler.TriggerJob("multimodal-attachments"))
+}
+
+func TestLocalEmbeddingsPausedOllamaUsesSavedCredentialWithVisualRuntime(t *testing.T) {
+	require := require.New(t)
+	defaults := config.NewDefaultConfig().Vector.Multimodal
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: defaults.Model, Dimension: defaults.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
+	require.NoError(err)
+	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
+	require.NoError(err)
+	manifestPath := filepath.Join(t.TempDir(), "visual-capabilities.json")
+	require.NoError(writeVisualCapabilityManifest(manifestPath, manifest))
+	t.Setenv(defaults.APIKeyEnv, "synthetic-visual-key")
+	extra := fmt.Sprintf("\n[vector.multimodal]\nenabled = true\ncapabilities_file = %q\n", manifestPath)
+	f, _ := newScheduledLocalEmbeddingsFixture(t, "archive@example.test", extra, nil)
+	credentials, err := providercredentials.Read(f.cfg.TokensDir())
+	require.NoError(err)
+	stored, err := providercredentials.Put(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, f.cfg.Vector.Embeddings.Endpoint, "synthetic-startup-key")
+	require.NoError(err)
+	f.embeddingKey.Store("synthetic-startup-key")
+	f.handle.vf, err = setupVectorFeatures(f.ctx, f.store, f.cfg.DatabaseDSN(), false, vectorInitVisualOpener{})
+	require.NoError(err)
+	require.NotNil(f.handle.vf.Visual)
+	visualRuntime := f.handle.vf.Visual
+	// Saving a replacement key leaves the running visual service in place.
+	_, err = providercredentials.Put(f.cfg.TokensDir(), stored.ETag, providercredentials.VectorEmbeddingsID, f.cfg.Vector.Embeddings.Endpoint, "synthetic-replacement-key")
+	require.NoError(err)
+	f.embeddingKey.Store("synthetic-replacement-key")
+	require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
+	require.Same(visualRuntime, f.handle.vf.Visual)
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err, "the published query runtime must use the same saved key as the successful builder")
+	require.Len(messages, 1)
 }

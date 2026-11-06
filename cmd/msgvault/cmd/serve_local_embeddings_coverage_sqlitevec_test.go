@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/query"
@@ -19,6 +20,7 @@ import (
 
 func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text", "\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
 	f.start(t)
 	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
@@ -41,18 +43,17 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 		request.RemoteAddr = "127.0.0.1:1234"
 		response := httptest.NewRecorder()
 		f.server.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusOK, response.Code, response.Body.String())
-		t.Logf("COVERAGE_JSON=%s", response.Body.String())
+		assert.Equal(http.StatusOK, response.Code, response.Body.String())
 		var coverage api.SearchCoverageResponse
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
+		assert.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
 		return coverage
 	}
 	beforeBuild := f.runner.beforeBuild
 	f.runner.beforeBuild = func() {
 		beforeBuild()
 		coverage := coverageStatus()
-		require.Equal(api.SearchCoverageIncomplete, coverage.Status)
-		require.Empty(coverage.Actions, "an active build already owns recovery")
+		assert.Equal(api.SearchCoverageIncomplete, coverage.Status)
+		assert.Empty(coverage.Actions, "an active build already owns recovery")
 	}
 	f.runner.failBuild = true
 	f.enableThroughAPI(t)

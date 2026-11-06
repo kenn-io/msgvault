@@ -206,6 +206,7 @@ func TestSearchCoverageReportsEveryNamedStateInFilteredContext(t *testing.T) {
 		},
 		{
 			name: "incomplete", status: VectorStatusReady,
+			wantActions:  []SearchCoverageAction{SearchCoverageActionBuildIndex},
 			backend:      &filteredCoverageBackend{active: generation, embeddedIDs: map[int64]struct{}{2: {}}},
 			wantStatus:   SearchCoverageIncomplete,
 			wantEligible: 2, wantEmbedded: 1, wantPercentage: 50,
@@ -238,6 +239,13 @@ func TestSearchCoverageReportsEveryNamedStateInFilteredContext(t *testing.T) {
 				Store:  &mockStore{stats: &StoreStats{}}, Engine: engine, Backend: backend,
 				VectorStatus: tt.status, Logger: testLogger(),
 			})
+			if tt.wantStatus == SearchCoverageIncomplete {
+				srv.vectorCfg.Enabled = true
+				tt.backend.active.Fingerprint = srv.vectorCfg.GenerationFingerprint()
+				srv.scheduler = &embeddingStatusScheduler{mockScheduler: newMockScheduler(), status: vector.EmbeddingStatus{Job: vector.EmbeddingJobState{State: "running"}}}
+				assert.Empty(getSearchCoverage(t, srv, `{}`).Actions, "a running build owns recovery")
+				srv.scheduler = nil
+			}
 			if tt.stale {
 				srv.SetVectorStale("configured generation changed")
 			}

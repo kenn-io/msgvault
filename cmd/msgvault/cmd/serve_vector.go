@@ -626,6 +626,10 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		features.Backend = backend
 		features.Cfg = vecCfg
 		features.DocumentSearch = nil
+		credentialSnapshot, err := providercredentials.Read(cfg.TokensDir())
+		if err != nil {
+			return nil, fmt.Errorf("load text embedding credentials: %w", err)
+		}
 		embeddingAPIKey, err := resolveTextEmbeddingCredential(credentialSnapshot, vecCfg)
 		if err != nil {
 			return nil, err

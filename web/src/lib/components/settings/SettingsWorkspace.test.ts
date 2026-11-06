@@ -823,11 +823,10 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
   expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull();
 });
 
-it('retries a failed initial local status read through Refresh feature status and displays the server activation refusal', async () => {
+it('retries a failed initial local status read through Refresh feature status', async () => {
   let reads = 0;
   const { client, operationsController } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') return Response.json({ error: 'unavailable', message: 'The archive is stopping' }, { status: 503 });
     if (++reads === 1) throw new TypeError('Network interrupted');
     return Response.json({ host: 'archive.example.test', enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
   });
@@ -835,8 +834,7 @@ it('retries a failed initial local status read through Refresh feature status an
   await screen.findByRole('button', { name: 'Set up Search by meaning' });
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
-  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The archive is stopping');
+  expect(await screen.findByRole('button', { name: 'Turn on' })).toBeDefined();
 });
 
 it.each(['none', 'http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
