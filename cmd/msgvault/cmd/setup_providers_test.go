@@ -1602,6 +1602,33 @@ func TestSetupProvidersRefusesConfiguredRemote(t *testing.T) {
 	assert.Equal(strings.ReplaceAll(setupProvidersMinimalConfig, "{{DIR}}", filepath.ToSlash(fixture.dir)), fixture.readConfig(t))
 }
 
+func TestSetupStatusWithoutProviderKeepsKeywordSearchAvailable(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[attachments.documents]
+enabled = true
+`)
+	output, err := fixture.run(t, "status", "--json")
+	require.NoError(err, output)
+	var report laneReport
+	require.NoError(json.Unmarshal([]byte(output), &report))
+
+	text := findLane(t, report, "text_search")
+	assert.Equal("Search by meaning (messages, chats, meetings)", text.Label)
+	assert.Equal(laneStateOff, text.State)
+	assert.Equal("keyword search works; set up search by meaning for semantic matches", text.Reason)
+	assert.Equal([]string{"msgvault setup providers --local-embeddings"}, text.Next)
+	assert.Equal("requires search by meaning", findLane(t, report, lanePersonSearch).Reason)
+	assert.Equal("requires search by meaning", findLane(t, report, laneDocumentVectors).Reason)
+
+	human, err := fixture.run(t, "status")
+	require.NoError(err, human)
+	assert.Contains(human, "Search by meaning (messages, chats, meetings)")
+	assert.Contains(human, "keyword search works; set up search by meaning for semantic matches")
+	assert.Contains(human, "msgvault setup providers --local-embeddings")
+	assert.Contains(human, "requires search by meaning")
+}
+
 func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1632,7 +1659,7 @@ func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	human, err := fixture.run(t, "status")
 	require.NoError(err, human)
 	assert.Contains(human, "LANE")
-	assert.Contains(human, "Text search (messages, chats, meetings)")
+	assert.Contains(human, "Search by meaning (messages, chats, meetings)")
 	assert.Contains(human, "MCP tools live with this configuration")
 }
 

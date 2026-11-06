@@ -529,7 +529,7 @@ func setupScheduleEdits(keys toml.MetaData, lane string) []config.TableEdit {
 }
 
 func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
-	lane := setupLanePlan{Lane: laneTextSearch, Label: "Text search"}
+	lane := setupLanePlan{Lane: laneTextSearch, Label: "Search by meaning"}
 	embeddings := loaded.Vector.Embeddings
 	switch {
 	case loaded.Vector.Enabled && !detection.localEmbeddings:
@@ -635,7 +635,7 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 		lane.Reason = "already enabled"
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	case textLaneProvider(plan) == "custom":
 		lane.Action = planActionSkip
 		lane.Reason = "custom hosted provider: configure [vector.people] and its postures explicitly, then run `msgvault person provider consent --semantic-embeddings --yes`"
@@ -759,7 +759,7 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 		lane.Reason = "requires the document lane"
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	case textLaneProvider(plan) == "custom":
 		lane.Action = planActionSkip
 		lane.Reason = "custom hosted provider: configure [attachments.documents.index.embeddings] explicitly and consent separately to document and query text"
@@ -1037,7 +1037,7 @@ The people sweep can send archive excerpts and infer personal attributes.
 		},
 	}
 	flags := command.Flags()
-	flags.BoolVar(&options.localEmbeddings, "local-embeddings", false, "Switch text search to the shared local embedding server")
+	flags.BoolVar(&options.localEmbeddings, "local-embeddings", false, "Use the shared local embedding server for search by meaning")
 	flags.BoolVar(&options.yes, "yes", false, "Accept every provider disclosure without prompting")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "Print the plan and the current lane report without writing anything")
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
