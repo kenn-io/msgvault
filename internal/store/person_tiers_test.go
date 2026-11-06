@@ -72,7 +72,7 @@ func newTierPeople(t *testing.T) tierPeople {
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	p := tierPeople{f: f}
 	save := func(name string, mail []tierMail) int64 {
-		person := mustPromotedPerson(t, f.Store, name+"@example.com", name)
+		person := mustPromotedPerson(t.Context(), t, f.Store, name+"@example.com", name)
 		seedTierMail(t, f, person.ParticipantIDs[0], owner, mail)
 		return person.ID
 	}
@@ -144,7 +144,7 @@ func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	// The last saved person sits on the second page of 500.
-	late := mustPromotedPerson(t, f.Store, "late@example.com", "late")
+	late := mustPromotedPerson(t.Context(), t, f.Store, "late@example.com", "late")
 	seedTierMail(t, f, late.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
 	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
@@ -249,9 +249,9 @@ func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
 	f := storetest.New(t)
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	person := mustPromotedPerson(t, f.Store, "sent@example.com", "sent")
+	person := mustPromotedPerson(t.Context(), t, f.Store, "sent@example.com", "sent")
 	seedTierMail(t, f, person.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
-	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+	labels, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, map[string]store.LabelInfo{
 		"Drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 		"Sent":   {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
@@ -268,7 +268,7 @@ func TestPersonTiersCountSentMailThatKeptDraftEvidence(t *testing.T) {
 	require.NoError(rows.Err())
 	require.Len(sent, 4)
 	for _, id := range sent {
-		require.NoError(f.Store.AddMessageLabels(id, []int64{labels["Drafts"], labels["Sent"]}))
+		require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels["Drafts"], labels["Sent"]}))
 	}
 	projectTierSignals(t, f, "UTC", 25)
 

@@ -57,7 +57,7 @@ const parityDim = 4
 // generation.
 func buildSqlitevecParity(t *testing.T, corpus []parityDoc) (*sqlitevec.Backend, context.Context, vector.GenerationID) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
@@ -90,13 +90,14 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = main.Exec(schema)
+	_, err = main.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 
 	for _, d := range corpus {
-		_, err := main.Exec(`INSERT INTO messages (id, subject) VALUES (?, ?)`, d.id, d.subject)
+		_, err := main.ExecContext(t.Context(), `INSERT INTO messages (id, subject) VALUES (?, ?)`, d.id, d.subject)
 		require.NoErrorf(t, err, "insert msg %d", d.id)
-		_, err = main.Exec(
+		_, err = main.ExecContext(
+			t.Context(),
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
 			d.id, d.subject, d.body)
 		require.NoErrorf(t, err, "insert fts %d", d.id)

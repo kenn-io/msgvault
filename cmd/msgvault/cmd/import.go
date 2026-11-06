@@ -85,7 +85,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -140,19 +140,22 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted. Run again to continue.")
-			return rebuildCacheAfterWrite(dbPath, state)
+			return rebuildCacheAfterWrite(ctx, dbPath, state)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
+	// The import committed. A stop request that lands now must not skip
+	// recording the owner or the migration that follows.
+	post := context.WithoutCancel(ctx)
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
 	if !noDefaultIdentityImportWhatsApp && summary.SourceID != 0 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164", state.logger)
+		confirmDefaultIdentity(post, cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164", state.logger)
 	}
 
 	if summary.SourceID != 0 {
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(post, s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 	}
@@ -160,7 +163,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	// Import contacts if provided.
 	if importContacts != "" {
 		fmt.Printf("\nImporting contacts from %s...\n", importContacts)
-		matched, total, err := whatsapp.ImportContacts(s, importContacts)
+		matched, total, err := whatsapp.ImportContacts(ctx, s, importContacts)
 		if err != nil {
 			return fmt.Errorf("contact import: %w", err)
 		}
@@ -190,7 +193,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		fmt.Printf("  Rate:           %.0f messages/sec\n", rate)
 	}
 
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(ctx, dbPath, state)
 }
 
 // parseWhatsAppDateWindow parses --after/--before like import-imessage does:

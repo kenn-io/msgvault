@@ -137,6 +137,7 @@ func loadArchivedReplyPlans(
 				return nil, err
 			}
 			archived, err := st.ScanArchivedRawMessagesForConversation(
+				ctx,
 				sourceID, scopedKey, RawFormat, afterID, pageSize,
 			)
 			if err != nil {

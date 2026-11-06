@@ -36,13 +36,13 @@ func TestImportAppleCompletesAndUpdatesSourceFreshness(t *testing.T) {
 	opts := appleTestOptions()
 	source, err := st.GetOrCreateSource("whatsapp", opts.Phone)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`), source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`), source.ID)
 	require.NoError(err)
 	before, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
 	require.True(before.LastSyncAt.Valid)
 
-	_, err = NewImporter(st, nil).Import(context.Background(), createAppleChatFixture(t), opts)
+	_, err = NewImporter(st, nil).Import(t.Context(), createAppleChatFixture(t), opts)
 	require.NoError(err)
 	after, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
@@ -61,7 +61,7 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	first, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	first, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	require.Equal(int64(4), first.MessagesAdded)
 	markAppleMessagesUnwritten(t, st)
@@ -69,7 +69,7 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	// The rerun must not read chat 1: had it read this edit, which leaves
 	// Z_OPT alone, it would rewrite the row.
 	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = 'unseen edit' WHERE Z_PK = 1`)
-	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	second, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Zero(second.MessagesProcessed)
 	assert.Zero(second.MessagesAdded)
@@ -78,7 +78,7 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 
 	full := appleTestOptions()
 	full.Full = true
-	forced, err := importer.Import(context.Background(), chatDBPath, full)
+	forced, err := importer.Import(t.Context(), chatDBPath, full)
 	require.NoError(err)
 	assert.Equal(int64(1), forced.MessagesUpdated)
 	assert.Zero(forced.MessagesAdded)
@@ -86,7 +86,7 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	assert.Equal("unseen edit", appleBodyText(t, st, "direct-in"))
 
 	// --full records fresh markers, so the next run skips every chat again.
-	after, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	after, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Zero(after.MessagesProcessed)
 }
@@ -99,7 +99,7 @@ func TestImportAppleRerunReadsChangedChats(t *testing.T) {
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	markAppleMessagesUnwritten(t, st)
 
@@ -112,7 +112,7 @@ func TestImportAppleRerunReadsChangedChats(t *testing.T) {
 		DELETE FROM ZWAMESSAGE WHERE Z_PK = 4;
 		UPDATE ZWAMESSAGE SET ZTEXT = 'group text read again' WHERE Z_PK = 3;
 	`)
-	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	second, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal(int64(1), second.MessagesAdded)
 	assert.Equal(int64(2), second.MessagesUpdated)
@@ -123,7 +123,7 @@ func TestImportAppleRerunReadsChangedChats(t *testing.T) {
 	// Messages deleted in WhatsApp stay archived.
 	assertStoreCount(t, st.DB(), "messages", 5)
 
-	third, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	third, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Zero(third.MessagesProcessed)
 }
@@ -136,7 +136,7 @@ func TestImportAppleRerunReadsChatsWithGroupMemberChange(t *testing.T) {
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	markAppleMessagesUnwritten(t, st)
 
@@ -144,7 +144,7 @@ func TestImportAppleRerunReadsChatsWithGroupMemberChange(t *testing.T) {
 	execAppleFixture(t, chatDBPath, `
 		UPDATE ZWAGROUPMEMBER SET ZCONTACTNAME = 'Bob Renamed', Z_OPT = Z_OPT + 1 WHERE Z_PK = 10
 	`)
-	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal(int64(1), summary.MessagesUpdated)
 	assert.Zero(summary.MessagesAdded)
@@ -164,14 +164,15 @@ func TestImportAppleRerunAppliesLateChatName(t *testing.T) {
 	`)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 
 	execAppleFixture(t, chatDBPath, `UPDATE ZWACHATSESSION SET ZPARTNERNAME = 'Late Name' WHERE Z_PK = 3`)
-	_, err = importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err = importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	var name string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COALESCE(display_name, '') FROM participants WHERE phone_number = '+15555550103'`,
 	).Scan(&name))
 	assert.Equal("Late Name", name)
@@ -187,14 +188,14 @@ func TestImportAppleRerunReadsChatAfterRevisionsShift(t *testing.T) {
 	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET Z_OPT = 2 WHERE Z_PK = 1`)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 
 	execAppleFixture(t, chatDBPath, `
 		UPDATE ZWAMESSAGE SET Z_OPT = 1 WHERE Z_PK = 1;
 		UPDATE ZWAMESSAGE SET Z_OPT = 2, ZTEXT = 'restored edit' WHERE Z_PK = 2;
 	`)
-	_, err = importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err = importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal("restored edit", appleBodyText(t, st, "direct-out"))
 }
@@ -229,13 +230,13 @@ func TestImportAppleRerunInvalidatesMarkers(t *testing.T) {
 			chatDBPath := createAppleMarkerFixture(t)
 			st := testutil.NewTestStore(t)
 			importer := NewImporter(st, nil)
-			first, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			first, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 			markAppleMessagesUnwritten(t, st)
 
 			tt.change(t, chatDBPath, first.SourceID, importer)
 			execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = 'outbound read again' WHERE Z_PK = 2`)
-			summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 			assert.Contains(rewrittenAppleMessages(t, st), "direct-out")
 			assert.Equal("outbound read again", appleBodyText(t, st, "direct-out"))
@@ -257,11 +258,11 @@ func TestImportAppleRerunReadsDifferentDatabase(t *testing.T) {
 	`)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), first, appleTestOptions())
+	_, err := importer.Import(t.Context(), first, appleTestOptions())
 	require.NoError(err)
 	markAppleMessagesUnwritten(t, st)
 
-	_, err = importer.Import(context.Background(), other, appleTestOptions())
+	_, err = importer.Import(t.Context(), other, appleTestOptions())
 	require.NoError(err)
 	assert.Contains(rewrittenAppleMessages(t, st), "direct-in")
 	assert.Equal("other database text", appleBodyText(t, st, "direct-in"))
@@ -281,7 +282,7 @@ func TestImportAppleRerunReadsChatsAfterRowSwap(t *testing.T) {
 	`)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	markAppleMessagesUnwritten(t, st)
 
@@ -289,7 +290,7 @@ func TestImportAppleRerunReadsChatsAfterRowSwap(t *testing.T) {
 		UPDATE ZWAMESSAGE SET ZCHATSESSION = 2 WHERE Z_PK = 2;
 		UPDATE ZWAMESSAGE SET ZCHATSESSION = 1 WHERE Z_PK = 3;
 	`)
-	_, err = importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err = importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Contains(rewrittenAppleMessages(t, st), "direct-out")
 	assert.Contains(rewrittenAppleMessages(t, st), "group-in")
@@ -339,16 +340,16 @@ func TestImportAppleRerunReadsChatsAfterBalancedMoves(t *testing.T) {
 			execAppleFixture(t, chatDBPath, `INSERT INTO ZWAMESSAGE VALUES `+tt.setup)
 			st := testutil.NewTestStore(t)
 			importer := NewImporter(st, nil)
-			_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 
 			execAppleFixture(t, chatDBPath, tt.move)
-			_, err = importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			_, err = importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 			var moved, direct int64
 			query := st.Rebind(`SELECT conversation_id FROM messages WHERE source_message_id = ?`)
-			require.NoError(st.DB().QueryRow(query, "m102").Scan(&moved))
-			require.NoError(st.DB().QueryRow(query, "direct-in").Scan(&direct))
+			require.NoError(st.DB().QueryRowContext(t.Context(), query, "m102").Scan(&moved))
+			require.NoError(st.DB().QueryRowContext(t.Context(), query, "direct-in").Scan(&direct))
 			assert.Equal(direct, moved)
 		})
 	}
@@ -364,7 +365,7 @@ func TestImportAppleRerunReadsChatAfterBackupRestore(t *testing.T) {
 	`)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 
 	// The restored store drops row 30 and hands its Z_PK to a newer message.
@@ -372,7 +373,7 @@ func TestImportAppleRerunReadsChatAfterBackupRestore(t *testing.T) {
 		DELETE FROM ZWAMESSAGE WHERE Z_PK = 30;
 		INSERT INTO ZWAMESSAGE VALUES (30, 1, NULL, 'after-restore', 1, 700000040, 'after restore', 0, '', 1);
 	`)
-	_, err = importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err = importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal("after restore", appleBodyText(t, st, "after-restore"))
 }
@@ -381,7 +382,7 @@ func TestImportAppleMarkersAcceptTextDates(t *testing.T) {
 	chatDBPath := createAppleMarkerFixture(t)
 	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZMESSAGEDATE = '' WHERE Z_PK = 2`)
 	summary, err := NewImporter(testutil.NewTestStore(t), nil).Import(
-		context.Background(), chatDBPath, appleTestOptions(),
+		t.Context(), chatDBPath, appleTestOptions(),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), summary.MessagesAdded)
@@ -421,12 +422,12 @@ func TestImportAppleRerunReadsChatsWithoutMarkers(t *testing.T) {
 			createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 			st := testutil.NewTestStore(t)
 			importer := NewImporter(st, nil)
-			_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 			markAppleMessagesUnwritten(t, st)
 
 			execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = 'edit without marker' WHERE Z_PK = 1`)
-			summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+			summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 			require.NoError(err)
 			assert.Equal(int64(1), summary.MessagesUpdated)
 			assert.Zero(summary.MessagesAdded)
@@ -447,11 +448,11 @@ func TestImportAppleLimitLeavesTruncatedChatUnmarked(t *testing.T) {
 	importer := NewImporter(st, nil)
 	limited := appleTestOptions()
 	limited.Limit = 1
-	_, err := importer.Import(context.Background(), chatDBPath, limited)
+	_, err := importer.Import(t.Context(), chatDBPath, limited)
 	require.NoError(err)
 	assertStoreCount(t, st.DB(), "messages", 1)
 
-	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal(int64(3), summary.MessagesAdded)
 	assertStoreCount(t, st.DB(), "messages", 4)
@@ -482,7 +483,7 @@ func TestImportAppleRerunReadsChatsAfterInterruptedOtherDatabase(t *testing.T) {
 		UPDATE ZWAMESSAGE SET ZTEXT = 'other ' || Z_PK WHERE ZTEXT IS NOT NULL;
 	`)
 	st := testutil.NewTestStore(t)
-	_, err := NewImporter(st, nil).Import(context.Background(), first, appleTestOptions())
+	_, err := NewImporter(st, nil).Import(t.Context(), first, appleTestOptions())
 	require.NoError(err)
 	ids := []string{"direct-in", "direct-out", "group-in", "lid-in"}
 	original := make(map[string]string, len(ids))
@@ -491,7 +492,7 @@ func TestImportAppleRerunReadsChatsAfterInterruptedOtherDatabase(t *testing.T) {
 	}
 
 	// Database B overwrites the first chat it writes, then is cancelled.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	_, err = NewImporter(st, cancelAfterWrite{cancel: cancel}).Import(ctx, other, appleTestOptions())
 	require.ErrorIs(err, context.Canceled)
 	changed := 0
@@ -503,7 +504,7 @@ func TestImportAppleRerunReadsChatsAfterInterruptedOtherDatabase(t *testing.T) {
 	require.Positive(changed, "the interrupted import must have written")
 	markAppleMessagesUnwritten(t, st)
 
-	_, err = NewImporter(st, nil).Import(context.Background(), first, appleTestOptions())
+	_, err = NewImporter(st, nil).Import(t.Context(), first, appleTestOptions())
 	require.NoError(err)
 	assert.Len(rewrittenAppleMessages(t, st), changed)
 	for _, id := range ids {

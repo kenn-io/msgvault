@@ -105,7 +105,7 @@ func TestProviderProcess(t *testing.T) {
 	}
 	mode := args[1]
 	if mode == "child" {
-		conn, err := net.Dial("tcp", args[2])
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", args[2])
 		if err != nil {
 			os.Exit(1)
 		}
@@ -119,7 +119,7 @@ func TestProviderProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	if mode == "parent" {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestProviderProcess$", "--", "child", args[2]) // #nosec G702 -- this test executable starts itself, with a local test listener address as one argument.
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProviderProcess$", "--", "child", args[2]) // #nosec G702 -- this test executable starts itself, with a local test listener address as one argument.
 		cmd.Stdout = os.Stdout
 		if cmd.Run() != nil {
 			os.Exit(1)

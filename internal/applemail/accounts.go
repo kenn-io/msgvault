@@ -1,6 +1,7 @@
 package applemail
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -49,7 +50,7 @@ func DefaultAccountsDBPath() string {
 // ResolveAccounts opens the Accounts4.sqlite database at dbPath and
 // resolves the given GUIDs to account information. Returns a map of
 // GUID → AccountInfo for each GUID that was found.
-func ResolveAccounts(dbPath string, guids []string) (map[string]AccountInfo, error) {
+func ResolveAccounts(ctx context.Context, dbPath string, guids []string) (map[string]AccountInfo, error) {
 	if len(guids) == 0 {
 		return map[string]AccountInfo{}, nil
 	}
@@ -78,7 +79,7 @@ func ResolveAccounts(dbPath string, guids []string) (map[string]AccountInfo, err
 		WHERE child.ZIDENTIFIER IN (` + strings.Join(placeholders, ",") + `)
 	`
 
-	rows, err := db.Query(query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts: %w", err)
 	}
@@ -106,7 +107,7 @@ func ResolveAccounts(dbPath string, guids []string) (map[string]AccountInfo, err
 // DiscoverV10Accounts scans mailDir for V10-style directories containing
 // UUID subdirectories and resolves them to account information using the
 // Accounts4.sqlite database at accountsDBPath.
-func DiscoverV10Accounts(mailDir, accountsDBPath string, logger *slog.Logger) ([]AccountInfo, error) {
+func DiscoverV10Accounts(ctx context.Context, mailDir, accountsDBPath string, logger *slog.Logger) ([]AccountInfo, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -121,7 +122,7 @@ func DiscoverV10Accounts(mailDir, accountsDBPath string, logger *slog.Logger) ([
 		return nil, nil
 	}
 
-	resolved, err := ResolveAccounts(accountsDBPath, guids)
+	resolved, err := ResolveAccounts(ctx, accountsDBPath, guids)
 	if err != nil {
 		return nil, fmt.Errorf("resolve accounts: %w", err)
 	}

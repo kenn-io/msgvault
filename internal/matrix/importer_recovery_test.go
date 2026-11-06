@@ -228,17 +228,17 @@ func TestImportFullSyncKeepsRecoveredReactionRedacted(t *testing.T) {
 	_, err := f.run(t, true, false)
 	req.NoError(err)
 	var reactions int
-	req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&reactions))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&reactions))
 	check.Equal(1, reactions)
 	f.timeline = append(f.timeline, &event.Event{ID: "$redaction", Type: event.EventRedaction, Redacts: "$reaction", Content: event.Content{Raw: map[string]any{}}})
 	_, err = f.run(t, false, true)
 	req.NoError(err)
-	req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&reactions))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&reactions))
 	check.Zero(reactions)
 	f.quiet = true
 	_, err = f.run(t, true, false)
 	req.NoError(err)
-	req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&reactions))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&reactions))
 	check.Zero(reactions)
 }
 
@@ -305,7 +305,7 @@ func (f *recoveryFixture) body(t *testing.T, eventID string) string {
 	found, err := f.store.MessageExistsBatch(f.sourceID, []string{eventID})
 	require.NoError(t, err)
 	require.NotZero(t, found[eventID])
-	body, err := f.store.GetMessageBodyText(found[eventID])
+	body, err := f.store.GetMessageBodyText(t.Context(), found[eventID])
 	require.NoError(t, err)
 	return body
 }
@@ -313,7 +313,7 @@ func (f *recoveryFixture) body(t *testing.T, eventID string) string {
 func (f *recoveryFixture) operation(t *testing.T) operations.Run {
 	t.Helper()
 	req := require.New(t)
-	last, err := f.store.GetLastSuccessfulSyncByType(f.sourceID, SourceType)
+	last, err := f.store.GetLastSuccessfulSyncByType(t.Context(), f.sourceID, SourceType)
 	req.NoError(err)
 	id, err := operations.NewInt64ID(operations.KindSourceSync, last.ID)
 	req.NoError(err)
@@ -327,21 +327,21 @@ func (f *recoveryFixture) interrupt(t *testing.T, operation, table, record, when
 	t.Helper()
 	req := require.New(t)
 	if f.store.IsPostgreSQL() {
-		_, err := f.store.DB().Exec(fmt.Sprintf(`CREATE FUNCTION stop_recovery_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF %s THEN RAISE EXCEPTION 'interrupted recovery'; END IF; RETURN %s; END $$`, when, record))
+		_, err := f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION stop_recovery_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF %s THEN RAISE EXCEPTION 'interrupted recovery'; END IF; RETURN %s; END $$`, when, record))
 		req.NoError(err)
-		_, err = f.store.DB().Exec(fmt.Sprintf(`CREATE TRIGGER stop_recovery BEFORE %s ON %s FOR EACH ROW EXECUTE FUNCTION stop_recovery_fn()`, operation, table))
+		_, err = f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_recovery BEFORE %s ON %s FOR EACH ROW EXECUTE FUNCTION stop_recovery_fn()`, operation, table))
 		req.NoError(err)
 		return func() {
-			_, err := f.store.DB().Exec(`DROP TRIGGER stop_recovery ON ` + table)
+			_, err := f.store.DB().ExecContext(t.Context(), `DROP TRIGGER stop_recovery ON `+table)
 			req.NoError(err)
-			_, err = f.store.DB().Exec(`DROP FUNCTION stop_recovery_fn()`)
+			_, err = f.store.DB().ExecContext(t.Context(), `DROP FUNCTION stop_recovery_fn()`)
 			req.NoError(err)
 		}
 	}
-	_, err := f.store.DB().Exec(fmt.Sprintf(`CREATE TRIGGER stop_recovery BEFORE %s ON %s WHEN %s BEGIN SELECT RAISE(ABORT, 'interrupted recovery'); END`, operation, table, when))
+	_, err := f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_recovery BEFORE %s ON %s WHEN %s BEGIN SELECT RAISE(ABORT, 'interrupted recovery'); END`, operation, table, when))
 	req.NoError(err)
 	return func() {
-		_, err := f.store.DB().Exec(`DROP TRIGGER stop_recovery`)
+		_, err := f.store.DB().ExecContext(t.Context(), `DROP TRIGGER stop_recovery`)
 		req.NoError(err)
 	}
 }
@@ -349,7 +349,7 @@ func (f *recoveryFixture) interrupt(t *testing.T, operation, table, record, when
 // ageAttempts moves every failed attempt past the retry cooldown.
 func (f *recoveryFixture) ageAttempts(t *testing.T) {
 	t.Helper()
-	_, err := f.store.DB().Exec(f.store.Rebind(`UPDATE matrix_encrypted_events SET tried_at = ? WHERE tried_at IS NOT NULL`), time.Now().Add(-2*recoveryCooldown).Unix())
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE matrix_encrypted_events SET tried_at = ? WHERE tried_at IS NOT NULL`), time.Now().Add(-2*recoveryCooldown).Unix())
 	require.NoError(t, err)
 }
 
@@ -358,7 +358,7 @@ func (f *recoveryFixture) pendingEdits(t *testing.T, target string) []string {
 	req := require.New(t)
 	ids, err := f.store.MessageExistsBatch(f.sourceID, []string{target})
 	req.NoError(err)
-	rows, err := f.store.DB().Query(f.store.Rebind(`SELECT event_id FROM matrix_pending_edits WHERE target_message_id = ? ORDER BY origin_ts, event_id`), ids[target])
+	rows, err := f.store.DB().QueryContext(t.Context(), f.store.Rebind(`SELECT event_id FROM matrix_pending_edits WHERE target_message_id = ? ORDER BY origin_ts, event_id`), ids[target])
 	req.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var edits []string
@@ -390,7 +390,7 @@ func TestImportRecoveryDeletedPlaceholders(t *testing.T) {
 	check.Zero(sum.PendingEncrypted)
 	check.Equal("original", f.body(t, "$original"))
 	var deleted bool
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), ids["$original"]).Scan(&deleted))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), ids["$original"]).Scan(&deleted))
 	check.True(deleted)
 	f.quiet = false
 	f.timeline = []*event.Event{f.message(t, "$target", "target", 10)}
@@ -399,7 +399,7 @@ func TestImportRecoveryDeletedPlaceholders(t *testing.T) {
 	ids, err = f.store.MessageExistsBatch(f.sourceID, []string{"$original", "$target"})
 	req.NoError(err)
 	var targetID int64
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), ids["$original"]).Scan(&targetID))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), ids["$original"]).Scan(&targetID))
 	check.Equal(ids["$target"], targetID)
 }
 
@@ -446,7 +446,7 @@ func TestImportRecoveryFinishesInterruptedWrites(t *testing.T) {
 				wantReactions, wantRows = 1, 2
 			}
 			var reactions int
-			req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&reactions))
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&reactions))
 			check.Equal(wantReactions, reactions)
 			ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$original", "$second", "$reaction", "$second-reaction"})
 			req.NoError(err)
@@ -488,7 +488,7 @@ func TestImportRecoversPlaceholderFromInterruptedRun(t *testing.T) {
 			f.timeline = []*event.Event{missing}
 			_, err := f.run(t, true, false)
 			req.NoError(err)
-			convID, err := f.store.EnsureConversation(f.sourceID, "!room:example.org", "")
+			convID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "!room:example.org", "")
 			req.NoError(err)
 			fresh := f.message(t, "$fresh", "fresh", 20)
 			fresh.RoomID = "!room:example.org"
@@ -668,7 +668,7 @@ func TestImportRecoveryRetiresUnsupportedEventsAndKeepsMalformedPending(t *testi
 func TestImportPendingRepliesCrossPagesWithoutRawEvents(t *testing.T) {
 	req, check := require.New(t), assert.New(t)
 	f := newRecoveryFixture(t)
-	convID, err := f.store.EnsureConversation(f.sourceID, "!room:example.org", "Room")
+	convID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "!room:example.org", "Room")
 	req.NoError(err)
 	var replyIDs []int64
 	for i := range pageSize + 1 {
@@ -684,7 +684,7 @@ func TestImportPendingRepliesCrossPagesWithoutRawEvents(t *testing.T) {
 	req.NoError(err)
 	for _, messageID := range replyIDs {
 		var targetID sql.NullInt64
-		req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), messageID).Scan(&targetID))
+		req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), messageID).Scan(&targetID))
 		check.Equal(targets["$target"], targetID.Int64)
 	}
 }
@@ -745,7 +745,7 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 				var recovered int
 				if retired {
 					check.Equal("original", f.body(t, "$original"))
-					req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&recovered))
+					req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&recovered))
 					check.Zero(recovered)
 					return
 				}
@@ -759,9 +759,9 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 				check.False(metadata.Valid, "a replayed copy is never recovered")
 				switch kind {
 				case "reaction":
-					req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&recovered))
+					req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&recovered))
 					check.Equal(1, recovered)
-					req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reaction_source_events WHERE source_reaction_id = '$second'`).Scan(&recovered))
+					req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reaction_source_events WHERE source_reaction_id = '$second'`).Scan(&recovered))
 					check.Zero(recovered)
 				case "edit":
 					check.Equal("edited", f.body(t, "$original"))
@@ -871,7 +871,7 @@ func TestImportRecoveryPrefersOriginalBeforeCopiedCiphertext(t *testing.T) {
 			check.Equal("$a-original", conflict.Winner)
 			if !f.store.IsPostgreSQL() {
 				var indexed, matches int64
-				req.NoError(f.store.DB().QueryRow(`SELECT MIN(rowid), COUNT(*) FROM messages_fts WHERE messages_fts MATCH '"sender"'`).Scan(&indexed, &matches))
+				req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT MIN(rowid), COUNT(*) FROM messages_fts WHERE messages_fts MATCH '"sender"'`).Scan(&indexed, &matches))
 				check.Equal(int64(1), matches)
 				check.Equal(ids["$a-original"], indexed, "search must attribute the text to its original event")
 			}
@@ -936,7 +936,7 @@ func TestImportRecoveryAppliesOneCopyOfAReplayedReaction(t *testing.T) {
 	_, err = f.run(t, true, false)
 	req.NoError(err)
 	var reactions int
-	req.NoError(f.store.DB().QueryRow(`SELECT count(*) FROM reactions`).Scan(&reactions))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&reactions))
 	check.Equal(1, reactions, "a reaction's Megolm index applies once")
 }
 
@@ -1000,7 +1000,7 @@ func TestImportRecoveryFinishesReplyLinkAfterInterruption(t *testing.T) {
 	ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$reply", "$target"})
 	req.NoError(err)
 	var replyTo int64
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), ids["$reply"]).Scan(&replyTo))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), ids["$reply"]).Scan(&replyTo))
 	check.Equal(ids["$target"], replyTo)
 }
 

@@ -452,12 +452,12 @@ func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
 	_, err = imazingcsv.NewImporter(st, imazingcsv.Options{Owner: "+15550000001", Timezone: "UTC"}).
 		ImportPath(t.Context(), exportRoot)
 	requirements.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(imazingcsv.SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), imazingcsv.SourceType, "+15550000001")
 	requirements.NoError(err)
 	var ownerParticipantID, messageID int64
-	requirements.NoError(st.DB().QueryRow(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT id FROM participants WHERE phone_number = '+15550000001'`).Scan(&ownerParticipantID))
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_id = ?`), source.ID).Scan(&messageID))
 	person, _, err := st.CreatePersonFromParticipant(ownerParticipantID)
 	requirements.NoError(err)

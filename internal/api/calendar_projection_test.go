@@ -22,7 +22,7 @@ func TestHandleGetMessageCalendarProjection(t *testing.T) {
 	mock.messages[0].MessageType = "calendar_event"
 	mock.messages[0].Calendar = &store.CalendarProjection{Status: &status}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

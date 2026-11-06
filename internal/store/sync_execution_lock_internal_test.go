@@ -16,7 +16,7 @@ func (l *failingSyncExecutionLock) release() (bool, error) { return l.released, 
 
 func TestSyncExecutionReleaseRetriesFailedCleanup(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(":memory:")
+	st, err := OpenForTest(t.Context(), ":memory:")
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -43,7 +43,7 @@ func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 	for _, cleanup := range []string{"run", "abandon", "all"} {
 		t.Run(cleanup, func(t *testing.T) {
 			require := require.New(t)
-			st, err := OpenForTest(":memory:")
+			st, err := OpenForTest(t.Context(), ":memory:")
 			require.NoError(err)
 			t.Cleanup(func() { _ = st.Close() })
 			require.NoError(st.InitSchema())
@@ -78,7 +78,7 @@ func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 
 func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
 	requirements := require.New(t)
-	st, err := OpenForTest(":memory:")
+	st, err := OpenForTest(t.Context(), ":memory:")
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 

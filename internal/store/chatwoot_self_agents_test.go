@@ -20,15 +20,15 @@ func TestSyncChatwootSelfAgentsWritesOnlyChangedConfiguration(t *testing.T) {
 	require.NoError(st.SyncChatwootSelfAgents(t.Context(), source.ID, []string{first}))
 
 	sentinel := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET updated_at = ? WHERE id = ?`), sentinel, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET updated_at = ? WHERE id = ?`), sentinel, source.ID)
 	require.NoError(err)
 	untouched := func() bool {
 		var count int
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sources WHERE id = ? AND updated_at = ?`), source.ID, sentinel).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sources WHERE id = ? AND updated_at = ?`), source.ID, sentinel).Scan(&count))
 		return count == 1
 	}
 	identities := func() []string {
-		rows, err := st.DB().Query(st.Rebind(`SELECT address FROM account_identities WHERE source_id = ? ORDER BY address`), source.ID)
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT address FROM account_identities WHERE source_id = ? ORDER BY address`), source.ID)
 		require.NoError(err)
 		defer func() { assert.NoError(rows.Close()) }()
 		var addresses []string

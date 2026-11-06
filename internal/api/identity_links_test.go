@@ -86,7 +86,7 @@ func postIdentityLink(t *testing.T, srv *Server, path string, body IdentityLinkR
 	t.Helper()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)

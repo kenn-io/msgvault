@@ -67,7 +67,7 @@ func TestRunStopsRetryWhenConsentRevokedDuringProviderBackoff(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if requests.Add(1) == 1 {
 					if changeSnapshot {
-						assert.NoError(st.SetParticipantIdentifier(left, "email", "updated@example.test"))
+						assert.NoError(st.SetParticipantIdentifierContext(t.Context(), left, "email", "updated@example.test"))
 					}
 					close(firstRequest)
 					http.Error(w, "retry", http.StatusTooManyRequests)
@@ -161,7 +161,7 @@ func TestRunScoresSnapshotsAndNeverAppliesMatch(t *testing.T) {
 		assert.Equal("Dry Right", body.State.Right["display_name"])
 		assert.NotContains(body.State.Left, "id")
 		if failDuringRequest {
-			assert.NoError(st.SetParticipantIdentifier(left, "email", "updated@example.test"))
+			assert.NoError(st.SetParticipantIdentifierContext(t.Context(), left, "email", "updated@example.test"))
 			failDuringRequest = false
 			http.Error(w, "fixture provider failure", http.StatusBadGateway)
 			return

@@ -50,7 +50,7 @@ func TestPstThreadingNUL(t *testing.T) {
 			// The existing-row repair path must not restore the omitted facts either.
 			require.NoError(recordPstMessageHeadersByID(t.Context(), st, src.ID, ids["pst-synthetic"], raw))
 			var mid, metadata sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id, metadata FROM messages WHERE id = ?`), ids["pst-synthetic"]).Scan(&mid, &metadata))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT rfc822_message_id, metadata FROM messages WHERE id = ?`), ids["pst-synthetic"]).Scan(&mid, &metadata))
 			assert.Equal(tc.wantID, mid.String)
 			facts := map[string]string{}
 			if metadata.Valid {
@@ -93,7 +93,7 @@ func TestPstThreadingPipeline(t *testing.T) {
 			}
 			require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), src.ID, 0, nil))
 			require.NoError(st.ReconcilePstEmailThreadsContext(t.Context(), src.ID))
-			rows, err := st.DB().Query(`SELECT conversation_id, rfc822_message_id, reply_to_message_id FROM messages ORDER BY source_message_id`)
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT conversation_id, rfc822_message_id, reply_to_message_id FROM messages ORDER BY source_message_id`)
 			require.NoError(err)
 			defer func() { require.NoError(rows.Close()) }()
 			var conv int64
@@ -127,7 +127,7 @@ func TestImportPst_RerunRepairsMissingIdentifiers(t *testing.T) {
 	require.NoError(err)
 	require.Zero(first.Errors)
 	// Query only metadata, then simulate the historical importer losing IDs.
-	rows, err := st.DB().Query(`SELECT id, rfc822_message_id FROM messages WHERE rfc822_message_id IS NOT NULL AND rfc822_message_id <> ''`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT id, rfc822_message_id FROM messages WHERE rfc822_message_id IS NOT NULL AND rfc822_message_id <> ''`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	original := map[int64]string{}
@@ -145,24 +145,24 @@ func TestImportPst_RerunRepairsMissingIdentifiers(t *testing.T) {
 		require.NoError(readErr)
 		rawBefore[id] = sha256.Sum256(raw)
 	}
-	_, err = st.DB().Exec(`UPDATE messages SET rfc822_message_id = NULL, metadata = NULL`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = NULL, metadata = NULL`)
 	require.NoError(err)
 	// Earlier imports without identifiers keyed conversations by content hash.
-	_, err = st.DB().Exec(`UPDATE conversations SET source_conversation_id = 'legacy-' || id`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE conversations SET source_conversation_id = 'legacy-' || id`)
 	require.NoError(err)
 	var conversationsBefore int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationsBefore))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations`).Scan(&conversationsBefore))
 	second, err := ImportPst(t.Context(), st, path, opts)
 	require.NoError(err)
 	require.Zero(second.Errors)
 	assert.Equal(first.MessagesAdded, second.MessagesSkipped)
 	assert.Zero(second.MessagesAdded)
 	var conversationsAfter int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationsAfter))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations`).Scan(&conversationsAfter))
 	assert.Equal(conversationsBefore, conversationsAfter, "repair must not add placeholder conversations")
 	for id, want := range original {
 		var got string
-		require.NoError(st.DB().QueryRow(`SELECT COALESCE(rfc822_message_id,'') FROM messages WHERE id = ?`, id).Scan(&got))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(rfc822_message_id,'') FROM messages WHERE id = ?`, id).Scan(&got))
 		assert.Equal(sha256.Sum256([]byte(want)), sha256.Sum256([]byte(got)))
 		raw, err := st.GetMessageRaw(id)
 		require.NoError(err)

@@ -17,13 +17,13 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 	f := storetest.New(t)
 	original, hash := seedDocumentPublicationAuthority(t, f)
 	attachmentID := seededDocumentAttachmentID(t, f, hash)
-	_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
 	require.NoError(err)
 	require.False(eligible, "standalone consent must not retain inline occurrences")
 	var occurrenceCount int
-	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
 	assert.Zero(occurrenceCount)
 	candidates, err := f.Store.ListDocumentExtractionCandidates(t.Context(), original.ID, "original", original.AllowedMediaTypes, nil, nil, 10)
 	require.NoError(err)
@@ -101,12 +101,12 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 		RetentionPosture: expanded.RetentionPosture, TrainingPosture: expanded.TrainingPosture,
 	}))
 	// A role edit invalidates serving before the asynchronous journal is consumed.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET attachment_role = 'preview' WHERE id = ?"), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE attachments SET attachment_role = 'preview' WHERE id = ?"), attachmentID)
 	require.NoError(err)
 	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "quasar", PageSize: 10})
 	require.NoError(err)
 	assert.Empty(response.Results)
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
 	require.NoError(err)
 	retired, err := f.Store.RetireDocumentExtractionProfile(t.Context(), expanded.ID)
 	require.NoError(err)
@@ -114,7 +114,7 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 3)
 	require.NoError(err)
 	require.False(eligible, "retired inline consent must not retain occurrences")
-	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
 	assert.Zero(occurrenceCount)
 }
 
@@ -159,9 +159,9 @@ func TestInlineFallbackSurvivesStandaloneHeadForSharedHash(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{ProfileID: target.ID, ProfileFingerprint: target.Fingerprint, RetentionPosture: target.RetentionPosture, TrainingPosture: target.TrainingPosture}))
 	// Deterministic consent precedence independent of database clock granularity.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_provider_consents SET consented_at = ? WHERE profile_id = ?"), time.Now().Add(-2*time.Hour), expanded.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_provider_consents SET consented_at = ? WHERE profile_id = ?"), time.Now().Add(-2*time.Hour), expanded.ID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_provider_consents SET consented_at = ? WHERE profile_id = ?"), time.Now().Add(-time.Hour), original.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_provider_consents SET consented_at = ? WHERE profile_id = ?"), time.Now().Add(-time.Hour), original.ID)
 	require.NoError(err)
 	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "quasar", PageSize: 10})
 	require.NoError(err)

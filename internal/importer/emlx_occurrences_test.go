@@ -50,7 +50,7 @@ func TestImportEmlxNewOldDateMessage(t *testing.T) {
 	assertions.Equal(int64(2), second.MessagesProcessed)
 	assertions.Equal(2, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	var messageID int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages
  WHERE rfc822_message_id = 'old-download@example.test'`).Scan(&messageID))
 	archived, err := st.GetMessageRawContext(t.Context(), messageID)
 	requirements.NoError(err)
@@ -72,7 +72,7 @@ func TestImportEmlxMovedOccurrenceRetainsArchive(t *testing.T) {
 	requirements.NoError(err)
 	requirements.False(first.HardErrors)
 	var messageID int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 
 	mkMailboxDir(t, archive, map[string][]byte{"3.emlx": raw})
 	second, err := ImportEmlxDir(t.Context(), st, root, opts)
@@ -93,7 +93,7 @@ func TestImportEmlxMovedOccurrenceRetainsArchive(t *testing.T) {
 	assertions.False(moved.HardErrors)
 	assertions.Zero(moved.MessagesAdded)
 	var movedReceipts int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_import_items
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items
  WHERE source_id = ? AND provider = 'emlx-occurrence' AND name = ? AND status = 'imported'`),
 		first.SourceID, "Archive.mbox/Messages/2.emlx").Scan(&movedReceipts))
 	assertions.Equal(1, movedReceipts, "a moved path gets its own receipt even when the content already exists")
@@ -109,7 +109,7 @@ func TestImportEmlxMovedOccurrenceRetainsArchive(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(labels, 2)
 	var live int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NULL`),
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NULL`),
 		messageID).Scan(&live))
 	assertions.Equal(1, live)
 }
@@ -130,7 +130,7 @@ func TestImportEmlxFTSFailureRemainsRetryable(t *testing.T) {
 	// The FTS content shadow table is written by SQLite's real virtual-table
 	// insertion. Its insert trigger leaves message persistence and FTS deletion
 	// intact, so the failure happens at the production post-commit FTS boundary.
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_emlx_fts_content
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_emlx_fts_content
  BEFORE INSERT ON messages_fts_content BEGIN
  SELECT RAISE(ABORT, 'synthetic EMLX FTS insertion failure'); END`)
 	requirements.NoError(err)
@@ -142,22 +142,22 @@ func TestImportEmlxFTSFailureRemainsRetryable(t *testing.T) {
 	assertions.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-target", "imported"))
 
 	var messageID int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 	archived, err := st.GetMessageRawContext(t.Context(), messageID)
 	requirements.NoError(err)
 	assertions.Equal(raw, archived, "raw committed before the injected real FTS failure")
 	var indexed int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts
  WHERE messages_fts MATCH 'syntheticretryneedle'`).Scan(&indexed))
 	requirements.Zero(indexed, "the real FTS insertion fault must leave committed raw unindexed")
 
-	_, err = st.DB().Exec(`DROP TRIGGER fail_emlx_fts_content`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_emlx_fts_content`)
 	requirements.NoError(err)
 	summary, err = ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
 	assertions.False(summary.HardErrors)
 	assertions.Zero(summary.Errors)
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts
  WHERE messages_fts MATCH 'syntheticretryneedle'`).Scan(&indexed))
 	assertions.Equal(1, indexed, "an unchanged raw-present source must repair unfinished FTS")
 	assertions.Equal(1, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
@@ -193,19 +193,19 @@ func TestImportEmlxFatalMIMECompletesWithSalvage(t *testing.T) {
 	assertions.Zero(summary.Errors)
 	assertions.Equal(2, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
 	var status string
-	requirements.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 	assertions.Equal(store.SyncStatusCompleted, status)
 
 	var messageID int64
 	var subject, rfcID string
-	requirements.NoError(st.DB().QueryRow(`SELECT id, subject, rfc822_message_id FROM messages
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, subject, rfc822_message_id FROM messages
  WHERE rfc822_message_id = 'malformed-import@example.test'`).Scan(&messageID, &subject, &rfcID))
 	assertions.Equal("Synthetic malformed import", subject)
 	archived, err := st.GetMessageRawContext(t.Context(), messageID)
 	requirements.NoError(err)
 	assertions.Equal(raw, archived)
 	var parent sql.NullInt64
-	requirements.NoError(st.DB().QueryRow(`SELECT reply_to_message_id FROM messages WHERE subject = 'Synthetic reply'`).
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reply_to_message_id FROM messages WHERE subject = 'Synthetic reply'`).
 		Scan(&parent))
 	assertions.Equal(sql.NullInt64{Int64: messageID, Valid: true}, parent, "reply resolution still runs")
 
@@ -230,8 +230,8 @@ func TestImportEmlxPolicyChangeRetriesAttachmentStorage(t *testing.T) {
 	requirements.NoError(err)
 	requirements.False(first.HardErrors)
 	var messageID, attachments int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
 	requirements.Zero(attachments, "disk storage was intentionally disabled")
 
 	opts.AttachmentsDir = filepath.Join(tmp, "enabled-attachments")
@@ -240,7 +240,7 @@ func TestImportEmlxPolicyChangeRetriesAttachmentStorage(t *testing.T) {
 	assertions.False(second.HardErrors)
 	assertions.Zero(second.MessagesAdded)
 	var contentHash string
-	err = st.DB().QueryRow(st.Rebind(`SELECT content_hash FROM attachments WHERE message_id = ?`), messageID).
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT content_hash FROM attachments WHERE message_id = ?`), messageID).
 		Scan(&contentHash)
 	requirements.NoError(err, "unchanged raw must complete newly enabled attachment storage")
 	wantHash := sha256.Sum256(content)
@@ -273,7 +273,7 @@ func TestImportEmlxTargetTransitionFailures(t *testing.T) {
 			// Both INSERT and UPDATE are covered so the observable contract does
 			// not depend on the ledger's choice of upsert statement.
 			for _, operation := range []string{"INSERT", "UPDATE"} {
-				_, err := st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_target_%s BEFORE %s ON source_import_items
+				_, err := st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_target_%s BEFORE %s ON source_import_items
  WHEN NEW.provider = 'emlx-target' AND NEW.status = '%s' BEGIN
  SELECT RAISE(ABORT, 'synthetic target transition failure'); END`, operation, operation, failedStatus))
 				requirements.NoError(err)
@@ -285,8 +285,8 @@ func TestImportEmlxTargetTransitionFailures(t *testing.T) {
 			assertions.Zero(countEmlxLedgerEntries(t, st, failed.SourceID, "emlx-occurrence", "imported"))
 			assertions.Zero(countEmlxLedgerEntries(t, st, failed.SourceID, "emlx-target", "imported"))
 			var messages, rawRows int
-			requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
-			requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawRows))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_raw`).Scan(&rawRows))
 			if transition == "dirty" {
 				assertions.Zero(messages, "failed durable dirty transition must prevent message mutation")
 				assertions.Zero(rawRows)
@@ -295,13 +295,13 @@ func TestImportEmlxTargetTransitionFailures(t *testing.T) {
 				requirements.Equal(1, rawRows)
 				assertions.Equal(1, countEmlxLedgerEntries(t, st, failed.SourceID, "emlx-target", "pending"))
 				var messageID int64
-				requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 				archived, err := st.GetMessageRawContext(t.Context(), messageID)
 				requirements.NoError(err)
 				assertions.Equal(raw, archived)
 			}
 			for _, operation := range []string{"INSERT", "UPDATE"} {
-				_, err := st.DB().Exec("DROP TRIGGER fail_target_" + operation)
+				_, err := st.DB().ExecContext(t.Context(), "DROP TRIGGER fail_target_"+operation)
 				requirements.NoError(err)
 			}
 			requirements.NoError(st.Close())
@@ -400,7 +400,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 					statement = `CREATE TRIGGER fail_shared_fts BEFORE INSERT ON messages_fts_content
  BEGIN SELECT RAISE(ABORT, 'synthetic shared FTS failure'); END`
 				}
-				_, err = st.DB().Exec(statement)
+				_, err = st.DB().ExecContext(t.Context(), statement)
 				requirements.NoError(err)
 				failed, err := ImportEmlxDir(t.Context(), st, rootB, opts)
 				requirements.NoError(err)
@@ -409,7 +409,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				originalHash := sha256.Sum256(raw)
 				sourceMessageID := "emlx-" + hex.EncodeToString(originalHash[:])
 				var messageID int64
-				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages
  WHERE source_id = ? AND source_message_id = ?`), first.SourceID, sourceMessageID).Scan(&messageID))
 				committed, err := st.GetMessageRawContext(t.Context(), messageID)
 				requirements.NoError(err)
@@ -419,12 +419,12 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				requirements.Equal(newPart, parsed.Attachments[0].Content,
 					"the fixture must reach changed raw persistence before completion fails")
 				var completedTarget int
-				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_import_items
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items
  WHERE source_id = ? AND provider = 'emlx-target' AND provider_id = ? AND status = 'imported'`),
 					first.SourceID, sourceMessageID).Scan(&completedTarget))
 				assertions.Zero(completedTarget)
 
-				_, err = st.DB().Exec("DROP TRIGGER " + trigger)
+				_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+trigger)
 				requirements.NoError(err)
 				requirements.NoError(os.Remove(filepath.Join(mboxB, "Messages", nameB)))
 				requirements.NoError(st.Close())
@@ -445,7 +445,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Equal(committed, archived, "unchanged older A must finish CURRENT B raw")
 				var contentHash, storagePath string
-				requirements.NoError(reopened.DB().QueryRow(reopened.Rebind(`SELECT content_hash, storage_path
+				requirements.NoError(reopened.DB().QueryRowContext(t.Context(), reopened.Rebind(`SELECT content_hash, storage_path
  FROM attachments WHERE message_id = ?`), messageID).Scan(&contentHash, &storagePath))
 				partHash := sha256.Sum256(newPart)
 				assertions.Equal(hex.EncodeToString(partHash[:]), contentHash)
@@ -456,7 +456,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				assertions.Equal(newPart, blob)
 				assertions.NotEmpty(storagePath)
 				var indexed int
-				requirements.NoError(reopened.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts
+				requirements.NoError(reopened.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts
  WHERE messages_fts MATCH 'sharedtargetneedle'`).Scan(&indexed))
 				assertions.Equal(1, indexed)
 				labels, err := reopened.MessageLabelIDsContext(t.Context(), messageID)
@@ -466,7 +466,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 					wantLabels = 2
 				}
 				assertions.Len(labels, wantLabels, "recovery preserves accumulated mailbox provenance")
-				requirements.NoError(reopened.DB().QueryRow(reopened.Rebind(`SELECT COUNT(*) FROM source_import_items
+				requirements.NoError(reopened.DB().QueryRowContext(t.Context(), reopened.Rebind(`SELECT COUNT(*) FROM source_import_items
  WHERE source_id = ? AND provider = 'emlx-target' AND provider_id = ? AND status = 'imported'`),
 					first.SourceID, sourceMessageID).Scan(&completedTarget))
 				assertions.Equal(1, completedTarget)
@@ -537,7 +537,7 @@ func TestImportEmlxSharedTargetRetainsUnchangedParts(t *testing.T) {
 				r.NoError(err)
 				r.False(newer.HardErrors)
 				var messageID int64
-				r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+				r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 				archived, err := st.GetMessageRawContext(t.Context(), messageID)
 				r.NoError(err)
 				parsed, err := mime.Parse(archived)
@@ -624,7 +624,7 @@ func TestImportEmlxReconcileEmptyTree(t *testing.T) {
 	a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "pending"))
 	var n int
-	r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&n))
+	r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&n))
 	a.Equal(1, n)
 }
 
@@ -638,14 +638,14 @@ func TestImportEmlxReconcileRepairsEqualRaw(t *testing.T) {
 	first, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
 	r.False(first.HardErrors)
-	_, err = st.DB().Exec("DELETE FROM messages_fts")
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM messages_fts")
 	r.NoError(err)
 	opts.FullReconcile = true
 	fixed, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
 	a.False(fixed.HardErrors)
 	var n int
-	r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'reconciliationneedle'").Scan(&n))
+	r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'reconciliationneedle'").Scan(&n))
 	a.Equal(1, n)
 }
 
@@ -668,7 +668,7 @@ func TestImportEmlxReconcileInvalidatesUnvisitedOccurrences(t *testing.T) {
 			first, err := ImportEmlxDir(t.Context(), st, root, opts)
 			r.NoError(err)
 			r.False(first.HardErrors)
-			_, err = st.DB().Exec("DELETE FROM messages_fts")
+			_, err = st.DB().ExecContext(t.Context(), "DELETE FROM messages_fts")
 			r.NoError(err)
 			opts.FullReconcile = true
 			io := defaultEmlxImportIO(opts)
@@ -698,7 +698,7 @@ func TestImportEmlxReconcileInvalidatesUnvisitedOccurrences(t *testing.T) {
 			a.False(retried.HardErrors)
 			a.Equal(2, parses)
 			var matches int
-			r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unvisitedreconciliationneedle'").Scan(&matches))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unvisitedreconciliationneedle'").Scan(&matches))
 			a.Equal(1, matches, "retry must repair the unvisited message before acknowledging it")
 			again, err := ImportEmlxDir(t.Context(), st, root, opts)
 			r.NoError(err)
@@ -729,7 +729,7 @@ func TestImportEmlxSourceBudgetColdRetries(t *testing.T) {
 			r.NoError(err)
 			r.False(first.HardErrors)
 			var mid int64
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&mid))
 			archived, err := st.GetMessageRawContext(t.Context(), mid)
 			r.NoError(err)
 			parsed, err := mime.Parse(archived)
@@ -770,11 +770,11 @@ func TestImportEmlxPreservesDedupTombstone(t *testing.T) {
 			r.NoError(err)
 			r.False(duplicate.HardErrors)
 			var survivorID, duplicateID int64
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_id = ?", survivor.SourceID).Scan(&survivorID))
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_id = ?", duplicate.SourceID).Scan(&duplicateID))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_id = ?", survivor.SourceID).Scan(&survivorID))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_id = ?", duplicate.SourceID).Scan(&duplicateID))
 			archived, err := st.GetMessageRawContext(t.Context(), duplicateID)
 			r.NoError(err)
-			_, err = st.MergeDuplicates(survivorID, []int64{duplicateID}, "synthetic-emlx-dedup")
+			_, err = st.MergeDuplicates(t.Context(), survivorID, []int64{duplicateID}, "synthetic-emlx-dedup")
 			r.NoError(err)
 			if mode == "changed sibling" {
 				cacheAttachment(t, root, "1", "2", "one.bin", []byte("replacement attachment"))
@@ -791,7 +791,7 @@ func TestImportEmlxPreservesDedupTombstone(t *testing.T) {
 				r.NoError(err)
 				a.Equal(archived, retained, "deduplication keeps the archived duplicate intact")
 				var tombstones int
-				r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NOT NULL AND delete_batch_id = ?", duplicateID, "synthetic-emlx-dedup").Scan(&tombstones))
+				r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NOT NULL AND delete_batch_id = ?", duplicateID, "synthetic-emlx-dedup").Scan(&tombstones))
 				a.Equal(1, tombstones)
 			}
 		})
@@ -847,7 +847,7 @@ func TestImportEmlxMergedBudgetRemainsRetryable(t *testing.T) {
 			a.Positive(limited.Errors)
 			a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 			var mid int64
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&mid))
 			current, err := st.GetMessageRawContext(t.Context(), mid)
 			r.NoError(err)
 			parsed, err := mime.Parse(current)
@@ -930,7 +930,7 @@ func TestImportEmlxSingleOccurrenceShrinkingReplacement(t *testing.T) {
 	a.False(changed.HardErrors)
 	a.Positive(changed.Errors, "first replacement still cannot fit; feasible later parts must nevertheless progress")
 	var mid int64
-	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+	r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&mid))
 	current, err := st.GetMessageRawContext(t.Context(), mid)
 	r.NoError(err)
 	parsed, err := mime.Parse(current)

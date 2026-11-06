@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -49,22 +48,22 @@ func newIdentityDiscoveryFixture(t *testing.T) identityDiscoveryFixture {
 	sentID := createMessage("sent-folder-message", sql.NullTime{Time: when, Valid: true}, sql.NullTime{}, false)
 	inboundID := createMessage("inbound-message", sql.NullTime{}, sql.NullTime{Time: when.Add(time.Hour), Valid: true}, false)
 	gmailSentID := createMessage("gmail-sent-message", sql.NullTime{}, sql.NullTime{}, true)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET archived_at = ? WHERE id = ?`), when.Add(2*time.Hour), gmailSentID)
 	require.NoError(t, err, "fix archived-at fallback")
 
-	sentLabelID, err := f.Store.EnsureLabel(f.Source.ID, "imap-sent", "Sent Mail", "system")
+	sentLabelID, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "imap-sent", "Sent Mail", "system")
 	require.NoError(t, err, "create canonical sent folder")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE labels SET system_role = 'sent' WHERE id = ?`), sentLabelID)
 	require.NoError(t, err, "set canonical sent role")
 	require.NoError(t, f.Store.ReplaceMessageLabels(sentID, []int64{sentLabelID}), "label sent message")
 
-	gmailSentLabelID, err := f.Store.EnsureLabel(f.Source.ID, "SENT", "Gmail Sent Mail", "system")
+	gmailSentLabelID, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "SENT", "Gmail Sent Mail", "system")
 	require.NoError(t, err, "create Gmail sent label")
 	require.NoError(t, f.Store.ReplaceMessageLabels(gmailSentID, []int64{gmailSentLabelID}), "label Gmail sent message")
 
-	nameOnlySentID, err := f.Store.EnsureLabel(f.Source.ID, "mailbox-42", "Sent", "user")
+	nameOnlySentID, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "mailbox-42", "Sent", "user")
 	require.NoError(t, err, "create name-only sent label")
 	require.NoError(t, f.Store.ReplaceMessageLabels(inboundID, []int64{nameOnlySentID}), "label inbound message")
 
@@ -145,7 +144,7 @@ func TestIdentityDiscoveryScanReadsOnlySourceNativeAttribution(t *testing.T) {
 	)
 
 	var isFromMe, sourceIsFromMe, identityIsFromMe bool
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT is_from_me, source_is_from_me, identity_is_from_me
 		FROM messages
 		WHERE id = ?
@@ -268,7 +267,7 @@ func TestParticipantMergeKeepsDistinctEnvelopeAliasRows(t *testing.T) {
 
 	readEnvelopes := func(messageID int64) []string {
 		t.Helper()
-		rows, err := f.Store.DB().Query(f.Store.Rebind(`
+		rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 			SELECT participant_id, email_address FROM message_recipients
 			WHERE message_id = ? AND recipient_type = 'to' ORDER BY id
 		`), messageID)
@@ -339,7 +338,7 @@ func mergedAliasEnvelopeFixture(t *testing.T) (*storetest.Fixture, int64) {
 	require.NoError(t, f.Store.MergeParticipants(aliasID, primaryID), "merge alias into primary")
 
 	var isFromMe, identityIsFromMe bool
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT is_from_me, identity_is_from_me FROM messages WHERE id = ?
 	`), messageID).Scan(&isFromMe, &identityIsFromMe), "read pre-confirmation attribution")
 	require.False(t, isFromMe, "fixture message must start unattributed")
@@ -351,7 +350,7 @@ func mergedAliasEnvelopeFixture(t *testing.T) (*storetest.Fixture, int64) {
 func assertMessageIdentityAttributed(t *testing.T, f *storetest.Fixture, messageID int64) {
 	t.Helper()
 	var isFromMe, sourceIsFromMe, identityIsFromMe bool
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT is_from_me, source_is_from_me, identity_is_from_me FROM messages WHERE id = ?
 	`), messageID).Scan(&isFromMe, &sourceIsFromMe, &identityIsFromMe), "read attribution")
 	assert.True(t, identityIsFromMe,
@@ -464,7 +463,7 @@ func TestIdentityDiscoverySourceMessageIDsAreSourceScopedAndBounded(t *testing.T
 	fx := newIdentityDiscoveryFixture(t)
 	other, err := fx.Store.GetOrCreateSource("imap", "other@example.test")
 	require.NoError(err)
-	otherConv, err := fx.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConv, err := fx.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	require.NoError(err)
 	otherMessageID, err := fx.Store.UpsertMessage(&store.Message{
 		ConversationID: otherConv, SourceID: other.ID, SourceMessageID: "sent-folder-message",
@@ -475,7 +474,7 @@ func TestIdentityDiscoverySourceMessageIDsAreSourceScopedAndBounded(t *testing.T
 	require.NoError(err)
 	require.NoError(
 		fx.Store.ReplaceMessageRecipients(otherMessageID, "from", []int64{otherParticipant}, []string{"Other"}))
-	imapUpperSentLabel, err := fx.Store.EnsureLabel(other.ID, "SENT", "Uppercase mailbox", "system")
+	imapUpperSentLabel, err := fx.Store.EnsureLabel(t.Context(), other.ID, "SENT", "Uppercase mailbox", "system")
 	require.NoError(err)
 	require.NoError(fx.Store.ReplaceMessageLabels(otherMessageID, []int64{imapUpperSentLabel}))
 
@@ -512,7 +511,7 @@ func TestIdentityDiscoveryDoesNotReadContentTables(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-	_, err := fx.Store.ScanIdentityDiscoveryPageContext(context.Background(), fx.SourceID, 0, 100)
+	_, err := fx.Store.ScanIdentityDiscoveryPageContext(t.Context(), fx.SourceID, 0, 100)
 	require.NoError(t, err)
 
 	statements := strings.ToLower(logBuffer.String())

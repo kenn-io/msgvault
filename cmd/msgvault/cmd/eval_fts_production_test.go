@@ -46,7 +46,7 @@ func seedRankingDivergenceArchiveIn(t *testing.T, dataDir string) *store.Store {
 	// documents apart, with the query term buried once inside it.
 	filler := strings.Repeat("quarterly figures and other unrelated correspondence text ", 60)
 
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
 	(1, 1, 'thread-1', 'email_thread'),
@@ -67,7 +67,8 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 		{2, filler + " renewal " + filler},
 		{3, "Notice served."},
 	} {
-		_, err = s.DB().Exec(
+		_, err = s.DB().ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, b.id, b.body)
 		require.NoError(t, err, "seed body %d", b.id)
 	}
@@ -154,7 +155,7 @@ func TestRankedFTS_MatchesProductionRelevanceRanking(t *testing.T) {
 func TestRankedFTS_HonoursProductionAddressFilterSemantics(t *testing.T) {
 	s := seedRankingDivergenceArchive(t)
 	ctx := t.Context()
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO participants (id, email_address) VALUES (1, 'landlord@example.com');
 INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (1, 1, 'from');
 `)

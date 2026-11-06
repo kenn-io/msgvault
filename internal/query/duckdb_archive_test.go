@@ -123,12 +123,12 @@ func TestArchiveDuckDBEngineRestrictsSQLToAnalytics(t *testing.T) {
 	})
 	t.Run("configuration remains locked", func(t *testing.T) {
 		for _, setting := range []string{"SET enable_external_access = true", "SET memory_limit = '1GB'"} {
-			_, err := engine.db.Exec(setting)
+			_, err := engine.db.ExecContext(t.Context(), setting)
 			require.Error(t, err)
 		}
 	})
 	t.Run("owner SQL remains privileged", func(t *testing.T) {
-		owner, err := NewDuckDBEngine(dir, "", nil)
+		owner, err := NewDuckDBEngine(t.Context(), dir, "", nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, owner.Close()) })
 		result, err := owner.QuerySQL(t.Context(), fmt.Sprintf("SELECT content FROM read_text('%s')", escapePath(outside)))
@@ -154,14 +154,14 @@ func TestArchiveDuckDBEngineFollowsPublication(t *testing.T) {
 	requirements.NotNil(before.Cache)
 	assertions.Equal([][]any{{"Original publication"}}, before.Rows)
 
-	writer, err := NewDuckDBEngine(dir, "", nil)
+	writer, err := NewDuckDBEngine(t.Context(), dir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(writer.Close()) })
 	files, err := filepath.Glob(filepath.Join(dir, "messages", "*", "*.parquet"))
 	requirements.NoError(err)
 	requirements.Len(files, 1)
 	replacement := filepath.Join(t.TempDir(), "replacement.parquet")
-	_, err = writer.db.Exec(fmt.Sprintf(
+	_, err = writer.db.ExecContext(t.Context(), fmt.Sprintf(
 		"COPY (SELECT * EXCLUDE (message_type) REPLACE ('New publication' AS subject) FROM read_parquet('%s')) TO '%s' (FORMAT PARQUET)",
 		escapePath(files[0]), escapePath(replacement)))
 	requirements.NoError(err)

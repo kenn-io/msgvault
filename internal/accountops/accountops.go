@@ -1,6 +1,7 @@
 package accountops
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -55,7 +56,7 @@ type UpdateResult struct {
 }
 
 // UpdateDisplayName updates one account's display name.
-func UpdateDisplayName(st Store, req UpdateRequest) (UpdateResult, error) {
+func UpdateDisplayName(ctx context.Context, st Store, req UpdateRequest) (UpdateResult, error) {
 	account := strings.TrimSpace(req.Account)
 	email := strings.TrimSpace(req.Email)
 	if account != "" && email != "" && account != email {
@@ -68,7 +69,7 @@ func UpdateDisplayName(st Store, req UpdateRequest) (UpdateResult, error) {
 		return UpdateResult{}, opserr.Invalid(errors.New("display name is required"))
 	}
 
-	source, err := sourceops.ResolveExactOne(st, sourceops.Selector{
+	source, err := sourceops.ResolveExactOneContext(ctx, st, sourceops.Selector{
 		Account:     account,
 		SourceID:    req.SourceID,
 		SourceIDSet: req.SourceIDSet,

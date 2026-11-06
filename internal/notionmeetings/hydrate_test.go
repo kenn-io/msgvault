@@ -133,7 +133,7 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{}
 
-	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(context.Background(), meeting)
+	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), meeting)
 	require.NoError(t, err)
 	assert.Equal(t, "page-1", hydrated.Discovery.Parent.PageID)
 	assert.Equal(t, "page-1", hydrated.PageMarkdown.ID)
@@ -142,7 +142,7 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
@@ -178,7 +178,7 @@ func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
 	source.blocks["transcript-1"] = &empty
 	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript."
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
 	assert.True(hydrated.MarkdownTranscriptFallback)
@@ -207,7 +207,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			source.blockErrs = map[string]error{"transcript-1": tt.err}
 			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Published in Markdown.\n\n## Action items\nFollow up."
 
-			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
@@ -237,7 +237,7 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 			source := completeHydrationSource()
 			source.blockErrs = map[string]error{"transcript-1": tt.err}
 
-			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.Error(t, err)
 			assert.Nil(t, hydrated)
 			assert.ErrorIs(t, err, tt.err)
@@ -252,7 +252,7 @@ func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 		Raw: json.RawMessage(`{"object":"block","id":"meeting-1","type":"paragraph","has_children":false,"paragraph":{}}`),
 	}
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 
 	require.ErrorIs(t, err, ErrMalformedResponse)
 	assert.Nil(t, hydrated)
@@ -306,7 +306,7 @@ func TestHydratorMarkdownFallbackExcludesLaterSections(t *testing.T) {
 	source.blocks["transcript-1"] = &empty
 	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript.\n\n## Action items\nDo not archive as transcript."
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
 	assert.NotContains(hydrated.Transcript, "Action items")
@@ -317,7 +317,7 @@ func TestHydratorDoesNotWarnWhenOnlyLaterMarkdownSectionDiffers(t *testing.T) {
 	source := completeHydrationSource()
 	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Ready to ship.\n\n## Action items\nDifferent content."
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Warnings, "structured transcript and page Markdown transcript differed")
 }
@@ -350,7 +350,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Partial transcript."
 			tt.mutate(source.markdown)
 
-			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Empty(hydrated.Transcript)
 			assert.False(hydrated.MarkdownTranscriptFallback)
@@ -364,7 +364,7 @@ func TestHydratorDoesNotCompareIncompleteMarkdownTranscript(t *testing.T) {
 	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Partial conflicting transcript."
 	source.markdown.Truncated = true
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Warnings, "structured transcript and page Markdown transcript differed")
 }
@@ -376,7 +376,7 @@ func TestHydratorDoesNotWarnAboutIncompleteMarkdownWithoutTranscript(t *testing.
 	source.markdown.Markdown = "# Weekly planning\n\nMeeting context only."
 	source.markdown.UnknownBlockIDs = []string{"unrelated-block-1"}
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.Empty(t, hydrated.Transcript)
 	assert.NotContains(t, hydrated.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
@@ -387,7 +387,7 @@ func TestHydratorRejectsRepeatedChildCursor(t *testing.T) {
 	source.children["notes-1"][""] = &BlockPage{HasMore: true, NextCursor: "same"}
 	source.children["notes-1"]["same"] = &BlockPage{HasMore: true, NextCursor: "same"}
 
-	_, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	_, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "repeated child cursor")
 }
@@ -398,7 +398,7 @@ func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	source := completeHydrationSource()
 	source.usersErr = ErrUserInformation
 
-	hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(hydrated.Attendees)
 	assert.True(hydrated.AttendeeResolutionDegraded)
@@ -446,7 +446,7 @@ func TestHydratorDegradesOnInvalidUserPaginationAndKeepsFetchedUsers(t *testing.
 			source := completeHydrationSource()
 			source.users = tt.pages
 
-			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(err)
 			assert.True(hydrated.AttendeeResolutionDegraded)
 			require.Len(hydrated.Attendees, 1)
@@ -473,7 +473,7 @@ func TestHydratorKeepsSystemicUserListingErrorsFatal(t *testing.T) {
 			source := completeHydrationSource()
 			source.usersErr = tt.err
 
-			hydrated, err := NewHydrator(source).Hydrate(context.Background(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.Error(t, err)
 			assert.Nil(t, hydrated)
 			assert.ErrorIs(t, err, tt.err)
@@ -488,14 +488,14 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 	source.usersErr = errors.New("rate limit exceeded")
 	hydrator := NewHydrator(source)
 
-	first, err := hydrator.Hydrate(context.Background(), hydrationMeeting())
+	first, err := hydrator.Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(first.Attendees)
 	assert.True(first.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, first.AttendeeLabels)
 	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
 
-	second, err := hydrator.Hydrate(context.Background(), hydrationMeeting())
+	second, err := hydrator.Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(second.Attendees)
 	assert.True(second.AttendeeResolutionDegraded)

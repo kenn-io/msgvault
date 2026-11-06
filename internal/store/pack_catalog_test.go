@@ -48,13 +48,13 @@ func TestPackCatalogMalformedReferenceDoesNotBlockValidPackingOrPermitOrphanSwee
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(maintainer.Close()) })
 
-	stats, err := maintainer.Pack(context.Background(), packstore.PackOptions{})
+	stats, err := maintainer.Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(err)
 	assert.Equal(1, stats.BlobsPacked)
 	assert.True(stats.LooseOrphanSweepSuppressed)
 	assert.NoFileExists(filepath.Join(root, validHash[:2], validHash))
 	assert.FileExists(filepath.Join(root, orphanHash[:2], orphanHash))
-	entry, err := st.GetAttachmentPackEntry(validHash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), validHash)
 	require.NoError(err)
 	assert.NotNil(entry)
 }
@@ -74,7 +74,7 @@ func TestMaintenancePackCatalogResolvesUnknownThumbnailSize(t *testing.T) {
 	require.NoError(os.MkdirAll(filepath.Join(root, thumbnailHash[:2]), 0o700))
 	require.NoError(os.WriteFile(filepath.Join(root, filepath.FromSlash(thumbnailPath)), thumbnail, 0o600))
 
-	candidates, err := store.NewMaintenancePackCatalog(st, root).ListUnpacked(context.Background())
+	candidates, err := store.NewMaintenancePackCatalog(st, root).ListUnpacked(t.Context())
 	require.NoError(err)
 	var got *packstore.Candidate
 	for i := range candidates {
@@ -112,11 +112,11 @@ func TestMaintenancePacksThumbnailFromRecordedNoncanonicalPath(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(maintainer.Close()) })
 
-	stats, err := maintainer.Pack(context.Background(), packstore.PackOptions{})
+	stats, err := maintainer.Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(err)
 	assert.Equal(1, stats.BlobsPacked)
 	assert.NoFileExists(absThumbnailPath)
-	entry, err := st.GetAttachmentPackEntry(thumbnailHash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), thumbnailHash)
 	require.NoError(err)
 	assert.NotNil(entry)
 }
@@ -145,7 +145,7 @@ func (h *msgvaultPackHarness) SetMember(hash packstore.Hash, member bool) {
 		h.fixture.addAttachment(hash.String(), hash.String()[:2]+"/"+hash.String(), 13)
 	}
 	if !member && h.members[hash] {
-		_, err := h.store.DB().Exec(h.store.Rebind(`
+		_, err := h.store.DB().ExecContext(h.t.Context(), h.store.Rebind(`
 			DELETE FROM attachments
 			WHERE LOWER(content_hash) = ? OR LOWER(thumbnail_hash) = ?`), hash.String(), hash.String())
 		require.NoError(h.t, err)
@@ -156,7 +156,7 @@ func (h *msgvaultPackHarness) SetMember(hash packstore.Hash, member bool) {
 func (h *msgvaultPackHarness) SetCandidate(candidate packstore.Candidate) {
 	h.t.Helper()
 	require.NotEmpty(h.t, candidate.Paths)
-	_, err := h.store.DB().Exec(h.store.Rebind(`
+	_, err := h.store.DB().ExecContext(h.t.Context(), h.store.Rebind(`
 		UPDATE attachments SET storage_path = ?, size = ?
 		WHERE LOWER(content_hash) = ?`), candidate.Paths[0], candidate.Size, candidate.Hash.String())
 	require.NoError(h.t, err)
@@ -164,7 +164,7 @@ func (h *msgvaultPackHarness) SetCandidate(candidate packstore.Candidate) {
 
 func (h *msgvaultPackHarness) PutPack(record packstore.PackRecord, entries []packstore.IndexEntry) {
 	h.t.Helper()
-	require.NoError(h.t, h.store.RecordPackedBlobs(toStoreRecordTest(record), toStoreEntriesTest(entries)))
+	require.NoError(h.t, h.store.RecordPackedBlobs(h.t.Context(), toStoreRecordTest(record), toStoreEntriesTest(entries)))
 }
 
 func (h *msgvaultPackHarness) Snapshot() packstoretest.CatalogState {
@@ -301,7 +301,7 @@ func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
 	hash := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
 	oldPack, newPack := pack.NewPackID(), pack.NewPackID()
 	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: oldPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: oldPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
 		[]store.PackIndexEntry{{BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
 	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
 	require.NoError(err)
@@ -325,7 +325,7 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	record := func(hash string) {
 		packID := pack.NewPackID()
-		require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
 			[]store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: 6, StoredLen: 64, RawLen: 64}}))
 	}
 	inWindow := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
@@ -363,7 +363,7 @@ func TestSkipLooseEnumerationReportsNoCandidates(t *testing.T) {
 	fx.addAttachment(hash, hash[:2]+"/"+hash, len(content))
 
 	catalog := store.NewMaintenancePackCatalog(st, root)
-	candidates, err := catalog.ListUnpacked(context.Background())
+	candidates, err := catalog.ListUnpacked(t.Context())
 	require.NoError(err)
 	require.Len(candidates, 1, "the loose blob is a candidate without the flag")
 

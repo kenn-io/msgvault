@@ -34,7 +34,7 @@ func TestMigrateFreshAndRepeated(t *testing.T) {
 	s, err := store.OpenReadOnly(conf.DatabaseDSN())
 	require.NoError(err)
 	var version int
-	require.NoError(s.DB().QueryRow("SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&version))
+	require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&version))
 	assert.Equal(store.SchemaVersion, version)
 	require.NoError(s.Close())
 }
@@ -66,7 +66,7 @@ func TestMigrateDoesNotApplyLegacyIdentityConfig(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	conf := lifecycleTestConfig(t.TempDir())
-	s, err := store.OpenForTest(conf.DatabaseDSN())
+	s, err := store.OpenForTest(t.Context(), conf.DatabaseDSN())
 	require.NoError(err)
 	require.NoError(s.InitSchema())
 	_, err = s.GetOrCreateSource("gmail", "account@example.com")
@@ -79,7 +79,7 @@ func TestMigrateDoesNotApplyLegacyIdentityConfig(t *testing.T) {
 	s, err = store.OpenReadOnly(conf.DatabaseDSN())
 	require.NoError(err)
 	var count int
-	require.NoError(s.DB().QueryRow("SELECT count(*) FROM account_identities").Scan(&count))
+	require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM account_identities").Scan(&count))
 	assert.Zero(count, "identity config must await source confirmation")
 	require.NoError(s.Close())
 }
@@ -96,11 +96,11 @@ func TestMigrateFailureReleasesLocks(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			} else {
-				s, err := store.OpenForTest(conf.DatabaseDSN())
+				s, err := store.OpenForTest(t.Context(), conf.DatabaseDSN())
 				require.NoError(err)
-				_, err = s.DB().Exec("CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+				_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 				require.NoError(err)
-				_, err = s.DB().Exec("INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", store.SchemaVersion+1)
+				_, err = s.DB().ExecContext(t.Context(), "INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", store.SchemaVersion+1)
 				require.NoError(err)
 				require.NoError(s.Close())
 			}

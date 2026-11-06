@@ -25,20 +25,20 @@ func TestPersonSweepCallJournalMigrationPreservesLegacyRowsAndIsIdempotent(t *te
 		actual_output_tokens, actual_cost_micro_usd, latency_milliseconds,
 		failure_class, created_at, completed_at`
 	if f.store.IsPostgreSQL() {
-		_, err = f.store.DB().Exec(`CREATE TABLE person_sweep_batches_legacy AS
-			SELECT ` + legacyColumns + ` FROM person_sweep_batches;
+		_, err = f.store.DB().ExecContext(t.Context(), `CREATE TABLE person_sweep_batches_legacy AS
+			SELECT `+legacyColumns+` FROM person_sweep_batches;
 			DROP TABLE person_sweep_batches;
 			ALTER TABLE person_sweep_batches_legacy RENAME TO person_sweep_batches;
 			ALTER TABLE person_sweep_batches
 				ADD PRIMARY KEY (attempt_id, batch_ordinal)`)
 	} else {
-		_, err = f.store.DB().Exec(`CREATE TABLE person_sweep_batches_legacy AS
-			SELECT ` + legacyColumns + ` FROM person_sweep_batches;
+		_, err = f.store.DB().ExecContext(t.Context(), `CREATE TABLE person_sweep_batches_legacy AS
+			SELECT `+legacyColumns+` FROM person_sweep_batches;
 			DROP TABLE person_sweep_batches;
 			ALTER TABLE person_sweep_batches_legacy RENAME TO person_sweep_batches`)
 	}
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_calls_v2")
 	require.NoError(err)
 	require.NoError(f.store.InitSchema())
@@ -75,7 +75,7 @@ func TestPersonSweepCallJournalMigrationPreservesLegacyRowsAndIsIdempotent(t *te
 		f.attemptID, testSweepUTCDate, "budget", strings.Repeat("f", 64))
 	require.Error(err, "the migrated schema must reject mismatched call purpose")
 
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_calls_v2")
 	require.NoError(err)
 	require.NoError(f.store.InitSchema(), "the migration must be idempotent")

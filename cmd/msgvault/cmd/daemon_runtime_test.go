@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -152,7 +151,7 @@ func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 	require.NotNil(rt, "runtime should be discovered")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
 	assert.Equal(host, rt.Host, "host")
@@ -186,7 +185,7 @@ func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	assert.Nil(findDaemonRuntime(dataDir), "wrong service ping must not match")
+	assert.Nil(findDaemonRuntime(t.Context(), dataDir), "wrong service ping must not match")
 }
 
 func TestFindDaemonRuntimeRejectsUnauthenticatedPingWithoutExactCreateTime(t *testing.T) {
@@ -237,7 +236,7 @@ func TestFindDaemonRuntimeRejectsUnauthenticatedPingWithoutExactCreateTime(t *te
 			})
 			require.NoError(err, "write runtime record")
 
-			rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir,
+			rt, found, err := findRespondingDaemonRuntime(t.Context(), dataDir,
 				func(*DaemonRuntime, error) bool { return true })
 
 			require.NoError(err, "find responding runtime")
@@ -295,7 +294,7 @@ func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeUnknown(t *test
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	require.NotNil(rt, "runtime secret proof recovers an indeterminate identity")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
@@ -349,7 +348,7 @@ func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeMismatch(t *tes
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	require.NotNil(rt, "runtime secret proof recovers a clock-stepped identity")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
@@ -635,7 +634,7 @@ func TestListLiveDaemonRuntimeRecordsDoesNotTrustAnotherDaemonsLeaseForServingMi
 	require.NoError(err, "acquire daemon ownership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
 
-	staleProcess := helperProcessCommand(context.Background(), "block")
+	staleProcess := helperProcessCommand(t.Context(), "block")
 	require.NoError(staleProcess.Start(), "start live reused-pid stand-in")
 	t.Cleanup(func() {
 		_ = staleProcess.Process.Kill()
@@ -813,7 +812,7 @@ func TestFindDaemonRuntimeRejectsRespondingEndpointWithMismatchedCreateTime(t *t
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	assert.Nil(rt, "mismatched process identity must outweigh an unauthenticated ping")
 	assertRuntimeRecordFileExists(t, dataDir)

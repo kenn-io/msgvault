@@ -53,7 +53,7 @@ func TestAnalyticsEngineSwapUpdatesHealthAndHandlers(t *testing.T) {
 	assertHealthMode := func(want string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 		require.Equal(http.StatusOK, rec.Code)
 		var body HealthResponse
 		require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
@@ -65,7 +65,7 @@ func TestAnalyticsEngineSwapUpdatesHealthAndHandlers(t *testing.T) {
 	assertHealthMode(AnalyticsModeDuckDB)
 
 	rec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil))
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/aggregates?view_type=senders", nil))
 	require.Equal(http.StatusOK, rec.Code, rec.Body.String())
 	var body AggregateResponse
 	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
@@ -97,7 +97,8 @@ func TestAnalyticsEngineSwapDoesNotBlockHealthWhileRequestRuns(t *testing.T) {
 	aggregateDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		rec := httptest.NewRecorder()
-		srv.Router().ServeHTTP(rec, httptest.NewRequest(
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodGet,
 			"/api/v1/aggregates?view_type=senders",
 			nil,
@@ -125,7 +126,7 @@ func TestAnalyticsEngineSwapDoesNotBlockHealthWhileRequestRuns(t *testing.T) {
 	}
 
 	health := httptest.NewRecorder()
-	srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	srv.Router().ServeHTTP(health, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 	assert.Equal(http.StatusOK, health.Code)
 	var healthBody HealthResponse
 	require.NoError(json.Unmarshal(health.Body.Bytes(), &healthBody))

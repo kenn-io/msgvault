@@ -30,7 +30,7 @@ func TestImporterScopesEveryStoreOwningHelper(t *testing.T) {
 	scoped := imp.scopedToSync(source.ID, runID)
 	requirements.NoError(st.FailSync(runID, "worker stopped"))
 
-	_, err = scoped.res.resolveID("user-a", "User A")
+	_, err = scoped.res.resolveID(t.Context(), "user-a", "User A")
 	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
 	for name, helperStore := range map[string]*store.Store{
 		"observation recorder": scoped.obs.store,
@@ -132,7 +132,7 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 			before := *latestBeeperState(t, imp).Chats[chat.ID]
 			requirements.True(before.Done)
 			var conversationID, messageID int64
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id, id FROM messages WHERE source_id = (SELECT id FROM sources WHERE source_type = 'beeper' AND identifier = 'signal') LIMIT 1`)).Scan(&conversationID, &messageID))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id, id FROM messages WHERE source_id = (SELECT id FROM sources WHERE source_type = 'beeper' AND identifier = 'signal') LIMIT 1`)).Scan(&conversationID, &messageID))
 			if unknown {
 				requirements.NoError(st.MarkConversationMemberCountUnknown(conversationID))
 			} else {
@@ -151,7 +151,8 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 			assertions.True(membership.RosterArchived)
 			assertions.Equal(3, membership.Conversation.ParticipantCount)
 			var statsParticipantCount int
-			requirements.NoError(st.DB().QueryRow(
+			requirements.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				st.Rebind(`SELECT participant_count FROM conversations WHERE id = ?`), conversationID,
 			).Scan(&statsParticipantCount))
 			assertions.Equal(3, statsParticipantCount, "quiet roster repair must refresh denormalized conversation stats")
@@ -188,7 +189,7 @@ func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) 
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
 	var conversationID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations
 		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
 	requirements.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: "{}", Valid: true}))
 	f.mu.Lock()
@@ -256,7 +257,7 @@ func TestQuietRosterRepairRunsDespiteMessageFetchErrors(t *testing.T) {
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = '{}'
 		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
 	requirements.NoError(err)
 	f.setMessageListFailure(active.ID, true)
@@ -289,7 +290,7 @@ func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
 	var conversationID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations
 		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
 	requirements.NoError(st.MarkConversationMemberCountUnknown(conversationID))
 	f.mu.Lock()
@@ -300,7 +301,7 @@ func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
 	requirements.NoError(err)
 	assertions.True(latestBeeperState(t, imp).Chats[quiet.ID].Gone)
 	var raw string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT CAST(metadata AS TEXT) FROM conversations WHERE id = ?`), conversationID).Scan(&raw))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT CAST(metadata AS TEXT) FROM conversations WHERE id = ?`), conversationID).Scan(&raw))
 	var metadata struct {
 		Route struct {
 			Failure            string `json:"failure"`
@@ -316,36 +317,38 @@ func installQuietRosterReplacementFailure(t *testing.T, st *store.Store) func() 
 	t.Helper()
 	requirements := require.New(t)
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_quiet_roster_replace()
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_quiet_roster_replace()
 			RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN
 				RAISE EXCEPTION 'forced quiet roster replacement failure';
 			END;
 			$$`)
 		requirements.NoError(err, "create PostgreSQL roster failure function")
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_quiet_roster_replace
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_quiet_roster_replace
 			BEFORE DELETE ON conversation_participants
 			FOR EACH ROW EXECUTE FUNCTION fail_quiet_roster_replace()`)
 		requirements.NoError(err, "create PostgreSQL roster failure trigger")
+		// Cleanup runs after t.Context() is canceled.
 		release := func() {
-			_, err := st.DB().Exec(`DROP TRIGGER IF EXISTS fail_quiet_roster_replace
+			_, err := st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_quiet_roster_replace
 				ON conversation_participants`)
 			requirements.NoError(err, "drop PostgreSQL roster failure trigger")
-			_, err = st.DB().Exec(`DROP FUNCTION IF EXISTS fail_quiet_roster_replace()`)
+			_, err = st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP FUNCTION IF EXISTS fail_quiet_roster_replace()`)
 			requirements.NoError(err, "drop PostgreSQL roster failure function")
 		}
 		t.Cleanup(release)
 		return release
 	}
 
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_quiet_roster_replace
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_quiet_roster_replace
 		BEFORE DELETE ON conversation_participants
 		FOR EACH ROW BEGIN
 			SELECT RAISE(ABORT, 'forced quiet roster replacement failure');
 		END`)
 	requirements.NoError(err, "create SQLite roster failure trigger")
+	// Cleanup runs after t.Context() is canceled.
 	release := func() {
-		_, err := st.DB().Exec(`DROP TRIGGER IF EXISTS fail_quiet_roster_replace`)
+		_, err := st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_quiet_roster_replace`)
 		requirements.NoError(err, "drop SQLite roster failure trigger")
 	}
 	t.Cleanup(release)
@@ -370,7 +373,7 @@ func TestQuietRosterFailureDoesNotBlockActiveSync(t *testing.T) {
 	requirements.NoError(err)
 	before := latestBeeperState(t, imp).ListWatermark
 	var conversationID int64
-	requirements.NoError(st.DB().QueryRow(`SELECT conversation_id FROM messages LIMIT 1`).Scan(&conversationID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_id FROM messages LIMIT 1`).Scan(&conversationID))
 	requirements.NoError(st.MarkConversationMemberCountUnknown(conversationID))
 	f.setChatGetFailure(quiet.ID, true)
 	f.appendMsg(active.ID, fakeMsg{ID: "fresh-repair", SortKey: 1, Timestamp: time.Now().UTC(), Text: "fresh", SenderID: "@me:beeper.local"})
@@ -419,7 +422,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = '{}'
 		WHERE source_id = ? AND source_conversation_id IN (?, ?)`), source.ID, stalled.ID, later.ID)
 	requirements.NoError(err)
 	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
@@ -440,7 +443,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 		f.mu.Unlock()
 		f.resetRequests()
 
-		_, err := imp.Import(context.Background(), ImportOptions{
+		_, err := imp.Import(t.Context(), ImportOptions{
 			AccountID: "signal", NoMedia: true, StopAt: start.Add(2 * time.Second),
 		})
 		requirements.NoError(err)
@@ -458,7 +461,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 		assertions.Empty(state.Chats[later.ID].RosterRetryAfter, "the later room was not attempted in the expired run")
 
 		f.resetRequests()
-		_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", NoMedia: true})
+		_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 		requirements.NoError(err)
 		requests := f.requests()
 		isChatProbe := func(chatID string) func(string) bool {
@@ -468,7 +471,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 		}
 		assertions.False(slices.ContainsFunc(requests, isChatProbe(stalled.ID)), "the backed-off room must be skipped")
 		assertions.True(slices.ContainsFunc(requests, isChatProbe(later.ID)), "the next room must receive its roster repair")
-		ids, err = st.ListUnresolvedConversationIDs(context.Background(), source.ID)
+		ids, err = st.ListUnresolvedConversationIDs(t.Context(), source.ID)
 		requirements.NoError(err)
 		assertions.Equal([]string{stalled.ID}, ids, "the later room's membership must be archived")
 	})
@@ -496,7 +499,7 @@ func TestQuietRosterRepairsMakeProgressInBatches(t *testing.T) {
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}' WHERE source_id = ? AND source_conversation_id <> ?`), source.ID, active.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = '{}' WHERE source_id = ? AND source_conversation_id <> ?`), source.ID, active.ID)
 	requirements.NoError(err)
 	_, err = imp.Import(t.Context(), opts)
 	requirements.NoError(err)
@@ -523,7 +526,7 @@ func TestBeeperHTMLPersists(t *testing.T) {
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	var html string
-	require.NoError(st.DB().QueryRow(`SELECT COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&html))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&html))
 	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: source words`, html)
 }
 
@@ -537,7 +540,7 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	assert.EqualValues(1, sum.ChatsProcessed)
@@ -546,46 +549,47 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 	assert.EqualValues(0, sum.Errors)
 
 	var msgCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&msgCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&msgCount))
 	assert.Equal(43, msgCount)
 
 	// Conversation and its full participant list (admin role preserved).
 	var convID int64
 	var convType string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id, conversation_type FROM conversations WHERE source_conversation_id = ?`,
 	), "!e2e:beeper.local").Scan(&convID, &convType))
 	assert.Equal("group_chat", convType)
 	var partCount, adminCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), convID).Scan(&partCount))
 	assert.Equal(3, partCount)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ? AND role='admin'`), convID).Scan(&adminCount))
 	assert.Equal(1, adminCount)
 
 	// Phone participant deduped by E.164, sender attribution set.
 	var alicePID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM participants WHERE phone_number = '+15550100010'`).Scan(&alicePID))
 	var senderCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE sender_id = ? AND message_type='beeper'`), alicePID).Scan(&senderCount))
 	assert.Equal(43, senderCount)
 
 	// Reply linked to its parent.
 	var parentID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "m5").Scan(&parentID))
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "m20").Scan(&linkedParent))
 	require.True(linkedParent.Valid)
 	assert.Equal(parentID, linkedParent.Int64)
 
 	// Embedded reaction persisted.
 	var reactionValue string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT r.reaction_value FROM reactions r
 		JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ?`), "m10").Scan(&reactionValue))
@@ -593,13 +597,13 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 
 	// Edit flag set.
 	var isEdited bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT is_edited FROM messages WHERE source_message_id = ?`), "m40").Scan(&isEdited))
 	assert.True(isEdited)
 
 	// Voice transcription is searchable (body + FTS).
 	var voiceBody string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT b.body_text FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id
 		WHERE m.source_message_id = ?`), "m41").Scan(&voiceBody))
@@ -608,12 +612,12 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 
 	// Mentions become mention recipient rows; @room is skipped; no from/to rows.
 	var mentionCount, fromToCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'mention'`), "m42").Scan(&mentionCount))
 	assert.Equal(1, mentionCount)
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.message_type = 'beeper' AND mr.recipient_type IN ('from','to')`).Scan(&fromToCount))
@@ -621,7 +625,7 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 
 	// Raw JSON archived with the beeper_json format tag.
 	var rawFormat string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mr.raw_format FROM message_raw mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ?`), "m10").Scan(&rawFormat))
@@ -644,14 +648,14 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 
 	// Conversation stats recomputed.
 	var statCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT message_count FROM conversations WHERE id = ?`), convID).Scan(&statCount))
 	assert.Equal(43, statCount)
 
 	// The completed run persists its final counters for sync diagnostics
 	// (mid-run checkpoints are throttled and may never have fired).
 	var processed, added int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT messages_processed, messages_added FROM sync_runs
 		WHERE source_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1`), src.ID).
 		Scan(&processed, &added))
@@ -690,13 +694,14 @@ func TestImportScopesFallbackUserIDsByAccount(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "account-a"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a"})
 	require.NoError(err)
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "account-b"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "account-b"})
 	require.NoError(err)
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participant_identifiers
 		 WHERE identifier_type = 'beeper'`,
 	).Scan(&participantCount))
@@ -704,24 +709,27 @@ func TestImportScopesFallbackUserIDsByAccount(t *testing.T) {
 		"the same raw Beeper ID must resolve to one durable identifier per account")
 
 	var senderCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(DISTINCT sender_id) FROM messages
 		 WHERE source_message_id IN ('message-account-a', 'message-account-b')`,
 	).Scan(&senderCount))
 	assert.Equal(2, senderCount,
 		"sender, mention, and reaction resolution must use the account-scoped ID")
 	var mentionCount, reactionCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(DISTINCT participant_id) FROM message_recipients
 		 WHERE recipient_type = 'mention'`,
 	).Scan(&mentionCount))
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(DISTINCT participant_id) FROM reactions`,
 	).Scan(&reactionCount))
 	assert.Equal(2, mentionCount)
 	assert.Equal(2, reactionCount)
 
-	rows, err := st.DB().Query(st.Rebind(
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
 		`SELECT identifier_value FROM participant_identifiers
 		 WHERE identifier_type = 'beeper' ORDER BY identifier_value`,
 	))
@@ -749,7 +757,7 @@ func TestImportSecondRunIncremental(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// Three new messages arrive.
@@ -764,14 +772,14 @@ func TestImportSecondRunIncremental(t *testing.T) {
 	}
 
 	f.resetRequests()
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	// The reconcile pass may re-upsert recent messages, so MessagesAdded can
 	// exceed 3; the DB count is the duplicate-free ground truth.
 	assert.GreaterOrEqual(sum.MessagesAdded, int64(3))
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(46, total, "no duplicates on re-run")
 
 	// The second run must be cursor-driven: chat discovery filtered by
@@ -799,7 +807,7 @@ func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -812,7 +820,7 @@ func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
 	}
 
 	f.resetRequests()
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 20})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", Limit: 20})
 	require.NoError(err)
 	assert.EqualValues(20, sum.MessagesProcessed,
 		"one per-chat budget must cover incremental and reconciliation work")
@@ -827,13 +835,13 @@ func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
 	assert.Equal(1, messageLists, "the limit must stop before fetching another page")
 
 	var limitedTotal int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&limitedTotal))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&limitedTotal))
 	assert.Equal(63, limitedTotal, "the first incremental page is archived without skipping later pages")
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	var finalTotal int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&finalTotal))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&finalTotal))
 	assert.Equal(88, finalTotal, "the next run must resume the pages left by the limit")
 }
 
@@ -869,11 +877,11 @@ func TestImportResumeAfterLimit(t *testing.T) {
 	defer done()
 
 	// Run 1: limited — backfill stops early but stays resumable.
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 30})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", Limit: 30})
 	require.NoError(err)
 
 	var afterRun1 int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&afterRun1))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&afterRun1))
 	require.Less(afterRun1, 100)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -887,11 +895,11 @@ func TestImportResumeAfterLimit(t *testing.T) {
 
 	// Run 2: unlimited — resumes from the stored cursor without refetching.
 	f.resetRequests()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(100, total)
 
 	for _, req := range f.requests() {
@@ -910,10 +918,10 @@ func TestImportResumeAfterLimit(t *testing.T) {
 	// The reply pair buffered in run 1 (parent beyond the limit) must have
 	// survived the interruption and linked once the resumed run archived it.
 	var parentID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "b5").Scan(&parentID))
 	var linked sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "b99").Scan(&linked))
 	require.True(linked.Valid, "reply pairs must survive a resumed backfill")
 	assert.Equal(parentID, linked.Int64)
@@ -929,7 +937,7 @@ func TestImportReactionEventRefreshesTarget(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// Bob reacts to an old message: the network delivers a REACTION event and
@@ -944,12 +952,12 @@ func TestImportReactionEventRefreshesTarget(t *testing.T) {
 		SenderID: "@signal_bob:beeper.local", SenderName: "Bob",
 	})
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.EqualValues(1, sum.ReactionsRefreshed)
 
 	var reactionValue string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT r.reaction_value FROM reactions r
 		JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ?`), "m5").Scan(&reactionValue))
@@ -957,7 +965,7 @@ func TestImportReactionEventRefreshesTarget(t *testing.T) {
 
 	// The REACTION event itself must not become a message row.
 	var eventRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "react1").Scan(&eventRows))
 	assert.Zero(eventRows)
 }
@@ -990,7 +998,7 @@ func TestImportReconcileCatchesRecentDeletion(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// The sender deletes r2 in place; the chat sees new activity so the next
@@ -1001,17 +1009,17 @@ func TestImportReconcileCatchesRecentDeletion(t *testing.T) {
 		Text: "newest", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
 	})
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "r2").Scan(&deletedAt))
 	assert.True(deletedAt.Valid, "reconcile pass must tombstone recent deletions")
 
 	// The archived content survives deletion — that is the point of the archive.
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT b.body_text FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id
 		WHERE m.source_message_id = ?`), "r2").Scan(&body))
@@ -1051,18 +1059,18 @@ func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// The recent chat changes in place without advancing LastActivity. It is
 	// older than the one-hour watermark overlap but still inside the promised
 	// reconciliation window, so the next run must enumerate and revisit it.
 	f.chat("!recent-idle:beeper.local").Msgs[0].IsDeleted = true
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "ri0").Scan(&deletedAt))
 	assert.True(deletedAt.Valid, "recent inactive chat must be reconciled despite the newer global watermark")
 }
@@ -1077,7 +1085,7 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// A reaction arrives for an old message, but fetching the target fails
@@ -1094,7 +1102,7 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	})
 	f.setMessageGetFailure("m5", true)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
 	assert.Positive(sum.FetchErrors, "transient target failure must be recorded as a fetch error")
 	cf := sum.FailedChats["!e2e:beeper.local"]
@@ -1106,12 +1114,12 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 
 	// Healed: the next run re-delivers the reaction event and archives it.
 	f.setMessageGetFailure("m5", false)
-	sum, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.EqualValues(1, sum.ReactionsRefreshed)
 
 	var reactionValue string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT r.reaction_value FROM reactions r
 		JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ?`), "m5").Scan(&reactionValue))
@@ -1143,14 +1151,14 @@ func TestImportTruncatedParticipantsFetchesDetail(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var convID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM conversations WHERE source_conversation_id = ?`), "!grp:beeper.local").Scan(&convID))
 	var partCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), convID).Scan(&partCount))
 	assert.Equal(3, partCount, "truncated listing must trigger a full-detail fetch")
 }
@@ -1179,7 +1187,7 @@ func TestImportFullReconcilesConversationParticipants(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// Bea leaves and Ann becomes an admin without any new message activity.
@@ -1189,16 +1197,16 @@ func TestImportFullReconcilesConversationParticipants(t *testing.T) {
 		{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
 		{"id": "@signal_ann:beeper.local", "fullName": "Ann", "isAdmin": true},
 	}
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", Full: true})
 	require.NoError(err)
 
 	var convID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM conversations WHERE source_conversation_id = ?`), ch.ID).Scan(&convID))
 	var memberCount, departedCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), convID).Scan(&memberCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ? AND p.display_name = 'Bea'`), convID).Scan(&departedCount))
@@ -1206,7 +1214,7 @@ func TestImportFullReconcilesConversationParticipants(t *testing.T) {
 	assert.Zero(departedCount, "departed participants must be removed")
 
 	var annRole string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cp.role FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ? AND p.display_name = 'Ann'`), convID).Scan(&annRole))
@@ -1223,13 +1231,13 @@ func TestImportFullRepairsWithoutDuplicates(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", Full: true})
 	require.NoError(err)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(43, total, "--full re-walk must upsert in place")
 }
 
@@ -1247,11 +1255,11 @@ func TestImportEmptyChatPicksUpLaterMessages(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	require.Zero(total)
 
 	// The chat's first-ever message arrives after the empty backfill.
@@ -1260,9 +1268,9 @@ func TestImportEmptyChatPicksUpLaterMessages(t *testing.T) {
 		Text: "hello at last", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
 	})
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(1, total, "a chat that was empty at backfill must still pick up later messages")
 }
 
@@ -1290,11 +1298,11 @@ func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	require.Equal(2, total, "first run archives the locally-available history")
 
 	// The scan is daily in production; the second run below stands in for the
@@ -1309,14 +1317,15 @@ func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
 		fakeMsg{ID: "o2", SortKey: 2, Timestamp: base.Add(-47 * time.Hour), Text: "ancient two", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
 	)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(4, total, "history Beeper backfilled after the chat completed must be archived")
 	assert.Equal(int64(1), sum.ChatsReopened)
 
 	var text string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT b.body_text FROM messages m JOIN message_bodies b ON b.message_id = m.id
 		 WHERE m.source_message_id = 'o1'`).Scan(&text))
 	assert.Equal("ancient one", text)
@@ -1341,7 +1350,7 @@ func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
@@ -1356,14 +1365,14 @@ func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
 	saveState := func(runID int64, state *SyncState) {
 		blob, marshalErr := state.Marshal()
 		require.NoError(marshalErr)
-		_, updateErr := st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, runID)
+		_, updateErr := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, runID)
 		require.NoError(updateErr)
 	}
 
 	// Stop a normal discovery cycle after the first chat. This leaves its
 	// Visited checkpoint for the next run while the daily tail scan is not due.
 	completed := 0
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		AccountID:  "signal",
 		ShouldStop: func() bool { return completed >= 1 },
 		Progress:   func(string) { completed++ },
@@ -1384,11 +1393,11 @@ func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
 		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
 	})
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var archived int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper' AND source_message_id = ?`,
 	), "late-history").Scan(&archived))
 	assert.Equal(1, archived, "a due tail scan must still probe chats marked visited by an interrupted discovery cycle")
@@ -1418,7 +1427,7 @@ func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	oldInterval := tailScanInterval
@@ -1432,11 +1441,11 @@ func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
 		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
 	})
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(2, total, "a cursorless tail-only chat must still run its empty-chat recovery")
 }
 
@@ -1468,7 +1477,7 @@ func TestImportTailProbeSkipsEventOnlyPagesToFindOlderContent(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	oldInterval := tailScanInterval
@@ -1483,12 +1492,13 @@ func TestImportTailProbeSkipsEventOnlyPagesToFindOlderContent(t *testing.T) {
 		fakeMsg{ID: "reaction-between", SortKey: 3, Timestamp: base.Add(-time.Hour), Type: "REACTION", IsHidden: true, LinkedMessageID: "q1"},
 	)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.Equal(int64(1), sum.ChatsReopened)
 
 	var text string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT b.body_text FROM messages m JOIN message_bodies b ON b.message_id = m.id
 		 WHERE m.source_message_id = 'older-content'`).Scan(&text))
 	assert.Equal("older content", text)
@@ -1521,7 +1531,7 @@ func TestImportTailScanIgnoresUnarchivedNonContentEvents(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	oldInterval := tailScanInterval
@@ -1538,13 +1548,13 @@ func TestImportTailScanIgnoresUnarchivedNonContentEvents(t *testing.T) {
 	)
 
 	for range 2 {
-		sum, ierr := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+		sum, ierr := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 		require.NoError(ierr)
 		assert.Zero(sum.ChatsReopened, "non-content events must not reopen a completed chat")
 	}
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(2, total, "non-content events must remain excluded from the archive")
 }
 
@@ -1575,7 +1585,7 @@ func TestImportTailOnlyUnchangedChatSkipsIncrementalAndReconcile(t *testing.T) {
 	imp, _, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	oldInterval := tailScanInterval
@@ -1583,7 +1593,7 @@ func TestImportTailOnlyUnchangedChatSkipsIncrementalAndReconcile(t *testing.T) {
 	t.Cleanup(func() { tailScanInterval = oldInterval })
 	f.resetRequests()
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.Zero(sum.ChatsReopened)
 
@@ -1625,7 +1635,7 @@ func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -1638,10 +1648,10 @@ func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
 	state.LastTailScan = formatWatermark(time.Now().Add(-25 * time.Hour))
 	blob, err := state.Marshal()
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
 	require.NoError(err)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	f.cancelMessageListFor("!quiet-cancel-probe:beeper.local", cancel)
 	_, err = imp.Import(ctx, ImportOptions{AccountID: "signal"})
 	require.ErrorIs(err, context.Canceled)
@@ -1649,7 +1659,7 @@ func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
 	// The interrupted probe must leave the old stamp in the failed checkpoint,
 	// so an immediate retry still visits the otherwise-inactive quiet chat.
 	f.resetRequests()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.True(slices.ContainsFunc(f.requests(), func(req string) bool {
 		return strings.Contains(req, "/v1/chats/!quiet-cancel-probe:beeper.local/messages") &&
@@ -1678,11 +1688,11 @@ func TestImportTailScanThrottled(t *testing.T) {
 	imp, _, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	f.resetRequests()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	for _, req := range f.requests() {
 		if strings.Contains(req, "/messages?") {
@@ -1723,7 +1733,7 @@ func TestImportResumesActiveTailScanWithinThrottleInterval(t *testing.T) {
 	})
 	imp, st, done := newTestImporter(t, f)
 	defer done()
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
@@ -1738,11 +1748,11 @@ func TestImportResumesActiveTailScanWithinThrottleInterval(t *testing.T) {
 	state.Chats[quietID].Visited = true
 	blob, err := state.Marshal()
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
 	require.NoError(err)
 
 	f.resetRequests()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.True(slices.ContainsFunc(f.requests(), func(req string) bool {
 		return strings.Contains(req, "/v1/chats/"+quietID+"/messages") && strings.Contains(req, "direction=before")
@@ -1791,13 +1801,13 @@ func TestImportDegenerateTailPagination(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.EqualValues(45, sum.MessagesProcessed, "tail re-serves must not be re-processed")
 	assert.EqualValues(45, sum.MessagesAdded)
 
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(45, total)
 
 	// Terminates promptly: 3 real pages + 1 degenerate page.
@@ -1858,7 +1868,7 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
 	f.addChat(ch)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f.cancelAfterPages = 27 // past the 25-page checkpoint, before history ends
 	f.cancelFn = cancel
@@ -1897,13 +1907,13 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 		"persisted state must carry the reply pairs its cursor has walked past")
 
 	// The resumed run completes the chat and links the pair.
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	var parentID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "c5").Scan(&parentID))
 	var linked sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "c39").Scan(&linked))
 	require.True(linked.Valid)
 	require.Equal(parentID, linked.Int64)
@@ -1926,7 +1936,7 @@ func TestImportUnfinishedChatGoneMarksDone(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 10})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", Limit: 10})
 	require.NoError(err)
 
 	// The unfinished chat disappears from Beeper (left/deleted) while the
@@ -1936,7 +1946,7 @@ func TestImportUnfinishedChatGoneMarksDone(t *testing.T) {
 	f.mu.Lock()
 	f.chats = f.chats[1:] // drop !e2e, keep !stays
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -1950,7 +1960,7 @@ func TestImportUnfinishedChatGoneMarksDone(t *testing.T) {
 
 	// Archived rows survive.
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	require.Positive(count)
 }
 
@@ -1963,21 +1973,21 @@ func TestImportIncrementalStuckCursorTerminates(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	var before int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&before))
 
 	// The API misbehaves: direction=after re-serves the head page under a
 	// non-advancing cursor. The incremental walk must terminate (mirroring
 	// the backfill's degenerate-tail defense) without duplicating rows.
 	f.chat("!e2e:beeper.local").StuckHead = true
 	f.resetRequests()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	var after int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&after))
 	require.Equal(before, after, "re-served pages must not duplicate rows")
 	require.Less(len(f.requests()), 70, "the walk must terminate promptly, not spin")
 }
@@ -1999,7 +2009,7 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// New activity in both chats — the failing chat's message is missed this
@@ -2011,7 +2021,7 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	f.appendMsg("!other:beeper.local", fakeMsg{ID: "o1", SortKey: 1, Timestamp: now,
 		Text: "recent", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"})
 	f.setMessageListFailure("!e2e:beeper.local", true)
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
 	var partial *PartialSyncError
 	require.ErrorAs(err, &partial, "fetch errors are reported as a typed partial result")
@@ -2021,13 +2031,14 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	// run completes, so the failed-run watermark the analytics cache tracks
 	// does not move, while the error count keeps it visible.
 	var healthyCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = 'o1'`).Scan(&healthyCount))
 	require.Equal(1, healthyCount, "healthy chats must continue after another chat fails")
 	var status string
 	var errorsCount int
 	var cursorAfter sql.NullString
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT status, errors_count, cursor_after FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &errorsCount, &cursorAfter))
 	require.Equal(store.SyncStatusCompleted, status)
 	require.Positive(errorsCount, "a partial run records its fetch errors")
@@ -2036,13 +2047,13 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	// Healed: the held-back watermark keeps the chat discoverable and the
 	// missed message is archived.
 	f.setMessageListFailure("!e2e:beeper.local", false)
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = 'b99'`), src.ID).Scan(&count))
 	require.Equal(1, count, "the missed message must be archived once the fetch heals")
 }

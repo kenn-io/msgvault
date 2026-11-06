@@ -23,7 +23,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	// status would be attributed to its recipient.
 	requirements.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))
 	requirements.NoError(st.AddAccountIdentity(source.ID, "bob@example.com", "manual"))
-	conversationID, err := st.EnsureConversation(source.ID, "draft-lifecycle", "Draft lifecycle")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-lifecycle", "Draft lifecycle")
 	requirements.NoError(err)
 	people := []store.ParticipantPersistData{
 		{EmailAddress: "alice@example.com", Domain: "example.com"},
@@ -67,7 +67,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 		assertions.Empty(allSnapshots("received:bob@example.com"))
 		assertions.Empty(allSnapshots("received:alice@example.com"))
 		assertions.Equal(want, allSnapshots("account:alice@example.com"))
-		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), source.ID)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), source.ID)
 		requirements.NoError(err)
 		_, err = st.RepairAccountAttributionContext(t.Context(), source.ID, nil)
 		requirements.NoError(err)
@@ -107,14 +107,14 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	requirements.Equal(int64(2), finished.Revision)
 
 	var oldDeleted sql.NullTime
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), draft.CurrentMessageID).Scan(&oldDeleted))
 	requirements.True(oldDeleted.Valid)
 	assertWritten(draft.CurrentMessageID, published.CurrentMessageID)
 	for _, id := range []int64{draft.CurrentMessageID, published.CurrentMessageID} {
 		var authored bool
-		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&authored))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&authored))
 		assertions.True(authored)
 	}
 	var walked []int64
@@ -134,7 +134,7 @@ func TestManagedIMAPDraftAttachmentReplacement(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://draft-replacement@example.test:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "draft-replacement", "Draft replacement")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-replacement", "Draft replacement")
 	requirements.NoError(err)
 	initialReceipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	oldHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -176,7 +176,7 @@ func TestManagedIMAPDraftAttachmentReplacementRollsBackAfterAttachmentFailure(t 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://draft-replacement-rollback@example.test:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "draft-replacement-rollback", "Draft replacement rollback")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-replacement-rollback", "Draft replacement rollback")
 	requirements.NoError(err)
 	initialReceipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	oldHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -223,7 +223,7 @@ func TestManagedIMAPDraftAttachmentReplacementRollsBackAfterAttachmentFailure(t 
 	requirements.Len(refs, 1)
 	assertions.Equal(oldHash, refs[0].ContentHash)
 	var messages int
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&messages))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&messages))
 	assertions.Equal(1, messages)
 }
 
@@ -249,7 +249,7 @@ func TestManagedIMAPDraftReplacementUIDReuse(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
 			requirements.NoError(err)
-			conversationID, err := st.EnsureConversation(source.ID, "draft-uid-reuse", "Draft UID reuse")
+			conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-uid-reuse", "Draft UID reuse")
 			requirements.NoError(err)
 			build := func(receipt store.IMAPDraftReceipt, raw string) func([]int64) *store.MessagePersistData {
 				return func([]int64) *store.MessagePersistData {
@@ -296,7 +296,7 @@ func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://gc@example.com:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "draft-gc", "Draft GC")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-gc", "Draft GC")
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func(_ []int64) *store.MessagePersistData {
@@ -306,7 +306,7 @@ func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 		}
 	})
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), draft.CurrentMessageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), draft.CurrentMessageID)
 	requirements.NoError(err)
 	plan, err := st.PlanGCContext(t.Context())
 	requirements.NoError(err)
@@ -319,15 +319,15 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 	assertions := assert.New(t)
 	st, source, draft, _ := newReviewManagedDraft(t, "surviving-membership", 61, "body")
 
-	archiveLabelID, err := st.EnsureLabel(source.ID, "Archive", "Archive", "user")
+	archiveLabelID, err := st.EnsureLabel(t.Context(), source.ID, "Archive", "Archive", "user")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO imap_message_memberships
 			(source_id, mailbox, uidvalidity, uid, message_id)
 		VALUES (?, ?, ?, ?, ?)
 	`), source.ID, "Archive", 1, 62, draft.CurrentMessageID)
 	requirements.NoError(err)
-	requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{archiveLabelID}))
+	requirements.NoError(st.AddMessageLabels(t.Context(), draft.CurrentMessageID, []int64{archiveLabelID}))
 
 	beforeRevision, err := st.DerivedDataRevision()
 	requirements.NoError(err)
@@ -349,7 +349,7 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 	assertions.Nil(finished.Pending)
 
 	var retainedMailbox string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mailbox FROM imap_message_memberships
 		WHERE source_id = ? AND message_id = ?
 	`), source.ID, draft.CurrentMessageID).Scan(&retainedMailbox))

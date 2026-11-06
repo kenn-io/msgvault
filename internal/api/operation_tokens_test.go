@@ -18,7 +18,7 @@ func TestOperationTokenRunReferenceIsPrivatePersistentAndArchiveBound(t *testing
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
 
@@ -34,7 +34,7 @@ func TestOperationTokenRunReferenceIsPrivatePersistentAndArchiveBound(t *testing
 	}
 	require.NoError(st.Close())
 
-	reopened, err := store.OpenForTest(dbPath)
+	reopened, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.NoError(reopened.InitSchema())
@@ -189,7 +189,7 @@ func TestOperationCursorRejectsAuthenticatedNoncanonicalTimestamp(t *testing.T) 
 
 func operationTokenTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchema())

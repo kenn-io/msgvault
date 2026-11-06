@@ -16,7 +16,7 @@ func TestAttachmentRoleSchemaDefaultsHistoricalRowsUnknown(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("legacy-role-default")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO attachments
 			(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`),
@@ -73,6 +73,7 @@ func TestLegacyUpsertAttachmentFailsClosed(t *testing.T) {
 	f := storetest.New(t)
 	messageID := f.CreateMessage("legacy-attachment-api")
 	require.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		messageID, "legacy.png", "image/png", "legacy/path", "legacy-content", 12,
 	))
 
@@ -90,6 +91,7 @@ func TestSourceAwareUpsertPromotesMatchingLegacyOccurrence(t *testing.T) {
 	messageID := f.CreateMessage("promote-legacy-occurrence")
 	hash := strings.Repeat("bc", 32)
 	require.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		messageID, "legacy.pdf", "application/pdf", "legacy/path", hash, 12,
 	))
 	legacyID := singleAttachmentID(t, f, messageID)
@@ -103,7 +105,7 @@ func TestSourceAwareUpsertPromotesMatchingLegacyOccurrence(t *testing.T) {
 	var id int64
 	var count int
 	var role, roleSource, partKey, filename, storagePath string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT MIN(id), COUNT(*), MIN(attachment_role), MIN(role_source),
 		       MIN(source_part_key), MIN(filename), MIN(storage_path)
 		FROM attachments WHERE message_id = ?`), messageID).
@@ -135,7 +137,7 @@ func TestAttachmentSourcePartKeyPreservesDistinctDuplicateBytes(t *testing.T) {
 	}
 
 	var count int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&count))
 	assert.Equal(t, 2, count)
 }
@@ -170,7 +172,7 @@ func TestAttachmentSourcePartKeyResyncUpdatesOneOccurrence(t *testing.T) {
 		contentHash string
 		size        int64
 	)
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*), MIN(filename), MIN(content_hash), MIN(size)
 		FROM attachments WHERE message_id = ?`), messageID).
 		Scan(&count, &filename, &contentHash, &size))
@@ -205,7 +207,7 @@ func TestUpsertAttachmentRecordPreservingStoredKeepsBlobForMissingResync(t *test
 
 	var id, size int64
 	var filename, storagePath, contentHash, state, skipReason string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT id, filename, storage_path, content_hash, size,
 		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
 		FROM attachments WHERE message_id = ? AND source_part_key = ?`),
@@ -240,7 +242,7 @@ func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
 	require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
 
 	var contentHash sql.NullString
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT content_hash FROM attachments
 		WHERE message_id = ? AND source_part_key = ?`),
 		messageID, write.SourcePartKey).Scan(&contentHash))
@@ -251,7 +253,7 @@ func TestUpsertAttachmentRecordPreservingStoredRerunWhileMissing(t *testing.T) {
 
 	var count int
 	var storagePath, state, skipReason string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*), MIN(storage_path), MIN(attachment_state),
 		       MIN(attachment_skip_reason)
 		FROM attachments WHERE message_id = ? AND source_part_key = ?`),
@@ -283,7 +285,7 @@ func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testin
 		t.Context(), messageID, "imazing_csv:attachment:", "imazing_csv:attachment:current",
 	))
 
-	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 		SELECT source_part_key FROM attachments WHERE message_id = ? ORDER BY source_part_key`), messageID)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
@@ -304,7 +306,7 @@ func TestDeleteKeyedAttachmentsExceptContextOnlyRemovesStalePrefixRows(t *testin
 		t.Context(), messageID, "imazing_csv:attachment:", "",
 	))
 	var count int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&count))
 	assert.Equal(2, count, "an empty keep key removes importer-owned rows but preserves foreign rows")
 }
@@ -320,7 +322,7 @@ func TestUpsertAttachmentRecordRejectsInvalidRoleEvidence(t *testing.T) {
 	require.ErrorContains(t, err, "attachment role")
 
 	var count int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&count))
 	assert.Zero(t, count)
 }

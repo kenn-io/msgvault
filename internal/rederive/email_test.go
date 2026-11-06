@@ -21,7 +21,7 @@ const emailRaw = "From: Original <original@example.net>\r\nSubject: Archived mai
 
 func archiveEmail(t *testing.T, st *store.Store, src *store.Source, key, body string) int64 {
 	t.Helper()
-	conv, err := st.EnsureConversation(src.ID, key, "")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, key, "")
 	require.NoError(t, err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: key, MessageType: "email", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}, Subject: sql.NullString{String: "Stored subject", Valid: true}, Snippet: sql.NullString{String: "HeizkÃ¶rper", Valid: true}})
 	require.NoError(t, err)
@@ -46,11 +46,11 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	sender, err := st.EnsureParticipant("repaired@example.net", "Repaired", "example.net")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Repaired"}))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET message_type = 'chat', sender_id = ? WHERE id = ?"), sender, id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = 'chat', sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
 	Heal(t.Context(), slog.New(slog.DiscardHandler), st, src)
 	var body, html string
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
 	assert.Equal("Heizkörper", body)
 	assert.Equal("<p>Heizkörper</p>", html)
 	for _, query := range []string{"Heizkörper", "Stored", "repaired"} {
@@ -70,18 +70,18 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	query := fmt.Sprintf(`CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, failed)
 	drop := "DROP TRIGGER fail_retry_snippet"
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_retry_snippet() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
+		_, err := st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_retry_snippet() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
 		require.NoError(err)
 		query = `CREATE TRIGGER fail_retry_snippet BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_retry_snippet()`
 		drop += " ON messages"
 	}
-	_, err := st.DB().Exec(query)
+	_, err := st.DB().ExecContext(t.Context(), query)
 	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, func(string) { cancel() })
 	require.ErrorIs(err, context.Canceled)
-	body, err := st.GetMessageBodyText(last)
+	body, err := st.GetMessageBodyText(t.Context(), last)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
 	assert.Equal(int64(1), sum.Errors)
@@ -97,16 +97,16 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MessagesScanned, "a sync retries only unresolved MIME rows")
-	_, err = st.DB().Exec(drop)
+	_, err = st.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
 	sum, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MessagesScanned)
 	assert.Zero(sum.Errors)
-	body, err = st.GetMessageBodyText(failed)
+	body, err = st.GetMessageBodyText(t.Context(), failed)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body)
-	body, err = st.GetMessageBodyText(bad)
+	body, err = st.GetMessageBodyText(t.Context(), bad)
 	require.NoError(err)
 	assert.Equal("keep me", body)
 	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
@@ -118,7 +118,7 @@ func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key s
 	t.Helper()
 	id := archiveEmail(t, st, src, key, "Heizkörper")
 	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}))
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "Heizkörper", id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "Heizkörper", id)
 	require.NoError(t, err)
 }
 
@@ -160,12 +160,12 @@ func TestEmailPreservesProviderSnippets(t *testing.T) {
 			src, err := st.GetOrCreateSource(tc.source, "archive@example.net")
 			require.NoError(err)
 			id := archiveEmail(t, st, src, "old", tc.body)
-			_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), tc.snippet, id)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), tc.snippet, id)
 			require.NoError(err)
 			_, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 			require.NoError(err)
 			var snippet string
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COALESCE(snippet, '') FROM messages WHERE id = ?"), id).Scan(&snippet))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COALESCE(snippet, '') FROM messages WHERE id = ?"), id).Scan(&snippet))
 			assert.Equal(t, tc.want, snippet)
 		})
 	}
@@ -189,20 +189,20 @@ func TestEmailRetryPublishesRevisionAfterRevisionWriteFails(t *testing.T) {
 	fault := `CREATE TRIGGER fail_email_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
 	drop := `DROP TRIGGER fail_email_revision`
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_email_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_email_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
 		require.NoError(err)
 		fault = `CREATE TRIGGER fail_email_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_email_revision()`
 		drop += ` ON archive_metadata`
 	}
-	_, err := st.DB().Exec(fault)
+	_, err := st.DB().ExecContext(t.Context(), fault)
 	require.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.Error(err)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body, "the failed revision publication follows a committed text repair")
 	assert.Zero(derivedDataRevision(t, st))
-	_, err = st.DB().Exec(drop)
+	_, err = st.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
@@ -222,15 +222,15 @@ func TestEmailCorruptCompressionDoesNotStopLaterRows(t *testing.T) {
 			assert := assert.New(t)
 			st, src, bad := archiveEmailSource(t, "outlook", "keep me")
 			last := archiveEmail(t, st, src, "later", "stale")
-			_, err := st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), tc.raw, bad)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), tc.raw, bad)
 			require.NoError(err)
 			sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 			require.NoError(err)
 			assert.Equal(int64(1), sum.Undecodable)
-			body, err := st.GetMessageBodyText(last)
+			body, err := st.GetMessageBodyText(t.Context(), last)
 			require.NoError(err)
 			assert.Equal("Heizkörper", body)
-			body, err = st.GetMessageBodyText(bad)
+			body, err = st.GetMessageBodyText(t.Context(), bad)
 			require.NoError(err)
 			assert.Equal("keep me", body)
 		})
@@ -245,26 +245,26 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	rowFault := fmt.Sprintf(`CREATE TRIGGER fail_pending_row BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, failed)
 	dropRevision := `DROP TRIGGER fail_pending_revision`
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_pending_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_pending_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
 		require.NoError(err)
-		_, err = st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION fail_pending_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
+		_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_pending_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'snippet failure'; END IF; RETURN NEW; END $$`, failed))
 		require.NoError(err)
 		revisionFault = `CREATE TRIGGER fail_pending_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_pending_revision()`
 		rowFault = `CREATE TRIGGER fail_pending_row BEFORE UPDATE OF snippet ON messages FOR EACH ROW EXECUTE FUNCTION fail_pending_row()`
 		dropRevision += ` ON archive_metadata`
 	}
-	_, err := st.DB().Exec(revisionFault)
+	_, err := st.DB().ExecContext(t.Context(), revisionFault)
 	require.NoError(err)
-	_, err = st.DB().Exec(rowFault)
+	_, err = st.DB().ExecContext(t.Context(), rowFault)
 	require.NoError(err)
 	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.ErrorContains(err, "revision failure")
 	require.Equal(int64(1), sum.Errors)
-	body, err := st.GetMessageBodyText(repaired)
+	body, err := st.GetMessageBodyText(t.Context(), repaired)
 	require.NoError(err)
 	require.Equal("Heizkörper", body)
 	require.Zero(derivedDataRevision(t, st))
-	_, err = st.DB().Exec(dropRevision)
+	_, err = st.DB().ExecContext(t.Context(), dropRevision)
 	require.NoError(err)
 	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)

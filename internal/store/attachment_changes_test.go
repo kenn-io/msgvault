@@ -43,24 +43,24 @@ func TestAttachmentChangeJournalCapturesOnlyRelevantCommittedMutations(t *testin
 
 	transaction, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
-	_, err = transaction.Exec(f.Store.Rebind(
+	_, err = transaction.ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET filename = ? WHERE id = ?`), "rolled-back.pdf", firstID)
 	require.NoError(err)
 	require.NoError(transaction.Rollback())
 	assert.Zero(attachmentChangeCount(t, f), "rolled-back trigger writes must roll back")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET is_read = NOT is_read WHERE id = ?`), messageID)
 	require.NoError(err)
 	assert.Zero(attachmentChangeCount(t, f), "read state is not attachment lifecycle")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET filename = ? WHERE id = ?`), "changed.pdf", firstID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), firstID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), firstID)
 	require.NoError(err)
 
 	changes, err := f.Store.ListAttachmentChanges(t.Context(), consumer.ConsumerKey, 10)
@@ -83,11 +83,11 @@ func TestAttachmentChangeJournalCapturesSourceMergeOwnershipChange(t *testing.T)
 	f := newBeeperMediaFixture(t)
 
 	conversationIdentity := "!media-merge:beeper.local"
-	historicalConversation, err := f.Store.EnsureConversation(f.Source.ID, conversationIdentity, "Thread")
+	historicalConversation, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, conversationIdentity, "Thread")
 	require.NoError(err)
 	destination, err := f.Store.GetOrCreateSource("beeper", "signal-main")
 	require.NoError(err)
-	destinationConversation, err := f.Store.EnsureConversation(destination.ID, conversationIdentity, "Thread")
+	destinationConversation, err := f.Store.EnsureConversation(t.Context(), destination.ID, conversationIdentity, "Thread")
 	require.NoError(err)
 	messageID, err := f.Store.UpsertMessage(&store.Message{
 		SourceID: f.Source.ID, ConversationID: historicalConversation,
@@ -115,7 +115,7 @@ func TestAttachmentChangeJournalCapturesSourceMergeOwnershipChange(t *testing.T)
 	assert.Equal(attachmentID, requireInt64Pointer(t, changes[0].OldAttachmentID))
 	assert.Equal(attachmentID, requireInt64Pointer(t, changes[0].NewAttachmentID))
 	var actualConversationID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT conversation_id FROM messages WHERE id = ?`), messageID).Scan(&actualConversationID))
 	assert.Equal(destinationConversation, actualConversationID)
 }
@@ -184,9 +184,10 @@ func TestSQLiteAttachmentChangeAdvanceWaitsForWriterSlot(t *testing.T) {
 	holder, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err)
 	held := true
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if held {
-			_, _ = holder.ExecContext(context.Background(), "ROLLBACK")
+			_, _ = holder.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		}
 		_ = holder.Close()
 	})
@@ -235,7 +236,7 @@ func TestAttachmentChangeJournalCapturesCascadeDeletion(t *testing.T) {
 		t.Context(), consumer.ConsumerKey, consumer.BaselineSequence,
 	))
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), messageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), messageID)
 	require.NoError(err)
 	changes, err := f.Store.ListAttachmentChanges(t.Context(), consumer.ConsumerKey, 10)
 	require.NoError(err)
@@ -260,7 +261,7 @@ func createJournalAttachment(
 		SourcePartKey: partKey,
 	}))
 	var id int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ? AND source_part_key = ?`), messageID, partKey).Scan(&id))
 	return id
 }
@@ -268,7 +269,7 @@ func createJournalAttachment(
 func attachmentChangeCount(t *testing.T, f *storetest.Fixture) int {
 	t.Helper()
 	var count int
-	require.NoError(t, f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachment_change_log`).Scan(&count))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachment_change_log`).Scan(&count))
 	return count
 }
 

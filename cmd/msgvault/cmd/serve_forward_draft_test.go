@@ -171,7 +171,7 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	}
 	body, err := json.Marshal(map[string]any{"args": args})
 	requirements.NoError(err)
-	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 	requirements.NoError(err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "owner-test-key")
@@ -229,7 +229,7 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 
 	getBody, err := json.Marshal(map[string]any{"args": []string{"draft-get", result.DraftID, "--json"}})
 	requirements.NoError(err)
-	getRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(getBody))
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(getBody))
 	requirements.NoError(err)
 	getRequest.Header.Set("Content-Type", "application/json")
 	getRequest.Header.Set("X-Api-Key", "owner-test-key")
@@ -255,7 +255,7 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 		api.CLIRunDraftEditCommand, result.DraftID, "--revision", "1", "--body", "edited forward note", "--json",
 	}})
 	requirements.NoError(err)
-	editRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(editBody))
+	editRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(editBody))
 	requirements.NoError(err)
 	editRequest.Header.Set("Content-Type", "application/json")
 	editRequest.Header.Set("X-Api-Key", "owner-test-key")
@@ -333,7 +333,7 @@ func TestDraftForwardIgnoresPreservedHistoricalMIMEAttachments(t *testing.T) {
 
 	history, err := fixture.store.GetOrCreateSource("imap", "imap://history@example.test")
 	requirements.NoError(err)
-	historyConversation, err := fixture.store.EnsureConversation(history.ID, "history-thread", "Question")
+	historyConversation, err := fixture.store.EnsureConversation(t.Context(), history.ID, "history-thread", "Question")
 	requirements.NoError(err)
 	senderID, err := fixture.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	requirements.NoError(err)
@@ -443,7 +443,7 @@ func TestDraftForwardRefusesCorruptStoredAttachmentBeforeAppend(t *testing.T) {
 	assertions.Equal("unreadable_file", output.Problems[0].Reason)
 	assertions.NotEmpty(output.Problems[0].Detail)
 	var drafts int
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(
 		"SELECT COUNT(*) FROM imap_drafts",
 	)).Scan(&drafts))
 	assertions.Zero(drafts)
@@ -633,7 +633,7 @@ func TestDraftForwardAttachmentsSurviveParentRemoval(t *testing.T) {
 	hash := fixture.addLoose(content)
 	source, err := fixture.store.GetOrCreateSource("imap", "retained-draft@example.test")
 	requirements.NoError(err)
-	conversationID, err := fixture.store.EnsureConversation(source.ID, "retained-draft", "Retained draft")
+	conversationID, err := fixture.store.EnsureConversation(t.Context(), source.ID, "retained-draft", "Retained draft")
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	draft, err := fixture.store.PersistIMAPDraftContext(t.Context(), receipt, nil, func(_ []int64) *store.MessagePersistData {
@@ -656,7 +656,7 @@ func TestDraftForwardAttachmentsSurviveParentRemoval(t *testing.T) {
 	requirements.NotEmpty(draft.DraftID)
 	_, err = fixture.maintenance.pack(t.Context(), 0)
 	requirements.NoError(err)
-	_, err = fixture.store.DB().Exec(fixture.store.Rebind("DELETE FROM messages WHERE id = ?"), fixture.messageID)
+	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind("DELETE FROM messages WHERE id = ?"), fixture.messageID)
 	requirements.NoError(err)
 	_, err = fixture.maintenance.repack(t.Context(), 0)
 	requirements.NoError(err)

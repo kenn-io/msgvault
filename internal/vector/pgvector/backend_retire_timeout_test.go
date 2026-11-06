@@ -21,7 +21,7 @@ func newTracedBackendForTest(t *testing.T) (*Backend, *sqlTracer, context.Contex
 	schema := currentSchema(t, db)
 	tracedDB, tracer := openTracedPGTestDB(t, schema)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := Open(ctx, Options{DB: tracedDB, Dimension: 768})
 	require.NoError(t, err, "Open backend over traced handle")
 	t.Cleanup(func() { _ = b.Close() })

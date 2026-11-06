@@ -76,7 +76,7 @@ func TestSearchTableEastAsianWidthSetting(t *testing.T) {
 	// test binary exercises that startup boundary and the production renderer.
 	executable, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.Command(executable, "-test.run=^TestSearchTableShortSenderLeavesRoomForSubject$")
+	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestSearchTableShortSenderLeavesRoomForSubject$")
 	cmd.Env = append(os.Environ(), "RUNEWIDTH_EASTASIAN=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)

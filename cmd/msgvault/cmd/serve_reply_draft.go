@@ -347,7 +347,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	var source *store.Source
 	var err error
 	if sourceIDSet || strings.TrimSpace(account) != "" {
-		source, err = sourceops.ResolveExactOne(a.store, sourceops.Selector{
+		source, err = sourceops.ResolveExactOneContext(ctx, a.store, sourceops.Selector{
 			Account: account, SourceID: sourceID, SourceIDSet: sourceIDSet,
 		})
 		if err != nil {

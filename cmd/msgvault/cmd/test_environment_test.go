@@ -71,7 +71,7 @@ func TestCLITestsDoNotPurgeCallerAttachments(t *testing.T) {
 	path := seedAttachmentFile(t, filepath.Join(callerHome, "attachments"), hash[:2]+"/"+hash, "caller-owned recording")
 	executable, err := os.Executable()
 	require.NoError(err)
-	child := exec.Command(executable, "-test.run=^TestCLITestsDoNotPurgeCallerAttachments$")
+	child := exec.CommandContext(t.Context(), executable, "-test.run=^TestCLITestsDoNotPurgeCallerAttachments$")
 	child.Env = append(os.Environ(), "MSGVAULT_HOME="+callerHome, "MSGVAULT_TEST_ISOLATION_CHILD=1")
 	output, err := child.CombinedOutput()
 	require.NoError(err, "%s", output)

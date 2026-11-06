@@ -46,7 +46,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "synthetic-thread", "Project plan")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "synthetic-thread", "Project plan")
 	require.NoError(err)
 	var ids []int64
 	for i, fixture := range []struct {
@@ -57,7 +57,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		body := fmt.Sprintf("Reply %d contextneedle", i)
 		require.NoError(st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 		require.NoError(st.UpsertFTS(id, "Project plan", body, "sender@example.com", "recipient@example.com", ""))
-		_, err = st.DB().Exec(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,?,'application/octet-stream',10,'synthetic')`, id, fixture.filename)
+		_, err = st.DB().ExecContext(t.Context(), `INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,?,'application/octet-stream',10,'synthetic')`, id, fixture.filename)
 		require.NoError(err)
 		ids = append(ids, id)
 	}
@@ -81,7 +81,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	server.SetVectorFeatures(engine, nil, backend, vectorCfg)
 	httpServer := httptest.NewServer(server.Router())
 	t.Cleanup(httpServer.Close)
-	t.Cleanup(func() { require.NoError(server.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	home := filepath.Join(root, "cli-home")
 	require.NoError(os.MkdirAll(home, 0700))
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0600))

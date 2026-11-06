@@ -50,7 +50,7 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
 	require.NoError(err)
 	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "gmail-1", MessageType: "email"})
 	require.NoError(err)
@@ -126,7 +126,7 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	}
 	// A moved local identity must make persistence fail, retaining remote evidence.
 	a.emailTagClientFactory = func(ctx context.Context, s *store.Source) (gmail.API, error) {
-		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "changed-identity", mid)
+		_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "changed-identity", mid)
 		require.NoError(err)
 		return client, nil
 	}
@@ -148,7 +148,7 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 	}
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-1", MessageType: "email"})
 	require.NoError(err)
@@ -184,14 +184,14 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 		draftCacheRefresh: func(ctx context.Context, account string) error {
 			require.NoError(ctx.Err())
 			assert.Equal("owner@example.test", account)
-			message, err := st.GetMessage(messageID)
+			message, err := st.GetMessageContext(ctx, messageID)
 			require.NoError(err)
 			cachedLabels = message.Labels
 			return nil
 		},
 	}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger})
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", messageID), strings.NewReader(`{"add":["Label_next"]}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", messageID), strings.NewReader(`{"add":["Label_next"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, req)
@@ -230,7 +230,7 @@ func TestDaemonMessageTagsRevokedGrantUsesDefaultFactory(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", scopeEscalationAccount)
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-revoked", MessageType: "email",
@@ -261,7 +261,7 @@ func TestDaemonMessageTagsReadonlyGrantDoesNotWrite(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", scopeEscalationAccount)
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
 	require.NoError(err)
 	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "gmail-1", MessageType: "email"})
 	require.NoError(err)
@@ -306,14 +306,14 @@ func TestDaemonMessageTagsValidationBeforeAcquisition(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource(tc.provider, "owner@example.test")
 			require.NoError(err)
-			conv, err := st.EnsureConversation(source.ID, "thread", "Tags")
+			conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Tags")
 			require.NoError(err)
 			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "INBOX|1", MessageType: "email"})
 			require.NoError(err)
 			if tc.provider == "imap" {
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_folder_state(source_id,mailbox,uidvalidity,uidnext) VALUES(?,?,?,?)`), source.ID, "INBOX", 77, 2)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_folder_state(source_id,mailbox,uidvalidity,uidnext) VALUES(?,?,?,?)`), source.ID, "INBOX", 77, 2)
 				require.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships(source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES(?,?,?,?,?,?)`), source.ID, "INBOX", 77, 1, id, `[]`)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships(source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES(?,?,?,?,?,?)`), source.ID, "INBOX", 77, 1, id, `[]`)
 				require.NoError(err)
 			}
 			execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
@@ -333,7 +333,7 @@ func TestDaemonMessageTagsValidationBeforeAcquisition(t *testing.T) {
 			require.NoError(err)
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
-			req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", id), strings.NewReader(string(body))).WithContext(ctx)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", id), strings.NewReader(string(body))).WithContext(ctx)
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			srv.Router().ServeHTTP(response, req)
@@ -362,13 +362,13 @@ func TestDaemonMessageTagsIMAPNativeKeywords(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", cfg.Identifier())
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags")
 	require.NoError(err)
 	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "INBOX|1", MessageType: "email"})
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_folder_state(source_id,mailbox,uidvalidity,uidnext) VALUES(?,?,?,?)`), source.ID, "INBOX", selected.UIDValidity, 2)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_folder_state(source_id,mailbox,uidvalidity,uidnext) VALUES(?,?,?,?)`), source.ID, "INBOX", selected.UIDValidity, 2)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships(source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES(?,?,?,?,?,?)`), source.ID, "INBOX", selected.UIDValidity, 1, mid, `[]`)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships(source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES(?,?,?,?,?,?)`), source.ID, "INBOX", selected.UIDValidity, 1, mid, `[]`)
 	require.NoError(err)
 	a := &storeAPIAdapter{store: st, config: &config.Config{}, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
 		return imaplib.NewClient(cfg, testutil.IMAPTestPassword), nil
@@ -377,6 +377,6 @@ func TestDaemonMessageTagsIMAPNativeKeywords(t *testing.T) {
 	require.NoError(err)
 	assert.True(result.Verified)
 	var encoded string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT flags FROM imap_message_memberships WHERE message_id=?`), mid).Scan(&encoded))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT flags FROM imap_message_memberships WHERE message_id=?`), mid).Scan(&encoded))
 	assert.NotEqual("[]", encoded)
 }

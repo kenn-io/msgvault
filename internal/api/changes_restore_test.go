@@ -18,7 +18,7 @@ import (
 // between opens and a copy of an open SQLite database is not a database.
 func openChangesArchive(t *testing.T, path string) (*Server, *store.Store) {
 	t.Helper()
-	st, err := store.OpenForTest(path)
+	st, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err, "open archive %s", path)
 	require.NoError(t, st.InitSchema(), "init schema at %s", path)
 	srv := NewServerWithOptions(ServerOptions{
@@ -132,7 +132,8 @@ func TestChangesEndpoint_RestoringAnOlderSnapshotSilentlyDivergesTheConsumer(t *
 	// 4. The message the rollback removed produces no event either — the same
 	//    blind spot hard deletions have.
 	var missing int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), added).Scan(&missing),
 		"count the removed message")
 	require.Zero(missing, "the restore must really have removed the added message")

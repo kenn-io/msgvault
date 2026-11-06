@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -72,7 +71,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	// FK-repoint paths are also exercised.
 	source, err := st.GetOrCreateSource("imessage", "+15555550100")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-phone-dup", "")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-phone-dup", "")
 	require.NoError(err, "EnsureConversation")
 
 	// Two raw inserts that share +15555551234. id1 wins, id2 loses.
@@ -159,7 +158,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, loser, msgC)
 
 	// Run the migration we are testing.
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
 		"ensureParticipantsPhoneUniqueIndex")
 
 	// 1) Loser row must be gone.
@@ -205,7 +204,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		"read msg-C sender")
 	assert.True(msgCSender.Valid, "msg-C sender = %+v, want winner %d", msgCSender, winner)
 	assert.Equal(winner, msgCSender.Int64, "msg-C sender")
-	msgCIsFromMe, err := st.GetMessageIsFromMe(msgC)
+	msgCIsFromMe, err := st.GetMessageIsFromMe(t.Context(), msgC)
 	require.NoError(err, "read msg-C attribution")
 	assert.True(msgCIsFromMe, "sender repoint must refresh identity-derived attribution")
 
@@ -221,13 +220,13 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	applied, err := st.IsMigrationApplied(migrationPhoneUniqueIndex)
 	require.NoError(err, "IsMigrationApplied")
 	assert.True(applied, "migration sentinel not set after successful run")
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
 		"re-run of ensureParticipantsPhoneUniqueIndex must be a no-op")
 
 	// 8) Public API: EnsureParticipantByPhone with the duplicated
 	//    number returns the winner id (the unique index is now
 	//    actually enforcing ON CONFLICT (phone_number)).
-	gotID, err := st.EnsureParticipantByPhone("+15555551234", "Alice (later call)", "imessage")
+	gotID, err := st.EnsureParticipantByPhone(t.Context(), "+15555551234", "Alice (later call)", "imessage")
 	require.NoError(err, "EnsureParticipantByPhone")
 	assert.Equal(winner, gotID, "EnsureParticipantByPhone returned id %d, want winner %d (ON CONFLICT must find the unique index)", gotID, winner)
 }
@@ -301,7 +300,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	acctRevBeforeMerge, err := st.AccountIdentityRevision()
 	require.NoError(err, "AccountIdentityRevision before merge")
 
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
 		"ensureParticipantsPhoneUniqueIndex")
 
 	revAfter, err := st.IdentityRevision()
@@ -312,7 +311,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	assert.Equal(acctRevBeforeMerge+1, acctRevAfter,
 		"dedupe merge must bump the account identity revision (it repoints messages.sender_id)")
 
-	clusters, err := st.ParticipantClusters()
+	clusters, err := st.ParticipantClusters(t.Context())
 	require.NoError(err, "ParticipantClusters")
 	canonical := min(winner, third)
 	assert.Equal(map[int64]int64{winner: canonical, third: canonical}, clusters,
@@ -573,7 +572,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata(t *testing.T) {
 	multiLoser1 := insertParticipant("+15555550003", "dan@example.com", "", "Dan")
 	multiLoser2 := insertParticipant("+15555550003", "dana@example.org", "example.org", "Dana")
 
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(t.Context()),
 		"ensureParticipantsPhoneUniqueIndex")
 
 	for _, loser := range []int64{richLoser, ignoredLoser, multiLoser1, multiLoser2} {
