@@ -365,6 +365,7 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 }
 
 func TestSenderLabelsPreserveEnvelopeAndArchivedSenders(t *testing.T) {
+	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
@@ -380,10 +381,10 @@ func TestSenderLabelsPreserveEnvelopeAndArchivedSenders(t *testing.T) {
 	e := b.BuildEngine()
 	labels, err := e.SenderLabels(t.Context(), []int64{first, second, preferred, deleted})
 	require.NoError(t, err)
-	assert.Equal(t, "Personal Alias", labels[first])
-	assert.Equal(t, "Issue Desk", labels[second])
-	assert.Equal(t, "Alice", labels[preferred])
-	assert.Equal(t, "Alice", labels[deleted])
+	assert.Equal("Personal Alias", labels[first])
+	assert.Equal("Issue Desk", labels[second])
+	assert.Equal("Alice", labels[preferred])
+	assert.Equal("Alice", labels[deleted])
 }
 
 func TestSenderLabelsFallBackToKnownIdentifier(t *testing.T) {

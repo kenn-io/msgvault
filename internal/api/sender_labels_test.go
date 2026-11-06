@@ -15,6 +15,8 @@ import (
 )
 
 func TestExploreSenderLabelsKeepConversationRoster(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	t.Parallel()
 	rows := []query.EntryRow{
 		{Kind: query.EntryEmail, AnchorMessageID: new(int64(1))},
@@ -27,49 +29,53 @@ func TestExploreSenderLabelsKeepConversationRoster(t *testing.T) {
 	opts := testServerOptions(t, nil)
 	opts.Engine = engine
 	response := postExploreJSON(t, NewServerWithOptions(opts), "/api/v1/explore", `{}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result ExploreHTTPResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(t, result.Rows, 3)
-	assert.Equal(t, "Zoe Sender", result.Rows[0].SenderLabel)
-	assert.Empty(t, result.Rows[1].SenderLabel)
-	assert.Empty(t, result.Rows[2].SenderLabel)
-	assert.Equal(t, []string{"Alice Recipient", "Zoe Sender"}, result.Rows[2].ParticipantLabels)
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Rows, 3)
+	assert.Equal("Zoe Sender", result.Rows[0].SenderLabel)
+	assert.Empty(result.Rows[1].SenderLabel)
+	assert.Empty(result.Rows[2].SenderLabel)
+	assert.Equal([]string{"Alice Recipient", "Zoe Sender"}, result.Rows[2].ParticipantLabels)
 
 	archivedEngine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'deleted', 101::BIGINT, 'Archived', 'snippet', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', 1::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, 1)
 	archived := postExploreJSON(t, newTestServerWithEngine(t, archivedEngine), "/api/v1/explore", `{"filters":[{"dimension":"deletion","values":["deleted"]}]}`)
-	require.Equal(t, http.StatusOK, archived.Code, archived.Body.String())
+	require.Equal(http.StatusOK, archived.Code, archived.Body.String())
 	var archivedBody ExploreHTTPResponse
-	require.NoError(t, json.Unmarshal(archived.Body.Bytes(), &archivedBody))
-	require.Len(t, archivedBody.Rows, 1)
-	assert.Equal(t, "Alice", archivedBody.Rows[0].SenderLabel)
+	require.NoError(json.Unmarshal(archived.Body.Bytes(), &archivedBody))
+	require.Len(archivedBody.Rows, 1)
+	assert.Equal("Alice", archivedBody.Rows[0].SenderLabel)
 }
 
 func TestExploreSenderLookupFailureKeepsRows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{SenderLabelsErr: errors.New("sender lookup failed")}, timelineResult: &query.ExploreResponse{Rows: []query.EntryRow{{Kind: query.EntryEmail, AnchorMessageID: new(int64(1)), ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}
 	opts := testServerOptions(t, nil)
 	opts.Engine = engine
 	response := postExploreJSON(t, NewServerWithOptions(opts), "/api/v1/explore", `{}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result ExploreHTTPResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(t, result.Rows, 1)
-	assert.Empty(t, result.Rows[0].SenderLabel)
-	assert.Equal(t, []string{"Example Sender"}, result.Rows[0].ParticipantLabels)
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Rows, 1)
+	assert.Empty(result.Rows[0].SenderLabel)
+	assert.Equal([]string{"Example Sender"}, result.Rows[0].ParticipantLabels)
 }
 
 func TestFilesSenderLookupFailureKeepsRows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{SenderLabelsErr: errors.New("sender lookup failed")}, result: &query.FileSearchResponse{Files: []query.FileRow{{ID: 1, MessageID: 11, Filename: "example.pdf", ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{1: {ID: 1, MessageID: 11, Filename: "example.pdf"}}}
 	opts := testServerOptions(t, nil)
 	opts.Engine, opts.Store = engine, catalog
 	response := postExploreJSON(t, NewServerWithOptions(opts), "/api/v1/files/search", `{}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result FileSearchHTTPResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(t, result.Files, 1)
-	assert.Empty(t, result.Files[0].SenderLabel)
-	assert.Equal(t, []string{"Example Sender"}, result.Files[0].ParticipantLabels)
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Files, 1)
+	assert.Empty(result.Files[0].SenderLabel)
+	assert.Equal([]string{"Example Sender"}, result.Files[0].ParticipantLabels)
 }
 
 type engineWithoutSenderLabeler struct{ query.Engine }
