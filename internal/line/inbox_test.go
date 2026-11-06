@@ -621,6 +621,9 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 		must.NoError(err)
 		checks.Zero(status.Pending)
+		var updated int64
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+		checks.Equal(int64(1), updated)
 		archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 		must.NoError(err)
 		must.Len(archived.From, 1)

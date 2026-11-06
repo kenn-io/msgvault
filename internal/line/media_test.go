@@ -95,6 +95,9 @@ func TestMediaTranscodingRetry(t *testing.T) {
 				f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 			}
 			f.run(t)
+			var updated int64
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+			checks.Equal(int64(1), updated)
 			stored := f.media(t)
 			checks.Equal(attachmentpolicy.StateStored, stored.State)
 			checks.Len(stored.ContentHash, 64)
