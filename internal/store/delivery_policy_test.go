@@ -376,14 +376,14 @@ func TestDeliveryPolicyApprovalLapsesWhenTheAddressIsSplit(t *testing.T) {
 }
 
 func TestDeliveryPolicyReadRejectsUnknownOrMalformedPersonUID(t *testing.T) {
-	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	p, _ := deliveryPerson(t, f)
 
 	_, err := f.Store.GetDeliveryPolicyContext(t.Context(), store.DeliveryPolicyQuery{PersonUID: "unknown-synthetic-uid"})
-	assert.ErrorIs(err, store.ErrDeliveryPersonUnknown)
+	require.ErrorIs(err, store.ErrDeliveryPersonUnknown)
 	_, err = f.Store.GetDeliveryPolicyContext(t.Context(), store.DeliveryPolicyQuery{PersonUID: p.VCardUID + "\x00"})
-	assert.ErrorIs(err, store.ErrDeliveryPolicyInvalid)
+	require.ErrorIs(err, store.ErrDeliveryPolicyInvalid)
 }
 
 func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
