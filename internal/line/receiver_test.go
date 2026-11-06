@@ -60,6 +60,9 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 		must.NoError(err)
 		must.Len(rows, 1)
 		checks.Equal("event-1", rows[0].WebhookEventID)
+		checks.NotContains(rows[0].RawJSON, "replyToken")
+		checks.NotContains(rows[0].RawJSON, "markAsReadToken")
+		checks.Contains(rows[0].RawJSON, `"quoteToken":"retained"`)
 	})
 	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","replyToken":"ephemeral","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic","quoteToken":"retained","nested":[{"markAsReadToken":"ephemeral"}]}}]}`
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(body))

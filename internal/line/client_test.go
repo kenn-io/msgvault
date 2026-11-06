@@ -160,7 +160,7 @@ func TestClientRefusesRedirects(t *testing.T) {
 	assert.Zero(t, calls)
 }
 
-func TestClientBoundsAndRedactsResponses(t *testing.T) {
+func TestClientBoundsResponses(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 

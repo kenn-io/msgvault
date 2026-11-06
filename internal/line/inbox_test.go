@@ -844,104 +844,61 @@ func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
 }
 
 func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
-	for _, direction := range []string{"departed_into_active", "active_into_departed"} {
-		t.Run(direction, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-
-			f := newInboxFixture(t)
-			ctx := context.Background()
-			stamp := f.now.UnixMilli()
-			source := Source{Type: "group", GroupID: testGroup}
-			userA := testUser
-			userB := "U00000000000000000000000000000009"
-			membership := func(kind, eventID, userID string, timestamp int64) {
-				t.Helper()
-				members := &Members{Members: []Source{{Type: "user", UserID: userID}}}
-				event := Event{Type: kind, WebhookEventID: eventID, Timestamp: timestamp, Source: source}
-				if kind == "memberJoined" {
-					event.Joined = members
-				} else {
-					event.Left = members
-				}
-				f.enqueue(t, event, time.Time{})
-				f.run(t)
-			}
-			membership("memberJoined", "a-joined", userA, stamp)
-			membership("memberLeft", "a-left", userA, stamp+10)
-			membership("memberJoined", "b-joined", userB, stamp+20)
-			// A's later leave clock is newer than B's join, but does not make B inactive.
-			membership("memberLeft", "a-left-after-b-joined", userA, stamp+30)
-
-			departed, err := f.st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(testChannel, userA), "")
-			must.NoError(err)
-			active, err := f.st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(testChannel, userB), "")
-			must.NoError(err)
-			absorbed, survivor := departed, active
-			if direction == "active_into_departed" {
-				absorbed, survivor = active, departed
-			}
-			must.NoError(f.st.MergeParticipantsContext(ctx, absorbed, survivor))
-
-			var conversationID int64
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+testGroup).Scan(&conversationID))
-			checkMergedMembership := func() {
-				t.Helper()
-				var left sql.NullTime
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversationID, survivor).Scan(&left))
-				checks.False(left.Valid, "one active linked LINE identity keeps the merged participant active")
-				var routes int
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id=?`), conversationID).Scan(&routes))
-				checks.Equal(1, routes, "merged LINE identities project to one conversation membership")
-			}
-			checkMergedMembership()
-
-			// Replayed old events from A must not overwrite B's active membership.
-			membership("memberJoined", "a-delayed-old-join", userA, stamp-1)
-			checkMergedMembership()
-			// A's newer join is still followed by A's leave; B remains independently active.
-			membership("memberJoined", "a-delayed-join-before-leave", userA, stamp+25)
-			checkMergedMembership()
-		})
-	}
-}
-
-func TestProcessorMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
 	for _, chat := range []struct {
 		name, conversationKey, identifierType, identifier string
 		source                                            Source
+		messageOnly                                       bool
 	}{
-		{"group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "group", GroupID: testGroup, UserID: testUser}},
-		{"room", "room:R00000000000000000000000000000001", "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser}},
-		{"anonymous_group", "group:" + testGroup, "line_anonymous", "channel:2000000001:group:" + testGroup, Source{Type: "group", GroupID: testGroup}},
+		{"explicit_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, "U00000000000000000000000000000009"), Source{Type: "group", GroupID: testGroup}, false},
+		{"message_only_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "group", GroupID: testGroup, UserID: testUser}, true},
+		{"message_only_room", "room:R00000000000000000000000000000001", "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser}, true},
+		{"anonymous_group", "group:" + testGroup, "line_anonymous", "channel:2000000001:group:" + testGroup, Source{Type: "group", GroupID: testGroup}, true},
 	} {
-		for _, direction := range []string{"message_only_into_departed", "departed_into_message_only"} {
+		for _, direction := range []string{"departed_into_active", "active_into_departed"} {
 			t.Run(chat.name+"/"+direction, func(t *testing.T) {
 				must := require.New(t)
 				checks := assert.New(t)
 				f := newInboxFixture(t)
 				ctx := context.Background()
 				stamp := f.now.UnixMilli()
-				departedUser := "U00000000000000000000000000000009"
+				departedUser := testUser
+				if chat.messageOnly {
+					departedUser = "U00000000000000000000000000000009"
+				}
 				membershipSource := chat.source
 				membershipSource.UserID = ""
-				message := f.message("message-only", "message proves this sender is present", stamp)
-				message.Source = chat.source
-				f.enqueue(t, message, time.Time{})
-				f.run(t)
-				membership := func(user, eventID string, at int64) {
+				membership := func(kind, eventID, userID string, timestamp int64) {
 					t.Helper()
-					f.enqueue(t, Event{Type: "memberLeft", Timestamp: at, WebhookEventID: eventID, Source: membershipSource, Left: &Members{Members: []Source{{Type: "user", UserID: user}}}}, time.Time{})
+					members := &Members{Members: []Source{{Type: "user", UserID: userID}}}
+					event := Event{Type: kind, WebhookEventID: eventID, Timestamp: timestamp, Source: membershipSource}
+					if kind == "memberJoined" {
+						event.Joined = members
+					} else {
+						event.Left = members
+					}
+					f.enqueue(t, event, time.Time{})
 					f.run(t)
 				}
-				membership(departedUser, "other-left", stamp+20)
-				present, err := f.st.EnsureParticipantByIdentifierContext(ctx, chat.identifierType, chat.identifier, "")
+				if chat.messageOnly {
+					message := f.message("message-only", "message proves this sender is present", stamp)
+					message.Source = chat.source
+					f.enqueue(t, message, time.Time{})
+					f.run(t)
+					membership("memberLeft", "other-left", departedUser, stamp+20)
+				} else {
+					membership("memberJoined", "a-joined", departedUser, stamp)
+					membership("memberLeft", "a-left", departedUser, stamp+10)
+					membership("memberJoined", "b-joined", "U00000000000000000000000000000009", stamp+20)
+					// A's later leave clock is newer than B's join, but does not make B inactive.
+					membership("memberLeft", "a-left-after-b-joined", departedUser, stamp+30)
+				}
+				active, err := f.st.EnsureParticipantByIdentifierContext(ctx, chat.identifierType, chat.identifier, "")
 				must.NoError(err)
 				departed, err := f.st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(testChannel, departedUser), "")
 				must.NoError(err)
-				absorbed, survivor := present, departed
-				if direction == "departed_into_message_only" {
-					absorbed, survivor = departed, present
+				absorbed, survivor := departed, active
+				if direction == "active_into_departed" {
+					absorbed, survivor = active, departed
 				}
 				must.NoError(f.st.MergeParticipantsContext(ctx, absorbed, survivor))
 				var conversationID int64
@@ -952,14 +909,30 @@ func TestProcessorMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
 					must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversationID, survivor).Scan(&left))
 					return left
 				}
-				checks.False(leftAt().Valid, "a message-only active identity survives merging with a departed identity")
+				checkMergedMembership := func() {
+					t.Helper()
+					checks.False(leftAt().Valid, "one active linked LINE identity keeps the merged participant active")
+					var routes int
+					must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id=?`), conversationID).Scan(&routes))
+					checks.Equal(1, routes, "merged LINE identities project to one conversation membership")
+				}
+				checkMergedMembership()
+				if !chat.messageOnly {
+					// Replayed old events from A must not overwrite B's active membership.
+					membership("memberJoined", "a-delayed-old-join", departedUser, stamp-1)
+					checkMergedMembership()
+					// A's newer join is still followed by A's leave; B remains independently active.
+					membership("memberJoined", "a-delayed-join-before-leave", departedUser, stamp+25)
+					checkMergedMembership()
+					return
+				}
 				f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-				membership(departedUser, "other-left-again", stamp+30)
+				membership("memberLeft", "other-left-again", departedUser, stamp+30)
 				checks.False(leftAt().Valid, "message presence survives later events and processor restart")
 				if chat.source.UserID == "" {
 					return // Anonymous chat placeholders have no identifiable provider leave event.
 				}
-				membership(testUser, "message-sender-left", stamp+40)
+				membership("memberLeft", "message-sender-left", testUser, stamp+40)
 				left := leftAt()
 				must.True(left.Valid)
 				checks.Equal(stamp+40, left.Time.UnixMilli(), "a later leave of the message sender makes every identity departed")

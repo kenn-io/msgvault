@@ -548,6 +548,14 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	requirements.Len(telegram.Routes.Items, 1)
 	assertions.Equal(telegramID, telegram.Routes.Items[0].ConversationID)
 	assertions.Equal("telegram", telegram.Routes.Items[0].Network)
+
+	lineID := nativeConversation("line", "line-peer")
+	line, err := f.Store.GetPersonMessagingRoutesContext(t.Context(),
+		store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: "line"})
+	requirements.NoError(err)
+	requirements.Len(line.Routes.Items, 1)
+	assertions.Equal(lineID, line.Routes.Items[0].ConversationID)
+	assertions.Equal("line", line.Routes.Items[0].Network)
 }
 
 func TestMessagingRoutesLINEUsesNativeNetworkFilter(t *testing.T) {
@@ -559,7 +567,7 @@ func TestMessagingRoutesLINEUsesNativeNetworkFilter(t *testing.T) {
 	conversation, err := f.Store.EnsureConversationWithType(source.ID, "line-peer", "direct_chat", "Synthetic LINE chat")
 	require.NoError(t, err)
 	require.NoError(t, f.Store.EnsureConversationParticipant(conversation, peer, "member"))
-	for _, network := range []string{"", "line", "discord"} {
+	for _, network := range []string{"", "discord"} {
 		t.Run(network, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

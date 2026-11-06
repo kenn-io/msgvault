@@ -67,12 +67,12 @@ const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
   it.each([
-    [true, null, 0, 0, 0, false],
-    [false, null, 0, 0, 0, false],
-    [true, null, 2, 0, 0, true],
-    [true, null, 0, 1, 0, true],
+    [true, undefined, 0, 0, 0, false],
+    [false, undefined, 0, 0, 0, false],
+    [true, undefined, 2, 0, 0, true],
+    [true, undefined, 0, 1, 0, true],
     [true, '2026-07-19T10:00:00Z', 0, 0, 0, true],
-    [true, null, 0, 0, 3, false],
+    [true, undefined, 0, 0, 3, false],
   ] as const)('shows LINE inbox counts for active=%s, last event=%s, pending=%i, failed=%i, invalid signatures=%i', async (active, last_received_at, pending, failed, invalid_signatures, showCounts) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       source_type: 'line', identifier: '2000000001', display_name: 'Example OA',

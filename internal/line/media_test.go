@@ -347,6 +347,7 @@ func TestMediaProfileFailureDoesNotDelayDownload(t *testing.T) {
 }
 
 func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
+	must := require.New(t)
 	checks := assert.New(t)
 
 	f := newInboxFixture(t)
@@ -358,6 +359,9 @@ func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 	again := f.media(t)
+	var count int
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=?`), f.archived(t, "1").id).Scan(&count))
+	checks.Equal(1, count)
 	checks.Equal(first.ContentHash, again.ContentHash)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 }
