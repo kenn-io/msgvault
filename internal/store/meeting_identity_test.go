@@ -341,6 +341,24 @@ func TestMeetingIdentityUpdatedExceptionOrder(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityOccurrenceOnlyCancelledMasterSeriesInstance(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "master", `{"id":"series","status":"cancelled","recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`)
+	_, exception := calendarFixture(t, st, "exception", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, copyID := calendarFixture(t, st, "copy", strings.Replace(linkSeriesRaw, `"id":"series"`, `"id":"copy-series"`, 1), "copy@example.com")
+	note := granolaLinkFixture(t, st, "series_20270314T100000Z")
+	for _, ref := range []string{
+		fmt.Sprintf("evt:%d@20270314T100000Z", copyID),
+		fmt.Sprintf("evt:%d", exception),
+	} {
+		t.Run(ref, func(t *testing.T) {
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+			require.NoError(t, err)
+			assert.Equal(t, []int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+		})
+	}
+}
+
 func TestMeetingIdentityOccurrenceOnlyPreservesGranolaRepresentative(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

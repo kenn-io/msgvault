@@ -178,6 +178,10 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 			}
 			keyArgs = append(keyArgs, provider, instance)
 		}
+		if copy.Event.SeriesProviderID != "" && copy.Event.Original != nil {
+			keyClauses = append(keyClauses, `(k.kind='`+meetingGoogleEventIDKey+`' AND k.value=?)`)
+			keyArgs = append(keyArgs, copy.Event.SeriesProviderID+"_"+copy.Event.Original.Key())
+		}
 	}
 	query := `SELECT m.id FROM messages m WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL
  AND m.id IN (SELECT d.member_message_id FROM meeting_link_decisions d WHERE ` + strings.Join(clauses, " OR ") + `
