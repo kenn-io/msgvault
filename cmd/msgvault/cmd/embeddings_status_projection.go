@@ -15,7 +15,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// embeddingCoverageCacheTTL is how long counts are served without a refresh.
+// embeddingCoverageCacheTTL is how long counts are served without a refresh,
+// unless an embedding run ended after they were counted.
 // Diagnostics are read fresh on every request.
 const embeddingCoverageCacheTTL = vector.EmbeddingCoverageMaxAge
 
@@ -54,13 +55,13 @@ func newEmbeddingCoverageCache(base context.Context, log *slog.Logger) *embeddin
 	return &embeddingCoverageCache{base: base, log: log, entries: make(map[string]embeddingCoverage)}
 }
 
-func (c *embeddingCoverageCache) counts(ctx context.Context, st *store.Store, gen int64, messageTypes []string, sourceIDs []int64) (embeddingCoverage, error) {
+func (c *embeddingCoverageCache) counts(ctx context.Context, st *store.Store, gen int64, messageTypes []string, sourceIDs []int64, since *time.Time) (embeddingCoverage, error) {
 	key := fmt.Sprint(gen, messageTypes, sourceIDs)
 	c.mu.Lock()
 	entry, cached := c.entries[key]
 	c.mu.Unlock()
 	age := time.Since(entry.countedAt)
-	if cached && age < embeddingCoverageCacheTTL {
+	if cached && age < embeddingCoverageCacheTTL && (since == nil || entry.countedAt.After(*since)) {
 		return entry, nil
 	}
 	result := c.group.DoChan(key, func() (any, error) {
@@ -158,15 +159,15 @@ func (src embeddingStatusSource) read(ctx context.Context, sourceID int64) (vect
 		}
 		scope.SourceIDs = []int64{sourceID}
 	}
-	coverage, err := src.coverage.counts(ctx, st, int64(target.ID), scope.MessageTypes, scope.SourceIDs)
+	if err := setEmbeddingRunStatus(ctx, st, &status); err != nil {
+		return status, err
+	}
+	coverage, err := src.coverage.counts(ctx, st, int64(target.ID), scope.MessageTypes, scope.SourceIDs, status.LatestRunEndedAt)
 	if err != nil {
 		return status, err
 	}
 	status.Eligible, status.Current, status.Pending = coverage.eligible, coverage.current, coverage.pending
 	status.CoverageSampledAt = coverage.countedAt
-	if err := setEmbeddingRunStatus(ctx, st, &status); err != nil {
-		return status, err
-	}
 	if target.ID == 0 {
 		return status, nil
 	}
@@ -204,7 +205,7 @@ func setEmbeddingRunStatus(ctx context.Context, st *store.Store, status *vector.
 		status.ActiveRunID, status.ActiveRunStartedAt = id, &lane.Active.StartedAt
 	}
 	if run := lane.Latest; run != nil {
-		status.LatestRunStartedAt = &run.StartedAt
+		status.LatestRunStartedAt, status.LatestRunEndedAt = &run.StartedAt, run.FinishedAt
 		for _, counter := range run.Counters {
 			if counter.Name == operations.CounterFailed {
 				status.Failed = counter.Value

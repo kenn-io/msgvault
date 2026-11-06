@@ -770,6 +770,38 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 	}
 }
 
+func TestLocalEmbeddingsRecoveryAfterCachedPendingCounts(t *testing.T) {
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "", "")
+	f.start(t)
+	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+	_, _, err := testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "pending", "Pear", "A pear tree is growing.")
+	require.NoError(err)
+	f.runner.beforeBuild = func() {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/status", nil)
+		request.Header.Set("Authorization", "Bearer owner")
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		if !assert.Equal(t, http.StatusOK, response.Code, response.Body.String()) {
+			return
+		}
+		var status vector.EmbeddingStatus
+		if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+			t.Errorf("decode embedding status: %v", err)
+			return
+		}
+		assert.Equal(t, int64(1), status.Pending, "Settings observes pending coverage during setup")
+	}
+	f.runner.failBuild = true
+	f.enableThroughAPI(t)
+	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+	require.NotEmpty(f.localStatus(t).Error)
+	f.runner.beforeBuild = nil
+	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
+	require.Empty(f.localStatus(t).Error, "the first status read after a successful same-generation recovery must clear the setup error")
+}
+
 func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)

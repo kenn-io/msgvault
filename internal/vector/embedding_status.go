@@ -32,6 +32,7 @@ type EmbeddingStatus struct {
 	ActiveRunID        int64                      `json:"-"`
 	ActiveRunStartedAt *time.Time                 `json:"-"`
 	LatestRunStartedAt *time.Time                 `json:"-"`
+	LatestRunEndedAt   *time.Time                 `json:"-"`
 	CoverageSampledAt  time.Time                  `json:"coverage_sampled_at"`
 	DiagnosticsStale   bool                       `json:"diagnostics_stale"`
 	SampledAt          time.Time                  `json:"sampled_at"`

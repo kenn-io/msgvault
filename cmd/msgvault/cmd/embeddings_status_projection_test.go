@@ -214,7 +214,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	}
 	eligible := func(cache *embeddingCoverageCache, ctx context.Context, sourceIDs []int64) int64 {
 		t.Helper()
-		got, err := cache.counts(ctx, st, 1, nil, sourceIDs)
+		got, err := cache.counts(ctx, st, 1, nil, sourceIDs, nil)
 		require.NoError(err)
 		return got.eligible
 	}
@@ -245,7 +245,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	slow := newEmbeddingCoverageCache(t.Context(), nil)
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = slow.counts(cancelled, st, 1, nil, nil)
+	_, err = slow.counts(cancelled, st, 1, nil, nil, nil)
 	require.ErrorIs(err, context.Canceled)
 	require.Eventually(func() bool {
 		slow.mu.Lock()
@@ -259,16 +259,16 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	broken, err := store.Open(filepath.Join(dir, "msgvault.db"))
 	require.NoError(err)
 	failing := newEmbeddingCoverageCache(t.Context(), slog.New(slog.DiscardHandler))
-	cached, err := failing.counts(t.Context(), broken, 1, nil, nil)
+	cached, err := failing.counts(t.Context(), broken, 1, nil, nil, nil)
 	require.NoError(err)
 	require.NoError(broken.Close())
 	expire(failing, embeddingCoverageStaleLimit-10*time.Second)
-	stale, err := failing.counts(t.Context(), broken, 1, nil, nil)
+	stale, err := failing.counts(t.Context(), broken, 1, nil, nil, nil)
 	require.NoError(err, "a failed refresh can serve counts within the stale limit")
 	assert.Equal(cached.eligible, stale.eligible)
 	assert.Equal(cached.current, stale.current)
 	assert.Equal(cached.pending, stale.pending)
 	expire(failing, embeddingCoverageStaleLimit+time.Second)
-	_, err = failing.counts(t.Context(), broken, 1, nil, nil)
+	_, err = failing.counts(t.Context(), broken, 1, nil, nil, nil)
 	require.Error(err, "counts beyond the stale limit cannot hide a refresh failure")
 }
