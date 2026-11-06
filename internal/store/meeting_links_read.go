@@ -174,7 +174,7 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
  AND (d.occurrence_key=? OR d.occurrence_key=''))`)
 		args = append(args, copy.Event.ProviderEventID, copy.SourceID, o.Identity.OccurrenceKey)
 		if provider := copy.Event.ProviderEventID; provider != "" {
-			keyClauses = append(keyClauses, `(k.kind='google_event_id' AND k.value IN (?,?))`)
+			keyClauses = append(keyClauses, `(k.kind='`+meetingGoogleEventIDKey+`' AND k.value IN (?,?))`)
 			instance := provider
 			if o.Identity.OccurrenceKey != "" {
 				instance += "_" + o.Identity.OccurrenceKey
