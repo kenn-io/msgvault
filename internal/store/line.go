@@ -520,9 +520,6 @@ func (s *Store) LineProfileContext(ctx context.Context, sourceID int64, userID s
 }
 
 func (s *Store) CacheLineProfileContext(ctx context.Context, sourceID int64, userID, raw string, at time.Time) error {
-	if userID == "" || !jsontext.Value(raw).IsValid() {
-		return errors.New("invalid LINE profile cache")
-	}
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}

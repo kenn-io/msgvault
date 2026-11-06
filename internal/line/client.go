@@ -39,7 +39,6 @@ func (e *APIError) Error() string { return fmt.Sprintf("line: API returned HTTP 
 
 type BotInfo struct {
 	UserID      string `json:"userId"`
-	BasicID     string `json:"basicId"`
 	DisplayName string `json:"displayName"`
 }
 type Profile struct {
@@ -47,9 +46,8 @@ type Profile struct {
 	DisplayName string `json:"displayName"`
 }
 type GroupSummary struct {
-	GroupID    string `json:"groupId"`
-	GroupName  string `json:"groupName"`
-	PictureURL string `json:"pictureUrl"`
+	GroupID   string `json:"groupId"`
+	GroupName string `json:"groupName"`
 }
 type ClientOption func(*Client)
 
