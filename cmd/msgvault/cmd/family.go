@@ -24,10 +24,8 @@ func newFamilyShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "show <id>", Short: "Show an email's copies, replies and forwards",
 		Long: `Show the other archived copies of an email, its replies and its forwards in
-other accounts and conversations. Each row names the account, whether that
-account sent or received the copy, and the header evidence that connects it to
-the email: the same Message-ID, a reply, a forward, shared references, a
-relation through another copy, or only the same provider thread.
+other accounts and conversations. Each row names the account, whether it sent
+or received the copy, and how the messages are related.
 
 Relations come from Message-ID, In-Reply-To, References and attached-original
 headers, plus the Gmail or Google Groups threads of the email and its exact
@@ -40,7 +38,6 @@ email in the archive is still waiting to be indexed, a note on stderr says so,
 because that email could be a related copy the lookup cannot see yet. Rows are in ascending message ID order, and the
 row marked "this message" is the email you gave. The lookup stops at 500
 emails or 5,000 identifiers and says which on stderr.
-Use --json for the full response.
 
 Examples:
   msgvault family show 123
@@ -67,7 +64,7 @@ Examples:
 			return writeRelatedCopies(cmd, family)
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, flagJSON, false, "Output the related copies as JSON")
+	cmd.Flags().BoolVar(&asJSON, flagJSON, false, "Output the full response as JSON")
 	return cmd
 }
 
