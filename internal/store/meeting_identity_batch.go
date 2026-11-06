@@ -190,6 +190,9 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		if _, ok := r.batch.occurrences[OccurrenceRef{MessageID: ref.row.MessageID, Key: ref.id.Key()}]; ok {
 			continue
 		}
+		if ref.row.ICalUID == "" {
+			continue
+		}
 		row, window, bounded, err := planMeetingOccurrence(ctx, r, ref.row, ref.id, budget)
 		if err != nil {
 			return err

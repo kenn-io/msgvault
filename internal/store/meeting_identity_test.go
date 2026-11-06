@@ -834,6 +834,32 @@ func TestMeetingIdentityScopedGranolaAfterSourceMerge(t *testing.T) {
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 }
 
+func TestMeetingIdentitySparseUIDBatchKeepsOccurrenceEvidence(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", strings.ReplaceAll(linkSeriesRaw, `"iCalUID":"weekly@example.org",`, ""))
+	calendarFixture(t, st, "sparse", `{"id":"sparse","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"summary":"Edited title"}`)
+	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "other@example.org")
+	edited := fmt.Sprintf("evt:%d@20270314T100000Z", master)
+	second := fmt.Sprintf("evt:%d@20270321T100000Z", master)
+	copyRef := fmt.Sprintf("evt:%d@20270314T100000Z", copyID)
+	for _, tc := range []struct {
+		name string
+		refs []string
+	}{
+		{"edited date alone", []string{edited, copyRef}},
+		{"edited date first", []string{edited, second, copyRef}},
+		{"edited date last", []string{second, edited, copyRef}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: tc.refs})
+			require.NoError(t, err)
+			assert.Equal("occ:"+edited, got.ByOccurrence[edited].Key)
+			assert.Equal("occ:"+edited, got.ByOccurrence[copyRef].Key)
+		})
+	}
+}
+
 func TestMeetingIdentitySparseUIDFallbackCopiesMerge(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
