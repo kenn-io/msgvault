@@ -33,6 +33,25 @@ func TestMarkdownAnchorGolden(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)
 	golden(t, "anchor.md", []byte(Markdown(v)))
 }
+func TestMarkdownAnchorHeading(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		anchor    bool
+		anchorRef string
+		want      string
+	}{
+		{name: "anchor absent", want: "# Around #32 · UTC\n"},
+		{name: "different displayed reference", anchor: true, anchorRef: "msg:99", want: "# Around #32 · UTC\n"},
+		{name: "entry reference fallback", anchor: true, want: "# Context · UTC\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			v := sampleTimeline(ModeAnchor)
+			v.TimezoneIsDefault = false
+			v.History = []Entry{{Kind: "message", Ref: "msg:32", AnchorRef: tt.anchorRef, Anchor: tt.anchor, Time: v.Now}}
+			assert.Contains(t, Markdown(v), tt.want)
+		})
+	}
+}
 func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 	for _, kind := range []string{"title", "snippet"} {
 		t.Run(kind, func(t *testing.T) {

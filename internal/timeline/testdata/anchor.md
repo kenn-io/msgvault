@@ -1,4 +1,4 @@
-# Around #32 · UTC (set [activity].timezone)
+# Context · UTC (set [activity].timezone)
 ⚠ gmail:owner@example.com stale failed → msgvault sync
 ⚠ activity reconciling
 

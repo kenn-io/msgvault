@@ -56,6 +56,12 @@ func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	}
 	if t.Mode == ModeAnchor && t.Anchor != nil {
 		heading = "Around " + FormatShortRef(t.Anchor.Ref)
+		for _, item := range timelineItems(t) {
+			if e := item.entry; e != nil && e.Anchor && FormatShortRef(cmp.Or(e.AnchorRef, e.Ref)) == FormatShortRef(t.Anchor.Ref) {
+				heading = "Context"
+				break
+			}
+		}
 	}
 	fmt.Fprintf(&b, "# %s · %s\n", heading, zone)
 	for _, s := range t.Freshness.Sources {
