@@ -1,9 +1,10 @@
 package scheduler
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"math/big"
 	"time"
 
 	"github.com/netresearch/go-cron"
@@ -40,8 +41,10 @@ type AcquisitionError struct {
 
 func (e *AcquisitionError) Error() string {
 	switch e.Reason {
+	case AcquisitionReasonUnknown:
+		// Use the safe outcome message below for an unspecified reason.
 	case AcquisitionCanonicalTarget:
-		return "rapid email requires one active canonical mail source; check the configured account identifier"
+		return "Choose exactly one active mail account using its ACCOUNT value from msgvault list-accounts."
 	case AcquisitionFilteredCoverage:
 		return "rapid email requires unfiltered coverage; remove folder/date filters or disable poll_interval"
 	}
@@ -169,7 +172,9 @@ func accountPollBackoff(interval time.Duration, failures int) time.Duration {
 		delay = min(2*delay, ceiling)
 	}
 	if room := min(delay/10, ceiling-delay); room > 0 && failures > 0 {
-		delay += time.Duration(rand.Int64N(int64(room) + 1))
+		if jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(room)+1)); err == nil {
+			delay += time.Duration(jitter.Int64())
+		}
 	}
 	return delay
 }
@@ -224,8 +229,7 @@ func (s *Scheduler) accountPollStatusLocked(status *AccountStatus, r *accountReg
 		status.PollState = "polling"
 	}
 	if err := s.lastErr[status.Email]; err != nil {
-		var acquisition *AcquisitionError
-		if errors.As(err, &acquisition) {
+		if acquisition, ok := errors.AsType[*AcquisitionError](err); ok {
 			status.LastError = acquisition.Error()
 		} else {
 			status.LastError = "email acquisition failed; retry scheduled"

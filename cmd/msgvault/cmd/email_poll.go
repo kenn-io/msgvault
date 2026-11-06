@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -110,7 +111,7 @@ func rapidAcquisitionResult(ctx context.Context, err error, incomplete bool, flo
 	if prior != nil && prior.Credentials {
 		credentials = true
 	}
-	if errors.As(err, &status) && (status.StatusCode == 401 || status.StatusCode == 403) {
+	if errors.As(err, &status) && (status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusForbidden) {
 		credentials = true
 	}
 	reason := scheduler.AcquisitionReasonUnknown
@@ -139,7 +140,7 @@ func runRapidEmailSync(ctx context.Context, identifier string, st *store.Store, 
 	switch src.SourceType {
 	case sourceTypeGmail:
 		if getOAuthMgr == nil && state.cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) == "" {
-			err = provideridentity.NewGmailCredentialError(provideridentity.GmailOAuthConfiguration, errors.New("Gmail OAuth configuration is unavailable"))
+			err = provideridentity.NewGmailCredentialError(provideridentity.GmailOAuthConfiguration, errors.New("gmail OAuth configuration is unavailable"))
 			return rapidAcquisitionResult(ctx, err, false, time.Time{})
 		}
 		client, _, err := newDaemonGmailClient(ctx, src.Identifier, src, getOAuthMgr, state, oauth.ScopesGmailReadonly)

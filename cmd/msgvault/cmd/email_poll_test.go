@@ -57,7 +57,7 @@ poll_interval = "30s"
 				credentials++
 				return nil, errors.New("synthetic credentials unavailable")
 			}, invocationFromContext(ctx))
-			assert.Error(t, err)
+			require.Error(t, err)
 			assert.Zero(t, credentials, "invalid rapid targets fail before resolving credentials")
 			assert.Equal(t, before, count(), "rapid reconciliation never creates a source")
 		})
@@ -147,8 +147,8 @@ func TestRapidEmailCooperativeYieldDoesNotRecordFailureTelemetry(t *testing.T) {
 	var acquisition *scheduler.AcquisitionError
 	require.ErrorAs(t, err, &acquisition)
 	assert.Equal(t, scheduler.AcquisitionCancelled, acquisition.Outcome)
-	assert.ErrorIs(t, err, cause, "suppressing telemetry must preserve the actual returned cause")
-	assert.NoError(t, ctx.Err(), "cooperative preemption does not cancel its context")
+	require.ErrorIs(t, err, cause, "suppressing telemetry must preserve the actual returned cause")
+	require.NoError(t, ctx.Err(), "cooperative preemption does not cancel its context")
 	assert.True(t, jobctx.PreemptionRequested(ctx))
 	assert.Zero(t, events, "an interrupted acquisition keeps ordinary cooperative-yield telemetry semantics")
 }

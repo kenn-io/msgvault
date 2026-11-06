@@ -10,18 +10,18 @@ import (
 	"hegel.dev/go/hegel"
 )
 
-func microsoftStateIDs(t testing.TB, st *store.Store, message int64) []string {
-	t.Helper()
+func microsoftStateIDs(tb testing.TB, st *store.Store, message int64) []string {
+	tb.Helper()
 	rows, err := st.DB().Query(st.Rebind(`SELECT l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`), message)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
-		require.NoError(t, rows.Scan(&id))
+		require.NoError(tb, rows.Scan(&id))
 		ids = append(ids, id)
 	}
-	require.NoError(t, rows.Err())
+	require.NoError(tb, rows.Err())
 	return ids
 }
 

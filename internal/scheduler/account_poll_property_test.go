@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,37 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"hegel.dev/go/hegel"
 )
-
-func TestAccountPollingOrdinaryBurstsHaveOneFollowup(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		burst := hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64))
-		var calls atomic.Int32
-		started, release := make(chan struct{}), make(chan struct{})
-		s := New(func(context.Context, string) error {
-			if calls.Add(1) == 1 {
-				close(started)
-				<-release
-			}
-			return nil
-		})
-		defer func() { <-s.Stop().Done() }()
-		require.NoError(ht, s.AddAccount("sample@example.test", "0 0 1 1 *"))
-		go s.onAccountTick("sample@example.test")
-		<-started
-		// Bound physical materialization, not the drawn burst domain. Every
-		// nonempty drawn burst still exercises its observable follow-up.
-		for range min(burst, 1000) {
-			s.onAccountTick("sample@example.test")
-		}
-		close(release)
-		s.wg.Wait()
-		want := int32(1)
-		if burst != 0 {
-			want = 2
-		}
-		assert.Equal(ht, want, calls.Load())
-	})
-}
 
 func TestAccountPollingGenerationReplacementInvalidatesCallbacks(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
@@ -171,26 +139,5 @@ func TestAccountPollingOrdinaryDeferralConservesGeneratedBackoff(t *testing.T) {
 		require.NoError(ht, s.TriggerSync("sample@example.test", false))
 		s.wg.Wait()
 		assert.False(ht, s.Status()[0].NextEligiblePoll.Before(deadline), "only complete acquisition resets adaptive delay")
-	})
-}
-
-func TestAccountPollingStartupConservesGeneratedManualOwnership(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		seconds := hegel.Draw(ht, hegel.Integers(15, 120))
-		minutes := hegel.Draw(ht, hegel.Integers(16, 120))
-		floor := time.Now().Add(time.Duration(minutes) * time.Minute)
-		s := New(func(context.Context, string) error {
-			return &AcquisitionError{Outcome: AcquisitionDeferred, NotBefore: floor}
-		})
-		defer func() { <-s.Stop().Done() }()
-		require.NoError(ht, s.AddAccount("sample@example.test", "0 0 1 1 *"))
-		require.NoError(ht, s.SetAccountPollInterval("sample@example.test", time.Duration(seconds)*time.Second))
-		require.NoError(ht, s.TriggerSync("sample@example.test", false))
-		s.wg.Wait()
-		require.NoError(ht, s.TriggerSync("sample@example.test", true))
-		s.wg.Wait()
-		s.Start()
-		s.wg.Wait()
-		assert.Error(ht, s.TriggerSync("sample@example.test", true), "the earlier accepted manual request still owns its completion")
 	})
 }

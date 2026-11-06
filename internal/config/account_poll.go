@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ func ValidateAccountPollInterval(interval time.Duration) error {
 		return nil
 	}
 	if interval < 15*time.Second || interval > 120*time.Second || interval%time.Second != 0 {
-		return fmt.Errorf("poll_interval must be zero or whole seconds between 15s and 120s")
+		return errors.New("poll_interval must be zero or whole seconds between 15s and 120s")
 	}
 	return nil
 }
@@ -37,7 +38,7 @@ func (c *Config) ValidateAccountPolling() error {
 		}
 		polling[account.Email] = true
 		if strings.TrimSpace(account.Email) == "" {
-			return fmt.Errorf("poll_interval requires a canonical account identifier")
+			return errors.New("poll_interval requires a canonical account identifier")
 		}
 		if err := cronexpr.Validate(account.Schedule); err != nil {
 			return fmt.Errorf("poll_interval requires a valid five-field schedule: %w", err)
@@ -45,7 +46,7 @@ func (c *Config) ValidateAccountPolling() error {
 	}
 	for key := range polling {
 		if enabled[key] > 1 {
-			return fmt.Errorf("duplicate enabled account key with poll_interval")
+			return errors.New("duplicate enabled account key with poll_interval")
 		}
 	}
 	return nil

@@ -26,10 +26,12 @@ import (
 // used to verify an existing identity is deliberately not a body download.
 type pollingIMAPListener struct {
 	net.Listener
+
 	bodies atomic.Int32
 }
 type pollingIMAPConn struct {
 	net.Conn
+
 	owner   *pollingIMAPListener
 	pending string
 }
@@ -37,7 +39,7 @@ type pollingIMAPConn struct {
 func (l *pollingIMAPListener) Accept() (net.Conn, error) {
 	conn, err := l.Listener.Accept()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("accept IMAP fixture connection: %w", err)
 	}
 	return &pollingIMAPConn{Conn: conn, owner: l}, nil
 }
@@ -54,6 +56,9 @@ func (c *pollingIMAPConn) Read(p []byte) (int, error) {
 		if strings.Contains(line, "BODY.PEEK[]") || strings.Contains(line, "BODY[]") {
 			c.owner.bodies.Add(1)
 		}
+	}
+	if err != nil {
+		err = fmt.Errorf("read IMAP fixture connection: %w", err)
 	}
 	return n, err
 }

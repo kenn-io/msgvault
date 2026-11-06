@@ -134,7 +134,11 @@ func TestRapidEmailGmailPartialQuotaDebtReopensWithUnchangedHistory(t *testing.T
 
 	// Ordinary demand may bypass adaptive jitter after the provider floor;
 	// startup retains that already accepted manual request and its completion.
-	time.Sleep(max(time.Duration(0), time.Until(partial.RetryNotBefore())))
+	if wait := time.Until(partial.RetryNotBefore()); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		<-timer.C
+	}
 	s.Start()
 	select {
 	case <-completed:
