@@ -1,6 +1,7 @@
 package hex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"os"
@@ -166,6 +167,10 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 	v := Manifest{SchemaVersion: 1, ID: "titles", Status: "complete", CreatedAtMS: 1790000000123, App: "Zoom", Notes: &Notes{Title: " Notes title "}, ProvisionalTitle: "Provisional"}
 	v.Title = "Zoom call — " + time.UnixMilli(v.CreatedAtMS).In(zone).Format("3:04 PM")
 	for _, source := range []string{"", "default", "user", "calendar", "call"} {
+		v.Notes.Title = " Notes title "
+		if source == "user" {
+			v.Notes.Title = v.ProvisionalTitle
+		}
 		v.TitleSource = source
 		data, err := json.Marshal(v)
 		must.NoError(err)
@@ -187,6 +192,10 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 		check.Equal(want, snapshot.Title)
 		check.Contains(snapshot.Body, "Provisional")
 		check.Contains(snapshot.Body, v.Title)
+		if source == "user" {
+			check.Equal(1, bytes.Count([]byte(snapshot.Body), []byte("Provisional title: Provisional")))
+			check.NotContains(snapshot.Body, "Notes title:", "a repeated title must be omitted")
+		}
 		account := meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}
 		_, err = imp.ImportRemote(t.Context(), RemoteRequest{Action: "register", Source: account})
 		must.NoError(err)
