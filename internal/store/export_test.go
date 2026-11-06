@@ -379,7 +379,7 @@ var (
 
 // TierOptionsAsOf reads person tier counts as of a fixed date, not today.
 func TierOptionsAsOf(options PersonTierOptions, asOf time.Time) PersonTierOptions {
-	options.asOf = asOf
+	options.AsOf = asOf
 	return options
 }
 

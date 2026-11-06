@@ -98,9 +98,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(m.meetingState.messages) == 0 || m.meetingState.cursor >= len(m.meetingState.messages) {
 			return m, nil
 		}
-		m.meetingState.level = meetingLevelDetail
-		m.meetingState.detail = nil
-		m.meetingState.detailScroll = 0
+		m.meetingState.resetDetail()
 		m.meetingState.detailRequestID++
 		m.meetingState.detailLoading = true
 		m.loading = true
@@ -377,4 +375,15 @@ func (m *Model) navigateMeetingList(key string) bool {
 		)
 	}
 	return true
+}
+
+func (s *meetingState) resetDetail() {
+	s.level = meetingLevelDetail
+	s.detail = nil
+	s.detailScroll = 0
+	s.detailSearchActive = false
+	s.detailSearchInput.SetValue("")
+	s.detailSearchQuery = ""
+	s.detailSearchMatches = nil
+	s.detailSearchMatchIndex = 0
 }

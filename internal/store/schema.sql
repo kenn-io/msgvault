@@ -4526,6 +4526,15 @@ BEGIN
     WHERE person_id = OLD.person_id;
 END;
 
+-- Call claims are message-backed observations, never inferred attendance.
+CREATE TABLE IF NOT EXISTS call_details (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL,
+    owner_participation TEXT NOT NULL,
+    occurred_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
+
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -4710,8 +4719,10 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_duration_days INTEGER NOT NULL DEFAULT 0,
     recurrence_end_at DATETIME
 );
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
@@ -4778,3 +4789,23 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    calendar_id TEXT NOT NULL DEFAULT '',
+    scheduled_at DATETIME,
+    PRIMARY KEY (message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_value ON meeting_link_key(value);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_scheduled ON meeting_link_key(julianday(scheduled_at));
+CREATE INDEX IF NOT EXISTS idx_meeting_details_duration ON meeting_details(duration_seconds);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    target_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_message_id, occurrence_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_calendar_ical_uid ON messages(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.ical_uid') END) WHERE message_type = 'calendar_event';

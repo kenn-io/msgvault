@@ -2,6 +2,7 @@
 package calrecur
 
 import (
+	"strings"
 	"time"
 )
 
@@ -25,4 +26,35 @@ func (i Identity) Key() string {
 		return d.Format(keyDateLayout)
 	}
 	return i.Instant.UTC().Format(keyInstantLayout)
+}
+
+// ParseInstanceID splits a Google instance ID into its base and original identity.
+func ParseInstanceID(value string) (string, Identity, bool) {
+	index := strings.LastIndexByte(value, '_')
+	if index <= 0 {
+		return "", Identity{}, false
+	}
+	base, key := value[:index], value[index+1:]
+	for _, layout := range []string{keyDateLayout, keyInstantLayout} {
+		at, err := time.Parse(layout, key)
+		if err != nil || at.Format(layout) != key {
+			continue
+		}
+		if layout == keyDateLayout {
+			return base, Identity{Date: at.Format(dateLayout), AllDay: true}, true
+		}
+		return base, Identity{Instant: at.UTC()}, true
+	}
+	return "", Identity{}, false
+}
+
+// ParseKey accepts the canonical keys produced by Identity.Key.
+func ParseKey(key string) (Identity, bool) {
+	if value, err := time.Parse(keyInstantLayout, key); err == nil && value.Format(keyInstantLayout) == key {
+		return Identity{Instant: value}, true
+	}
+	if value, err := time.Parse(keyDateLayout, key); err == nil {
+		return Identity{Date: value.Format(dateLayout), AllDay: true}, true
+	}
+	return Identity{}, false
 }

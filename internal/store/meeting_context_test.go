@@ -121,3 +121,20 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 func jsonNumberForMeetingTest(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
+
+func TestMeetingContextSenderAlsoRecipient(t *testing.T) {
+	require := require.New(t)
+	fixture := newMeetingQueryFixture(t)
+	result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[0]})}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+	require.NoError(err)
+	var packet meetingcontent.Packet
+	require.NoError(json.Unmarshal([]byte(result.Content), &packet))
+	require.Len(packet.Meetings, 1)
+	var roles []string
+	for _, participant := range packet.Meetings[0].Participants {
+		if participant.ParticipantID != nil && *participant.ParticipantID == fixture.organizer {
+			roles = append(roles, participant.Role)
+		}
+	}
+	assert.ElementsMatch(t, []string{"from", "to"}, roles)
+}

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -77,6 +78,7 @@ type Store struct {
 	personMatchConsentMu sync.RWMutex
 
 	sqliteOptimizeMu sync.Mutex
+	compacted        atomic.Bool
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
 	// maintenance a successful sync triggers (see optimizeAfterSync).
 	syncOptimizeMu   sync.Mutex
@@ -575,7 +577,8 @@ const sqliteOptimizeTimeout = time.Second
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
-		if !s.IsPostgreSQL() {
+		// A compacted store already refreshed statistics before VACUUM.
+		if !s.IsPostgreSQL() && !s.compacted.Load() {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
@@ -1187,6 +1190,8 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
+		{"idx_messages_calendar_ical_uid", "ON messages((metadata ->> 'ical_uid')) WHERE message_type = 'calendar_event'"},
+		{"idx_messages_meeting_start", "ON messages(COALESCE(sent_at,received_at,internal_date)) WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1697,6 +1702,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		// Earlier versions submitted one provider job per extraction attempt.
 		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
 			return fmt.Errorf("backfill document upload counts: %w", err)
+		}
+	}
+	// The SQLite meeting index needs deleted_at, which old archives gain above.
+	// PostgreSQL builds it concurrently below.
+	if !s.IsPostgreSQL() {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_meeting_start ON messages(julianday(COALESCE(sent_at,received_at,internal_date))) WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create meeting start index: %w", err)
 		}
 	}
 	// account: and received: filter on the account columns, and each sync
@@ -2405,6 +2420,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventDurationV1, 1, false, s.ensureCalendarEventRecurrenceDurationColumn); err != nil {
+		return fmt.Errorf("add calendar event recurrence duration: %w", err)
 	}
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)

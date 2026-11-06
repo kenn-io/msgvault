@@ -126,6 +126,9 @@ func (s Set) ruleIterator(opt rrule.ROption, until time.Time, budget *candidateB
 	iterator := &ruleIterator{budget: budget, set: s, start: opt.Dtstart, until: opt.Until, count: opt.Count, first: exists}
 	if !s.AllDay {
 		opt.Dtstart = civilTime(opt.Dtstart.In(s.location()))
+		if !s.startCivil.IsZero() {
+			opt.Dtstart = s.startCivil
+		}
 		opt.Until = civilHorizon(opt.Until, s.location())
 	}
 	// COUNT applies to existing civil dates and wall times.

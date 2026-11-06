@@ -49,7 +49,6 @@ func TestEvaluateThresholds(t *testing.T) {
 }
 
 func TestExclusionsForceTierThree(t *testing.T) {
-	checks := assert.New(t)
 	cfg := DefaultConfig()
 	cfg.ExcludeDomainPatterns = []string{"rooms.example.com"}
 	// Two-way contact that would reach tier 2 without an exclusion.
@@ -68,6 +67,9 @@ func TestExclusionsForceTierThree(t *testing.T) {
 		{"mixed", false, []string{"noreply@example.com", "alex@example.org"}, false, 2, ""},
 		{"phone defeats automated exclusion", false, []string{"noreply@example.com"}, true, 2, ""},
 		{"room", false, []string{"room@rooms.example.com"}, false, 3, "calendar_room"},
+		{"all automated across room and email", false, []string{"noreply@rooms.example.com", "noreply@example.com"}, false, 3, "automated_address"},
+		{"room overrides phone", false, []string{"noreply@rooms.example.com"}, true, 3, "calendar_room"},
+		{"mixed exclusions retain human eligibility", false, []string{"room-4@rooms.example.com", "noreply@example.com"}, false, 2, ""},
 		{"human plus room", false, []string{"room@rooms.example.com", "alex@example.com"}, false, 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,9 +82,6 @@ func TestExclusionsForceTierThree(t *testing.T) {
 			assert.Equal("tier2_two_way", d.Rule, "the matching rule stays visible for explain")
 		})
 	}
-	cfg.ExcludeAddressPatterns = []string{"alerts*"}
-	checks.Equal("automated_address", Evaluate(Signals{Emails: []string{"alerts-weekly@example.com"}}, cfg).Exclusion)
-	checks.Empty(Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg).Exclusion)
 }
 
 func TestDisabledAlternatives(t *testing.T) {

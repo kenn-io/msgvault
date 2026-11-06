@@ -26,3 +26,13 @@ func TargetPort(target *url.URL) (uint16, error) {
 	}
 	return uint16(port), nil
 }
+
+// SameOrigin compares URL schemes, hosts, and effective ports.
+func SameOrigin(left, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		EffectivePort(left) == EffectivePort(right)
+}

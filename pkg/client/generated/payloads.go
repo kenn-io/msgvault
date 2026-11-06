@@ -124,6 +124,8 @@ type RunPersonMatchScoringBody = PersonMatchScoringRequest
 
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
+type ImportCallObservationBody = CallImportRequest
+
 type ImportMeetingBody = MeetingImportRequest
 
 type ImportMuesliBody = MuesliRemoteRequest
@@ -143,6 +145,8 @@ type SnoozeLoopBody = SnoozeLoopRequest
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
+
+type DecideMeetingLinkBody = MeetingLinkDecisionRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
 

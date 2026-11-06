@@ -65,14 +65,14 @@ func (e *restoredTimelineTextEngine) ListConversationMessages(
 
 func TestNextModeCyclesThroughMeetings(t *testing.T) {
 	t.Run("with texts available", func(t *testing.T) {
-		assert.Equal(t, modeTexts, nextMode(modeEmail, true, false))
-		assert.Equal(t, modeMeetings, nextMode(modeTexts, true, false))
-		assert.Equal(t, modeEmail, nextMode(modeMeetings, true, false))
+		assert.Equal(t, modeTexts, nextMode(modeEmail, true, false, false))
+		assert.Equal(t, modeMeetings, nextMode(modeTexts, true, false, false))
+		assert.Equal(t, modeEmail, nextMode(modeMeetings, true, false, false))
 	})
 
 	t.Run("without texts available", func(t *testing.T) {
-		assert.Equal(t, modeMeetings, nextMode(modeEmail, false, false))
-		assert.Equal(t, modeEmail, nextMode(modeMeetings, false, false))
+		assert.Equal(t, modeMeetings, nextMode(modeEmail, false, false, false))
+		assert.Equal(t, modeEmail, nextMode(modeMeetings, false, false, false))
 	})
 }
 

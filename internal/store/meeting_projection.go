@@ -9,10 +9,11 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-const meetingProjectionVersion = 1
+const meetingProjectionVersion = 2
 const maxMeetingRawBytes = 64 << 20
 
 var errMeetingRawTooLarge = errors.New("meeting raw exceeds decode limit")
@@ -46,6 +47,11 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	if err != nil {
 		return fmt.Errorf("read meeting projection message: %w", err)
 	}
+	if messageType.String == callhistory.MessageType {
+		if err := s.refreshCallProjectionWith(ctx, tx, messageID, metadata.String); err != nil {
+			return err
+		}
+	}
 	if messageType.String != "meeting_transcript" {
 		// The common non-meeting path does no derived writes unless a prior meeting
 		// was reclassified. Check both tables through the details primary key.
@@ -56,6 +62,9 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 		}
 		if err != nil {
 			return fmt.Errorf("read prior meeting projection: %w", err)
+		}
+		if err := replaceMeetingLinkKey(ctx, tx, messageID, meetingLinkKey{}); err != nil {
+			return err
 		}
 		if _, err := q.Exec(`DELETE FROM meeting_action_items WHERE message_id = ?`, messageID); err != nil {
 			return fmt.Errorf("clear meeting actions: %w", err)
@@ -87,7 +96,11 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 			ActionReason:   reason,
 		}
 	}
-	full, err := json.Marshal(content)
+	key := deriveMeetingLinkKey(content)
+	full, err := json.Marshal(struct {
+		Content meetingcontent.Content
+		Key     meetingLinkKey
+	}{content, key})
 	if err != nil {
 		return fmt.Errorf("marshal meeting content hash: %w", err)
 	}
@@ -101,6 +114,9 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	}
 	if err == nil && oldVersion == meetingProjectionVersion && oldHash == hash {
 		return nil
+	}
+	if err := replaceMeetingLinkKey(ctx, tx, messageID, key); err != nil {
+		return err
 	}
 	compact, err := json.Marshal(meetingcontent.ProjectionContent(content))
 	if err != nil {

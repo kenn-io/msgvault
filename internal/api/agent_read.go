@@ -17,14 +17,16 @@ import (
 // Every admitted read has either a source filter or an object-source check.
 // SQL, export, administrative reads, and unsupported analytics remain owner-only.
 var agentReadPermissions = map[string]agentgrant.Permission{
-	"searchCLI": agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
+	"getTimeline": agentgrant.PermissionMessageRead,
+	"searchCLI":   agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
 	"fastSearch": agentgrant.PermissionSearchRead, "deepSearch": agentgrant.PermissionSearchRead,
 	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
 	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
+	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead, "getCalendarEvent": agentgrant.PermissionCalendarEventRead,
+	"getMessage": agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
@@ -53,6 +55,9 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 		}
 		return permission, nil
 	}
+	if (operation == "listCalendarEvents" || operation == "getCalendarEvent") && grant != nil && grant.HasPermission(agentgrant.PermissionMessageRead) {
+		permission = agentgrant.PermissionMessageRead
+	}
 	if grant == nil || permission == "" || !grant.HasPermission(permission) {
 		return "", agentReadDenied(permission)
 	}
@@ -73,6 +78,9 @@ type agentReadSnapshotStore interface {
 // beginAgentRead binds req to one read snapshot and authorizes its source scope.
 // The returned release frees the snapshot and its concurrency slot.
 func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission) (func(), *apiHTTPError) {
+	if operation == "getTimeline" && req.URL.Query().Get("with") != "" {
+		return nil, newAPIHTTPError(http.StatusForbidden, "permission_denied", "Relationship filters require owner access")
+	}
 	snapshotStore, ok := s.store.(agentReadSnapshotStore)
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
@@ -148,6 +156,8 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "listCalendarEvents", "getCalendarEvent", "getTimeline":
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)

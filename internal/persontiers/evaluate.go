@@ -1,7 +1,5 @@
 package persontiers
 
-import "strings"
-
 // Signals counts only events already filtered by the activity rules. Owner,
 // Emails and HasPhoneOrChat feed the exclusions and stay out of the output.
 type Signals struct {
@@ -90,11 +88,14 @@ func excluded(s Signals, c Config) string {
 	if len(s.Emails) == 0 {
 		return ""
 	}
+	// Keep local-part matching independent of room matching: an address can
+	// match both, and every address must match the same exclusion category.
+	localOnly := Config{ExcludeAddressPatterns: c.ExcludeAddressPatterns}
+	domainOnly := Config{ExcludeDomainPatterns: c.ExcludeDomainPatterns}
 	automated, rooms := !s.HasPhoneOrChat, true
 	for _, email := range s.Emails {
-		local, domain, ok := strings.Cut(email, "@")
-		automated = automated && ok && matches(local, c.ExcludeAddressPatterns)
-		rooms = rooms && ok && matches(domain, c.ExcludeDomainPatterns)
+		automated = automated && localOnly.ExcludesAddress(email) == "automated_address"
+		rooms = rooms && domainOnly.ExcludesAddress(email) == "calendar_room"
 	}
 	if rooms {
 		return "calendar_room"

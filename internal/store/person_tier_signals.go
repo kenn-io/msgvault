@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -59,7 +58,7 @@ func (s *Store) personTierReadiness(ctx context.Context, tx *loggedTx) (PersonTi
 // projection holds each person's direct events; the inbound audience cut comes
 // from the projector's own classifier. Events arrive in keyset pages and fold
 // into the counters, so memory follows the page size and the number of people
-// and days, not the number of events.
+// and days, plus the logical email IDs for the current person.
 func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
 	tally := newTierTally(cfg, asOf)
 	var after tierSignalRow
@@ -92,52 +91,60 @@ func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs [
 
 // tierSignalRow is one direct activity link the tier rules can count.
 type tierSignalRow struct {
-	PersonID  int64
-	MessageID int64
-	LocalDate string
-	Channel   string
-	Inbound   bool
-	Meeting   bool
-	List      bool
-	Call      bool
+	PersonID        int64
+	MessageID       int64
+	LocalDate       string
+	Channel         string
+	RFC822MessageID string
+	Inbound         bool
+	Meeting         bool
+	List            bool
+	Call            bool
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,
-// in (person, date, message) order after the given row. The WHERE clause is the
+// in (person, date DESC, message) order after the given row. The WHERE clause is the
 // counting rule: sent email and chat messages between the person and the owner,
 // not drafts or unsent texts; answered calls that stayed connected at least
 // MinCallSeconds, whoever dialed; and meetings in either direction. Unsent uses
 // the projector's own predicate, so a sent copy that kept draft evidence after
 // dedup still counts.
 func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args := personMergeSnapshotIDArgs(personIDs)
+	args = append(args, scopeArgs...)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
 		asOf.Format(time.DateOnly),
-		after.PersonID, after.LocalDate, after.MessageID,
+		after.LocalDate, after.PersonID, after.MessageID,
 		cfg.MinCallSeconds, cfg.MinCallSeconds, personTierRowPage)
 	callTypes := `'` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `'`
+	// List and audience exclusions are tallied after the classifier batch so
+	// their diagnostic counts remain available alongside counted contact.
+	counted := CountedEventWhere(CountedEventInputs{
+		Evidence: "aep.evidence", Role: "aep.role", Direction: "ae.direction", RefKind: "ae.ref_kind",
+		ListExcluded: "0", LargeInbound: "0",
+	})
 	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
  CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END,
- CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END
+ CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END,COALESCE(`+s.dialect.RFC822CanonicalIDExpr("m.rfc822_message_id")+`,'')
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
  JOIN messages m ON m.id=ae.message_id
  JOIN conversations c ON c.id=m.conversation_id
  JOIN sources src ON src.id=m.source_id
- WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND aep.evidence='direct'
+ WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`)`+scope+` AND `+counted+`
  AND aep.local_date BETWEEN ? AND ?
- AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
+ AND (aep.person_id,?,aep.message_id) > (?,aep.local_date,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
- (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
- (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
- (ae.direction='outbound' AND aep.role IN ('addressed','member')))
- AND (((COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
+ ae.ref_kind='meeting' OR
+ ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
- OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?))))
- ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
+ OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?)))
+ AND NOT `+matrixPendingEncryptedSQL("m")+`
+ ORDER BY aep.person_id,aep.local_date DESC,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
 	}
@@ -146,7 +153,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 	for rows.Next() {
 		var r tierSignalRow
 		var inbound, meeting, list, call int
-		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call); err != nil {
+		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call, &r.RFC822MessageID); err != nil {
 			return nil, fmt.Errorf("scan person tier signals: %w", err)
 		}
 		r.Inbound, r.Meeting, r.List, r.Call = inbound != 0, meeting != 0, list != 0, call != 0
@@ -191,10 +198,12 @@ func (s *Store) personTierBroadcast(ctx context.Context, tx *loggedTx, rows []ti
 // A call is its own channel, even though calls share the chat channel in the
 // projection, so calls plus texts reach the breadth rule.
 type tierTally struct {
-	cfg    persontiers.Config
-	short  string
-	result map[int64]persontiers.Signals
-	seen   map[int64]*tierDays
+	cfg         persontiers.Config
+	short       string
+	result      map[int64]persontiers.Signals
+	seen        map[int64]*tierDays
+	emailPerson int64
+	emailCopies map[string]struct{}
 }
 
 // tierCallChannel names calls as a channel. It cannot collide with a
@@ -224,6 +233,18 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 			s.LargeAudienceInboundEvents++
 			t.result[r.PersonID] = s
 			continue
+		}
+		// Rows are person-ordered across pages. Retain IDs only for this
+		// person, and only after list and audience qualification succeeds.
+		if t.emailPerson != r.PersonID {
+			t.emailPerson = r.PersonID
+			t.emailCopies = map[string]struct{}{}
+		}
+		if r.Channel == "email" && r.RFC822MessageID != "" {
+			if _, seen := t.emailCopies[r.RFC822MessageID]; seen {
+				continue
+			}
+			t.emailCopies[r.RFC822MessageID] = struct{}{}
 		}
 		d := t.seen[r.PersonID]
 		if d == nil {
@@ -269,19 +290,19 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 
 // personTierBindings reads each person's addresses and identifiers for
 // the exclusions, and whether any of their participants is one of the owner's
-// own addresses in any account. The projection drops owner-linked participants
-// only within the message's own account, so this is the stricter cross-account
-// check. Primary email is authoritative over email aliases, and native IDs are
-// exact.
+// own addresses in any authorized account. The projection drops owner-linked
+// participants only within the message's own account, so this is the stricter
+// cross-account check within the caller's scope. Primary email is authoritative
+// over email aliases, and native IDs are exact.
 func personTierBindings(ctx context.Context, tx *loggedTx, marks string, args []any, signals map[int64]persontiers.Signals) error {
-	rows, err := tx.QueryContext(ctx, `SELECT pp.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),
+	population, populationArgs := activityIdentityPopulationSQL(ctx)
+	args = append(populationArgs, args...)
+	rows, err := tx.QueryContext(ctx, `WITH visible AS NOT MATERIALIZED (`+population+`)
+ SELECT p.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),
  COALESCE(pi.identifier_type,''),COALESCE(pi.identifier_value,''),
- EXISTS (SELECT 1 FROM account_identities ai WHERE (`+ownerEmailMatch("p.email_address", "ai.address")+`) OR EXISTS (
- SELECT 1 FROM participant_identifiers oi WHERE oi.participant_id=p.id AND `+
-		ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", " AND (p.email_address IS NULL OR TRIM(p.email_address)='')")+`))
- FROM person_participants pp JOIN participants p ON p.id=pp.participant_id
- LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE pp.person_id IN (`+marks+`)
- ORDER BY pp.person_id,p.id,pi.identifier_type,pi.identifier_value`, args...)
+ p.is_account_owner=1
+ FROM visible p LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE p.person_id IN (`+marks+`)
+ ORDER BY p.person_id,p.id,pi.identifier_type,pi.identifier_value`, args...)
 	if err != nil {
 		return fmt.Errorf("read person tier bindings: %w", err)
 	}

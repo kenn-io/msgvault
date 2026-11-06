@@ -210,6 +210,18 @@ func TestToolErrorHasNoStructuredOutput(t *testing.T) {
 	checks.NotContains(wire, "structuredContent")
 }
 
+func TestOfficialToolHandlerRejectsUnstructuredSuccess(t *testing.T) {
+	assert := assert.New(t)
+	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+		return &toolResult{text: "unexpected unstructured success"}, nil
+	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	assert.Nil(wireResult)
+	assert.Nil(output)
+	var protocolErr *jsonrpc.Error
+	require.ErrorAs(t, err, &protocolErr)
+	assert.Equal(int64(jsonrpc.CodeInternalError), protocolErr.Code)
+}
+
 func TestOfficialToolHandlerSanitizesInternalErrors(t *testing.T) {
 	checks := assert.New(t)
 	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {

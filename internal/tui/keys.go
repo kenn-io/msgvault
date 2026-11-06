@@ -26,6 +26,7 @@ const (
 	keyNameCtrlU     = "ctrl+u"
 	keyNameCtrlD     = "ctrl+d"
 	keyNameRight     = "right"
+	keyNameLeft      = "left"
 	keyNamePageUp    = "pgup"
 	keyNamePageDown  = "pgdown"
 	keyNameHome      = "home"
@@ -243,7 +244,10 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.swapPeopleMeetingState()
 			m.swapPeopleTextState()
 		}
-		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil)
+		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil, m.timelineBackend != nil)
+		if m.mode == modeTimeline {
+			m.cancelTimelineRequest()
+		}
 		m.switchMessageReaderState(next)
 		m.presentationGeneration++
 		m.mode = next
@@ -253,6 +257,9 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.inlineSearchLoading = false
 		m.searchLoadingMore = false
 		switch m.mode {
+		case modeTimeline:
+			cmd := m.activateTimeline()
+			return m, cmd, true
 		case modeTexts:
 			return m, m.activateTextPresentation(), true
 		case modeMeetings:
@@ -1275,7 +1282,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			m.modalCursor = 0
 		}
 		selected := options[m.modalCursor]
-		switch m.mode {
+		switch m.mode { //nolint:exhaustive // Timeline has no account selector.
 		case modeMeetings:
 			m.meetingState.sourceID = selected.accountID
 		case modeTexts:

@@ -1,0 +1,248 @@
+// Package timeline defines bounded, read-only views over archived activity.
+package timeline
+
+import (
+	"time"
+)
+
+type Mode string // "day" | "relationship" | "anchor"
+type Request struct {
+	Mode                      Mode
+	Date, From, To            string
+	Days                      int
+	With, Around              string
+	Before, After             int
+	Conversation              bool
+	Tiers                     []int
+	IncludeCold, IncludeNoise bool
+	Brief                     bool
+	Budget                    int
+	Format                    string // "markdown" | "json"
+	Cursor                    string
+	Scope                     Scope
+	// BeforeSet and AfterSet preserve explicit zero counts from transports.
+	BeforeSet, AfterSet bool `json:"-"`
+}
+type Scope struct {
+	Owner     bool
+	OpenTools []string // MCP tools the caller may call; nil for owner = all
+}
+type Timeline struct {
+	continuation      *Continuation
+	Mode              Mode          `json:"mode"`
+	Timezone          string        `json:"timezone"`
+	TimezoneIsDefault bool          `json:"timezone_is_default"`
+	Window            Window        `json:"window"`
+	Now               time.Time     `json:"now"`
+	Freshness         Freshness     `json:"freshness"`
+	Person            *PersonHeader `json:"person,omitempty"`
+	Anchor            *Anchor       `json:"anchor,omitempty"`
+	Candidates        []Candidate   `json:"candidates,omitempty"`
+	OpenLoops         *OpenLoops    `json:"open_loops,omitempty"`
+	Upcoming          []Entry       `json:"upcoming,omitempty"`
+	Days              []Day         `json:"days,omitempty"`
+	History           []Entry       `json:"history,omitempty"`
+	Gaps              []Gap         `json:"gaps,omitempty"`
+	Omitted           Omitted       `json:"omitted"`
+	Cursor            string        `json:"cursor,omitempty"`
+}
+type Gap struct {
+	Section   string   `json:"section"`
+	Code      string   `json:"code"`
+	Retryable bool     `json:"retryable"`
+	Items     []string `json:"items,omitempty"` // e.g. unexpandable series refs
+}
+type Open struct {
+	Tool string         `json:"tool"`
+	Args map[string]any `json:"args"`
+}
+
+// Entry is a tagged union. Kind: "meeting" | "transcript" | "burst" | "message" | "call" | "loop".
+type Entry struct {
+	// Truncated reports omitted text and lists; scalar values are preserved.
+	Truncated  bool          `json:"truncated,omitzero"`
+	Kind       string        `json:"kind"`
+	Key        string        `json:"key"`        // stable identity
+	Ref        string        `json:"ref"`        // display ref
+	AnchorRef  string        `json:"anchor_ref"` // valid --around value for this entry
+	Time       time.Time     `json:"time"`
+	Open       []Open        `json:"open"`
+	Anchor     bool          `json:"anchor,omitempty"`
+	Filtered   bool          `json:"filtered,omitempty"`
+	HiddenText bool          `json:"hidden_text,omitempty"`
+	Meeting    *MeetingEntry `json:"meeting,omitempty"`
+	Burst      *BurstEntry   `json:"burst,omitempty"`
+	Message    *MessageEntry `json:"message,omitempty"`
+	Call       *CallEntry    `json:"call,omitempty"`
+	Loop       *LoopEntry    `json:"loop,omitempty"`
+}
+
+const (
+	ModeDay          Mode = "day"
+	ModeRelationship Mode = "relationship"
+	ModeAnchor       Mode = "anchor"
+)
+
+type Window struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+type UntrustedText struct {
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
+}
+type SourceFreshness struct {
+	SourceID             *int64     `json:"source_id"`
+	SourceType           string     `json:"source_type"`
+	Identifier           string     `json:"identifier"`
+	Scheduling           string     `json:"scheduling"`
+	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at"`
+	LastSyncErrors       int64      `json:"last_sync_errors"`
+	Outcome              string     `json:"outcome"`
+	Reason               string     `json:"reason,omitempty"`
+	SyncCommand          string     `json:"sync_command"`
+}
+
+// Warn reports whether the source needs a freshness warning.
+func (s SourceFreshness) Warn() bool {
+	return s.Reason != "" || s.Outcome == "failed" || s.Outcome == "cancelled" || s.Outcome == "paused" || s.Scheduling == "disabled" || s.LastSyncErrors > 0
+}
+
+type Freshness struct {
+	AsOf           time.Time             `json:"as_of"`
+	StaleThreshold int64                 `json:"stale_threshold"` // seconds
+	Sources        []SourceFreshness     `json:"sources"`
+	Projections    []ProjectionFreshness `json:"projections"`
+	Warnings       []string              `json:"warnings"`
+}
+type ProjectionFreshness struct {
+	Name     string     `json:"name"`
+	Frontier *time.Time `json:"frontier"`
+	State    string     `json:"state"`
+}
+
+// Person contains display metadata only; a zero PersonID denotes an unsaved contact.
+type Person struct {
+	email         string
+	TierSource    string `json:"tier_source"`
+	Truncated     bool   `json:"truncated,omitzero"`
+	PersonID      int64  `json:"person_id,omitempty"`
+	ParticipantID int64  `json:"participant_id,omitempty"`
+	Name          string `json:"name"`
+	Tier          int    `json:"tier,omitempty"`
+	Participation string `json:"participation,omitempty"`
+	Credited      bool   `json:"credited,omitempty"`
+}
+type PersonHeader struct {
+	Person             Person          `json:"person"`
+	Ref                string          `json:"ref"`
+	Channels           []string        `json:"channels"`
+	FirstAt            *time.Time      `json:"first_at"`
+	LastAt             *time.Time      `json:"last_at"`
+	LastInboundAt      *time.Time      `json:"last_inbound_at"`
+	LastOutboundAt     *time.Time      `json:"last_outbound_at"`
+	InteractionCount   int             `json:"interaction_count"`
+	CadenceStatus      string          `json:"cadence_status,omitempty"`
+	DueAt              *time.Time      `json:"due_at,omitempty"`
+	InitiatedByContact int             `json:"initiated_by_contact"`
+	InitiatedByOwner   int             `json:"initiated_by_owner"`
+	Monthly            [12]int         `json:"monthly"`
+	Brief              *UntrustedText  `json:"brief,omitempty"`
+	Agenda             []UntrustedText `json:"agenda,omitempty"`
+}
+type Anchor struct {
+	Ref      string    `json:"ref"`
+	Kind     string    `json:"kind"`
+	Time     time.Time `json:"time"`
+	Filtered bool      `json:"filtered"`
+}
+type Candidate struct {
+	Truncated      bool    `json:"truncated,omitzero"`
+	PersonID       int64   `json:"person_id"`
+	PersonUID      string  `json:"person_uid"`
+	ParticipantIDs []int64 `json:"participant_ids"`
+	DisplayName    string  `json:"display_name"`
+	Address        string  `json:"address"`
+}
+type OpenLoops struct {
+	Items              []Entry `json:"items"`
+	Truncated          bool    `json:"truncated"`
+	CoverageIncomplete bool    `json:"coverage_incomplete"`
+	SkippedUnparseable int     `json:"skipped_unparseable"`
+}
+
+// Day contains either a summary or detailed entries, never both.
+type Day struct {
+	Date     string      `json:"date"`
+	Summary  *DaySummary `json:"summary,omitempty"`
+	Meetings []Entry     `json:"meetings,omitempty"`
+	Bursts   []Entry     `json:"bursts,omitempty"`
+	Calls    []Entry     `json:"calls,omitempty"`
+}
+type DaySummary struct {
+	Messages        int      `json:"messages"`
+	Calls           int      `json:"calls"`
+	PeopleCount     int      `json:"people_count"`
+	PeopleTruncated bool     `json:"people_truncated,omitzero"`
+	Meetings        int      `json:"meetings"`
+	People          []Person `json:"people"`
+	Truncated       bool     `json:"truncated"`
+}
+type Omitted struct {
+	Budget map[string]any `json:"budget"`
+	Noise  int            `json:"noise"`
+	Cold   int            `json:"cold"`
+}
+
+// MeetingEntry is also the payload of an unlinked transcript entry.
+type MeetingEntry struct {
+	Status              string        `json:"status,omitzero"`
+	DeletedFromSource   bool          `json:"deleted_from_source,omitzero"`
+	AttendeeCount       int           `json:"attendee_count"`
+	AttendeesTruncated  bool          `json:"attendees_truncated,omitzero"`
+	PeopleCount         int           `json:"people_count"`
+	PeopleTruncated     bool          `json:"people_truncated,omitzero"`
+	Title               UntrustedText `json:"untrusted_text"`
+	Start               time.Time     `json:"start,omitzero"`
+	End                 time.Time     `json:"end,omitzero"`
+	Time                time.Time     `json:"time,omitzero"`
+	AllDay              bool          `json:"all_day"`
+	Attendees           []Person      `json:"attendees,omitempty"`
+	People              []Person      `json:"people,omitempty"`
+	Attended            bool          `json:"attended"`
+	LinkedTranscriptIDs []int64       `json:"linked_transcript_ids,omitempty"`
+	PossiblyRelated     []string      `json:"possibly_related,omitempty"`
+	ActionItemCount     int           `json:"action_item_count"`
+}
+type BurstEntry struct {
+	PeopleCount      int           `json:"people_count"`
+	PeopleTruncated  bool          `json:"people_truncated,omitzero"`
+	Channel          string        `json:"channel"`
+	People           []Person      `json:"people"`
+	Inbound          int           `json:"inbound"`
+	Outbound         int           `json:"outbound"`
+	FirstAt          time.Time     `json:"first_at"`
+	LastAt           time.Time     `json:"last_at"`
+	Snippet          UntrustedText `json:"untrusted_text"`
+	LatestMessageIDs []int64       `json:"latest_message_ids"`
+	Copies           map[int64]int `json:"copies,omitempty"`
+}
+type MessageEntry struct {
+	PeopleCount     int           `json:"people_count"`
+	PeopleTruncated bool          `json:"people_truncated,omitzero"`
+	Direction       string        `json:"direction"`
+	People          []Person      `json:"people"`
+	Snippet         UntrustedText `json:"untrusted_text"`
+}
+type CallEntry struct {
+	PeopleCount     int      `json:"people_count"`
+	PeopleTruncated bool     `json:"people_truncated,omitzero"`
+	Outcome         string   `json:"outcome"`
+	DurationSeconds *float64 `json:"duration_seconds"`
+	People          []Person `json:"people"`
+}
+type LoopEntry struct {
+	Kind   string `json:"kind"`
+	Age    string `json:"age"`
+	Person Person `json:"person"`
+}

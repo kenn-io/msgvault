@@ -113,11 +113,13 @@ func (s *Store) StableAnchorSettledContext(
 }
 
 // IsAccountIdentityAddressContext reports whether address is a confirmed
-// account identity (one of the archive owner's own addresses) on any source.
+// account identity (one of the archive owner's own addresses) in the source scope.
 func (s *Store) IsAccountIdentityAddressContext(ctx context.Context, address string) (bool, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "source_id")
+	args := append([]any{address}, scopeArgs...)
 	var found int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM account_identities
-		WHERE LOWER(address) = LOWER(?) LIMIT 1`, address).Scan(&found)
+		WHERE LOWER(address) = LOWER(?)`+scope+` LIMIT 1`, args...).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

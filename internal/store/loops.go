@@ -36,6 +36,7 @@ const (
 // LoopQuery selects the conversations a loop request reads.
 type LoopQuery struct {
 	PersonID       int64
+	ParticipantIDs []int64
 	ConversationID int64
 }
 
@@ -212,6 +213,17 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 			OR EXISTS (SELECT 1 FROM conversation_participants cp
 				WHERE cp.conversation_id = c.id AND cp.participant_id = pp.participant_id)))`
 		args = append(args, q.PersonID)
+	}
+	if len(q.ParticipantIDs) > 0 {
+		marks := placeholders(len(q.ParticipantIDs))
+		query += ` AND (EXISTS (SELECT 1 FROM messages pm WHERE pm.conversation_id = c.id AND pm.sender_id IN (` + marks + `))
+			OR EXISTS (SELECT 1 FROM message_recipients pr JOIN messages pm ON pm.id = pr.message_id WHERE pm.conversation_id = c.id AND pr.participant_id IN (` + marks + `))
+			OR EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id = c.id AND cp.participant_id IN (` + marks + `)))`
+		for range 3 {
+			for _, id := range q.ParticipantIDs {
+				args = append(args, id)
+			}
+		}
 	}
 	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type`
 	return query, args
@@ -396,18 +408,22 @@ type loopOwners struct {
 	persons      map[int64]struct{}
 }
 
+var ownerParticipantIDsSQL = `
+		SELECT p.id FROM account_identities ai
+		JOIN participants p ON ` + ownerEmailMatch("p.email_address", "ai.address") + `
+		UNION ALL
+		SELECT pi.participant_id FROM account_identities ai
+		JOIN participant_identifiers pi ON ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail)
+
+const personIDsForParticipantsSQL = `SELECT person_id FROM person_participants WHERE participant_id IN (%s)`
+
 // loopOwnerIdentities loads the owners once per request. A participant that
 // matches any account address is you across the whole archive, whether or not
 // a person links it to your other addresses, so mail between your own
 // accounts is never a loop. The match starts from the few account addresses,
 // so the lower-case indexes on participants and identifiers serve it.
 func (s *Store) loopOwnerIdentities(ctx context.Context) (loopOwners, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id FROM account_identities ai
-		JOIN participants p ON `+ownerEmailMatch("p.email_address", "ai.address")+`
-		UNION ALL
-		SELECT pi.participant_id FROM account_identities ai
-		JOIN participant_identifiers pi ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail))
+	rows, err := s.db.QueryContext(ctx, ownerParticipantIDsSQL)
 	if err != nil {
 		return loopOwners{}, fmt.Errorf("load owner identities: %w", err)
 	}
@@ -426,7 +442,7 @@ func (s *Store) loopOwnerIdentities(ctx context.Context) (loopOwners, error) {
 		return loopOwners{}, err
 	}
 	err = queryInChunksContext(ctx, s.db, slices.Collect(maps.Keys(owners.participants)), nil,
-		`SELECT person_id FROM person_participants WHERE participant_id IN (%s)`,
+		personIDsForParticipantsSQL,
 		func(rows *loggedRows) error {
 			var id int64
 			if err := rows.Scan(&id); err != nil {

@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,32 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 		if summary.Flag != "" {
 			assert.NotNil(t, mcpCmd.Flags().Lookup(strings.TrimPrefix(summary.Flag, "--")), "%s", summary.Name)
 		}
+	}
+}
+
+func TestDaemonMCPMeetingLinkToolsRequireSupportedSchema(t *testing.T) {
+	for _, version := range []string{"3.45.0", "3.46.0"} {
+		t.Run(version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
+					return
+				}
+				http.NotFound(w, r)
+			})
+			handler, closeHandler := mcpserver.NewHTTPHandler(daemonMCPServeOptions(t.Context(), client, nil), mcpserver.HTTPOptions{AllowWrites: true})
+			t.Cleanup(closeHandler)
+			server := httptest.NewServer(handler)
+			t.Cleanup(server.Close)
+			session, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-capability-test", Version: "1"}, nil).Connect(t.Context(), &sdkmcp.StreamableClientTransport{Endpoint: server.URL}, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, session.Close()) })
+			names := mcpDraftToolNames(t, session)
+			assert.Contains(t, names, mcpserver.ToolGetMeetingContext)
+			for _, name := range []string{mcpserver.ToolGetMeetingRecord, mcpserver.ToolSuggestMeetingLinks, mcpserver.ToolLinkMeeting, mcpserver.ToolUnlinkMeeting} {
+				assert.Equal(t, version == "3.46.0", slices.Contains(names, name), name)
+			}
+		})
 	}
 }
 
@@ -691,4 +719,51 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
+}
+
+func TestCalendarArchiveMCPVersionGates(t *testing.T) {
+	for _, version := range []string{"3.44.0", calendarEventsMinAPISchemaVersion} {
+		t.Run(version, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{}
+				switch r.URL.Path {
+				case "/api/v1/health":
+					body = map[string]any{"status": "ok", "api_schema_version": version}
+				case "/api/v1/agent-tokens/self":
+					body = map[string]any{"permissions": []string{"calendar.event.read"}}
+				}
+				assertions.NoError(json.NewEncoder(w).Encode(body))
+			})
+			owner := daemonMCPServeOptions(t.Context(), client, nil)
+			assertions.Equal(version == calendarEventsMinAPISchemaVersion, owner.CalEvents != nil)
+			delegated, err := delegatedMCPServeOptions(t.Context(), client)
+			requirements.NoError(err)
+			assertions.Equal(version == calendarEventsMinAPISchemaVersion, delegated.CalEvents != nil)
+		})
+	}
+}
+
+func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
+	for _, version := range []string{"3.46.0", "3.47.0"} {
+		t.Run(version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{}
+				switch r.URL.Path {
+				case "/api/v1/health":
+					body = map[string]any{"status": "ok", "api_schema_version": version}
+				case "/api/v1/agent-tokens/self":
+					body = map[string]any{"permissions": []string{"message.read"}}
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(body))
+			})
+			owner := daemonMCPServeOptions(t.Context(), client, nil)
+			assert.Equal(t, version == "3.47.0", owner.Timeline != nil)
+			delegated, err := delegatedMCPServeOptions(t.Context(), client)
+			require.NoError(t, err)
+			assert.Equal(t, version == "3.47.0", delegated.Timeline != nil)
+		})
+	}
 }

@@ -38,6 +38,7 @@ const (
 	ToolDraftDelete               = "draft_delete"
 	ToolDraftRecover              = "draft_recover"
 	ToolDraftSendAs               = "draft_send_as"
+	ToolTimeline                  = "timeline"
 	ToolSearchMessages            = "search_messages"
 	ToolQuerySQL                  = "query_sql"
 	ToolSearchMetadata            = "search_metadata"
@@ -77,6 +78,10 @@ const (
 	ToolCreateSavedView           = "create_saved_view"
 	ToolUpdateSavedView           = "update_saved_view"
 	ToolDeleteSavedView           = "delete_saved_view"
+	ToolGetMeetingRecord          = "get_meeting_record"
+	ToolSuggestMeetingLinks       = "suggest_meeting_links"
+	ToolLinkMeeting               = "link_meeting"
+	ToolUnlinkMeeting             = "unlink_meeting"
 	ToolGetMeetingContext         = "get_meeting_context"
 	ToolListMeetingActionItems    = "list_meeting_action_items"
 	ToolGetMeetingMetrics         = "get_meeting_metrics"
@@ -175,10 +180,13 @@ type ServeOptions struct {
 	// when the embedder has no durable Saved View store; the Saved View tools
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
+	CalEvents  CalendarEventsBackend
+	Timeline   TimelineBackend
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings     MeetingBackend
+	MeetingLinks bool
+	Calendar     CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
@@ -297,6 +305,10 @@ func officialToolHandler(
 				}},
 			}
 		}
+		if result.textOnly {
+			wireResult.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: result.text}}
+			return wireResult, nil, nil
+		}
 		if len(result.structuredContent) == 0 {
 			slog.Error("MCP successful tool result has no structured content")
 			return nil, nil, &jsonrpc.Error{
@@ -407,6 +419,8 @@ func newMCPServerWithPolicy(
 		savedViews:           opts.SavedViews,
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
+		calEvents:            opts.CalEvents,
+		timelineBackend:      opts.Timeline,
 		personAgendaBackend:  opts.PersonAgendaBackend,
 		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,
@@ -620,17 +634,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// agentReadToolPermission names the grant permission the daemon requires for a read tool.
-func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
-	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
-		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
-		return agentgrant.PermissionMessageRead, true
-	case ToolGetAttachment:
-		return agentgrant.PermissionAttachmentRead, true
-	case ToolGetStats:
-		return agentgrant.PermissionStatsRead, true
-	}
-	return "", false
+// agentReadToolPermission lists the permissions that admit a read tool.
+func agentReadToolPermission(name string) []agentgrant.Permission {
+	return agentgrant.ReadToolPermissions(name)
 }

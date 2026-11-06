@@ -10,13 +10,14 @@ const (
 	modeTexts
 	modeMeetings
 	modePeople
+	modeTimeline
 	modeCount
 )
 
 // nextMode advances through the available content modes. Meetings uses the
 // primary query engine, so it remains available when the optional text engine
 // is not configured.
-func nextMode(current tuiMode, textsAvailable, peopleAvailable bool) tuiMode {
+func nextMode(current tuiMode, textsAvailable, peopleAvailable, timelineAvailable bool) tuiMode {
 	switch current {
 	case modeEmail:
 		if textsAvailable {
@@ -29,8 +30,16 @@ func nextMode(current tuiMode, textsAvailable, peopleAvailable bool) tuiMode {
 		if peopleAvailable {
 			return modePeople
 		}
+		if timelineAvailable {
+			return modeTimeline
+		}
 		return modeEmail
 	case modePeople:
+		if timelineAvailable {
+			return modeTimeline
+		}
+		return modeEmail
+	case modeTimeline:
 		return modeEmail
 	default:
 		return modeEmail

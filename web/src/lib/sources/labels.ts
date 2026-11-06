@@ -7,7 +7,7 @@ import { sentenceCase } from '../explore/labels';
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
   discord: 'Discord', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
-  imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
+  imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', caldav: 'CalDAV', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
@@ -63,6 +63,7 @@ export const SOURCE_SETTING_PREFIX: Readonly<Record<string, string>> = {
 
 
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {
+  sync_manual_only: 'Sync manually with msgvault sync-caldav',
   source_not_schedulable: 'Imported file — nothing to sync',
   sync_already_running: 'Sync in progress',
   scheduler_unavailable: 'Scheduler unavailable',

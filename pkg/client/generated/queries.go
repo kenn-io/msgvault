@@ -141,10 +141,30 @@ type ListAttributeDefinitionsQuery struct {
 type ListCalendarEventsQuery struct {
 	From time.Time `json:"from" validate:"required"`
 	To   time.Time `json:"to" validate:"required"`
+
+	// Limit Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.
+	Limit  *int    `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+	Cursor *string `json:"cursor,omitempty"`
 }
 
 func (l ListCalendarEventsQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type ListCallObservationsQuery struct {
+	PersonID *int64     `json:"person_id,omitempty"`
+	Limit    *int64     `json:"limit,omitempty"`
+	AfterID  *int64     `json:"after_id,omitempty"`
+	After    *time.Time `json:"after,omitempty"`
+	Before   *time.Time `json:"before,omitempty"`
+}
+
+type SummarizeCallsQuery struct {
+	PersonID *int64     `json:"person_id,omitempty"`
+	Limit    *int64     `json:"limit,omitempty"`
+	Offset   *int64     `json:"offset,omitempty"`
+	After    *time.Time `json:"after,omitempty"`
+	Before   *time.Time `json:"before,omitempty"`
 }
 
 type ListCardDAVBooksQuery struct {
@@ -675,6 +695,22 @@ type SearchMediaQuery struct {
 }
 
 func (s SearchMediaQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetMeetingRecordQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetMeetingRecordQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
@@ -1779,4 +1815,57 @@ type GetTextStatsQuery struct {
 
 	// SearchQuery Search query
 	SearchQuery *string `json:"search_query,omitempty"`
+}
+
+type GetTimelineQuery struct {
+	// Mode View: day, relationship, or anchor; inferred from with or around when omitted
+	Mode *string `json:"mode,omitempty"`
+
+	// Date One local date (YYYY-MM-DD)
+	Date *string `json:"date,omitempty"`
+
+	// From First local date, inclusive; requires to
+	From *string `json:"from,omitempty"`
+
+	// To Last local date, inclusive; requires from
+	To *string `json:"to,omitempty"`
+
+	// Days Days ending today (1–31); defaults to two without other date bounds
+	Days *int64 `json:"days,omitempty"`
+
+	// With Person, participant, email, phone, or name reference
+	With *string `json:"with,omitempty"`
+
+	// Around Message, conversation, event, burst, date, or datetime reference
+	Around *string `json:"around,omitempty"`
+
+	// Before Anchor neighbors before the target (0–50); default five
+	Before *int64 `json:"before,omitempty"`
+
+	// After Anchor neighbors after the target (0–50); default five
+	After *int64 `json:"after,omitempty"`
+
+	// Conversation Show individual messages in the anchor conversation
+	Conversation *bool `json:"conversation,omitempty"`
+
+	// Tiers Comma-separated person tiers (1, 2, or 3)
+	Tiers *string `json:"tiers,omitempty"`
+
+	// IncludeCold Include archived cold activity
+	IncludeCold *bool `json:"include_cold,omitempty"`
+
+	// IncludeNoise Include activity excluded as noise
+	IncludeNoise *bool `json:"include_noise,omitempty"`
+
+	// Brief Use shorter sections and a default budget of 6144 bytes
+	Brief *bool `json:"brief,omitempty"`
+
+	// Budget Final encoded bytes (4096–65536); default 16384
+	Budget *int64 `json:"budget,omitempty"`
+
+	// Format Response encoding: json (default) or markdown
+	Format *string `json:"format,omitempty"`
+
+	// Cursor Continue the same request and authorization scope
+	Cursor *string `json:"cursor,omitempty"`
 }

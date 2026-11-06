@@ -123,6 +123,8 @@ in the short window. Tier 2 is two-way contact in the long window, or meetings.
 Counts cover meetings, the email and chat messages that were sent or received,
 and Synctech and Google Voice calls that stayed connected for at least
 `min_call_seconds`. A call counts as one message each way, whoever dialed.
+The same email held in more than one account counts once, matched by Message-ID.
+Matrix messages still waiting to be decrypted don't count.
 Drafts, texts that never left your phone, missed calls, voicemail, and shorter
 calls don't count. Archives imported before this change keep counting unsent
 texts, and count no calls, until you import the backup again: run
@@ -1459,6 +1461,68 @@ For example, `person@example.com` can create on `team@example.com` when Google
 currently reports `owner` or `writer` for that calendar. `primary` resolves to the
 live primary calendar ID before the daemon checks policy. List the actual ID in
 both permission lists; neither list supports wildcards or alias names.
+
+### CalDAV Sources (unreleased)
+
+Archive CalDAV calendars with `msgvault sync-caldav <name>`. The daemon reads
+these settings and the password file on its own host. Sync is manual and
+read-only. Each discovered calendar becomes a separate archive source.
+
+Each source is identified by the connection's username and canonical calendar collection URL. Renaming a CalDAV entry in the configuration preserves its source and archived events. Different accounts archive a shared collection separately. A calendar whose collection URL moves archives again under a new source. The old source keeps its archived events.
+
+```toml
+[[caldav.sources]]
+name = "personal"
+url = "https://calendar.example.org/dav"
+username = "owner@example.org"
+password_file = "caldav-password"
+time_zone = "UTC"
+calendars = []
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | Required | 1–64 lowercase letters, digits, `_` or `-`; start with a letter |
+| `url` | Required | HTTPS discovery URL without embedded credentials, query or fragment |
+| `username` | Required | Basic/Digest authentication username |
+| `password_file` | Required | Plain password file; relative paths resolve from the configuration directory |
+| `time_zone` | `UTC` | IANA timezone for floating times and all-day dates |
+| `calendars` | `[]` | Absolute same-origin calendar collection URLs ending in `/`; empty selects all discovered calendars |
+| `max_events` | `20000` | Maximum live events per calendar after sync; accepts 1–200000 |
+| `trusted_origin` | Empty | Optional HTTPS origin approved for a private server, with no path |
+| `trusted_addresses` | `[]` | Exact private IP pins for that origin; use with `trusted_origin` |
+
+Detecting your own events, setting `is_from_me`, and marking attendees as copy-self require `username` to be an email address.
+
+For iCloud, set `url` to your account's `pNN-caldav.icloud.com` host, such as `https://p01-caldav.icloud.com/`. Discovery requires the same origin, so `https://caldav.icloud.com/` cannot discover calendars on that account host. The sync error names the account host to use for `url`.
+
+Keep the password in a regular file readable only by its owner (`chmod 600`
+or `chmod 400` on Unix). Surrounding whitespace is ignored. The daemon rejects empty files and
+files over 64 KiB. On Windows, restrict the file's ACL to the daemon user.
+Passwords are not copied into archive metadata.
+
+The shared DAV client accepts Basic and Digest authentication over HTTPS.
+For a private server, configure the same explicit
+[trusted destination policy](#carddav) used by CardDAV. A public discovery URL
+cannot redirect credentials to another origin.
+
+Changing `time_zone` refreshes archived event times on the next sync while preserving message IDs and history. Floating recurrence identities use their literal local values, independently of the configured zone.
+
+`TZID` accepts IANA and Windows names; unknown names cause a reported resource skip, and embedded `VTIMEZONE` definitions aren't interpreted.
+UTC times are supported. `Local` is rejected because it depends on the daemon host's
+timezone and can change event times when that host changes zones. A resource
+that isn't iCalendar 2.0, uses an unsupported time zone or `RANGE=THISANDFUTURE`,
+or has an all-day end that doesn't follow its start is skipped whole. The sync summary and
+sync history report each skip; previously archived events keep their raw data and ETags. Unsupported
+recurrence rules remain in raw data and appear in the calendar projection's
+recurrence error field.
+
+If resources contain the same event UID, an unchanged archived resource takes precedence over a changed resource. Among downloaded resources, sync keeps the first in href order and skips later conflicting resources. Other resources continue, and previously archived events from skipped resources remain available.
+
+Sync fails rather than accepting incomplete reports or advancing a cursor
+past a failed fetch or write. Discovery, each calendar pull, and persistence have separate five-minute
+deadlines. Discovery and each calendar pull have separate 256 MiB response-data budgets. Per calendar, sync allows 50,000 resource entries
+and `max_events` live events after the sync. Each resource is limited to 2 MiB. Increase `max_events` for a larger calendar.
 
 ### `[matrix]`
 

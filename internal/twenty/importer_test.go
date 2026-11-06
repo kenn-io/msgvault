@@ -607,3 +607,20 @@ func TestTwentyArchiveBoundsUnicodeSnippet(t *testing.T) {
 		})
 	}
 }
+
+func TestImportTwentyLinksArchivedCalendarUID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, source, options := newImportFixture(t)
+	source.pages[""].Records[0].Calendar.Raw = jsontext.Value(`{"id":"event-1","iCalUid":"shared@example.org","startsAt":"2026-09-01T09:30:00Z","endsAt":"2026-09-01T10:30:00Z"}`)
+	_, err := NewImporter(st, source).Import(t.Context(), options)
+	requirements.NoError(err)
+	note := archivedID(t, st, "r1")
+	metadata, err := st.GetMessageMetadata(note)
+	requirements.NoError(err)
+	requirements.True(metadata.Valid)
+	var fields map[string]any
+	requirements.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+	assertions.Equal("shared@example.org", fields["calendar_ical_uid"])
+	assertions.Equal("2026-09-01T09:30:00Z", fields["scheduled_start"])
+}

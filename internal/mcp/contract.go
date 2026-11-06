@@ -31,6 +31,8 @@ type embeddedResource struct {
 }
 
 type toolResult struct {
+	// textOnly explicitly opts into a successful text response without an output object.
+	textOnly          bool
 	text              string
 	structuredContent jsontext.Value
 	embeddedResource  *embeddedResource

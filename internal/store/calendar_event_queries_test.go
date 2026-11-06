@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -19,7 +23,7 @@ func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRo
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	return calendarEventRowsInWindow(ctx, st.db, st.dialect, start, end)
+	return calendarEventRowsInWindow(ctx, st.meetingReader(ctx), start, end)
 }
 func bulkCalendarCandidates(t *testing.T, st *Store, sourceID, conversationID int64, kind string, count int) {
 	t.Helper()
@@ -70,25 +74,26 @@ func TestCalendarEventRowsManyExceptionsBounded(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(rows, 1)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Len(page.Occurrences, 1)
 	// The same budget still rejects exceptions that actually affect the window.
-	_, err = st.ListCalendarOccurrencesContext(t.Context(), time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, err = calendarWindow(t, st, "1970-01-01T00:00:00Z", "2030-01-01T00:00:00Z")
 	requirements.ErrorIs(err, ErrQueryTooBroad)
 	assertions.Contains(err.Error(), "narrow the window")
 }
 
 func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, _ := calendarFixture(t, st, "cap-master", calendarRaw)
 	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
-	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_json = '["RRULE:FREQ=DAILY"]' WHERE kind = 'series'`)
+	_, err := st.db.Exec(`UPDATE calendar_events SET status = 'confirmed', start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_json = '["RRULE:FREQ=DAILY"]' WHERE kind = 'series'`)
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	for _, width := range []time.Duration{24 * time.Hour, time.Hour} {
-		_, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(width))
+		_, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(width)})
 		requirements.ErrorIs(err, ErrQueryTooBroad)
 		assertions.Contains(err.Error(), "more than 2000 recurring series overlap the window")
 		assertions.Contains(err.Error(), "a narrower window will not reduce open-ended series")
@@ -97,8 +102,34 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	// Deleted series without archived exceptions in the window do not count.
 	_, err = st.db.Exec(`UPDATE calendar_events SET status = 'cancelled' WHERE kind = 'series'`)
 	requirements.NoError(err)
-	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	_, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(time.Hour)})
 	requirements.NoError(err)
+}
+
+func TestCalendarEventRowsDeletedSeriesBudget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, master := calendarFixture(t, st, "deleted-master", `{"id":"deleted-series","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
+	_, err := st.db.Exec(`UPDATE messages SET deleted_from_source_at = ?`, time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC))
+	requirements.NoError(err)
+	_, live := calendarFixture(t, st, "live-master", `{"id":"live-series","start":{"dateTime":"2027-03-14T09:00:00Z"},"end":{"dateTime":"2027-03-14T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	_, exception := calendarFixture(t, st, "archived-exception", `{"id":"archived-edit","recurringEventId":"deleted-series","originalStartTime":{"dateTime":"2027-03-14T09:00:00Z"},"start":{"dateTime":"2027-03-14T09:15:00Z"},"end":{"dateTime":"2027-03-14T09:45:00Z"}}`)
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`, time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC), exception)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 14, 9, 0, 0, 0, time.UTC)
+	for _, width := range []time.Duration{24 * time.Hour, time.Hour} {
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(width)})
+		requirements.NoError(err)
+		assertions.Empty(page.Unexpandable)
+		requirements.Len(page.Occurrences, 2)
+		assertions.Equal(live, page.Occurrences[0].MessageID)
+		assertions.Equal(exception, page.Occurrences[1].MessageID)
+		assertions.Equal(master, page.Occurrences[1].SeriesMessageID)
+		assertions.True(page.Occurrences[1].DeletedFromSource)
+		assertions.Equal("2027-03-14T09:15:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
+		assertions.Equal("2027-03-14T09:45:00Z", page.Occurrences[1].End.Format(time.RFC3339))
+	}
 }
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
@@ -110,7 +141,7 @@ func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	_, err = queryCalendarEventRowsWithinBudget(ctx, st.meetingReader(ctx), "1 = 1", nil, 1)
 	assert.ErrorIs(t, err, ErrQueryTooBroad)
 }
 func TestCalendarEventSourceZoneRebuild(t *testing.T) {
@@ -144,11 +175,11 @@ func TestCalendarExceptionsOriginalAndEffectiveWindows(t *testing.T) {
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, moved := calendarFixture(t, st, "moved", `{"id":"moved","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00Z"},"start":{"dateTime":"2027-04-02T09:00:00Z"},"end":{"dateTime":"2027-04-02T10:00:00Z"}}`)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Empty(page.Occurrences, "the original occurrence moved outside the window")
 	from = from.AddDate(0, 1, 0)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
@@ -168,7 +199,7 @@ func TestCalendarExceptionsPartialBounds(t *testing.T) {
 			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":{"dateTime":%q},"end":{"dateTime":%q},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`, tc.original, tc.original[:11]+"10:00:00Z"))
 			_, exception := calendarFixture(t, st, "partial", fmt.Sprintf(`{"id":"partial","recurringEventId":"weekly","originalStartTime":{"dateTime":%q},%s}`, tc.original, tc.bounds))
 			from := time.Date(2027, 4, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			assertions.Empty(page.Unexpandable)
 			requirements.Len(page.Occurrences, 1)
@@ -179,6 +210,26 @@ func TestCalendarExceptionsPartialBounds(t *testing.T) {
 			assertions.Equal(tc.end, o.End.Format(time.RFC3339))
 		})
 	}
+}
+
+func TestCalendarListingWithMalformedLegacyMetadata(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
+	// JSONB rejects malformed input at storage time.
+	if st.IsPostgreSQL() {
+		return
+	}
+	// Simulate malformed metadata archived before the UID index was introduced.
+	_, err := st.db.Exec(`DROP INDEX idx_messages_calendar_ical_uid`)
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: `{"broken":`, Valid: true}))
+	requirements.NoError(st.InitSchemaContext(t.Context()), "schema setup must accept malformed legacy metadata")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(24 * time.Hour)})
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(event, page.Occurrences[0].MessageID)
 }
 
 func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
@@ -197,13 +248,13 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 			shortened := strings.Replace(raw, "RRULE:FREQ=WEEKLY;COUNT=3", tc.recurrence, 1)
 			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(shortened), "gcal_json"))
 			from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
-			wide, err := st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 0, -3), from.AddDate(0, 0, 1))
+			wide, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from.AddDate(0, 0, -3), To: from.AddDate(0, 0, 1)})
 			require.NoError(err)
 			require.Len(wide.Occurrences, 1)
 			assert.Equal(cancelled, wide.Occurrences[0].MessageID)
 			assert.Equal(master, wide.Occurrences[0].SeriesMessageID)
 			assert.Equal("cancelled", wide.Occurrences[0].Status)
-			narrow, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			narrow, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			require.NoError(err)
 			assert.Empty(narrow.Unexpandable)
 			assert.Equal(wide.Occurrences, narrow.Occurrences)
@@ -219,7 +270,7 @@ func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
 	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_end_at = '2027-03-02 00:00:00+00:00', recurrence_json = '["RRULE:FREQ=DAILY;COUNT=1"]' WHERE kind = 'series'`)
 	require.NoError(err)
 	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	require.NoError(err)
 	assert.Empty(page.Unexpandable)
 	require.Len(page.Occurrences, 1)
@@ -255,7 +306,7 @@ func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 					if window.day == 1 {
 						to = from.AddDate(0, 1, 0)
 					}
-					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: to})
 					require.NoError(err)
 					assert.Empty(page.Unexpandable)
 					require.Len(page.Occurrences, window.count)
@@ -317,7 +368,7 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 			} {
 				t.Run(window.name, func(t *testing.T) {
 					from := time.Date(2027, 3, window.day, 0, 0, 0, 0, time.UTC)
-					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 					require.NoError(t, err)
 					if window.day == 2 {
 						require.Len(t, page.Occurrences, window.want+1)
@@ -342,4 +393,43 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 			}
 		})
 	}
+}
+
+func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, "calendar@example.com")
+	requirements.NoError(err)
+	masterRaw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:weekly@example.com\r\nDTSTART:20270302T090000Z\r\nDTEND:20270302T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	raw := strings.Replace(masterRaw, "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:weekly@example.com\r\nRECURRENCE-ID:20270302T090000Z\r\nDTSTART:20270303T090000Z\r\nDTEND:20270303T100000Z\r\nEND:VEVENT", 1)
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	ids := make([]int64, len(events))
+	for i, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
+		requirements.NoError(err)
+		ids[i], err = st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ProviderEventID, ConversationType: "calendar"},
+			RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+	}
+	requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], []byte(masterRaw), calevent.CalDAVRawFormat))
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, ids[1])
+	requirements.NoError(err)
+
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 2)})
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 1)
+	occurrence := page.Occurrences[0]
+	assertions.Equal(ids[0], occurrence.MessageID)
+	assertions.Zero(occurrence.SeriesMessageID)
+	assertions.Equal("confirmed", occurrence.Status)
+	assertions.Equal("2027-03-02T09:00:00Z", occurrence.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", occurrence.End.Format(time.RFC3339))
 }

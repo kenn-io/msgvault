@@ -40,6 +40,8 @@ const (
 )
 
 type catalogCapabilities struct {
+	calEvents       bool
+	timeline        bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -53,6 +55,7 @@ type catalogCapabilities struct {
 	embeddingStatus bool
 	savedViews      bool
 	meetings        bool
+	meetingLinks    bool
 	personAgenda    bool
 	personTier      bool
 	kata            bool
@@ -114,13 +117,16 @@ type toolDefinition struct {
 }
 
 func (d toolDefinition) tool() *sdkmcp.Tool {
-	return &sdkmcp.Tool{
-		Name:         d.name,
-		Description:  d.description,
-		Annotations:  d.annotations,
-		InputSchema:  d.inputSchema,
-		OutputSchema: d.outputSchema,
+	tool := &sdkmcp.Tool{
+		Name:        d.name,
+		Description: d.description,
+		Annotations: d.annotations,
+		InputSchema: d.inputSchema,
 	}
+	if d.outputSchema != nil {
+		tool.OutputSchema = d.outputSchema
+	}
+	return tool
 }
 
 func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*toolResult, error) {
@@ -131,6 +137,8 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
+		calEvents:       opts.CalEvents != nil,
+		timeline:        opts.Timeline != nil,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -144,6 +152,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		embeddingStatus: opts.EmbeddingStatus != nil,
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
+		meetingLinks:    opts.Meetings != nil && opts.MeetingLinks,
 		personAgenda:    opts.PersonAgendaBackend != nil,
 		personTier:      opts.PersonTierBackend != nil,
 		kata:            opts.Kata != nil,
@@ -190,8 +199,11 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.DelegatedOnly && opts.Engine != nil {
 		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
-			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
-				definitions = append(definitions, definition)
+			for _, permission := range agentReadToolPermission(definition.name) {
+				if slices.Contains(opts.GrantPermissions, string(permission)) {
+					definitions = append(definitions, definition)
+					break
+				}
 			}
 		}
 	}
@@ -232,6 +244,9 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		timelineDefinition(),
+		listCalendarEventsDefinition(),
+		getCalendarEventDefinition(),
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
@@ -247,6 +262,10 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		getCardDAVPublicationDefinition(),
 		previewCardDAVPublicationDefinition(),
 		getCardDAVSyncStatusDefinition(),
+		getMeetingRecordDefinition(),
+		suggestMeetingLinksDefinition(),
+		meetingLinkDecisionDefinition(false),
+		meetingLinkDecisionDefinition(true),
 		getMeetingContextDefinition(nil),
 		getMeetingMetricsDefinition(nil),
 		getPersonNotesDefinition(nil),
@@ -393,6 +412,8 @@ func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPe
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 
 func meetingsAvailable(c catalogCapabilities) bool { return c.meetings }
+
+func meetingLinksAvailable(c catalogCapabilities) bool { return c.meetingLinks }
 
 func personAgendaAvailable(c catalogCapabilities) bool { return c.personAgenda }
 

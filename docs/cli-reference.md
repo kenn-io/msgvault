@@ -16,13 +16,14 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Search and browse | [search](#search), [timeline](#timeline), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
+| Understand call frequency | [calls](#calls), [call evidence](usage/call-history.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
@@ -62,6 +63,60 @@ missing; JSON sets `coverage_incomplete`. An empty complete list prints
 `No open loops.` A message that is not an open loop, such as one you already
 answered, fails with `<id> isn't an open loop.`
 
+## timeline
+
+Read day activity, relationship history, or the context around an archived
+message or meeting through the selected daemon. This is unreleased and requires
+API schema 3.47.0 or newer. See [Timeline](usage/timeline.md) for the workflow
+and output conventions.
+
+```bash
+msgvault timeline
+msgvault timeline --with person:7
+msgvault timeline --around msg:42 --before 5 --after 5
+msgvault timeline --json --budget 4096
+```
+
+| Flag | Behavior |
+|---|---|
+| `--date YYYY-MM-DD` | One local day |
+| `--days N` | Up to 31 days ending today; default two |
+| `--from`, `--to` | Inclusive local dates, at most 31 days; supply both |
+| `--with REF` | A saved person, observed participant, email, phone, or name |
+| `--around REF` | A message, conversation, event, burst, local date, or RFC3339 time |
+| `--before`, `--after` | Anchor neighbors on each side; default 5, maximum 50 |
+| `--conversation` | Individual messages in the anchor's conversation |
+| `--tier 1,2` | Filter by applied or observed person tiers 1 through 3 |
+| `--include-cold`, `--include-noise` | Include activity omitted by the default cold and noise filters |
+| `--brief` | Smaller output, five loops and 24 hours of upcoming activity |
+| `--budget N` | Final output bytes, 4096–65536; default 16384, or 6144 with `--brief` |
+| `--json` | Compact JSON instead of Markdown; ends with a newline |
+| `--cursor C` | Continue with the same filters, format, and authorization scope |
+
+`--date`, `--days`, and the `--from`/`--to` pair are alternatives. Day boundaries
+use the daemon's `[activity].timezone`, default UTC. Unknown or undated anchors,
+invalid windows, and expired cursors fail with an error. An ambiguous name
+prints candidates without a timeline. Older daemons report the required API
+schema version and ask you to upgrade and restart.
+
+## calls
+
+Import and inspect supplied call evidence through the selected daemon. Requires
+owner authentication and API schema 3.45.0 or newer. Output is JSON.
+
+```bash
+msgvault calls import observation.json   # omit the file or use - for stdin
+msgvault calls list --person-id 42 --limit 50 --after-id 100
+msgvault calls summary --person-id 42 --limit 50 --offset 0
+```
+
+Both read commands accept `--after` and `--before` as RFC3339 timestamps.
+The window includes `after` and excludes `before`; limits default to 50 and
+are capped at 100. List pagination uses observation message IDs; summary
+pagination uses a ranked-person offset.
+See [call evidence](usage/call-history.md) for formats, counting rules and
+source limitations.
+
 ## meetings
 
 Read archived meeting evidence through the selected daemon. Requires API schema
@@ -73,6 +128,25 @@ msgvault meetings context --id 42 --id 43 --format markdown --output context.md
 msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
+
+### meetings link, unlink, links, and suggest
+
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.44.0 or newer.
+
+```bash
+msgvault meetings suggest msg:42
+msgvault meetings suggest evt:81@20270314T100000Z --json
+msgvault meetings link 42 --event evt:81@20270314T100000Z
+msgvault meetings links 42
+msgvault meetings links evt:81@20270314T100000Z
+msgvault meetings unlink 42 --event evt:81@20270314T100000Z
+```
+
+`link` and `unlink` take one meeting note's message ID and a required `--event` reference. Copy the event reference from `meetings suggest` or the `ref` field in `calendar events --json`. A series occurrence uses the series master's ID and its original occurrence key, even when an edited copy moved to another time.
+
+`suggest` accepts `msg:<id>` for a note or `evt:<id>[@occurrence key]` for an event. It returns up to ten overlapping candidates, ranked by overlap minutes, shared attendees, and shared title words. Plain output warns on stderr when calendar entries could not be fully expanded, while still listing readable candidates. `--json` includes those entries in an `unexpandable` array with their `message_id` and `reason`. Check this array before treating an empty or partial result as complete. Suggestions leave links unchanged.
+
+`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. After `link`, this list shows the chosen occurrence instead of automatic matches. `unlink` applies to all calendar copies of that occurrence and survives source removal and reimport when the event has an iCalendar UID.
 
 ### meetings context
 
@@ -2000,16 +2074,55 @@ msgvault sync-calendar <name|email> [flags]
 
 ---
 
+## sync-caldav
+
+Archive events from a configured CalDAV connection through the daemon. This is
+unreleased functionality. Set up
+[CalDAV sources](configuration.md#caldav-sources-unreleased) first.
+
+```bash
+msgvault sync-caldav personal
+msgvault sync-caldav personal --full
+```
+
+| Flag | Description |
+|---|---|
+| `--full` | Ignore the saved token and reconcile a complete calendar snapshot |
+| `--build-cache` | Refresh the analytics cache after this sync |
+| `--no-build-cache` | Skip analytics cache refresh after this sync |
+
+The first run discovers calendars and archives their events. Later runs use
+`sync-collection` tokens where supported; other servers use complete snapshots.
+Expired tokens trigger a fresh snapshot. A missing configured calendar is an
+error. Sync makes no provider writes.
+
+Events are searchable `calendar_event` messages, with typed event and attendee
+rows rebuilt from `caldav_ics` raw data. A resource may contain a recurring
+master and its exceptions. Task-only resources advance sync without becoming
+messages. Recurrence stays unexpanded in the archive. Rooms remain typed
+attendees and do not become people.
+
+Raw data keeps the iCalendar payload returned by the server. XML
+`calendar-data` normalizes line endings; GET fallback keeps the returned body
+bytes. Updated resources replace their archived event snapshots. Events removed upstream from a listed calendar retain their last raw data and are marked as deleted from the source. Cancelled events carry `status=cancelled`.
+
+---
+
 ## calendar
 
 List archived calendar events or control live Google Calendar events through the daemon.
 
 ```bash
 msgvault calendar events --from 2027-03-01 --to 2027-04-01
-msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --limit 100 --json
+msgvault calendar event evt:123@20270302T170000Z --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link` and `meetings unlink`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.46.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+Omit `--limit` and `--cursor` for the whole window in one call. Either prints one page, default 100, range 1–500. Tables include `REF` and print `next cursor:` on its own line. Continue with `--cursor` and the same window.
+
+`calendar event <ref>` opens an occurrence and prints its attendees, roles, and RSVPs. `--json` includes the archived location, description, and join URL when present. Paging, detail, and delegated reads require daemon API schema 3.46.0. Agents need `calendar.event.read` or `message.read` on the source. Both archive commands reject the live-calendar flags listed above.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
@@ -2061,6 +2174,59 @@ remote failure or an archive failure exits with an error after printing the
 receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
+
+## import-ics
+
+Import a local iCalendar file as separate calendar event messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Re-importing into that source
+updates events by UID and original recurrence identity. Higher SEQUENCE wins;
+equal sequences use DTSTAMP, with cancellation winning an exact tie. Older
+invitations cannot undo a cancellation. Each event keeps a stable message ID
+and its own VEVENT with calendar time zone definitions. A single-VEVENT file
+without sibling components stays byte-identical. The daemon reads the file locally; importing
+files through a remote daemon is unavailable.
+
+Each VEVENT becomes its own entry. A malformed or unsupported component rejects
+the whole file. Valid series with unsupported recurrence remain archived with
+an expansion error. The command reports updated, unchanged, and unexpandable
+event counts. Imports support UTC times, IANA time zones, all-day dates, and
+floating times. Floating times use the source's time zone, set with `--time-zone`, or UTC. Changing that zone
+rebuilds event times from the stored raw while preserving floating recurrence identities. Recurring timed events with a day or week DURATION in a zone with clock changes remain archived with an expansion error. All-day dates and exact-time durations still expand. Unsupported custom time zones and
+RECURRENCE-ID RANGE reject a file or email part. For email, the original MIME
+preserves that raw evidence.
+
+Files are limited to 32 MiB, 10,000 VEVENTs, 32 component levels, and 8 KiB per
+unfolded line.
+
+A cancellation keeps the event's last accepted title, times, participants, and
+raw, and only marks it cancelled.
+
+### Invitations in email
+
+Archiving email extracts decoded `text/calendar` MIME parts, including inline alternatives, into event messages in the same source. A `.ics` filename alone does not qualify. Attached forwarded emails and iTIP messages with the ADD, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+
+The first invitation for a UID creates an event entry. Recurring exceptions use the UID and original recurrence identity. Every contributing email keeps its full MIME and attachments. Events survive replacement or deletion of those emails. Floating invite times in email sources use UTC because email sources have no calendar time zone.
+
+Later emailed revisions, including recurring exceptions and cancellations, apply when their `ORGANIZER` address matches the family's original `invite_organizer`, ignoring case. `From`, `CN`, and `SENT-BY` do not affect this comparison. An empty original organizer or a mismatched organizer leaves the event unchanged and records `update ignored: ORGANIZER does not match invite_organizer` in the email's `calendar_invite_errors` metadata. The email keeps its full MIME and attachments. An emailed cancellation for an unseen UID creates a tombstone only if it carries an `ORGANIZER`, which becomes the family's original organizer. Accepted revisions still follow SEQUENCE, then DTSTAMP precedence. Standalone `import-ics` revisions do not use this email rule.
+
+This rule checks organizer continuity. The addresses are unauthenticated. A stranger who copies the visible `ORGANIZER` address can update or cancel the derived event. The archived emails remain available as evidence.
+
+Guest replies and single-guest removals stay in the email and leave the event unchanged. Ignored guest removals record a `guest removal ignored` diagnostic in `calendar_invite_errors`.
+
+For `import-ics`, `STATUS:CANCELLED` marks a full cancellation. `METHOD:CANCEL` without STATUS cancels the event when it has no ATTENDEE properties; with ATTENDEE properties, it is a guest removal. Cancellation preserves the last accepted event's title, times, participants, and raw. A cancellation received before the event creates a tombstone. Cancelled series list all occurrences as cancelled. Email cancellations follow the organizer continuity rule above. Invalid email calendar parts leave the email intact and record `calendar_invite_errors`.
+
+To extract invites from emails already in the archive, run
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection or a schema migration:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
 
 ## import-eml
 
@@ -3059,6 +3225,8 @@ Create a new SQLite archive containing the requested number of most recent
 messages and the records they reference. The destination receives its own
 `msgvault.db` and can be opened as a separate msgvault home.
 
+Calendar events, including CalDAV events and their original iCalendar data, are included.
+
 ```bash
 msgvault create-subset --output ./subset-vault --rows 1000
 MSGVAULT_HOME=./subset-vault msgvault tui
@@ -3106,8 +3274,8 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. Email counts exclude calendar events extracted from invitations.
+The command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -5240,6 +5408,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived

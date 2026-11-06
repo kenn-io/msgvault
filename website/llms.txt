@@ -32,6 +32,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 
 - [Web UI](https://msgvault.io/docs/web-ui.md): the browser application
 - [Terminal UI](https://msgvault.io/docs/usage/tui.md)
+- [Timeline](https://msgvault.io/docs/usage/timeline.md): day activity, relationship history, and anchor context
 - [Searching](https://msgvault.io/docs/usage/searching.md): query syntax and modes
 - [Semantic and Visual Search](https://msgvault.io/docs/usage/vector-search.md): semantic and hybrid setup
 - [Document Attachment Indexing](https://msgvault.io/docs/usage/document-indexing.md): Docbank-backed extraction
@@ -56,6 +57,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
+- [Call History](https://msgvault.io/docs/usage/call-history.md)
 
 ## People and Accounts
 

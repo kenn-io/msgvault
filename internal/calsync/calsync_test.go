@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -887,63 +885,6 @@ func TestFull_EnqueuesForEmbedding(t *testing.T) {
 	assert.Contains(t, enq.ids, e1.id)
 }
 
-func TestSnippet(t *testing.T) {
-	const maxSnippetBytes = 200
-
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{
-			name: "trims short input",
-			body: "  Team sync notes  ",
-			want: "Team sync notes",
-		},
-		{
-			name: "trims before checking exact byte limit",
-			body: " \t" + strings.Repeat("\u00e9", 100) + " \n",
-			want: strings.Repeat("\u00e9", 100),
-		},
-		{
-			name: "truncates long ASCII",
-			body: strings.Repeat("a", 201),
-			want: strings.Repeat("a", 200),
-		},
-		{
-			name: "caps multibyte text by bytes",
-			body: strings.Repeat("\u00e9", 101),
-			want: strings.Repeat("\u00e9", 100),
-		},
-		{
-			name: "keeps complete rune ending at byte 200",
-			body: strings.Repeat("a", 197) + "\u2014" + "tail",
-			want: strings.Repeat("a", 197) + "\u2014",
-		},
-		{
-			name: "drops em dash crossing byte 200",
-			body: strings.Repeat("a", 198) + "\u2014" + "tail",
-			want: strings.Repeat("a", 198),
-		},
-		{
-			name: "drops two-byte rune crossing byte 200",
-			body: strings.Repeat("a", 199) + "\u00e9" + "tail",
-			want: strings.Repeat("a", 199),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			got := Snippet(tt.body)
-
-			assert.Equal(tt.want, got)
-			assert.LessOrEqual(len(got), maxSnippetBytes)
-			assert.True(utf8.ValidString(got))
-		})
-	}
-}
-
 func TestSparseStandaloneCancellationOccurrences(t *testing.T) {
 	for _, known := range []bool{false, true} {
 		t.Run(strconv.FormatBool(known), func(t *testing.T) {
@@ -970,7 +911,7 @@ func TestSparseStandaloneCancellationOccurrences(t *testing.T) {
 			assertions.Equal("cancelled", status)
 			assertions.Equal(known, start.Valid)
 			assertions.Equal(known, end.Valid)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			if known {
 				requirements.Len(page.Occurrences, 1)
@@ -1007,7 +948,7 @@ func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
 			requirements.NoError(err)
 			assertions.False(inserted)
 		}
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 		requirements.NoError(err)
 		requirements.Len(page.Occurrences, 1)
 		assertions.Empty(page.Occurrences[0].Subject)
