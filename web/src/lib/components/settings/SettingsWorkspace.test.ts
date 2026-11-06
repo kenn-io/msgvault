@@ -847,14 +847,14 @@ it.each(['none', 'http', 'network'] as const)('turns on local search once and ke
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') { phase = 'indexing'; await activation; }
+    if (request.method === 'POST') { phase = 'indexing'; enabled = true; await activation; }
     else if (phase !== 'idle' && failure !== 'none' && !failed) {
       failed = true;
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
     }
     return Response.json({ enabled, provider: enabled ? 'builtin' : '', compatible: true, ollama_available: false,
-      phase, download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
+      phase, running: phase !== 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
   });
   render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');

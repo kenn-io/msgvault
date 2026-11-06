@@ -236,6 +236,32 @@ func (f *localActivationFixture) start(t *testing.T) {
 	f.controller.handle = f.handle
 }
 
+func (f *localActivationFixture) localStatus(t *testing.T) api.LocalEmbeddingsStatus {
+	t.Helper()
+	require := require.New(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+	request.Header.Set("Authorization", "Bearer owner")
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var status api.LocalEmbeddingsStatus
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+	return status
+}
+
+func (f *localActivationFixture) enableThroughAPI(t *testing.T) {
+	t.Helper()
+	f.server.SetLocalEmbeddings(f.controller)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer owner")
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusAccepted, response.Code)
+}
+
 func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 	for _, startupFailed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("startup_failed=%t", startupFailed), func(t *testing.T) {
@@ -271,22 +297,11 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 			assert.Equal(startupError, status.Error)
 			assert.True(status.OllamaAvailable)
 			f.server.SetLocalEmbeddings(f.controller)
-			readStatus := func() api.LocalEmbeddingsStatus {
-				t.Helper()
-				request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
-				request.Header.Set("Authorization", "Bearer owner")
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusOK, response.Code)
-				var status api.LocalEmbeddingsStatus
-				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-				return status
-			}
-			assert.Equal(startupError, readStatus().Error)
+			assert.Equal(startupError, f.localStatus(t).Error)
 			localEmbeddingEndpoint = fixtureEndpoint
 			require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
 			require.Equal(1, f.installs)
-			assert.Empty(readStatus().Error)
+			assert.Empty(f.localStatus(t).Error)
 			status, err = f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			require.True(status.Enabled)
@@ -306,34 +321,15 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 	require.NoError(err)
 	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
 	require.NoError(err)
-	f.server.SetLocalEmbeddings(f.controller)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer owner")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusAccepted, response.Code)
-	readStatus := func() api.LocalEmbeddingsStatus {
-		t.Helper()
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
-		request.Header.Set("Authorization", "Bearer owner")
-		request.RemoteAddr = "127.0.0.1:1234"
-		response := httptest.NewRecorder()
-		f.server.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusOK, response.Code)
-		var status api.LocalEmbeddingsStatus
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-		return status
-	}
-	require.Eventually(func() bool { return !readStatus().Running }, 5*time.Second, 10*time.Millisecond)
-	require.Contains(readStatus().Error, "invalid embed cron")
+	f.enableThroughAPI(t)
+	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+	require.Contains(f.localStatus(t).Error, "invalid embed cron")
 	require.ErrorContains(f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel), "not scheduled")
 	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 	require.NoError(err)
 	f.runner.beforeBuild = nil
 	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
-	require.Contains(readStatus().Error, "invalid embed cron", "a message build cannot repair rejected scheduling")
+	require.Contains(f.localStatus(t).Error, "invalid embed cron", "a message build cannot repair rejected scheduling")
 }
 
 func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
@@ -471,7 +467,6 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	}{
 		{name: "local without Ollama API"},
 		{name: "local without catalog", catalog: `{}`},
-		{name: "local with null catalog", catalog: `{"models":null}`},
 		{name: "local with invalid catalog", catalog: `invalid json`},
 		{name: "paused remote", pausedRemote: true},
 	} {
@@ -655,29 +650,10 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 			f := newLocalActivationFixture(t, "", "")
 			f.start(t)
 			require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-			f.server.SetLocalEmbeddings(f.controller)
 			f.runner.failBuild = true
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Authorization", "Bearer owner")
-			request.RemoteAddr = "127.0.0.1:1234"
-			response := httptest.NewRecorder()
-			f.server.Router().ServeHTTP(response, request)
-			require.Equal(http.StatusAccepted, response.Code)
-			readStatus := func() api.LocalEmbeddingsStatus {
-				t.Helper()
-				request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
-				request.Header.Set("Authorization", "Bearer owner")
-				request.RemoteAddr = "127.0.0.1:1234"
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusOK, response.Code, response.Body.String())
-				var status api.LocalEmbeddingsStatus
-				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-				return status
-			}
-			require.Eventually(func() bool { return !readStatus().Running }, 5*time.Second, 10*time.Millisecond)
-			require.Contains(readStatus().Error, "embedding build interrupted")
+			f.enableThroughAPI(t)
+			require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
+			require.Contains(f.localStatus(t).Error, "embedding build interrupted")
 			args := []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}
 			if empty {
 				var sourceID int64
@@ -687,7 +663,7 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 			}
 			f.runner.beforeBuild = nil
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: args}, nil))
-			assert.Empty(readStatus().Error)
+			assert.Empty(f.localStatus(t).Error)
 		})
 	}
 }

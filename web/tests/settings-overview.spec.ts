@@ -54,7 +54,7 @@ for (const width of [1280, 390]) {
       const row = page.locator('[data-feature="message_embedding"]');
       await expect(row.locator('.row__coverage')).toBeVisible();
       const coverage = await row.locator('.row__coverage').boundingBox();
-      const action = await row.getByRole('button', { name: 'Build index, Message search' }).boundingBox();
+      const action = await row.getByRole('button', { name: 'Build index, Search by meaning' }).boundingBox();
       expect(coverage).not.toBeNull();
       expect(action).not.toBeNull();
       if (width === 1280) expect(Math.abs(coverage!.y + coverage!.height / 2 - action!.y - action!.height / 2)).toBeLessThanOrEqual(1);
