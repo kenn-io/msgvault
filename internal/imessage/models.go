@@ -36,4 +36,7 @@ type ImportSummary struct {
 	AttachmentsUnavailable int
 	// AttachmentsSkipped counts attachments left out by the media policy.
 	AttachmentsSkipped int
+	// BodiesUndecoded counts messages whose attributedBody could not be
+	// decoded. Their archived text, if any, is kept.
+	BodiesUndecoded int
 }
