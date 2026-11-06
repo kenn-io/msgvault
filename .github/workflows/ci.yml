@@ -161,7 +161,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-checks
           extra-path: .git/golangci-lint-cache
@@ -207,7 +207,7 @@ jobs:
         run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
-        uses: $/.github/actions/go-cache-save
+        uses: ./.github/actions/go-cache-save
 
   test:
     needs: changes
@@ -223,7 +223,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-test
 
@@ -285,7 +285,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Save Go caches
-        uses: $/.github/actions/go-cache-save
+        uses: ./.github/actions/go-cache-save
 
   # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
   # that run one at a time inside one binary, so whole they set the wall clock
@@ -323,7 +323,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-test
 
@@ -357,7 +357,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: macos
 
@@ -386,7 +386,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Save Go caches
-        uses: $/.github/actions/go-cache-save
+        uses: ./.github/actions/go-cache-save
 
   frontend:
     needs: changes
@@ -402,7 +402,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-test
 
@@ -514,7 +514,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-test
 
@@ -577,7 +577,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: macos
 
@@ -620,7 +620,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: windows
 
@@ -698,7 +698,7 @@ jobs:
           path: msgvault.exe
 
       - name: Save Go caches
-        uses: $/.github/actions/go-cache-save
+        uses: ./.github/actions/go-cache-save
 
   lint-windows:
     needs: changes
@@ -717,7 +717,7 @@ jobs:
 
       # The Windows test job owns and saves this group; lint only reads it.
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: windows
 
@@ -766,7 +766,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: windows
 
@@ -845,7 +845,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: windows
 
@@ -900,7 +900,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: windows
 
@@ -966,7 +966,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-test
 
@@ -1055,7 +1055,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-postgres
 
@@ -1101,7 +1101,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Save Go caches
-        uses: $/.github/actions/go-cache-save
+        uses: ./.github/actions/go-cache-save
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # one package per job, each with its own PostgreSQL service so four shards'
@@ -1158,7 +1158,7 @@ jobs:
           cache: false
 
       - name: Restore Go caches
-        uses: $/.github/actions/go-cache-restore
+        uses: ./.github/actions/go-cache-restore
         with:
           group: linux-postgres
 
