@@ -157,7 +157,7 @@ available on a first import.
 | `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
 | `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
 | `--display-name` | No | Display name for the phone owner |
-| `--limit` | No | Maximum messages to write, including updates (0 imports all; must be non-negative) |
+| `--limit` | No | Maximum new messages to import (0 imports all; must be non-negative) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
 msgvault identifies the backup's own account from its messages: the author
