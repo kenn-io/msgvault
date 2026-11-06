@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -1113,4 +1114,26 @@ func TestAnalyticsNoticeShownWhileLoading(t *testing.T) {
 	model.loading = false
 	assert.NotContains(t, model.View().Content, "Analytics cache not built",
 		"notice should disappear once loading completes")
+}
+
+func TestEmptyArchiveSourceSetup(t *testing.T) {
+	tests := []struct {
+		name    string
+		message accountsLoadedMsg
+		want    string
+	}{
+		{name: "no sources", want: "No mail yet. Run `msgvault setup` for source setup instructions."},
+		{name: "existing source", message: accountsLoadedMsg{accounts: []query.AccountInfo{{}}}, want: "No data"},
+		{name: "failed source read", message: accountsLoadedMsg{err: errors.New("source read failed")}, want: "No data"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewBuilder().WithSize(100, 30).Build()
+			model.loading = false
+			assert.Contains(t, stripANSI(model.aggregateTableView()), "No data")
+			updated, _ := model.Update(tt.message)
+			model = updated.(Model)
+			assert.Contains(t, stripANSI(model.aggregateTableView()), tt.want)
+		})
+	}
 }

@@ -526,7 +526,9 @@ describe('SourcesWorkspace', () => {
     const onOpenOperations = vi.fn();
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
     expect(await screen.findByText('No sources yet')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    const emptyState = screen.getByText('No sources yet').closest('.kit-empty-state') as HTMLElement;
+    expect(within(emptyState).getByText('Add an account or import an export to start your archive.')).toBeDefined();
+    await fireEvent.click(within(emptyState).getByRole('button', { name: 'Add source' }));
     expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
