@@ -6,7 +6,8 @@ import "net/http"
 const (
 	remoteMessageBytes    int64 = 64 << 20
 	remoteAttachmentBytes int64 = 1 << 30
-	remoteSearchLimit           = 500
+	// RemoteSearchLimit bounds read-only remote search responses.
+	RemoteSearchLimit = 500
 )
 
 // remoteClientOperationAllowed is an exact-match allowlist of operation IDs for read-only remote clients.

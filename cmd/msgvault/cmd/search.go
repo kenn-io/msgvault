@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -298,7 +299,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if resp.HasMore {
 		defer func() {
 			advice := fmt.Sprintf("Hint: more messages match; use --offset %d for the next page", searchOffset+len(resp.Results))
-			if info.Kind != HTTPStoreConfiguredRemote || searchLimit < 500 {
+			if info.Kind != HTTPStoreConfiguredRemote || searchLimit < api.RemoteSearchLimit {
 				advice += " or raise --limit"
 			}
 			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), advice)

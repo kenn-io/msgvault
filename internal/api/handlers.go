@@ -1183,7 +1183,7 @@ func (s *Server) handleHybridSearch(
 	pageEnd := min(pageStart+pageSize, len(hits))
 	rankingLimitReached := 0
 	candidateLimitReached := 0
-	if mode == exploreSearchModeHybrid && meta.CandidatePoolOmitted {
+	if meta.CandidatePoolOmitted {
 		candidateLimitReached = vectorCfg.Search.KPerSignal
 	}
 	hasMore := pageEnd < len(hits)

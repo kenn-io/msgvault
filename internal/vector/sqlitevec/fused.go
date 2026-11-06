@@ -70,7 +70,7 @@ func (b *Backend) fuseSignals(
 	poolLimit := max(req.KPerSignal, 0)
 	vectorOverflow := len(vectorHits) > poolLimit
 	vectorSaturated := metadata.PoolSaturated || vectorOverflow
-	if len(vectorHits) > poolLimit {
+	if vectorOverflow {
 		vectorHits = vectorHits[:poolLimit]
 	}
 
@@ -608,7 +608,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	// Query-specific named args: only the main fused query
 	// references these. Concatenated onto filterArgs at the end so
 	// both args slices share storage for the filter-side names.
-	retainedIDs, err := json.Marshal(omission.vectorIDs)
+	retainedIDs, err := idsToJSON(omission.vectorIDs)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode retained vector IDs: %w", err)
 	}
@@ -619,7 +619,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		sql.Named("query_vec", queryVecArg),
 		sql.Named("rrf_k", req.RRFK),
 		sql.Named("limit", sqlLimit),
-		sql.Named("retained_vector_ids", string(retainedIDs)),
+		sql.Named("retained_vector_ids", retainedIDs),
 		sql.Named("vector_overflow", omission.vectorOverflow),
 		sql.Named("requested_limit", omission.requestedLimit),
 	)

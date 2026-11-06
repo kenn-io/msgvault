@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -391,7 +390,6 @@ func writeVectorSearchResponse(
 	resultCount int,
 	scopeLabel string,
 	scopeSourceCount int,
-	metadata ...map[string]any,
 ) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
@@ -430,9 +428,6 @@ func writeVectorSearchResponse(
 			"state":       "active",
 		},
 		"results": rows,
-	}
-	for _, values := range metadata {
-		maps.Copy(response, values)
 	}
 	err := json.NewEncoder(w).Encode(response)
 	require.NoError(t, err, "write vector search response")
