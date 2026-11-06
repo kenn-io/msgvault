@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"time"
 
@@ -35,6 +36,21 @@ type LocalEmbeddingsStatus struct {
 
 type LocalEmbeddingsRequest struct {
 	UseBuiltIn bool `json:"use_builtin"`
+}
+
+// UnmarshalJSON requires an explicit provider choice before setup can start.
+func (r *LocalEmbeddingsRequest) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		UseBuiltIn *bool `json:"use_builtin"`
+	}
+	if err := json.Unmarshal(data, &raw, json.RejectUnknownMembers(true)); err != nil {
+		return err
+	}
+	if raw.UseBuiltIn == nil {
+		return errors.New("use_builtin is required")
+	}
+	r.UseBuiltIn = *raw.UseBuiltIn
+	return nil
 }
 
 func (s *Server) SetLocalEmbeddings(controller LocalEmbeddingsController) {

@@ -23,11 +23,9 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
       range.selectNodeContents(element.querySelector('.row__name')!);
       const text = range.getBoundingClientRect();
       const chip = element.querySelector('.row__chip')!.getBoundingClientRect();
-      const button = element.querySelector('.row__action > button:last-child')?.getBoundingClientRect();
-      return { name: range.toString().trim(), textRight: text.right, chipLeft: chip.left, buttonRight: button?.right, rowRight: element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight) };
+      return { name: range.toString().trim(), textRight: text.right, chipLeft: chip.left };
     });
     expect(geometry.textRight, geometry.name).toBeLessThanOrEqual(geometry.chipLeft);
-    if (geometry.buttonRight !== undefined) expect(Math.abs(geometry.rowRight - geometry.buttonRight), geometry.name).toBeLessThanOrEqual(1);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(768);
 });

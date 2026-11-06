@@ -34,6 +34,16 @@ type localEmbeddingsController struct {
 	install    func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
 }
 
+type localEmbeddingsConflictError struct{ cause error }
+
+func (localEmbeddingsConflictError) Error() string {
+	return "Settings changed during setup. Turn on to retry."
+}
+
+func (e localEmbeddingsConflictError) Unwrap() error {
+	return e.cause
+}
+
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
 	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
 		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
@@ -216,7 +226,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	}
 	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
 		if errors.Is(err, config.ErrConfigConflict) {
-			return fmt.Errorf("%w during setup. Turn on again to retry with your latest settings", config.ErrConfigConflict)
+			return localEmbeddingsConflictError{cause: err}
 		}
 		return err
 	}

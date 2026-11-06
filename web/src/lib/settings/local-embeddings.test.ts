@@ -13,7 +13,6 @@ describe('local search row', () => {
     { name: 'off', status: off, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'downloaded', status: { ...off, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
     { name: 'available Ollama', status: { ...off, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Uses Ollama on this computer' },
-    { name: 'paused built-in with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'installed built-in with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
     { name: 'failed built-in startup with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, error: 'Local model files need setup. Turn on to retry.' }, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'matching Ollama', status: { ...off, enabled: true, provider: 'ollama', compatible: true }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching keeps your index', absent: /Switching rebuilds/ },

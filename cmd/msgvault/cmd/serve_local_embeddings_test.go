@@ -745,8 +745,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 				require.ErrorContains(err, "connection interrupted")
 			} else {
 				require.ErrorIs(err, config.ErrConfigConflict)
-				require.ErrorContains(err, "Turn on again to retry with your latest settings")
-				require.NotContains(err.Error(), "sha256-")
+				require.EqualError(err, "Settings changed during setup. Turn on to retry.")
 			}
 			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)

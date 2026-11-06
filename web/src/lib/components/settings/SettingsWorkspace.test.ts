@@ -823,7 +823,7 @@ it.each(['manual', 'scheduled'] as const)('clears the setup failure after a succ
   expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull();
 });
 
-it('refreshes local setup after a network interruption and explains activation refusal', async () => {
+it('retries a failed initial local status read through Refresh feature status and displays the server activation refusal', async () => {
   let reads = 0;
   const { client, operationsController } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;

@@ -111,7 +111,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					assert.False(controller.builtin.Load())
 					assert.Equal(int64(5), status().DoneBytes)
 				case "admission":
-					require.Equal(http.StatusAccepted, post(t.Context(), `{}`).Code)
+					require.Equal(http.StatusAccepted, post(t.Context(), `{"use_builtin":false}`).Code)
 					assert.Equal(int32(1), controller.calls.Load())
 					conflict := post(t.Context(), `{"use_builtin":true}`)
 					require.Equal(http.StatusConflict, conflict.Code)
@@ -143,6 +143,26 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					assert.Equal(int32(1), controller.calls.Load())
 				}
 			})
+		})
+	}
+}
+
+func TestLocalEmbeddingsRejectsMissingProviderChoice(t *testing.T) {
+	for _, body := range []string{`null`, `{}`, `{"use_builtin":null}`} {
+		t.Run(body, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+			t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+			controller := &localSetupTestController{started: make(chan context.Context, 1), release: make(chan struct{})}
+			server.SetLocalEmbeddings(controller)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			require.NoError(server.Shutdown(t.Context()))
+			assert.Zero(controller.calls.Load(), "malformed requests must not start setup")
 		})
 	}
 }
