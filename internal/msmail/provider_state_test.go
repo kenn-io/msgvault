@@ -26,6 +26,11 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 		f.serve(rec, r)
 		body := rec.Body.Bytes()
 		if strings.Contains(r.URL.Path, "/messages") && !strings.HasSuffix(r.URL.Path, "/$value") && rec.Code == http.StatusOK {
+			if r.URL.Query().Get("token") == "" && r.URL.Query().Get("skip") == "" {
+				fields := strings.Split(r.URL.Query().Get("$select"), ",")
+				assert.Contains(t, fields, "isRead", "native Graph acquisition must request read state")
+				assert.Contains(t, fields, "flag", "native Graph acquisition must request follow-up state")
+			}
 			var payload map[string]any
 			require.NoError(t, json.Unmarshal(body, &payload))
 			apply := func(item map[string]any) {
@@ -78,12 +83,21 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 		return result
 	}
 	assert.ElementsMatch(t, []string{"inbox", "msmail-state:unread", "msmail-state:flagged"}, labels())
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=TRUE WHERE id=?`), ids["m1"])
+	require.NoError(t, err)
 	state = nil
 	f.put("m1", "archive")
 	run()
 	assert.ElementsMatch(t, []string{"archive", "msmail-state:unread", "msmail-state:flagged"}, labels())
+	var localRead bool
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
+	assert.True(t, localRead, "provider unread state must not overwrite local reader state")
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=FALSE WHERE id=?`), ids["m1"])
+	require.NoError(t, err)
 	state = map[string]any{"isRead": true, "flag": map[string]any{"flagStatus": "completed"}}
 	f.put("m1", "archive")
 	run()
 	assert.Equal(t, []string{"archive"}, labels())
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
+	assert.False(t, localRead, "provider read state must not overwrite local reader state")
 }
