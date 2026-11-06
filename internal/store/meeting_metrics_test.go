@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,6 +47,77 @@ func TestMeetingMetricsDurationCoverageAndUTCMonths(t *testing.T) {
 		MeetingCount: 1, UnknownDurationCount: 1,
 	}, metrics.Months[1].Totals)
 	assertions.Equal("direct", metrics.Scope.Kind)
+}
+
+func TestReviewMeetingMetricsCountsLinkedCopiesOnce(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	fixture := newMeetingQueryFixture(t)
+	_, event := calendarFixture(t, fixture.store, "series", linkSeriesRaw)
+	ref := OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}
+	ids := []int64{fixture.meetingIDs[0], fixture.meetingIDs[1], fixture.meetingIDs[3]}
+	winnerDate := time.Date(2026, time.February, 10, 10, 0, 0, 0, time.UTC)
+	_, err := fixture.store.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, winnerDate, ids[1])
+	requirements.NoError(err)
+	for _, id := range ids {
+		requirements.NoError(fixture.store.LinkMeetingContext(t.Context(), id, ref))
+	}
+	keys, err := fixture.store.MeetingCountKeysContext(t.Context())
+	requirements.NoError(err)
+	requirements.Equal(keys[ids[0]], keys[ids[1]])
+	requirements.NotEmpty(keys[ids[0]])
+	metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), metrics.Totals.MeetingCount)
+	requirements.Len(metrics.Months, 1)
+	assertions.Equal(int64(1), metrics.Months[0].Totals.MeetingCount)
+	assertions.Equal("2026-02", metrics.Months[0].Month)
+	assertions.Equal(meetingcontent.DurationTotals{
+		MeetingCount: 1, KnownDurationCount: 1, TotalKnownSeconds: 3600, AverageKnownSeconds: new(float64(3600)),
+	}, metrics.Totals)
+	assertions.Equal(metrics.Totals, metrics.Months[0].Totals)
+	assertions.Equal([]meetingcontent.BasisTotals{{Basis: meetingcontent.DurationScheduled, Count: 1, TotalSeconds: 3600}}, metrics.DurationByBasis)
+	requirements.NotNil(metrics.FirstMeetingAt)
+	requirements.NotNil(metrics.LastMeetingAt)
+	assertions.Equal(winnerDate, *metrics.FirstMeetingAt)
+	assertions.Equal(winnerDate, *metrics.LastMeetingAt)
+
+	// Archive navigation scopes one transcript, even when it covers multiple occurrences.
+	requirements.NoError(fixture.store.LinkMeetingContext(t.Context(), ids[0], OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}))
+	for _, id := range ids {
+		single := []int64{id}
+		metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &single})
+		requirements.NoError(err)
+		assertions.Equal(int64(1), metrics.Totals.MeetingCount)
+	}
+}
+
+func TestMeetingMetricsDurationTiesKeepLowestID(t *testing.T) {
+	for _, known := range []bool{true, false} {
+		t.Run(fmt.Sprintf("known=%t", known), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			fixture := newMeetingQueryFixture(t)
+			_, event := calendarFixture(t, fixture.store, "event", singleLinkRaw("event", "shared@example.org"))
+			ids := []int64{fixture.meetingIDs[0], fixture.meetingIDs[1]}
+			raw := `{}`
+			want := meetingcontent.DurationTotals{MeetingCount: 1, UnknownDurationCount: 1}
+			if known {
+				raw = `{"started_at":"2026-01-01T10:00:00Z","ended_at":"2026-01-01T10:30:00Z"}`
+				want = meetingcontent.DurationTotals{MeetingCount: 1, KnownDurationCount: 1, TotalKnownSeconds: 1800, AverageKnownSeconds: new(float64(1800))}
+			}
+			for i, id := range ids {
+				requirements.NoError(fixture.store.UpsertMessageRawWithFormat(id, []byte(raw), "meeting_json"))
+				_, err := fixture.store.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, time.Date(2026, time.Month(i+1), 1, 10, 0, 0, 0, time.UTC), id)
+				requirements.NoError(err)
+				requirements.NoError(fixture.store.LinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: event}))
+			}
+			metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
+			requirements.NoError(err)
+			assertions.Equal(want, metrics.Totals)
+			requirements.Len(metrics.Months, 1)
+			assertions.Equal("2026-01", metrics.Months[0].Month)
+			assertions.Equal(want, metrics.Months[0].Totals)
+		})
+	}
 }
 
 func TestMeetingMetricsOrdersSQLiteBoundaryOffsetsByInstant(t *testing.T) {
