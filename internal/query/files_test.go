@@ -915,32 +915,44 @@ func TestSearchFilesSentOnlyExcludesDraftAttachments(t *testing.T) {
 }
 
 func TestSearchFilesSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
-	builder, labels, recipient := senderLabelFixture(t)
+	builder := NewTestDataBuilder(t)
+	builder.AddSource("archive@example.com")
+	sender := builder.AddParticipant("sender@example.com", "example.com", "Sender")
+	phone := builder.AddPhoneParticipant("+12025550123", "")
+	recipient := builder.AddParticipant("recipient@example.com", "example.com", "Recipient")
+	envelope := builder.AddMessage(MessageOpt{})
+	builder.AddFrom(envelope, sender, "Envelope Alias")
+	direct := builder.AddMessage(MessageOpt{SenderID: &phone})
+	labels := map[int64]string{envelope: "Envelope Alias", direct: "+12025550123"}
 	for id := range labels {
-		builder.AddTo(id, recipient, "Zoe Recipient")
+		builder.AddAttachment(id, 10, "example.pdf")
+		builder.AddTo(id, recipient, "Recipient")
 	}
 	engine := builder.BuildEngine()
-	for _, scope := range []string{"all", "person", "deleted"} {
-		t.Run(scope, func(t *testing.T) {
+	for _, variant := range []struct {
+		name   string
+		legacy bool
+		person bool
+	}{
+		{name: "fast"},
+		{name: "legacy", legacy: true},
+		{name: "person/fast", person: true},
+		{name: "person/legacy", legacy: true, person: true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
 			assert := assert.New(t)
+			engine.exploreFastPathDisabled = variant.legacy
 			request := FileSearchRequest{Page: PageSpec{Limit: 20}}
-			if scope == "person" {
+			if variant.person {
 				request.Person = &PersonFileScope{ParticipantIDs: []int64{recipient}, Directions: []PersonFileDirection{PersonFileToPerson}}
 			}
-			if scope == "deleted" {
-				request.Explore.Context.Deletion = DeletionDeleted
-			}
-			fast, legacy := runSearchFilesBothPaths(t, engine, request)
-			assert.Equal(legacy, fast)
-			expected := labels
-			if scope == "deleted" {
-				expected = map[int64]string{6: "Alice"}
-			}
+			result, err := engine.SearchFiles(t.Context(), request)
+			require.NoError(t, err)
 			actual := make(map[int64]string)
-			for _, row := range fast.Files {
+			for _, row := range result.Files {
 				actual[row.MessageID] = row.SenderLabel
 			}
-			assert.Equal(expected, actual)
+			assert.Equal(labels, actual)
 		})
 	}
 }

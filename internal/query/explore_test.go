@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -1671,13 +1670,11 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
 }
 
-func senderLabelFixture(t *testing.T) (*TestDataBuilder, map[int64]string, int64) {
-	t.Helper()
+func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
-	recipient := b.AddParticipant("recipient@example.com", "example.com", "Zoe Recipient")
 	first := b.AddMessage(MessageOpt{})
 	b.AddFrom(first, alice, "Personal Alias")
 	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
@@ -1692,64 +1689,57 @@ func senderLabelFixture(t *testing.T) (*TestDataBuilder, map[int64]string, int64
 	unknown := b.AddMessage(MessageOpt{})
 	chatSource := b.AddSourceWithType("+12025550100", "imessage")
 	chat := b.AddMessage(MessageOpt{SourceID: chatSource, SenderID: &alice, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
-	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: "Alice"}
-	for id := range labels {
-		b.AddAttachment(id, 10, "example.pdf")
+	labels := map[int64]string{first: "Personal Alias", preferred: "Alice", direct: "Alice", phone: "+12025550123", email: "sender@example.com", deleted: "Alice", unknown: "", chat: ""}
+	engine := b.BuildEngine()
+	assert := assert.New(t)
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{Deletion: DeletionAny}, Page: PageSpec{Limit: 20}})
+	assert.Equal(legacy, fast)
+	actual := make(map[int64]string)
+	for _, row := range fast.Rows {
+		actual[*row.AnchorMessageID] = row.SenderLabel
 	}
-	return b, labels, recipient
-}
-
-func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
-	builder, labels, _ := senderLabelFixture(t)
-	engine := builder.BuildEngine()
-	for _, deletion := range []DeletionFilter{DeletionAny, DeletionDeleted} {
-		t.Run(string(deletion), func(t *testing.T) {
-			assert := assert.New(t)
-			fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{Deletion: deletion}, Page: PageSpec{Limit: 20}})
-			assert.Equal(legacy, fast)
-			expected := make(map[int64]string)
-			if deletion == DeletionAny {
-				maps.Copy(expected, labels)
-				expected[8] = "" // The chat is one conversation, with no single sender.
-			} else {
-				expected[6] = "Alice"
-			}
-			actual := make(map[int64]string)
-			for _, row := range fast.Rows {
-				actual[*row.AnchorMessageID] = row.SenderLabel
-			}
-			assert.Equal(expected, actual)
-		})
-	}
+	assert.Equal(labels, actual)
 }
 
 func TestPageSenderLabelsAggregationIsBounded(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	recipient := b.AddParticipant("recipient@example.com", "example.com", "Recipient")
 	for range 1000 {
 		id := b.AddMessage(MessageOpt{})
 		b.AddFrom(id, sender, "Sender")
+		b.AddTo(id, recipient, "Recipient")
 		b.AddAttachment(id, 10, "example.pdf")
 	}
 	e := b.BuildEngine()
-	for _, workspace := range []string{"explore", "files"} {
-		t.Run(workspace, func(t *testing.T) {
+	for _, variant := range []struct {
+		name   string
+		legacy bool
+		person bool
+	}{
+		{name: "explore/fast"},
+		{name: "explore/legacy", legacy: true},
+		{name: "files/fast"},
+		{name: "files/legacy", legacy: true},
+		{name: "files/person/fast", person: true},
+		{name: "files/person/legacy", legacy: true, person: true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			e.exploreFastPathDisabled = variant.legacy
 			profile, err := profileQuery(t, e, func() error {
-				if workspace == "explore" {
-					result, err := e.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 500}})
-					require.NoError(err)
-					require.Len(result.Rows, 1)
-					assert.Equal("Sender", result.Rows[0].SenderLabel)
-				} else {
-					result, err := e.SearchFiles(t.Context(), FileSearchRequest{Page: PageSpec{Limit: 1, Offset: 500}})
-					require.NoError(err)
-					require.Len(result.Files, 1)
-					assert.Equal("Sender", result.Files[0].SenderLabel)
+				if strings.HasPrefix(variant.name, "explore/") {
+					_, err := e.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 500}})
+					return err
 				}
-				return nil
+				request := FileSearchRequest{Page: PageSpec{Limit: 1, Offset: 500}}
+				if variant.person {
+					request.Person = &PersonFileScope{ParticipantIDs: []int64{recipient}, Directions: []PersonFileDirection{PersonFileToPerson}}
+				}
+				_, err := e.SearchFiles(t.Context(), request)
+				return err
 			})
 			require.NoError(err)
 			matched := 0

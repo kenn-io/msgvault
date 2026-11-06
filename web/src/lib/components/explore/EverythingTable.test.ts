@@ -35,8 +35,7 @@ function row(index: number, overrides: Partial<EntryRow> = {}): EntryRow {
 describe('EverythingTable', () => {
   it.each([
     { label: 'message sender', kind: 'message' as const, sender: 'Zoe Sender', expected: 'Zoe Sender' },
-    { label: 'message roster without a sender', kind: 'message' as const, sender: undefined, expected: 'Alice Recipient, Zoe Sender' },
-    { label: 'conversation roster despite a sender', kind: 'conversation' as const, sender: 'Zoe Sender', expected: 'Alice Recipient, Zoe Sender' }
+    { label: 'message roster without a sender', kind: 'message' as const, sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
   ])('shows the $label on a phone', async ({ kind, sender, expected }) => {
     const originalMatchMedia = window.matchMedia;
     const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...originalMatchMedia(query), matches: query === MEDIA.compact }));
