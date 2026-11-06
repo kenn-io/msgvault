@@ -10,6 +10,88 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newPeopleRankingFixture(t *testing.T) (engine *DuckDBEngine, exact, prefix, substring int64, when time.Time) {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "gmail")
+	exact = b.AddParticipant("exact@example.test", "example.test", "Alice")
+	prefix = b.AddParticipant("prefix@example.test", "example.test", "Alice Example")
+	substring = b.AddParticipant("substring@example.test", "example.test", "Malice Stone")
+	b.AddParticipantIdentifier(exact, "slack", "alice", "@alice", true)
+	when = time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+	for index, participantID := range []int64{exact, prefix, substring} {
+		message := b.AddMessage(MessageOpt{
+			SourceID: source, ConversationID: int64(100 + index),
+			Subject: "people ranking fixture", SentAt: when.Add(time.Duration(index) * time.Minute),
+		})
+		b.AddFrom(message, participantID, "")
+	}
+	return b.BuildEngine(), exact, prefix, substring, when
+}
+
+func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
+	t.Parallel()
+	engine, exact, prefix, substring, _ := newPeopleRankingFixture(t)
+	for _, test := range []struct {
+		query string
+		want  []int64
+	}{
+		{query: "  ALICE  ", want: []int64{exact, prefix, substring}},
+		{query: "Alice Example", want: []int64{prefix}},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+				Query: test.query, Page: PageSpec{Limit: 25},
+			})
+			require.NoError(t, err)
+			got := make([]int64, 0, len(response.Rows))
+			for _, row := range response.Rows {
+				got = append(got, row.ID)
+			}
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, int64(len(test.want)), response.TotalCount)
+		})
+	}
+}
+
+func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "gmail")
+	var participants []int64
+	// Vary recency so equal text matches have a visible order.
+	for index, person := range []struct {
+		email    string
+		username string
+	}{
+		{email: "exact@example.test", username: "alice"},
+		{email: "prefix@example.test", username: "alice.example"},
+		{email: "substring@example.test", username: "malice"},
+	} {
+		participant := b.AddParticipant(person.email, "example.test", "")
+		participants = append(participants, participant)
+		b.AddParticipantIdentifier(participant, "slack", person.username, "@"+person.username, false)
+		message := b.AddMessage(MessageOpt{
+			SourceID: source, SentAt: time.Date(2026, 8, 22, 9, index, 0, 0, time.UTC),
+		})
+		b.AddFrom(message, participant, "")
+	}
+	engine := b.BuildEngine()
+	assert := assert.New(t)
+	want := []int64{participants[0], participants[1]}
+	response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+		Query: "@alice", Page: PageSpec{Limit: 25},
+	})
+	require.NoError(t, err)
+	got := make([]int64, 0, len(response.Rows))
+	for _, row := range response.Rows {
+		got = append(got, row.ID)
+	}
+	assert.Equal(want, got)
+	assert.NotContains(got, participants[2], "@alice excludes @malice")
+	assert.Equal(int64(len(want)), response.TotalCount)
+}
+
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
