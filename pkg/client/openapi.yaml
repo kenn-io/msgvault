@@ -2937,6 +2937,10 @@ components:
       properties:
         has_more:
           type: boolean
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         hybrid_available:
           type: boolean
         index_built:
@@ -2955,8 +2959,6 @@ components:
         scope_source_count:
           format: int64
           type: integer
-        sender_name_hint:
-          type: string
       required:
         - results
       type: object
@@ -14910,6 +14912,10 @@ components:
             format: int64
             type: integer
           type: array
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         index_state:
           type: string
         messages:
@@ -14918,8 +14924,6 @@ components:
           type: array
         query:
           type: string
-        sender_name_hint:
-          $ref: "#/components/schemas/SenderNameHint"
         stats:
           $ref: "#/components/schemas/TotalStatsResponse"
         total_count:
@@ -14933,6 +14937,26 @@ components:
         - query
         - messages
         - total_count
+      type: object
+    SearchHint:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retry_with:
+          $ref: "#/components/schemas/SearchHintRetryWithStruct"
+      required:
+        - code
+        - message
+        - retry_with
+      type: object
+    SearchHintRetryWithStruct:
+      properties:
+        query:
+          type: string
+      required:
+        - query
       type: object
     SearchProvenance:
       additionalProperties: false
@@ -15096,16 +15120,6 @@ components:
       required:
         - sender
         - count
-      type: object
-    SenderNameHint:
-      properties:
-        message:
-          type: string
-        query:
-          type: string
-      required:
-        - message
-        - query
       type: object
     SessionLoginRequest:
       additionalProperties: false
@@ -32413,11 +32427,6 @@ paths:
     get:
       operationId: fastSearch
       parameters:
-        - description: Suggest sender addresses after an empty first page
-          in: query
-          name: include_sender_name_hint
-          schema:
-            type: boolean
         - description: Search query; full text accepts standalone pipe-separated OR alternatives
           in: query
           name: q

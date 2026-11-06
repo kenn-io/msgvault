@@ -300,19 +300,19 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more messages match; use --offset %d for the next page\n", searchOffset+len(resp.Results))
 		}()
 	}
-	if len(resp.Results) == 0 && resp.SenderNameHint != "" {
-		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+resp.SenderNameHint) }()
-	}
 	// JSON mode must stay machine-parseable even with zero results:
 	// emit an empty array, never prose.
 	if searchJSON {
-		return outputSearchResultsJSON(resp.Results)
-	}
-	if len(resp.Results) == 0 {
+		result = outputSearchResultsJSON(resp.Results)
+	} else if len(resp.Results) == 0 {
 		fmt.Println("No messages found.")
-		return nil
+	} else {
+		result = outputSearchResultsTable(resp.Results)
 	}
-	return outputSearchResultsTable(resp.Results)
+	for _, hint := range resp.Hints {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+hint.Message)
+	}
+	return result
 }
 
 func outputSearchResultsTable(results []query.MessageSummary) error {

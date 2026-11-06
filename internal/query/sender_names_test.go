@@ -14,7 +14,7 @@ func TestSenderNameHints(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
 	for i := range 4 {
-		p := env.AddParticipant(dbtest.ParticipantOpts{Email: new(fmt.Sprintf("alex%d@example.com", i))})
+		p := env.AddParticipant(dbtest.ParticipantOpts{Email: new(fmt.Sprintf("sender%d@example.com", i))})
 		for j := 0; j <= i; j++ {
 			id := env.AddMessage(dbtest.MessageOpts{FromID: p, Subject: "hintfixture"})
 			// The participant was first seen without a name; the message supplies it.
@@ -24,38 +24,32 @@ func TestSenderNameHints(t *testing.T) {
 		}
 	}
 	q := search.Parse("from:alex subject:hintfixture")
-	hint := env.Engine.MatchSenderName(env.Ctx, q, MessageFilter{})
+	hint := env.Engine.MatchSenderName(env.Ctx, q)
 	requirements.NotNil(hint)
-	assertions.Equal(`from: matches addresses; senders matching "alex": alex3@example.com (4 messages), alex2@example.com (3 messages), alex1@example.com (2 messages); try from:alex3@example.com subject:hintfixture`, hint.Message)
-	results, err := env.Engine.Search(env.Ctx, search.Parse(hint.Query), 20, 0)
+	assertions.Equal(`from: matches addresses; senders matching "alex": sender3@example.com (4 messages), sender2@example.com (3 messages), sender1@example.com (2 messages); try from:sender3@example.com subject:hintfixture`, hint.Message)
+	results, err := env.Engine.Search(env.Ctx, search.Parse(hint.RetryWith.Query), 20, 0)
 	requirements.NoError(err)
 	assertions.Len(results, 4)
 	for _, tc := range []struct {
 		q             string
 		limit, offset int
-		opt           bool
 		want          bool
 	}{
-		{"from:alex subject:hintfixture", 10, 0, true, true},
-		{"from:alex subject:hintfixture", 10, 0, false, false},
-		{"from:alex subject:hintfixture", 0, 0, true, false},
-		{"from:alex subject:hintfixture", 10, 10, true, false},
-		{"from:alex3@example.com subject:hintfixture", 10, 0, true, false},
-		{"from:@example.com", 10, 0, true, false},
-		{"from:alex from:kim", 10, 0, true, false},
-		{"from:alex | from:kim", 10, 0, true, false},
-		{"from:alex subject:absent", 10, 0, true, false},
+		{"from:alex subject:hintfixture", 10, 0, true},
+		{"from:alex subject:hintfixture", 0, 0, false},
+		{"from:alex subject:hintfixture", 10, 10, false},
+		{"from:sender3@example.com subject:hintfixture", 10, 0, false},
+		{"from:alex from:kim", 10, 0, false},
+		{"from:alex | from:kim", 10, 0, false},
+		{"from:alex subject:absent", 10, 0, false},
 	} {
-		t.Run(fmt.Sprintf("%s/%d/%d/%t", tc.q, tc.limit, tc.offset, tc.opt), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%d/%d", tc.q, tc.limit, tc.offset), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			result, err := env.Engine.SearchFastWithStats(env.Ctx, search.ParseOR(tc.q), tc.q, MessageFilter{IncludeSenderNameHint: tc.opt}, ViewNoStats, tc.limit, tc.offset)
+			result, err := env.Engine.SearchFastWithStats(env.Ctx, search.ParseOR(tc.q), tc.q, MessageFilter{}, ViewNoStats, tc.limit, tc.offset)
 			requirements.NoError(err)
-			assertions.Equal(tc.want, result.SenderNameHint != nil)
+			assertions.Equal(tc.want, len(result.Hints) > 0)
 		})
 	}
-	source := int64(99)
-	hint = env.Engine.MatchSenderName(env.Ctx, q, MessageFilter{SourceID: &source})
-	assertions.Nil(hint)
 }
 
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
@@ -66,28 +60,44 @@ func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
 	other := env.AddParticipant(dbtest.ParticipantOpts{Email: new("other@example.com"), DisplayName: new("Alex Other")})
 	env.AddMessage(dbtest.MessageOpts{FromID: other, Subject: "hintfixture"})
 	q := search.Parse("from:alex_% subject:hintfixture")
-	hint := env.Engine.MatchSenderName(env.Ctx, q, MessageFilter{})
+	hint := env.Engine.MatchSenderName(env.Ctx, q)
 	requirements.NotNil(hint)
-	assertions.Equal("from:special@example.com subject:hintfixture", hint.Query)
+	assertions.Equal("from:special@example.com subject:hintfixture", hint.RetryWith.Query)
 	env.MarkDeletedByID(id)
 	q.DeletionScope = search.DeletionScopeActive
-	hint = env.Engine.MatchSenderName(env.Ctx, q, MessageFilter{})
+	hint = env.Engine.MatchSenderName(env.Ctx, q)
 	assertions.Nil(hint)
 	q.DeletionScope = search.DeletionScopeAny
-	hint = env.Engine.MatchSenderName(env.Ctx, q, MessageFilter{})
+	hint = env.Engine.MatchSenderName(env.Ctx, q)
 	requirements.NotNil(hint)
 }
 
-func TestSenderNameHintMatchesPartialAddress(t *testing.T) {
+func TestSenderHintCandidatesRespectScope(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
-	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex.k@example.com"), DisplayName: new("Jordan Lee")})
-	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
-	hint := env.Engine.MatchSenderName(env.Ctx, search.Parse("from:alex.k subject:hintfixture"), MessageFilter{})
-	requirements.NotNil(hint)
-	assertions.Equal("from:alex.k@example.com subject:hintfixture", hint.Query)
-	results, err := env.Engine.Search(env.Ctx, search.Parse(hint.Query), 10, 0)
+	for i := range 4 {
+		sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new(fmt.Sprintf("hidden%d@example.com", i)), DisplayName: new("Alex")})
+		env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
+	}
+	source := env.AddSource(dbtest.SourceOpts{Type: "gmail", Identifier: "visible@example.com"})
+	conv := env.AddConversation(dbtest.ConversationOpts{SourceID: source})
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("visible@example.com"), DisplayName: new("Jordan Lee")})
+	visible := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture", SourceID: source, ConversationID: conv})
+	env.SetFromName(visible, "Alex Kim")
+	env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
+	overridden := env.AddParticipant(dbtest.ParticipantOpts{Email: new("overridden@example.com"), DisplayName: new("Alex")})
+	id := env.AddMessage(dbtest.MessageOpts{FromID: overridden, Subject: "hintfixture", SourceID: source, ConversationID: conv})
+	env.SetFromName(id, "Jordan")
+	filter := MessageFilter{SourceID: &source}
+	q := search.Parse("from:alex subject:hintfixture")
+	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "", filter, ViewNoStats, 10, 0)
 	requirements.NoError(err)
-	requirements.Len(results, 1)
-	assertions.Equal(id, results[0].ID)
+	requirements.Len(result.Hints, 1)
+	assertions.Contains(result.Hints[0].Message, "visible@example.com (1 message)")
+	assertions.NotContains(result.Hints[0].Message, "hidden")
+	assertions.NotContains(result.Hints[0].Message, "overridden")
+	retry, err := env.Engine.SearchFastWithStats(env.Ctx, search.Parse(result.Hints[0].RetryWith.Query), "", filter, ViewNoStats, 10, 0)
+	requirements.NoError(err)
+	requirements.Len(retry.Messages, 1)
+	assertions.Equal(visible, retry.Messages[0].ID)
 }

@@ -179,7 +179,7 @@ type CLISearchRequest struct {
 
 type CLISearch struct {
 	HasMore          bool                   `json:"has_more,omitzero"`
-	SenderNameHint   string                 `json:"sender_name_hint,omitempty"`
+	Hints            []query.SearchHint     `json:"hints,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`

@@ -250,24 +250,27 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
 	for _, handler := range []toolHandler{h.searchMetadata, h.searchMessages} {
-		response := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": "from:alex subject:first account:reader@example.test"})
-		assert.Empty(response.Data)
-		require.Len(response.Hints, 1)
-		assert.Equal("sender_name_requires_address", response.Hints[0].Code)
-		assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
-		assert.Equal("from:alex@example.com subject:first account:reader@example.test", response.Hints[0].RetryWith.Query)
-		retry := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": response.Hints[0].RetryWith.Query})
-		require.Len(retry.Data, 1)
-		assert.Equal(int64(1), retry.Data[0].ID)
-		assert.Empty(retry.Hints)
+		for _, term := range []string{"alex", "alex@exam"} {
+			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": "from:" + term + " subject:first account:reader@example.test"})
+			assert.Empty(response.Data)
+			require.Len(response.Hints, 1)
+			assert.Equal("sender_name_requires_address", response.Hints[0].Code)
+			assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
+			assert.Equal("from:alex@example.com subject:first account:reader@example.test", response.Hints[0].RetryWith.Query)
+			retry := runTool[searchMetadataResponse](t, ToolSearchMetadata, handler, map[string]any{"query": response.Hints[0].RetryWith.Query})
+			require.Len(retry.Data, 1)
+			assert.Equal(int64(1), retry.Data[0].ID)
+			assert.Empty(retry.Hints)
+		}
 	}
 }
 
 func TestSearchMetadataSenderNameHintUnknownTotal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
-		assert.True(filter.IncludeSenderNameHint)
-		return &query.SearchFastResult{TotalCount: -1, SenderNameHint: &query.SenderNameHint{Message: "try from:alex@example.com", Query: "from:alex@example.com"}}, nil
+	engine := &querytest.MockEngine{SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+		hint := query.SearchHint{Code: "sender_name_requires_address", Message: "try from:alex@example.com"}
+		hint.RetryWith.Query = "from:alex@example.com"
+		return &query.SearchFastResult{TotalCount: -1, Hints: []query.SearchHint{hint}}, nil
 	}}
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, engine, &requests))

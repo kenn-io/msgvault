@@ -160,7 +160,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.46.0**.
+it is separate from the binary release version. The current schema is **3.47.0**.
 
 Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
 
@@ -211,6 +211,8 @@ Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
 Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
+
+Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
 
 Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
@@ -2023,6 +2025,8 @@ Search subject, snippet, sender and recipient metadata with the Gmail-style
 query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
+
+An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. The same shape is available from CLI search.
 
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply

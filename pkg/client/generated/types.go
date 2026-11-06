@@ -2860,6 +2860,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 
 type CliSearchResponse struct {
 	HasMore          *bool                    `json:"has_more,omitempty"`
+	Hints            []SearchHint             `json:"hints,omitempty"`
 	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
@@ -2867,11 +2868,17 @@ type CliSearchResponse struct {
 	Results          []CLIQueryMessageSummary `json:"results" validate:"required"`
 	ScopeLabel       *string                  `json:"scope_label,omitzero"`
 	ScopeSourceCount *int64                   `json:"scope_source_count,omitempty"`
-	SenderNameHint   *string                  `json:"sender_name_hint,omitzero"`
 }
 
 func (c CliSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range c.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(c.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
 	}
@@ -14920,10 +14927,10 @@ func (s SearchCoverageResponse) Validate() error {
 
 type SearchFastResponse struct {
 	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []SearchHint        `json:"hints,omitempty"`
 	IndexState       *string             `json:"index_state,omitzero"`
 	Messages         []MessageSummary    `json:"messages" validate:"required"`
 	Query            string              `json:"query" validate:"required"`
-	SenderNameHint   *SenderNameHint     `json:"sender_name_hint,omitempty"`
 	Stats            *TotalStatsResponse `json:"stats,omitempty"`
 	TotalCount       int64               `json:"total_count"`
 	Warnings         []string            `json:"warnings,omitempty"`
@@ -14931,6 +14938,13 @@ type SearchFastResponse struct {
 
 func (s SearchFastResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range s.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Messages, "required"); err != nil {
 		errors = errors.Append("Messages", err)
 	}
@@ -14944,13 +14958,6 @@ func (s SearchFastResponse) Validate() error {
 	if err := typesValidator.Var(s.Query, "required"); err != nil {
 		errors = errors.Append("Query", err)
 	}
-	if s.SenderNameHint != nil {
-		if v, ok := any(s.SenderNameHint).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("SenderNameHint", err)
-			}
-		}
-	}
 	if s.Stats != nil {
 		if v, ok := any(s.Stats).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14962,6 +14969,39 @@ func (s SearchFastResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SearchHint struct {
+	Code      string                    `json:"code" validate:"required"`
+	Message   string                    `json:"message" validate:"required"`
+	RetryWith SearchHintRetryWithStruct `json:"retry_with"`
+}
+
+func (s SearchHint) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Code, "required"); err != nil {
+		errors = errors.Append("Code", err)
+	}
+	if err := typesValidator.Var(s.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if v, ok := any(s.RetryWith).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RetryWith", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SearchHintRetryWithStruct struct {
+	Query string `json:"query" validate:"required"`
+}
+
+func (s SearchHintRetryWithStruct) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type SearchProvenance struct {
@@ -15124,15 +15164,6 @@ type SenderCount struct {
 }
 
 func (s SenderCount) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
-}
-
-type SenderNameHint struct {
-	Message string `json:"message" validate:"required"`
-	Query   string `json:"query" validate:"required"`
-}
-
-func (s SenderNameHint) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 

@@ -681,7 +681,7 @@ type cliDeleteDedupedExecuteResponse struct {
 
 type cliSearchResponse struct {
 	HasMore          bool                   `json:"has_more,omitzero"`
-	SenderNameHint   string                 `json:"sender_name_hint,omitempty"`
+	Hints            []query.SearchHint     `json:"hints,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -2524,8 +2524,8 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	resp.Results = results
 	if len(results) == 0 && offset == 0 {
 		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
-			if hint := matcher.MatchSenderName(r.Context(), parsed, query.MessageFilter{}); hint != nil {
-				resp.SenderNameHint = hint.Message
+			if hint := matcher.MatchSenderName(r.Context(), parsed); hint != nil {
+				resp.Hints = []query.SearchHint{*hint}
 			}
 		}
 	}

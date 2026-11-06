@@ -24,7 +24,7 @@ func TestCLISenderNameHintWithinGrant(t *testing.T) {
 	require.NoError(err)
 	_, otherID, err := testutil.CreateIndexedSourceMessage(st, "other@example.com", "two", "Project plan", "")
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim'),(2,'hidden@example.com','Alex Other');`)
+	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim'),(2,'alex@example.org','Alex Other');`)
 	require.NoError(err)
 	_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES (?,1,'from'),(?,2,'from')`, id, otherID)
 	require.NoError(err)
@@ -33,7 +33,7 @@ func TestCLISenderNameHintWithinGrant(t *testing.T) {
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	require.NoError(err)
 	for _, credential := range []struct{ header, value string }{{"X-Api-Key", "owner"}, {apiprotocol.AgentTokenHeader, token}} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex@exam", nil)
 		req.Header.Set(credential.header, credential.value)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -42,13 +42,16 @@ func TestCLISenderNameHintWithinGrant(t *testing.T) {
 			Results []struct {
 				ID int64 `json:"id"`
 			} `json:"results"`
-			SenderNameHint string `json:"sender_name_hint"`
+			Hints []struct {
+				Message string `json:"message"`
+			} `json:"hints"`
 		}
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 		assert.Empty(response.Results)
-		assert.Contains(response.SenderNameHint, "alex@example.com (1 message)")
+		require.Len(response.Hints, 1)
+		assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
 		if credential.value == token {
-			assert.NotContains(response.SenderNameHint, "hidden@example.com")
+			assert.NotContains(response.Hints[0].Message, "alex@example.org")
 		}
 		req = httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=from:alex@example.com", nil)
 		req.Header.Set(credential.header, credential.value)
