@@ -14,9 +14,9 @@ semantic people search, visual attachments, document extraction, document
 vectors, or people sweeps. Each has its own readiness and consent checks.
 
 ```bash
-export VOYAGE_API_KEY="..."      # text, people, and visual search
+export VOYAGE_API_KEY="..."      # search by meaning, people, and visual search
 export MISTRAL_API_KEY="..."     # document attachments
-export OPENAI_API_KEY="..."      # text search when no Voyage key
+export OPENAI_API_KEY="..."      # search by meaning when no Voyage key
 
 msgvault setup providers --dry-run   # show the plan and each provider disclosure
 msgvault setup providers             # answer once per provider, write config.toml
@@ -48,13 +48,13 @@ conversation briefs.
 
 | Key present                             | Lanes                                                                           | Model                                                                               | Notes                                                                                                                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VOYAGE_API_KEY`                        | text search, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
-| `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-1`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
-| `OPENAI_API_KEY`                        | text search only when no Voyage key      | `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
-| no key for the feature being configured | text: Ollama with `nomic-embed-text`, then the shared local server; sweep: loopback Ollama at `[chat].server`                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The Ollama model must already be installed. Setup asks before downloading missing files for the shared local server. |
+| `VOYAGE_API_KEY`                        | search by meaning, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
+| `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when search by meaning is on | `mistral-ocr-4-1`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
+| `OPENAI_API_KEY`                        | search by meaning only when no Voyage key      | `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
+| no key for the feature being configured | search by meaning: Ollama with `nomic-embed-text`, then the shared local server; sweep: loopback Ollama at `[chat].server`                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Search by meaning uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The Ollama model must already be installed. Setup asks before downloading missing files for the shared local server. |
 
 These are setup choices, not runtime failover. Adding a Voyage key does not
-replace an existing OpenAI text index, and an unavailable inference provider
+replace an existing OpenAI index for search by meaning, and an unavailable inference provider
 does not cause a sweep to switch providers. Setup does not use a signed-in Codex
 account: the
 [Codex app-server transport](../configuration.md#codex-app-server-profiles)
@@ -103,7 +103,7 @@ retention_posture = "standard"   # or "zdr"; --document-retention
 training_posture = "default-opt-out" # or "opted-out"; --document-training
 
 [attachments.documents.index.embeddings]
-enabled = true                   # document chunks use the text-search profile after `documents vectors consent`
+enabled = true                   # document chunks use the profile for search by meaning after `documents vectors consent`
 
 [people.sweep]
 enabled = true
@@ -131,7 +131,7 @@ Use `msgvault setup providers --local-embeddings` to use the shared local server
 
 ### `[vector]` and `[vector.embeddings]`
 
-The text lane. `api_format = "voyage-contextual"` pins `voyage-context-4` and
+Search by meaning. `api_format = "voyage-contextual"` pins `voyage-context-4` and
 sends each Beeper conversation window and each meeting as one contextual
 request, so a message is embedded with its neighbors. Other chat sources and
 email remain individual documents. The OpenAI-compatible format

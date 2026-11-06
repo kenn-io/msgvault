@@ -4701,7 +4701,7 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 
 Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
-configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
+configured key variable (default `MISTRAL_API_KEY`). When search by meaning is unset,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
 available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
@@ -4768,7 +4768,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
 
-Report the setup state of each feature (text search, semantic people search,
+Report the setup state of each feature (search by meaning, semantic people search,
 visual attachments, documents, document vectors, people sweep, activity
 projection, media policy): state, provider, model, recorded consent, schedule,
 the reason a lane is off, and the command that turns it on. Reads `config.toml`,

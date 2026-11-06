@@ -1001,14 +1001,14 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
 		Short: "Configure retrieval and people inference providers",
 		Long: `Read the environment and configure every lane that is still unset:
 
-  ` + setupVoyageKeyEnv + `   text search with Voyage contextual embeddings (conversation
-                   windows for chats, turn-aware chunks for meetings), semantic
-                   people search, and the visual attachment lane once its probe
-                   manifest exists
-  ` + setupOpenAIKeyEnv + `   text search on the OpenAI-compatible path when no Voyage key
-                   is present
-  MISTRAL_API_KEY  document attachment extraction, plus document vectors when a
-                   text lane is on
+  ` + setupVoyageKeyEnv + `   search by meaning with Voyage contextual embeddings
+                   (conversation windows for chats, turn-aware chunks for
+                   meetings), semantic people search, and the visual attachment
+                   lane once its probe manifest exists
+  ` + setupOpenAIKeyEnv + `   search by meaning on the OpenAI-compatible path when no
+                   Voyage key is present
+  MISTRAL_API_KEY  document attachment extraction, plus document vectors when
+                   search by meaning is on
   (no keys)        Ollama with nomic-embed-text, or the shared local embedding server
 
 Choose a hosted people inference provider with --provider openai, openrouter,
