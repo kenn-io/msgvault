@@ -369,7 +369,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		cancel()
 		<-stopped
 		if interrupted != nil {
-			if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "pending", "LINE processing interrupted", pass.retryAt(row, interrupted)); err != nil {
+			if err = pass.store.FinishLineEventContext(context.WithoutCancel(ctx), row.ID, "retry", "LINE processing interrupted", pass.retryAt(row, interrupted)); err != nil {
 				return errors.Join(ctx.Err(), err)
 			}
 			if ctx.Err() != nil {

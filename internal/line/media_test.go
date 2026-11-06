@@ -121,7 +121,7 @@ func TestMediaSizeSearch(t *testing.T) {
 		kind string
 		size int64
 	}{
-		{"image", "image", 15},
+		{"image", "image", 22},
 		{"file", "file", 28},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -39,7 +39,10 @@ func bodyText(m Message) string {
 		parts = append(parts, strconv.FormatFloat(m.Latitude, 'f', -1, 64)+","+strconv.FormatFloat(m.Longitude, 'f', -1, 64))
 		return strings.Join(parts, "\n")
 	case "image", "video", "audio", "file":
-		return m.FileName
+		if m.FileName != "" {
+			return m.FileName
+		}
+		return "[" + m.Type + "]"
 	default:
 		return "[LINE " + m.Type + "]"
 	}
