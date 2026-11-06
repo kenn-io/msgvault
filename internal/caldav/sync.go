@@ -181,7 +181,7 @@ func prepare(ctx context.Context, plan carddav.MemberPlan, inventory map[string]
 		if duplicate {
 			b.retryFull = true
 			skipped[member.Href] = true
-			b.skipped = append(b.skipped, skippedResource{href: member.Href, err: errors.New("duplicate CalDAV event identity across resources")})
+			b.skipped = append(b.skipped, skippedResource{href: member.Href, err: errors.New("event appears in multiple files")})
 			continue
 		}
 		for _, event := range events {
