@@ -51,7 +51,6 @@ func TestCachePublicationCommitsDatasetsBeforeMarker(t *testing.T) {
 		analyticsDir,
 		cachePublishPlanForMode(true),
 		data,
-		acquirePublishLock,
 	))
 
 	assertions.Equal(oldState, observedMarker)
@@ -90,7 +89,7 @@ func TestCachePublicationInterruptionLeavesOldMarkerAndDetectableDrift(t *testin
 	})
 	requirements.NoError(err)
 
-	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true), stateData, acquirePublishLock)
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true), stateData)
 	requirements.ErrorIs(err, interrupted)
 	currentMarker, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 	requirements.NoError(readErr)
@@ -198,12 +197,9 @@ func mustInspectCacheReadiness(t *testing.T, analyticsDir string) query.CacheRea
 	return readiness
 }
 
-// TestBuilderLockDoesNotBlockReaders pins the narrowed locking protocol: the
-// builder lock held for the whole staging/index-construction phase must not
-// exclude readers — they keep querying the committed generation — while
-// destructive maintenance (lockCacheAndInvalidateSyncState) still holds the
-// reader-coordination lock exclusively for its entire operation.
-func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
+// Builders allow readers while staging. Maintenance invalidates the marker and
+// releases readers while keeping other builders excluded until maintenance ends.
+func TestCacheLocksAllowReadersDuringStagingAndMaintenanceWhileExcludingBuilders(t *testing.T) {
 	requirements := require.New(t)
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
 	requirements.NoError(os.MkdirAll(analyticsDir, 0o755))
@@ -218,15 +214,24 @@ func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
 	release()
 	requirements.NoError(builderLock.Unlock(), "release builder lock")
 
+	state, err := json.Marshal(query.CacheSyncState{
+		LastMessageID: 1,
+		LastSyncAt:    time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC),
+		SchemaVersion: query.CacheSchemaVersion,
+		PublishedAt:   time.Date(2026, 7, 15, 10, 1, 0, 0, time.UTC),
+	})
+	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 	unlockCache, err := lockCacheAndInvalidateSyncState(analyticsDir)
 	requirements.NoError(err, "destructive maintenance locks")
-	blockedCtx, cancelBlocked := context.WithTimeout(context.Background(), 150*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; destructive maintenance holds the cache locks
-	defer cancelBlocked()
-	_, err = query.AcquireCacheReadLock(blockedCtx, analyticsDir)
-	requirements.Error(err, "readers must stay excluded during destructive maintenance")
-	requirements.NoError(unlockCache(), "release destructive locks")
-
-	release, err = query.AcquireCacheReadLock(context.Background(), analyticsDir)
-	requirements.NoError(err, "readers must reacquire after destructive maintenance releases")
+	defer func() { requirements.NoError(unlockCache()) }()
+	release, err = query.AcquireCacheReadLock(readCtx, analyticsDir)
+	requirements.NoError(err, "readers can inspect the invalidated cache")
 	release()
+	_, err = os.Stat(query.CacheStatePath(analyticsDir))
+	requirements.ErrorIs(err, os.ErrNotExist)
+	blockedCtx, cancelBlocked := context.WithTimeout(t.Context(), 150*time.Millisecond) //nolint:kennlint // deadlinetest: maintenance keeps the builder lock until release
+	defer cancelBlocked()
+	_, err = acquireCacheBuildLock(blockedCtx, analyticsDir)
+	requirements.ErrorIs(err, context.DeadlineExceeded, "other builders stay excluded")
 }

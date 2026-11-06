@@ -62,6 +62,8 @@ type DuckDBEngine struct {
 	ownTempDirectory bool
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
 
+	liveSQLWhenCacheUnavailable bool
+
 	// querySem bounds concurrent heavy query execution (see
 	// duckDBQueryConcurrency). Acquired at the top of each expensive public
 	// method via acquireQuerySlot; cheap PK/detail lookups are not gated so
@@ -120,6 +122,9 @@ type DuckDBEngine struct {
 
 // DuckDBOptions configures optional DuckDB engine behavior.
 type DuckDBOptions struct {
+	// LiveSQLWhenCacheUnavailable serves message analytics from live SQL when
+	// the cache is unusable and a SQLite engine is available.
+	LiveSQLWhenCacheUnavailable bool
 	// DisableSQLiteScanner prevents loading the sqlite_scanner extension even
 	// on platforms where it would normally be available. This forces all SQLite
 	// queries to route through sqliteEngine, matching the Windows code path.
@@ -256,6 +261,7 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		sqlitePath:                   sqlitePath,
 		sqliteDB:                     sqliteDB,
 		sqliteEngine:                 sqliteEngine,
+		liveSQLWhenCacheUnavailable:  opt.LiveSQLWhenCacheUnavailable,
 		hasSQLiteScanner:             hasSQLiteScanner,
 		tempDirectory:                tempDirectory,
 		ownTempDirectory:             ownTempDirectory,
@@ -437,11 +443,15 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 	}, nil
 }
 
+func (e *DuckDBEngine) useLiveSQL(err error) bool {
+	return e.liveSQLWhenCacheUnavailable && e.sqliteEngine != nil && errors.Is(err, ErrCacheUnavailable)
+}
+
 // acquireCacheRead holds the shared cache lock for the duration of one query
 // so a concurrent cache publication (which holds it exclusively) cannot
 // delete or replace Parquet files mid-read. Shared holders never conflict
 // with each other; a reader blocks only during the brief rename+marker
-// publication step or destructive maintenance — build staging runs under a
+// publication step or maintenance invalidation. Build staging runs under a
 // separate builder lock and leaves the committed generation readable.
 // Engines opened without an analytics directory have no cache to guard.
 //
@@ -1467,6 +1477,9 @@ func (e *DuckDBEngine) aggregateByView(ctx context.Context, view ViewType, opts 
 func (e *DuckDBEngine) Aggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.Aggregate(ctx, groupBy, opts)
+		}
 		return nil, err
 	}
 	defer release()
@@ -1722,6 +1735,9 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.SubAggregate(ctx, filter, groupBy, opts)
+		}
 		return nil, err
 	}
 	defer release()
@@ -1818,6 +1834,9 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.GetTotalStats(ctx, opts)
+		}
 		return nil, err
 	}
 	defer release()
@@ -1967,6 +1986,9 @@ func (e *DuckDBEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
 	release, err := e.acquireCacheRead(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.ListMessages(ctx, filter)
+		}
 		return nil, err
 	}
 	defer release()
@@ -3118,6 +3140,9 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.SearchFastWithStats(ctx, q, queryStr, filter, statsGroupBy, limit, offset)
+		}
 		return nil, err
 	}
 	defer release()

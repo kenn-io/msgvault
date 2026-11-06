@@ -37,6 +37,7 @@ var (
 type projectorStore interface {
 	ActivityProjectionCursorContext(ctx context.Context, pass, target string) (int64, error)
 	SetActivityProjectionCursorContext(ctx context.Context, pass, target string, afterID int64) error
+	ExpandActivityConversationQueueContext(ctx context.Context, checkpoint func() error) (bool, error)
 	LoadQueuedActivityCandidatesContext(ctx context.Context, limit int) ([]store.ActivityCandidate, error)
 	ScanForActivityProjectionContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error)
 	ScanAllActivityCandidatesContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error)
@@ -695,12 +696,22 @@ func (p *Projector) drainQueue(
 	result *RunResult,
 ) error {
 	for {
+		expanded, err := p.store.ExpandActivityConversationQueueContext(ctx, func() error { return projectionCheckpoint(ctx) })
+		if err != nil {
+			return err
+		}
+		if expanded {
+			useProjectionBatch(ctx)
+		}
 		candidates, err := p.store.LoadQueuedActivityCandidatesContext(
 			ctx, p.batchSize)
 		if err != nil {
 			return err
 		}
 		if len(candidates) == 0 {
+			if expanded {
+				continue
+			}
 			return nil
 		}
 		if err := p.projectCandidates(

@@ -22,7 +22,7 @@ jobs:
     name: CI gate
     needs: run
     if: always()
-    runs-on: ubuntu-26.04
+    runs-on: namespace-profile-linux-1cpu
     steps:
       - name: Check CI result
         if: needs.run.result != 'success'

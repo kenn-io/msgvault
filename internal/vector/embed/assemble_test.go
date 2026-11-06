@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -354,16 +355,22 @@ func TestSourceSnapshot_UndatedScopeExcludesDatedConversationRows(t *testing.T) 
 	assert.Len(deduplicated, 2, "undated and unbounded selectors have different identities")
 }
 
+// testSeedSequence gives each seeded row a distinct identifier. Wall-clock
+// nanoseconds repeat between consecutive calls on Windows, which made two
+// seeds upsert the same message.
+var testSeedSequence atomic.Uint64
+
 func seedAssemblyMessage(t *testing.T, st *store.Store, messageType, subject, body string) int64 {
 	t.Helper()
-	source, err := st.GetOrCreateSource("test", fmt.Sprintf("source-%d", time.Now().UnixNano()))
+	seq := testSeedSequence.Add(1)
+	source, err := st.GetOrCreateSource("test", fmt.Sprintf("source-%d", seq))
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, fmt.Sprintf("conversation-%d", time.Now().UnixNano()), "Synthetic conversation")
+	conversationID, err := st.EnsureConversation(source.ID, fmt.Sprintf("conversation-%d", seq), "Synthetic conversation")
 	require.NoError(t, err)
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
 		SourceID:        source.ID,
-		SourceMessageID: fmt.Sprintf("message-%d", time.Now().UnixNano()),
+		SourceMessageID: fmt.Sprintf("message-%d", seq),
 		MessageType:     messageType,
 		SentAt:          sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true},
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},

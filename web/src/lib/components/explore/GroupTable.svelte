@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, MEDIA, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type {
     ExploreCacheUnavailable,
@@ -8,7 +9,7 @@
     ExploreGroupRow,
     ExploreScrollAnchor
   } from '../../explore/models';
-  import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
 
   let {
     rows,
@@ -60,10 +61,10 @@
     onRetry?: () => void;
   } = $props();
 
-  const geometry = new RowGeometry();
+  const compact = new MediaQuery(MEDIA.compact);
+  const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
-  const TEMPLATE = 'minmax(220px, 2fr) 100px 120px 132px 112px';
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -103,9 +104,7 @@
     const element = gridElement;
     densityRebasing = true;
     const preservedKey = activeKey;
-    const rebased = activeIndex >= 0
-      ? activeIndex * nextHeight
-      : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey
@@ -132,7 +131,7 @@
     if (signature === restoredAnchor) return;
     const index = rows.findIndex((row) => stableKey(row) === scrollAnchor.key);
     if (index < 0) return;
-    gridElement.scrollTop = index * height + scrollAnchor.offset;
+    gridElement.scrollTop = index * height + Math.min(scrollAnchor.offset, height - 1);
     scrollTop = gridElement.scrollTop;
     suppressedScrollTop = gridElement.scrollTop;
     restoredAnchor = signature;
@@ -207,7 +206,7 @@
   function measuredViewport(element: HTMLDivElement): number {
     return tableViewportHeight(
       element.clientHeight,
-      headerElement?.offsetHeight || 30,
+      headerElement?.offsetHeight ?? 30,
       window.innerHeight
     );
   }
@@ -231,6 +230,7 @@
     }
     element.scrollTop = rebased;
     scrollTop = element.scrollTop;
+    if (!restoring) persistAnchor(height);
     suppressedScrollTop = element.scrollTop;
     if (preservedKey && rows.some((row) => stableKey(row) === preservedKey)) {
       activeKey = preservedKey;
@@ -264,14 +264,20 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
+    const { index } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
     if (row && !restoring) {
       activeKey = stableKey(row);
       onActiveKey?.(activeKey);
-      onScrollAnchor?.(activeKey, scrollTop - first * height);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
+  }
+
+  function persistAnchor(height: number): void {
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
+    if (row) onScrollAnchor?.(stableKey(row), offset);
   }
 </script>
 
@@ -289,12 +295,12 @@
     onkeydown={handleKeydown}
     onscroll={handleScroll}
   >
-    <div class="group-header" bind:this={headerElement} role="row" style:grid-template-columns={TEMPLATE}>
-      <span role="columnheader">Group</span>
-      <span role="columnheader" class="numeric">Items</span>
-      <span role="columnheader" class="numeric">Estimated</span>
-      <span role="columnheader">Latest</span>
-      <span role="columnheader">Action</span>
+    <div class="group-header" bind:this={headerElement} role="row">
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Group</span>
+      <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Items</span>
+      <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Estimated</span>
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Latest</span>
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Action</span>
     </div>
     <div class="group-body" role="rowgroup">
       {#if unavailable}
@@ -338,7 +344,6 @@
               aria-rowindex={index + 2}
               aria-current={inspectedKey === stableKey(row) ? 'true' : undefined}
               tabindex="-1"
-              style:grid-template-columns={TEMPLATE}
               onpointerdown={(event) => {
                 activeKey = stableKey(row);
                 onActiveKey?.(activeKey);
@@ -348,7 +353,7 @@
               ondblclick={() => { if (drillable) onDrill(row); }}
             >
               <div role="gridcell"><strong>{row.label}</strong></div>
-              <span role="gridcell" class="numeric" data-mono>{row.count.toLocaleString()}</span>
+              <span role="gridcell" class="numeric" data-mono>{row.count.toLocaleString()}<span class="count-label">{' '}{row.count === 1 ? 'item' : 'items'}</span></span>
               <span role="gridcell" class="numeric" data-mono>{bytes(row.estimated_bytes)}</span>
               <div role="gridcell"><time datetime={row.latest_at} data-mono>{date(row.latest_at)}</time></div>
               <span role="gridcell">
@@ -403,6 +408,7 @@
   .group-header,
   .group-row {
     display: grid;
+    grid-template-columns: minmax(220px, 2fr) 100px 120px 132px 112px;
     align-items: center;
   }
 
@@ -464,7 +470,7 @@
   }
 
   .group-row {
-    height: var(--row-height);
+    height: var(--table-short-row-height);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
@@ -545,5 +551,28 @@
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
     text-align: right;
+  }
+  .count-label { display: none; }
+  @media (max-width: 640px) {
+    .group-spacer { min-width: 0; }
+    .group-header { min-height: 0; border: 0; box-shadow: none; }
+    .group-row {
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      grid-template-areas: 'label label label action' 'count size latest action';
+      align-content: center;
+      gap: var(--space-1) 0;
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .group-row > :global(*) { padding: 0; }
+    .group-row > :nth-child(1) { grid-area: label; }
+    .group-row strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+    .group-row > :nth-child(2) { grid-area: count; }
+    .count-label { display: inline; }
+    .group-row > :nth-child(3) { grid-area: size; }
+    .group-row > :nth-child(4) { grid-area: latest; }
+    .group-row > :nth-child(3)::before, .group-row > :nth-child(4)::before { content: ' · '; white-space: pre; }
+    .group-row > :nth-child(5) { grid-area: action; }
+    .group-row .numeric, .group-row time { color: var(--text-muted); font-size: var(--font-size-xs); text-align: left; }
+    .group-row :global(button) { min-height: var(--control-height); }
   }
 </style>

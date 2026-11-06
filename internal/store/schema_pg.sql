@@ -3917,6 +3917,13 @@ CREATE TABLE IF NOT EXISTS activity_projection_queue (
     queued_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Membership writes mark one conversation; the activity drain expands its messages.
+-- No foreign key: a cascading conversation delete can leave a harmless marker.
+CREATE TABLE IF NOT EXISTS activity_projection_conversation_queue (
+    conversation_id BIGINT PRIMARY KEY,
+    after_message_id BIGINT NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
     ON activity_projection_queue(message_id)
     WHERE revision > processed_revision;
@@ -3946,6 +3953,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
+-- idx_messages_source_sent_at is built by Store.buildLargeIndexesConcurrently.
 -- idx_messages_source_id is built by Store.buildLargeIndexesConcurrently via
 -- CREATE INDEX CONCURRENTLY on a dedicated autocommit connection, outside any
 -- transaction; building it over an existing archive can take a long time,

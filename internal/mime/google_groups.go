@@ -4,6 +4,8 @@ import (
 	"encoding/csv"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // GoogleGroupsHeaders holds the metadata accompanying messages in Groups
@@ -31,7 +33,7 @@ func ParseGoogleGroupsHeaders(raw []byte, fallbackGroup string) GoogleGroupsHead
 	if group == "" {
 		group = strings.TrimSpace(fallbackGroup)
 	}
-	if group == "" {
+	if group == "" || strings.ContainsRune(group, 0) {
 		return GoogleGroupsHeaders{}
 	}
 	// Bare group names and public addresses share a case-insensitive identity.
@@ -54,7 +56,7 @@ func ParseGoogleGroupsHeaders(raw []byte, fallbackGroup string) GoogleGroupsHead
 			labels = strings.Split(value, ",")
 		}
 		for _, label := range labels {
-			if label = strings.TrimSpace(strings.ToValidUTF8(decodeHeader(label), "\uFFFD")); label != "" {
+			if label = strings.TrimSpace(textutil.ReplaceNUL(strings.ToValidUTF8(decodeHeader(label), "\uFFFD"))); label != "" {
 				result.Labels = append(result.Labels, label)
 			}
 		}

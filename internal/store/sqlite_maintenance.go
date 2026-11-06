@@ -36,7 +36,7 @@ func (s *Store) RunDailyMaintenance(ctx context.Context) (MaintenanceReport, err
 	if s.IsPostgreSQL() || s.readOnly {
 		return report, nil
 	}
-	report.OptimizeErr = s.optimizeSQLiteWithin(ctx, dailyOptimizeTimeout)
+	report.OptimizeErr = s.optimizeSQLiteWithin(ctx, dailyOptimizeTimeout, true)
 	logSQLiteOptimizeError("daily maintenance", report.OptimizeErr)
 
 	report.WALBytesBefore = s.walBytes()

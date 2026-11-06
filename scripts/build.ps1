@@ -264,13 +264,13 @@ function Initialize-Arm64DuckDB {
         [string]$CompilerDirectory
     )
 
-    # duckdb-go v2.10504.0 uses DuckDB 1.5.4. Keep the native library pins
+    # duckdb-go v2.20000.0 uses DuckDB 2.0.0. Keep the native library pins
     # aligned with the Go binding version checked below.
-    $duckdbVersion = '1.5.4'
-    $duckdbCommit = '08e34c447bae34eaee3723cac61f2878b6bdf787'
+    $duckdbVersion = '2.0.0'
+    $duckdbCommit = 'd54cbbe3df17e8e5ce68312f483b4155836112aa'
     $duckdbGoVersion = (Invoke-Checked go list -m -f '{{.Version}}' github.com/duckdb/duckdb-go/v2 | Out-String).Trim()
-    if ($duckdbGoVersion -ne 'v2.10504.0') {
-        throw "scripts/build.ps1 expects duckdb-go v2.10504.0, but go.mod uses $duckdbGoVersion. Update the pinned DuckDB version and commit before building."
+    if ($duckdbGoVersion -ne 'v2.20000.0') {
+        throw "scripts/build.ps1 expects duckdb-go v2.20000.0, but go.mod uses $duckdbGoVersion. Update the pinned DuckDB version and commit before building."
     }
     $source = Join-Path $CacheRoot "duckdb-$duckdbVersion"
     $build = Join-Path $source 'build\windows-arm64-static'
@@ -341,23 +341,45 @@ Then rerun this command. The compiled library will be cached at:
         $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
         Invoke-Checked $cmake --build $build --target `
             duckdb_static `
+            duckdb_httplib `
+            duckdb_loadable_extensions `
             parquet_extension `
             json_extension `
             icu_extension `
             autocomplete_extension `
-            core_functions_extension `
-            duckdb_generated_extension_loader | Out-Host
+            core_functions_extension | Out-Host
     } finally {
         $env:CMAKE_BUILD_PARALLEL_LEVEL = $oldParallelLevel
     }
 
+    # DuckDB 2 no longer registers statically linked extensions by itself, and
+    # duckdb-go calls duckdb_register_static_extensions() at startup. Fill in
+    # DuckDB's loader template for exactly the extensions built above, the same
+    # way scripts/generate_static_extension_loader.py in DuckDB does.
+    $extensions = @('httplib', 'loadable_extensions', 'autocomplete', 'core_functions', 'icu', 'json', 'parquet')
+    $describers = $extensions | ForEach-Object { "duckdb_extension_$($_)_describe" }
+    $loader = [IO.File]::ReadAllText((Join-Path $source 'extension\loader\static_extension_loader.c.in'))
+    $loader = $loader.Replace('@LINK_EXTENSION_LIST@', $extensions -join ' ')
+    $loader = $loader.Replace('@DESCRIBE_DECLARATIONS@', (($describers | ForEach-Object {
+        "int32_t $_(duckdb_extension_descriptor *descriptor);"
+    }) -join "`n"))
+    $loader = $loader.Replace('@DESCRIBE_REGISTRATIONS@', (($describers | ForEach-Object {
+        "`tif (duckdb_register_static_extension($_) != 0) {`n`t`tresult = 1;`n`t}"
+    }) -join "`n"))
+    $loaderSource = Join-Path $build 'static_extension_loader.c'
+    $loaderObject = Join-Path $build 'static_extension_loader.o'
+    [IO.File]::WriteAllText($loaderSource, $loader)
+    # Quote the compiler flags so PowerShell does not read -I or -o as its own parameters.
+    Invoke-Checked $cc '-c' '-O2' '-DDUCKDB_STATIC_BUILD' "-I$(Join-Path $source 'src\include')" $loaderSource '-o' $loaderObject | Out-Host
+
+    # DuckDB 2 folds its third-party libraries into libduckdb_static.a.
     $libraries = @(
         Get-Item (Join-Path $build 'src\libduckdb_static.a')
-        Get-Item (Join-Path $build 'extension\libduckdb_generated_extension_loader.a')
+        Get-Item (Join-Path $build 'src\main\http\libduckdb_httplib.a')
+        Get-Item (Join-Path $build 'src\main\extension\libduckdb_loadable_extensions.a')
         Get-ChildItem (Join-Path $build 'extension') -Recurse -Filter 'lib*_extension.a'
-        Get-ChildItem (Join-Path $build 'third_party') -Recurse -Filter 'libduckdb_*.a'
     ) | Sort-Object FullName -Unique
-    $mri = @("CREATE $($bundle.Replace('\', '/'))")
+    $mri = @("CREATE $($bundle.Replace('\', '/'))", "ADDMOD $($loaderObject.Replace('\', '/'))")
     foreach ($library in $libraries) {
         $mri += "ADDLIB $($library.FullName.Replace('\', '/'))"
     }

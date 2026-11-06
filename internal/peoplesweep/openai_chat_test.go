@@ -492,7 +492,8 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 	assertChecks.Zero(requests.Load())
 
 	timeoutClient := server.Client()
-	timeoutClient.Timeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked HTTP response must expire at the client deadline
+	// The client deadline also covers connecting and uploading the request.
+	timeoutClient.Timeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the request must expire at the client deadline
 	_, err = generateOpenAIChatJSON(
 		t.Context(), profile, peoplesweep.NewOpenAIChatDriver(timeoutClient),
 		"test-key", structuredTestRequest(),
@@ -501,7 +502,6 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 	assertChecks.Truef(
 		errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout"),
 		"timeout error = %T: %v", err, err)
-	assertChecks.Equal(int64(1), requests.Load())
 }
 
 func TestOpenAIChatPreparedRequestUsesExactHTTPBody(t *testing.T) {

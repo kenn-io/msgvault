@@ -69,6 +69,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	parsed.OmitNULIdentities()
 	if strict && parseErr != nil {
 		log.Warn("archived malformed MIME with salvaged headers", "source_msg", sourceMsgID, "error", parseErr)
 	}

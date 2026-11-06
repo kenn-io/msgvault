@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,18 +16,116 @@ func explainSearchPlan(t *testing.T, env *testEnv, q *search.Query) string {
 	t.Helper()
 	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
 	sqlText := searchResultsSQL(ftsJoin, strings.Join(conditions, " AND "))
-	rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+sqlText, append(args, 50, 0)...)
-	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, notused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
-		plan.WriteString(detail + "\n")
+	return dbtest.ExplainQueryPlan(t, env.DB, sqlText, append(args, 50, 0)...)
+}
+
+// Choose the FTS result page before looking up sender and conversation details.
+func TestSearchFTSSelectsPageBeforeDetails(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	env.EnableFTS()
+	plan := explainSearchPlan(t, env, search.Parse("invoice"))
+	sort := strings.Index(plan, "USE TEMP B-TREE FOR ORDER BY")
+	conversation := strings.Index(plan, "SEARCH conv USING INTEGER PRIMARY KEY")
+	require.GreaterOrEqual(t, sort, 0, plan)
+	require.GreaterOrEqual(t, conversation, 0, plan)
+	assert.Less(t, sort, conversation, plan)
+}
+
+func TestSearchFTSPagingPreservesDetails(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("billing@example.com"), DisplayName: new("Billing")})
+	_, err := env.DB.Exec(`UPDATE conversations SET title = 'Invoice thread' WHERE id = 1`)
+	require.NoError(err)
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice one", FromID: sender})
+	second := env.AddMessage(dbtest.MessageOpts{Subject: "invoice two"})
+	_, err = env.DB.Exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, sender, second)
+	require.NoError(err)
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice three", FromID: sender, SentAt: "2024-06-01 10:00:00"})
+	env.EnableFTS()
+	q := search.Parse("invoice")
+	full := env.MustSearch(q, 10, 0)
+	require.Len(full, 3)
+	var paged []MessageSummary
+	for offset := 0; offset < 4; offset += 2 {
+		paged = append(paged, env.MustSearch(q, 2, offset)...)
 	}
-	require.NoError(t, rows.Err())
-	return plan.String()
+	assert.Equal(full, paged)
+	assert.Empty(env.MustSearch(q, 2, 4))
+	for _, msg := range paged {
+		assert.Equal("billing@example.com", msg.FromEmail)
+		assert.Equal("Billing", msg.FromName)
+		assert.Equal("Invoice thread", msg.ConversationTitle)
+	}
+}
+
+func TestSearchCommonWordExcludesCutoffTies(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3014
+	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
+	SELECT 100+x, 'window-' || x, 1, 1, 'email',
+		CASE WHEN x <= 3000 THEN '2025-01-01 00:00:00' ELSE '2025-02-01 00:00:00' END,
+		'invoice' FROM seq`)
+	require.NoError(t, err)
+	env.EnableFTS()
+	q := search.Parse("invoice")
+	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
+	for _, tc := range []struct {
+		offset int
+		rows   int
+		full   bool
+	}{
+		{offset: 0, rows: 7, full: true},
+		{offset: 7, rows: 7, full: true},
+		{offset: 14, rows: 0, full: false},
+	} {
+		t.Run(strconv.Itoa(tc.offset), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			page, full, err := env.Engine.searchNewestFirst(env.Ctx, q, conditions, args, ftsJoin, 7, tc.offset)
+			require.NoError(err)
+			assert.Len(page, tc.rows, "the cutoff date's tie group must stay outside the window")
+			assert.Equal(tc.full, full)
+		})
+	}
+}
+
+func TestSearchCommonWordPreservesPages(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3000
+	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject, deleted_at, deleted_from_source_at)
+	SELECT 100+x, 'window-' || x, 1, 1, 'email',
+		datetime('2025-01-01', '+' || (x/5) || ' minutes'),
+		CASE WHEN x > 1000 THEN 'visibility' ELSE '' END,
+		CASE WHEN x > 1000 AND x % 10 BETWEEN 1 AND 4 THEN '2025-02-01' END,
+		CASE WHEN x > 1000 AND x % 10 BETWEEN 5 AND 9 THEN '2025-02-01' END
+	FROM seq`)
+	require.NoError(t, err)
+	env.EnableFTS()
+	for _, scope := range []search.DeletionScope{"", search.DeletionScopeActive, search.DeletionScopeAny} {
+		t.Run("visibility/"+string(scope), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			q := search.Parse("visibility")
+			q.DeletionScope = scope
+			conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
+			want, err := env.Engine.executeSearchQuery(env.Ctx, conditions, args, ftsJoin, 4000, 0)
+			require.NoError(err)
+			require.NotEmpty(want)
+			var pages []MessageSummary
+			for offset := 0; offset <= len(want)+7; offset += 7 {
+				pages = append(pages, env.MustSearch(q, 7, offset)...)
+			}
+			assert.Equal(want, pages)
+		})
+	}
 }
 
 // A rare address must look up matching messages by rowid instead of walking
@@ -42,8 +141,7 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 		{BccAddrs: []string{"@example.com"}},
 	} {
 		plan := explainSearchPlan(t, env, q)
-		assert.Contains(t, plan, "SEARCH m USING INTEGER PRIMARY KEY", "%+v\n%s", q, plan)
-		assert.NotContains(t, plan, "SCAN m USING INDEX idx_messages_sent_at", "%+v\n%s", q, plan)
+		assert.NotRegexp(t, `(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
 	}
 }
 

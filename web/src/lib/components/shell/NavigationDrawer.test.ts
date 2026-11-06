@@ -39,8 +39,8 @@ describe('NavigationDrawer', () => {
 
   it('closes from the scrim', async () => {
     const onclose = vi.fn();
-    render(NavigationDrawer, { onclose, children: items });
-    await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
+    const { container } = render(NavigationDrawer, { onclose, children: items });
+    await fireEvent.click(container.querySelector('.drawer__scrim')!);
     expect(onclose).toHaveBeenCalledOnce();
   });
 });

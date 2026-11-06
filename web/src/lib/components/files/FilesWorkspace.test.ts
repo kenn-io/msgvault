@@ -1,3 +1,4 @@
+import { MEDIA } from '@kenn-io/kit-ui';
 import type { ComponentProps } from 'svelte';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -77,6 +78,25 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it.each([
+    { label: 'sender', sender: 'Zoe Sender', expected: 'Zoe Sender' },
+    { label: 'roster without a sender', sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
+  ])('shows the $label on a phone', async ({ sender, expected }) => {
+    const originalMatchMedia = window.matchMedia;
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ ...originalMatchMedia(query), matches: query === MEDIA.compact }));
+    try {
+      const result = response();
+      const client = createAPIClient(async () => Response.json({
+        ...result,
+        files: [{ ...result.files[0], participant_labels: ['Alice Recipient', 'Zoe Sender'], participant_domains: [], ...(sender ? { sender_label: sender } : {}) }]
+      }));
+      const rendered = renderReady({ client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
+      await waitFor(() => expect(rendered.container.querySelector('.phone-sender')?.textContent).toBe(expected));
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it('reports each rejected image selection once as a search failure', async () => {
     const events = telemetryEvents;
     const client = createAPIClient(async () => Response.json(response()));
@@ -254,6 +274,19 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(await within(grid).findByRole('gridcell', { name: 'work@example.com' })).toBeDefined();
     expect(await within(grid).findByRole('gridcell', { name: 'Slack' })).toBeDefined();
+  });
+
+  it.each([
+    { scope: undefined, peopleColumn: '5', label: 'all files' },
+    { scope: { kind: 'person' as const, id: 1 }, peopleColumn: '6', label: 'person files' }
+  ])('keeps cell column positions for $label', async ({ scope, peopleColumn }) => {
+    render(FilesWorkspace, {
+      client: createAPIClient(async () => Response.json(response())), predicate: { filters: [], presentation: 'table' },
+      identityScope: scope, sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const row = await screen.findByRole('row', { name: /fixture.pdf/ });
+    expect(within(row).getByRole('gridcell', { name: '2 KB' }).getAttribute('aria-colindex')).toBe('4');
+    expect(row.querySelector('.cell--people')?.getAttribute('aria-colindex')).toBe(peopleColumn);
   });
 
   it('keeps headers and virtual rows in one focusable grid', async () => {
@@ -634,7 +667,7 @@ describe('FilesWorkspace', () => {
   });
 
   it('loads bounded cursor pages until a durable selected file is restored', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-short-row-height');
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
     vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -681,7 +714,7 @@ describe('FilesWorkspace', () => {
     expect(onRestorationComplete).not.toHaveBeenCalled();
     expect(grid.getAttribute('aria-activedescendant')).toBeNull();
 
-    document.documentElement.style.setProperty('--row-height', '36px');
+    document.documentElement.style.setProperty('--table-short-row-height', '36px');
     const [frame, callback] = [...frames.entries()][0]!;
     frames.delete(frame);
     callback(performance.now());

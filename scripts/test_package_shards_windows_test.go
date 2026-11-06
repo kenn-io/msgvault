@@ -1,7 +1,6 @@
 package scripts
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -95,10 +94,8 @@ func record(t *testing.T) {
 	run := func(t *testing.T, timeout, fail string, extra ...string) (string, string, error) {
 		t.Helper()
 		output := t.TempDir()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
 		args := append([]string{"-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec", "-Timeout", timeout}, extra...)
-		cmd := exec.CommandContext(ctx, pwsh, args...)
+		cmd := exec.CommandContext(t.Context(), pwsh, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "SHARD_OUTPUT="+output, "SHARD_FAIL="+fail)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}

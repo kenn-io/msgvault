@@ -361,3 +361,20 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		assert.Equal(t, addresses{}, absent)
 	})
 }
+
+func TestVMessagesKeepUnnamedDirectSenderNamesEmpty(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	builder.AddSource("archive@example.com")
+	phone := builder.AddPhoneParticipant("+12025550123", "")
+	email := builder.AddParticipant("sender@example.com", "example.com", "")
+	ids := []int64{
+		builder.AddMessage(MessageOpt{SenderID: &phone}),
+		builder.AddMessage(MessageOpt{SenderID: &email}),
+	}
+	engine := builder.BuildEngine()
+	for _, id := range ids {
+		var fromName string
+		require.NoError(t, engine.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", id).Scan(&fromName))
+		assert.Empty(t, fromName, "other readers keep an empty name for unnamed direct senders")
+	}
+}

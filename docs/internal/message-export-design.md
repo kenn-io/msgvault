@@ -353,14 +353,11 @@ their normal bound parameters and backend dialect support.
    bounded export path.
 1. It emits the completion record with observed counts.
 
-The implementation may execute separate deterministic queries for the record
-phases. It does not need a single database snapshot in v1. Although export is
-logically read-only, `export-messages` deliberately remains under the daemon's
-operation gate so archive-mutating work cannot run between phases. Direct local
-execution uses the same daemon command-routing policy rather than defining a
-weaker consistency mode. This favors a coherent stream over concurrent sync
-during the bounded export; a future implementation may replace the exclusive
-gate with an equivalent cross-backend read snapshot.
+Source and person resolution share one read-only database snapshot with the
+record phases, using REPEATABLE READ on PostgreSQL. This keeps records
+consistent while imports and syncs continue. `export-messages` runs alongside
+that work without taking the daemon's operation gate. Direct local execution
+uses the same daemon command-routing policy.
 
 The existing daemon CLI transport may wrap subprocess output in its own NDJSON
 events internally. The daemon client reconstructs command stdout, so callers

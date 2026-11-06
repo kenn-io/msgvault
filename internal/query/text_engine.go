@@ -36,15 +36,14 @@ type TextSnapshotScope struct {
 	Filter         TextFilter
 }
 
-// TextSnapshotter returns an identity for the complete logical result set
-// behind a text page. Implementations exclude pagination from the identity.
+// TextSnapshotter returns a revision that changes when a text result may have
+// changed. Implementations exclude pagination from the revision.
 type TextSnapshotter interface {
 	TextSnapshotRevision(ctx context.Context, scope TextSnapshotScope) (string, error)
 }
 
-// TextSnapshotReader returns a page and the identity of its complete logical
-// result from one consistent read. Implementations exclude pagination from the
-// identity.
+// TextSnapshotReader returns a page and a revision from one consistent read.
+// The revision changes when the result may have changed and excludes pagination.
 type TextSnapshotReader interface {
 	ListConversationsSnapshot(ctx context.Context,
 		filter TextFilter) ([]ConversationRow, string, error)

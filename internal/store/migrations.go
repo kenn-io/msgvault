@@ -89,7 +89,8 @@ const (
 	// FTS bookkeeping sweeps no longer requeue the archive.
 	// v5: is_sent joined MessagesActivityColumns, and messages projected while
 	// unsent are requeued so the projector retracts them.
-	migrationActivityProjectionTriggers = "activity_projection_triggers_v5"
+	// v6: membership changes mark one conversation for expansion by the drain.
+	migrationActivityProjectionTriggers = "activity_projection_triggers_v6"
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 	migrationProviderConsentsV1         = "provider_consents_v1"

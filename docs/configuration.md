@@ -164,7 +164,7 @@ min_meeting_days_long = 2
 | `long_window_days` | `365` | Days counted for tier 2. At most 3650. |
 | `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
 | `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
-| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
+| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. See [People's room exclusions](/docs/usage/people/). |
 | `min_call_seconds` | `120` | How long an answered Synctech or Google Voice call must stay connected to count. Each counted call adds one to the outbound and inbound counts and is its own channel. `0` stops calls from counting. |
 | `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window, plus counted calls. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
@@ -495,8 +495,8 @@ attachments loose while this setting is enabled.
 Document extraction and local full-text indexing are disabled by default.
 Enabling them does not grant consent or send data. Record consent for the exact
 effective policy before a build can upload a document. Mistral also requires an
-authenticated capability manifest. On `main` after v0.21.0, self-hosted Docling
-uses a configured endpoint without a manifest.
+authenticated capability manifest. Self-hosted Docling uses a configured
+endpoint without a manifest.
 
 | Key | Default | Description |
 |---|---:|---|
@@ -574,7 +574,7 @@ even when indexing is disabled. Neither job contacts a provider.
 | `message_types` | `[]` | Include all supported message sources, or restrict extraction to the listed types |
 | `include_inline` | `false` | Also include inline attachments with an authorized document media type and authoritative role provenance |
 
-Inline scope support is available in v0.21.0. Some mail clients mark
+Some mail clients mark
 ordinary document attachments as inline. Set `include_inline = true` to include
 them; other roles remain excluded. This changes the consent fingerprint. Record
 consent again with `consent-mistral --capabilities <manifest> --yes` or
@@ -621,7 +621,8 @@ Discord's `--oauth-app` value is only a protected bot-token binding label. It
 is not resolved from this section and does not require an `[oauth.apps]` entry.
 `export-messages` uses the same daemon and database configuration as other
 archive commands. It does not load provider credentials or make provider API
-calls. The older `export-discord` compatibility command has the same read-only
+calls. It reads one database snapshot and runs alongside imports and syncs.
+The older `export-discord` compatibility command has the same read-only
 provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
@@ -909,8 +910,9 @@ messages or contact a provider.
 
 `[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share
 one attachment policy vocabulary. It decides which chat media is downloaded
-during sync and backfill; message text is always archived. `[imessage]` takes
-only `media_max_participants` and `max_media_mb`.
+during sync and backfill; message text is always archived. For attachment policy,
+`[imessage]` accepts `media_max_participants` and `max_media_mb`. It also accepts
+`enabled`, `schedule`, `db_path`, and `me`; see the [iMessage settings](#imessage).
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
@@ -1049,7 +1051,7 @@ configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. On unreleased `main`, the owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1082,7 +1084,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
-On unreleased `main`, flags and environment variables can configure the server
+Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
 environment variables, then TOML, then defaults. `iface:NAME` resolves at
 startup, preferring a usable IPv4 address and otherwise IPv6. An unknown, down,
@@ -1249,7 +1251,7 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
 | `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
-On unreleased `main`, each thread setting limits both DuckDB's query worker
+Each thread setting limits both DuckDB's query worker
 pool and its separate asynchronous I/O pool from database creation. It is a
 limit per pool, not a cap on all threads in the process.
 
@@ -1260,9 +1262,9 @@ raising these limits in `config.toml`. Restart the daemon to apply the change,
 then retry the query. The limits cap resource use; they do not reserve memory
 or disk space. Cache builds have separate `builder_*` limits.
 
-On unreleased `main`, the builder defaults to one quarter of currently available
-memory, bounded between `256MiB` and `16GiB`. The latest release uses a fixed
-`2GB` default. Linux builds also account for remaining memory under visible
+The builder defaults to one quarter of currently available memory, bounded
+between `256MiB` and `16GiB`. Releases before 0.23.0 used a fixed `2GB`
+default. Linux builds also account for remaining memory under visible
 cgroup v2 ancestor limits. When host memory cannot be detected, the fallback is
 `2GB`; unsupported or unreadable Linux container limits cap the default at
 `2GB` while retaining any lower headroom already detected. The `256MiB` minimum
@@ -1450,7 +1452,7 @@ invite_calendars = []            # subset allowed to change guests or notify the
 | `invite_calendars` | `[]` | Exact IDs allowed to change guests, respond, or notify them; writes still require `write_calendars` |
 | `calendar_aliases` | `{}` | Names mapped to exact calendar IDs for live control; aliases do not expand permissions |
 
-Event control also requires [write consent](usage/calendar.md#control-events-unreleased).
+Event control also requires [write consent](usage/calendar.md#control-events).
 `calendars` selects sync targets; it does not grant write authority. `email` selects
 the OAuth token, while `write_calendars` selects the calendar that owns the event.
 For example, `person@example.com` can create on `team@example.com` when Google
@@ -1518,7 +1520,7 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
-#### Mirror stored attachments to Docbank (unreleased)
+#### Mirror stored attachments to Docbank
 
 Msgvault can mirror stored attachment bytes from every source to a Docbank
 folder. Enable the integration and its separate attachment upload consent.
@@ -1711,7 +1713,7 @@ before choosing media caps or configuring a remote daemon.
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
 separate archive source. See [Chatwoot setup](guides/chatwoot.md) for token and
-inbox registration. This integration is available on `main`.
+inbox registration.
 
 ```toml
 [[chatwoot]]
@@ -1823,23 +1825,57 @@ max_media_mb = 500
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
+### Apple WhatsApp sources
+
+Keep WhatsApp for Mac current with `msgvault serve`. Add one entry per owner
+phone number; `path` defaults to the native WhatsApp `ChatStorage.sqlite`.
+Grant Full Disk Access to the process running the daemon. These imports copy
+message text and metadata; they don't copy media.
+
+```toml
+[[whatsapp_apple]]
+name = "personal"
+enabled = true
+phone = "+15550000000"
+display_name = "Me"
+schedule = "*/10 * * * *"
+# path = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
+```
+
+`phone` must start with `+`. `path` accepts `~` and resolves relative paths
+against the configuration directory when loaded with `--config`. The Sources page shows run history and
+offers **Sync now** for scheduled stores.
+
 ### `[imessage]`
 
-Media limits for [`import-imessage`](/docs/usage/text-messages/). The command
-reads these keys on every run; the `--max-media-mb` flag overrides
+Schedule imports with `msgvault serve` and set media limits for
+[`import-imessage`](/docs/usage/text-messages/). The `--max-media-mb` flag overrides
 `max_media_mb` for one run. [`purge-excluded-media`](cli-reference.md#purge-excluded-media)
 reads the same keys, so it removes stored iMessage attachments that exceed them.
 
 ```toml
 [imessage]
+enabled = true
+schedule = "*/10 * * * *"
+# db_path = "~/Library/Messages/chat.db"
+# me = "+15550000000"
 media_max_participants = 20
 max_media_mb = 250
 ```
 
 | Key | Default | Description |
 |---|---|---|
+| `enabled` | `false` | Enable daemon imports when a schedule is set |
+| `schedule` | — | Five-field cron schedule; Sources also offers **Sync now** |
+| `db_path` | `~/Library/Messages/chat.db` | Source database; accepts `~` and paths relative to the configuration directory when loaded with `--config` |
+| `me` | — | Your phone or email for sender and recipient attribution |
 | `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment size cap in MiB |
+
+Grant Full Disk Access to the process running the daemon. Every run re-reads
+all of `chat.db` and writes only what changed, including late arrivals
+and edits.
+Choose a schedule interval that allows for the time it takes to read your database.
 
 ### Omi Sources
 
@@ -1970,8 +2006,7 @@ scheduled sync from silently recreating it.
 
 ### Pocket Sources
 
-Pocket sync uses top-level `[[pocket]]` entries. This integration is available
-on `main`; check the release changelog before using it with an installed release.
+Pocket sync uses top-level `[[pocket]]` entries.
 
 ```toml
 [[pocket]]
@@ -2071,7 +2106,7 @@ stored data.
 
 ### Twilio Sources
 
-Unreleased: configure one `[[twilio]]` entry per Twilio account or subaccount.
+Configure one `[[twilio]]` entry per Twilio account or subaccount.
 See the [Twilio meeting guide](usage/meetings.md#twilio) for what sync stores.
 
 ```toml
@@ -2106,8 +2141,7 @@ Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
 Configure these entries on the Mac where Muesli records. With `[remote]`
 configured, the native client reads the local database and Contacts, then sends
 selected meetings using the existing remote API credentials. Without remote
-mode, the daemon reads the files on its own host. Remote Muesli sync and the
-native completion hook are available on `main` and are not yet released.
+mode, the daemon reads the files on its own host.
 
 ```toml
 [[muesli]]
@@ -2196,13 +2230,13 @@ Changing a stored key for vector or multimodal (visual) embeddings requires a da
 restart, like the other `[vector]` settings. Person enrichment and sweep keys
 apply on the next run.
 
-On unreleased `main`, a stored person-enrichment suppression key also takes
-precedence over a custom `suppression_key_env`. Previously, a custom variable
-won. Before upgrading an installation that has both, ensure the stored key
+A stored person-enrichment suppression key also takes precedence over a custom
+`suppression_key_env`. Before 0.22.0, a custom variable won. When upgrading
+an installation that has both, ensure the stored key
 matches the variable's value. If existing suppression records were made with
 a different key, enrichment stops with `ErrSuppressionKeyMismatch`.
 
-On unreleased `main`, the host owner can also install keys without the Web UI:
+The host owner can also install keys without the Web UI:
 
 ```sh
 msgvault credentials set vector.embeddings --from-file /run/secrets/embedding-key
@@ -2424,7 +2458,7 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
 | `MSGVAULT_TELEMETRY_ENABLED` | Set to `0` to turn off anonymous telemetry; any value overrides `[telemetry] enabled` ([Telemetry](#telemetry)) |
 
-These runtime controls are available on unreleased `main`. Environment values
+Environment values
 override TOML. For each server or remote credential group, setting any of its
 three environment variables selects that group's environment sources; within
 the group, inline wins over file, then named environment. A supplied empty
@@ -2447,8 +2481,7 @@ MSGVAULT_HOME=/data MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080 msgvault s
 
 Persist `/data` across restarts so the archive and generated key survive. The
 published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
-and stores its home at `/data`. Use an image containing these unreleased
-features once published. No startup hook or entrypoint wrapper is required.
+and stores its home at `/data`. No startup hook or entrypoint wrapper is required.
 
 ## Telemetry
 
@@ -2769,3 +2802,21 @@ schedule = "30 4 * * *"
 [telemetry]
 enabled = true # false turns off anonymous usage telemetry
 ```
+
+## Sender authentication
+
+Pin the receiving mail server's authentication service ID for each email source:
+
+```toml
+[[sender_auth.sources]]
+source_id = 1
+trusted_authserv_ids = ["mx.google.com"]
+```
+
+Use the source ID from `msgvault list-accounts`. IDs must be positive and unique across entries. Authentication service IDs must be nonblank and contain no whitespace. Matching ignores case and requires an exact ID. Restart the daemon after changing these pins.
+
+Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned email sources. The verdict uses only the topmost `Authentication-Results` header. `verified` means the pinned receiver reported `dmarc=pass` for the domain in both the archived From header and the displayed sender address. It covers the sender domain only. Empty results mean the pinned receiver reported nothing usable, or the archived headers could not be read. Sources without pins and non-email messages omit the field.
+
+A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
+
+Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.

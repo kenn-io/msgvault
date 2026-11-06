@@ -420,35 +420,7 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
-		if definition.security == toolSecurityWrite && !allowWrites {
-			continue
-		}
-		if definition.security == toolSecurityProfileWrite &&
-			(!allowWrites || !opts.AllowProfileWrites) {
-			continue
-		}
-		if definition.security == toolSecurityIdentityDecision &&
-			(!allowWrites || !opts.AllowIdentityDecisions) {
-			continue
-		}
-		if definition.security == toolSecurityIdentityScoring &&
-			(!allowWrites || !opts.AllowIdentityScoring) {
-			continue
-		}
-		if definition.security == toolSecurityPersonMerge &&
-			(!allowWrites || !opts.AllowPersonMerges) {
-			continue
-		}
-		if definition.security == toolSecurityCardDAVWrite &&
-			(!allowWrites || !opts.AllowCardDAVWrites) {
-			continue
-		}
-		if definition.security == toolSecurityCalendarWrite &&
-			(!allowWrites || !opts.AllowCalendarWrites) {
-			continue
-		}
-		if definition.security == toolSecurityKataWrite &&
-			(!allowWrites || !opts.AllowKataWrites) {
+		if !toolClassAllowed(definition.security, opts, allowWrites) {
 			continue
 		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))

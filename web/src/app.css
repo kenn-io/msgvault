@@ -24,6 +24,15 @@ textarea {
   font: inherit;
 }
 
+/* Kit has no CSS hook for MEDIA.touch. */
+@media (hover: none), (pointer: coarse) {
+  .touch-controls button:not(.kit-popover-card *) {
+    min-height: 44px;
+  }
+
+  .touch-controls .kit-icon-button:not(.kit-popover-card *) { min-width: 44px; }
+}
+
 /* Keep unstyled section headings below the page title (h1, --font-size-xl). */
 h2 {
   font-size: var(--font-size-lg);

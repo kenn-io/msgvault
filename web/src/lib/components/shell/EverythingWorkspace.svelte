@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { Button, MEDIA, PageHeader } from '@kenn-io/kit-ui';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
@@ -36,6 +37,7 @@
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
+  import { splitHandleSize } from '../layout/split-handle';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
@@ -51,6 +53,7 @@
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
+  const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
     meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
@@ -125,6 +128,23 @@
     onSaveView,
     onStatusChange = () => undefined,
   }: Props = $props();
+
+  const compact = new MediaQuery(MEDIA.compact);
+  const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
+  let resultsSplit: HTMLDivElement | undefined = $state();
+  let previousSolo: boolean | undefined;
+  $effect(() => {
+    const currentSolo = solo;
+    const changed = previousSolo !== undefined && previousSolo !== currentSolo;
+    previousSolo = currentSolo;
+    if (!changed || !untrack(() => readingTargetKey)) return;
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body &&
+        (focused.checkVisibility?.({ visibilityProperty: true }) ?? !resultsSplit?.querySelector('[data-pane="primary"]')?.contains(focused))) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[data-reader-dismiss]')?.focus();
+    });
+  });
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
@@ -722,6 +742,9 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
+    class:results-split--solo={solo}
+    style:min-height={scope && readingTargetKey && !previewRight && !solo ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
     <SplitPane
@@ -729,8 +752,8 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
-      minSecondary={previewRight ? 400 : 160}
+      minPrimary={previewRight ? 360 : stackedListMin}
+      minSecondary={previewRight ? 400 : stackedReaderMin}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
@@ -856,6 +879,7 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            back={solo}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
@@ -921,11 +945,29 @@
   }
 
   .results-split {
+    contain: size;
     display: flex;
     min-width: 0;
     min-height: 200px;
     flex: 1;
     overflow: hidden;
+  }
+
+  .results-split--solo :global([data-split-pane]) { position: relative; }
+  .results-split--solo :global([data-pane='primary']) {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+  }
+  .results-split--solo :global(.handle-reset) { display: none; }
+  .results-split.results-split--solo :global([data-pane='secondary']) {
+    flex-grow: 1;
+    flex-shrink: 1;
+    border: 0;
+  }
+  .results-split--solo :global(.reading-pane) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
 
   .results-primary {

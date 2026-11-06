@@ -455,11 +455,15 @@ func headerBlock(raw []byte) []byte {
 }
 
 func parseDeliveryBlock(block []byte) (emailattribution.Headers, bool, error) {
+	return emailattribution.ParseHeaders(terminateHeaderBlock(block))
+}
+
+func terminateHeaderBlock(block []byte) []byte {
 	if mimeHeaderEnd(block) == 0 {
 		// A header-only payload has no blank line; terminate it for the reader.
 		block = append(slices.Clip(block), "\r\n\r\n"...)
 	}
-	return emailattribution.ParseHeaders(block)
+	return block
 }
 
 // refreshAccountAttributionTx is the one owner of messages.account_address
@@ -679,19 +683,29 @@ func (s *Store) calendarAccountAddressTx(
 	return address, nil
 }
 
+// MessageHeaderBlockContext returns a bounded outer MIME header block.
+func (s *Store) MessageHeaderBlockContext(ctx context.Context, id int64) ([]byte, error) {
+	prefix, compression, err := s.messageRawHeaderPrefix(ctx, ReadDBContext(ctx, s.db.DB), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read raw MIME headers for message %d: %w", id, err)
+	}
+	block, err := decodeMessageRawHeaderBounded(prefix, compression, emailattribution.MaxHeaderBytes)
+	if err != nil {
+		return nil, err
+	}
+	return terminateHeaderBlock(block), nil
+}
+
 // readDeliveryHeadersTx reads a bounded prefix of the stored MIME and parses
 // its delivery headers. Undecodable payloads report malformed with no
 // evidence; SQL errors return.
 func (s *Store) readDeliveryHeadersTx(
 	ctx context.Context, tx *loggedTx, id int64,
 ) (emailattribution.Headers, bool, error) {
-	var prefix []byte
-	var compression sql.NullString
-	err := tx.QueryRowContext(ctx, `
-		SELECT `+s.dialect.BlobPrefixSQL("raw_data")+`, compression
-		FROM message_raw WHERE message_id = ? AND raw_format = 'mime'`,
-		accountHeaderRawPrefix, id,
-	).Scan(&prefix, &compression)
+	prefix, compression, err := s.messageRawHeaderPrefix(ctx, tx.Tx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return emailattribution.Headers{}, false, nil
 	}
@@ -700,6 +714,15 @@ func (s *Store) readDeliveryHeadersTx(
 	}
 	headers, malformed := decodeDeliveryHeaders(prefix, compression)
 	return headers, malformed, nil
+}
+
+func (s *Store) messageRawHeaderPrefix(ctx context.Context, reader SQLReader, id int64) ([]byte, sql.NullString, error) {
+	var prefix []byte
+	var compression sql.NullString
+	err := reader.QueryRowContext(ctx, s.Rebind(`
+		SELECT `+s.dialect.BlobPrefixSQL("raw_data")+`, compression
+		FROM message_raw WHERE message_id = ? AND raw_format = 'mime'`), accountHeaderRawPrefix, id).Scan(&prefix, &compression)
+	return prefix, compression, err
 }
 
 // decodeDeliveryHeaders reads delivery evidence from a stored blob prefix.

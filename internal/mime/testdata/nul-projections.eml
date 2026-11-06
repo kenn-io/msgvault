@@ -1,0 +1,28 @@
+From: =?UTF-8?Q?Sender=00Name?= <sender@example.org>
+To: recipient@example.org
+Subject: =?UTF-8?Q?Report=00tail?=
+Message-ID: <nul@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: multipart/alternative; boundary=inner
+
+--inner
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+YmVmb3JldG9rZW4AYWZ0ZXJ0b2tlbg==
+--inner
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PHA+aHRtbGJlZm9yZQBodG1sYWZ0ZXI8L3A+
+--inner--
+--outer
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename*=UTF-8''file%00name.bin
+Content-Transfer-Encoding: base64
+
+AP9wYXlsb2Fk
+--outer--

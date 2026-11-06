@@ -42,18 +42,7 @@ func metadataSearchDB(tb testing.TB) *sql.DB {
 func metadataPlan(t *testing.T, e *SQLiteEngine, q *search.Query) string {
 	t.Helper()
 	conditions, args, join := e.buildFilteredMetadataSearchQueryParts(t.Context(), q, MessageFilter{})
-	rows, err := e.db.Query("EXPLAIN QUERY PLAN "+searchResultsSQL(join, strings.Join(conditions, " AND ")), append(args, 50, 0)...)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(t, rows.Err())
-	return plan.String()
+	return dbtest.ExplainQueryPlan(t, e.db, searchResultsSQL(join, strings.Join(conditions, " AND ")), append(args, 50, 0)...)
 }
 
 func TestMetadataSearchIndexedPlan(t *testing.T) {
@@ -62,12 +51,11 @@ func TestMetadataSearchIndexedPlan(t *testing.T) {
 	e := NewSQLiteEngine(metadataSearchDB(t))
 	for _, q := range []*search.Query{{TextTerms: []string{"eedle"}}, {TextTerms: []string{"ÉCOLE"}, AccountIDs: []int64{1}}} {
 		plan := metadataPlan(t, e, q)
+		assert.NotRegexp(`(?m)^SCAN m(?: |$)`, plan)
 		assert.Contains(plan, "messages_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "participants_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "recipients_metadata_fts VIRTUAL TABLE INDEX")
-		if len(q.AccountIDs) == 0 {
-			assert.Contains(plan, "SEARCH m USING INTEGER PRIMARY KEY")
-		} else {
+		if len(q.AccountIDs) > 0 {
 			assert.Contains(plan, "source_id=? AND rowid=?")
 		}
 	}

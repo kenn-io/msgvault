@@ -9,9 +9,11 @@ import (
 
 // NormalizeMessageID returns the canonical form used for RFC822 Message-ID
 // comparison and storage. It unwraps one structurally valid angle-bracket pair,
-// rejects malformed bracket structure, and makes invalid bytes safe for SQL
-// TEXT. It intentionally validates only bracket structure: historical archives
-// contain useful bare IDs that do not satisfy the full RFC grammar.
+// rejects malformed bracket structure, and replaces invalid UTF-8 bytes.
+// It intentionally validates only bracket structure: historical archives
+// contain useful bare IDs that do not satisfy the full RFC grammar. Legacy
+// SQLite comparison keys can include NUL; new writes use OmitNULIdentities
+// instead of changing their historical extraction and comparison forms.
 func NormalizeMessageID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {

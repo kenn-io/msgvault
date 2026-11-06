@@ -377,6 +377,7 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 	otherBefore := activityQueueRevision(t, f.Store, otherMessageID)
 	require.NoError(f.Store.EnsureConversationParticipant(
 		f.ConvID, participantID, "member"))
+	expandActivityConversations(t, f.Store)
 	firstAfterInsert := activityQueueRevision(t, f.Store, firstMessageID)
 	secondAfterInsert := activityQueueRevision(t, f.Store, secondMessageID)
 	assert.Greater(firstAfterInsert, firstBefore)
@@ -387,6 +388,7 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 		WHERE conversation_id = ? AND participant_id = ?
 	`, otherConversationID, f.ConvID, participantID)
 	require.NoError(err)
+	expandActivityConversations(t, f.Store)
 	assert.Greater(activityQueueRevision(t, f.Store, firstMessageID), firstAfterInsert)
 	assert.Greater(activityQueueRevision(t, f.Store, secondMessageID), secondAfterInsert)
 	assert.Greater(activityQueueRevision(t, f.Store, otherMessageID), otherBefore)
@@ -397,6 +399,7 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 		WHERE conversation_id = ? AND participant_id = ?
 	`, otherConversationID, participantID)
 	require.NoError(err)
+	expandActivityConversations(t, f.Store)
 	assert.Greater(activityQueueRevision(t, f.Store, otherMessageID), otherAfterMove)
 }
 
@@ -501,7 +504,11 @@ func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 		participantID := f.EnsureParticipant(
 			"processed-member@example.com", "Processed Member", "example.com")
 		assertActivityQueueReopensAfterProcessed(t, f.Store, messageID, func() error {
-			return f.Store.EnsureConversationParticipant(f.ConvID, participantID, "member")
+			if err := f.Store.EnsureConversationParticipant(f.ConvID, participantID, "member"); err != nil {
+				return err
+			}
+			expandActivityConversations(t, f.Store)
+			return nil
 		})
 	})
 }
