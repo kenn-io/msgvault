@@ -17,6 +17,7 @@ const Masked = "[verification content masked]"
 const MaxFieldBytes = 1024 * 1024
 
 const localizedCodeCues = `bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드`
+
 // Alternatives share leading literals; regexp scans every first literal at each byte.
 const englishCodeCues = `\b(?:(c(?:ode|onfirmation pin)|p(?:asscode|in is)|o(?:tp|ne[- ]time (?:password|pin))|2fa|temporary password|verification (?:password|number|pin)|(?:security|login|sign[ -]in|authentication) (?:password|pin)|your pin)\b|pin:)`
 const englishQualifiedCodeCues = `\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`
