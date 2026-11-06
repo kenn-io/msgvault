@@ -31,25 +31,28 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 		return nil, true
 	}
 	loader, ok := s.store.(MessageBodyLoader)
-	messages := make([]store.APIMessage, len(ids))
-	for i, id := range ids {
-		messages[i].ID = id
-	}
-	if !ok || loader.PopulateMessageBodiesContext(r.Context(), messages) != nil {
-		writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
-		return nil, false
-	}
-	results := make([]bool, len(messages))
-	var wg sync.WaitGroup
-	for i, msg := range messages {
-		wg.Go(func() {
-			results[i] = verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename }))
-		})
-	}
-	wg.Wait()
 	withheld := make(map[int64]bool, len(ids))
-	for i, msg := range messages {
-		withheld[msg.ID] = results[i]
+	// Only one page of bodies is held at a time; verdicts outlive their batch.
+	for start := 0; start < len(ids); start += maxPageSize {
+		messages := make([]store.APIMessage, min(maxPageSize, len(ids)-start))
+		for i := range messages {
+			messages[i].ID = ids[start+i]
+		}
+		if !ok || loader.PopulateMessageBodiesContext(r.Context(), messages) != nil {
+			writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
+			return nil, false
+		}
+		results := make([]bool, len(messages))
+		var wg sync.WaitGroup
+		for i, msg := range messages {
+			wg.Go(func() {
+				results[i] = verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename }))
+			})
+		}
+		wg.Wait()
+		for i, msg := range messages {
+			withheld[msg.ID] = results[i]
+		}
 	}
 	return withheld, true
 }
