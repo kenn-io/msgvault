@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -1713,9 +1714,7 @@ func TestExploreSenderLabelsUseEnvelopeAndDirectSender(t *testing.T) {
 			assert.Equal(legacy, fast)
 			expected := make(map[int64]string)
 			if deletion == DeletionAny {
-				for id, label := range labels {
-					expected[id] = label
-				}
+				maps.Copy(expected, labels)
 				expected[8] = "" // The chat is one conversation, with no single sender.
 			} else {
 				expected[6] = "Alice"
