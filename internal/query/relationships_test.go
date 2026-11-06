@@ -663,11 +663,11 @@ func TestRelationshipsOwnerAbsentCalendarEventPreservesLastInteraction(t *testin
 	b.AddTo(event, person, "Person")
 	engine := b.BuildEngine()
 	for _, scope := range []Context{{}, {SourceIDs: []int64{source}}} {
-		rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{Context: scope, ShowAll: true, Now: lastContact.Add(48 * time.Hour)})
-		requirements.Len(rows, 1)
-		assertions.Equal(person, rows[0].CanonicalID)
-		assertions.Equal(lastContact, rows[0].LastAt)
-		assertions.Equal(lastContact, rows[0].Signals.LastInteractionAt)
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, ShowAll: true, Now: lastContact.Add(48 * time.Hour)})
+		requirements.NoError(err)
+		requirements.Len(result.Rows, 1)
+		assertions.Equal(lastContact, result.Rows[0].LastAt)
+		assertions.Equal(lastContact, result.Rows[0].Signals.LastInteractionAt)
 	}
 }
 

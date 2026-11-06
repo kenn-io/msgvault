@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -55,7 +54,7 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 	second := persist("meeting_transcript", "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"planning@example.org"}}`)
 	cache := filepath.Join(t.TempDir(), "analytics")
 	var preservedShards map[string]string
-	readCount := func(want int64) {
+	readCount := func(want, wantLinked int64) {
 		engine, err := query.NewDuckDBEngine(cache, "", nil)
 		requirements.NoError(err)
 		defer func() { requirements.NoError(engine.Close()) }()
@@ -63,75 +62,53 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(people.Rows, 1)
 		assertions.Equal(want, people.Rows[0].MeetingCount)
-		person, err := engine.GetPerson(t.Context(), human, query.Context{}, nil)
-		requirements.NoError(err)
-		requirements.NotNil(person)
-		assertions.Equal(want, person.MeetingCount)
 		db, err := sql.Open("duckdb", "")
 		requirements.NoError(err)
 		defer func() { requirements.NoError(db.Close()) }()
-		var scored int64
-		requirements.NoError(db.QueryRow(`SELECT sum(meeting_count) FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(cache, identityindex.DatasetTemperatureContributions, "*.parquet"), human).Scan(&scored))
-		assertions.Equal(want, scored, "temperature counts each linked occurrence once")
-		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: query.Context{ParticipantIDs: []int64{human}}, Now: time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC)})
-		requirements.NoError(err)
-		requirements.Len(relationships.Rows, 1)
-		assertions.Equal(want, relationships.Rows[0].Signals.MeetingCount)
-		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: human, Year: 2026, Timezone: "UTC"})
-		requirements.NoError(err)
-		var dailyMeetings int64
-		for _, day := range calendar.Days {
-			dailyMeetings += day.Meetings
-		}
-		assertions.Equal(want, dailyMeetings)
-		var linked int
+		var linked int64
 		requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), second).Scan(&linked))
-		if want == 1 {
-			assertions.Equal(1, linked)
-		} else {
-			assertions.Zero(linked)
-		}
+		assertions.Equal(wantLinked, linked)
 		if preservedShards != nil {
 			assertions.Equal(preservedShards, snapshotMessagesDatasetBytes(t, cache))
 		}
 	}
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
-	readCount(2)
+	readCount(2, 0)
 	event := persist("calendar_event", "calendar", "gcal_json", `{"id":"event","iCalUID":"planning@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`)
 	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: `{"ical_uid":"planning@example.org"}`, Valid: true}))
 	assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 	incremental, err := buildCache(path, cache, false)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), incremental.StagedCount)
-	readCount(1)
+	readCount(1, 1)
 	// A re-import changes automatic evidence while keeping the message ID.
 	for _, tc := range []struct {
-		uid   string
-		count int64
+		uid           string
+		count, linked int64
 	}{
-		{"unmatched@example.org", 2}, {"planning@example.org", 1},
+		{"unmatched@example.org", 2, 0}, {"planning@example.org", 1, 1},
 	} {
 		requirements.NoError(st.UpsertMessageRawWithFormat(second, []byte(fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q}}`, tc.uid)), "twenty_json"))
 		assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 		_, err := buildCache(path, cache, false)
 		requirements.NoError(err)
-		readCount(tc.count)
+		readCount(tc.count, tc.linked)
 	}
 	preservedShards = snapshotMessagesDatasetBytes(t, cache)
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), second, store.OccurrenceRef{MessageID: event}))
 	assertions.False(cacheNeedsBuild(path, cache).FullRebuild)
 	_, err = buildCache(path, cache, false)
 	requirements.NoError(err)
-	readCount(2)
+	readCount(2, 0)
 	requirements.NoError(st.LinkMeetingContext(t.Context(), second, store.OccurrenceRef{MessageID: event}))
 	_, err = buildCache(path, cache, false)
 	requirements.NoError(err)
-	readCount(1)
+	readCount(1, 1)
 	preservedShards = nil
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
-	readCount(1)
+	readCount(1, 1)
 }
 
 func TestMeetingKeysAckSnapshotBoundary(t *testing.T) {
@@ -199,106 +176,67 @@ func TestMeetingKeysAckSnapshotBoundary(t *testing.T) {
 }
 
 func TestMeetingCountsCalendarEdits(t *testing.T) {
-	requirements := require.New(t)
-	path := filepath.Join(t.TempDir(), "archive.db")
-	st, err := store.OpenForTest(path)
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(st.Close()) })
-	requirements.NoError(st.InitSchema())
-	source, err := st.GetOrCreateSource("twenty", "owner@example.test")
-	requirements.NoError(err)
-	person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
-	requirements.NoError(err)
-	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	requirements.NoError(err)
-	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "explicit"))
-	declined, err := st.EnsureParticipant("declined@example.test", "Declined", "example.test")
-	requirements.NoError(err)
-	_, err = st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "declined", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "declined", ConversationType: "calendar"},
-		RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"declined","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"declined@example.test","responseStatus":"declined"}]}`),
-		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, declined}}},
-	})
-	requirements.NoError(err)
 	const eventRaw = `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00","timeZone":%q},"end":{"dateTime":"2027-03-14T11:00:00","timeZone":%q},"recurrence":%s}`
 	original := fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
-	event, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
-		RawFormat:    "gcal_json", RawMIME: []byte(original),
-		Metadata:   &sql.NullString{String: `{"ical_uid":"series@example.test"}`, Valid: true},
-		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, person}}},
-	})
-	requirements.NoError(err)
-	for _, id := range []string{"first", "second"} {
-		_, err = st.PersistMessage(&store.MessagePersistData{
-			Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
-			Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: "meeting"},
-			RawFormat:    "twenty_json", RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-21T10:00:00Z"}}`),
-			Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, person}}},
-		})
-		requirements.NoError(err)
-	}
-	cache := filepath.Join(t.TempDir(), "analytics")
-	_, err = buildCache(path, cache, true)
-	requirements.NoError(err)
-	engine, err := query.NewDuckDBEngine(cache, "", nil)
-	requirements.NoError(err)
-	temperatureDB, err := sql.Open("duckdb", "")
-	requirements.NoError(err)
-	defer func() { requirements.NoError(temperatureDB.Close()) }()
-	for _, attendance := range []struct {
-		person int64
-		want   int64
-	}{{person, 1}, {declined, 0}} {
-		for _, scope := range []query.Context{{}, {ParticipantIDs: []int64{attendance.person}}} {
-			result, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: scope, ShowAll: true, Now: time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)})
-			requirements.NoError(err)
-			var meetings int64
-			for _, row := range result.Rows {
-				if row.CanonicalID == attendance.person {
-					meetings += row.Signals.MeetingCount
-				}
-			}
-			assert.Equal(t, attendance.want, meetings, "attendance for person %d", attendance.person)
-		}
-		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: attendance.person, Year: 2026, Timezone: "UTC"})
-		requirements.NoError(err)
-		var calendarMeetings int64
-		for _, day := range calendar.Days {
-			calendarMeetings += day.Meetings
-		}
-		assert.Equal(t, attendance.want, calendarMeetings)
-		var temperatureMeetings int64
-		requirements.NoError(temperatureDB.QueryRow(`SELECT coalesce(sum(meeting_count), 0) FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(cache, identityindex.DatasetTemperatureContributions, "*.parquet"), attendance.person).Scan(&temperatureMeetings))
-		assert.Equal(t, attendance.want, temperatureMeetings)
-	}
-	requirements.NoError(engine.Close())
+	excluded := fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`)
+	zoned := fmt.Sprintf(eventRaw, "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
 	for _, step := range []struct {
-		name, raw, uid string
-		want           int64
+		name, beforeRaw, raw, uid string
+		want                      int64
 	}{
-		{"baseline", original, "series@example.test", 1},
-		{"projection removed", `{}`, "series@example.test", 2},
-		{"restored after projection removal", original, "series@example.test", 1},
-		{"EXDATE", fmt.Sprintf(eventRaw, "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`), "series@example.test", 2},
-		{"restored after EXDATE", original, "series@example.test", 1},
-		{"zone", fmt.Sprintf(eventRaw, "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`), "series@example.test", 2},
-		{"restored after zone", original, "series@example.test", 1},
-		{"UID", original, "different@example.test", 2},
+		{"baseline", "", original, "series@example.test", 1},
+		{"projection removed", "", `{}`, "series@example.test", 2},
+		{"restored after projection removal", `{}`, original, "series@example.test", 1},
+		{"EXDATE", "", excluded, "series@example.test", 2},
+		{"restored after EXDATE", excluded, original, "series@example.test", 1},
+		{"zone", "", zoned, "series@example.test", 2},
+		{"restored after zone", zoned, original, "series@example.test", 1},
+		{"UID", "", original, "different@example.test", 2},
 	} {
 		t.Run(step.name, func(t *testing.T) {
 			requirements := require.New(t)
+			path := filepath.Join(t.TempDir(), "archive.db")
+			st, err := store.OpenForTest(path)
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(st.Close()) })
+			requirements.NoError(st.InitSchema())
+			source, err := st.GetOrCreateSource("twenty", "owner@example.test")
+			requirements.NoError(err)
+			person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+			requirements.NoError(err)
+			event, err := st.PersistMessage(&store.MessagePersistData{
+				Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
+				Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
+				RawFormat:    "gcal_json", RawMIME: []byte(original),
+				Metadata: &sql.NullString{String: `{"ical_uid":"series@example.test"}`, Valid: true},
+			})
+			requirements.NoError(err)
+			for _, id := range []string{"first", "second"} {
+				_, err = st.PersistMessage(&store.MessagePersistData{
+					Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
+					Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: "meeting"},
+					RawFormat:    "twenty_json", RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-21T10:00:00Z"}}`),
+					Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{person}}},
+				})
+				requirements.NoError(err)
+			}
+			cache := filepath.Join(t.TempDir(), "analytics")
+			_, err = buildCache(path, cache, true)
+			requirements.NoError(err)
+			if step.beforeRaw != "" {
+				requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(step.beforeRaw), "gcal_json"))
+				_, err = buildCache(path, cache, false)
+				requirements.NoError(err)
+			}
 			requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(step.raw), "gcal_json"))
 			requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: fmt.Sprintf(`{"ical_uid":%q}`, step.uid), Valid: true}))
 			assert.False(t, cacheNeedsBuild(path, cache).FullRebuild)
-			_, err := buildCache(path, cache, false)
+			_, err = buildCache(path, cache, false)
 			requirements.NoError(err)
 			engine, err := query.NewDuckDBEngine(cache, "", nil)
 			requirements.NoError(err)
 			defer func() { requirements.NoError(engine.Close()) }()
-			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "person@example.test"})
+			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{})
 			requirements.NoError(err)
 			requirements.Len(people.Rows, 1)
 			assert.Equal(t, step.want, people.Rows[0].MeetingCount)

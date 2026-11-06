@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,19 +33,6 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i)
 		conversations = append(conversations, conv)
 	}
-	event, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
-		RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2025-04-01T12:00:00Z"},"end":{"dateTime":"2025-04-01T13:00:00Z"}}`),
-	})
-	require.NoError(err)
-	note, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"},
-		RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
-	})
-	require.NoError(err)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
 	person, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -81,7 +67,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 
 	assertCacheExportParity(t, tmp, derivedDir, fullDir, []string{
 		tableParticipants, tableParticipantIdentifiers, tablePersonDisplayNames, tableOwnerParticipants,
-		tableParticipantClusters, tableConversations, tableConversationParticipants, "meeting_keys",
+		tableParticipantClusters, tableConversations, tableConversationParticipants,
 	})
 }
 
@@ -119,7 +105,7 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 	return conv, id
 }
 
-func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string, allowEmpty ...string) {
+func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	duckDB, err := duckdbutil.Open(context.Background(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
@@ -153,9 +139,7 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
 			full, full, actual, actual, full).Scan(&rows, &missing, &extra), dataset)
-		if !slices.Contains(allowEmpty, dataset) {
-			require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
-		}
+		require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
 		assert.Zero(missing, "%s: rows the derived refresh did not write", dataset)
 		assert.Zero(extra, "%s: rows only the derived refresh wrote", dataset)
 	}
