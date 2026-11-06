@@ -111,6 +111,9 @@ func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
 			var callbackErr error
 			_, err := runCommand(firstCtx, client, func() ([]*imap.ListData, error) {
 				result, err := conn.List("", "*", nil).Collect()
+				if err != nil {
+					err = fmt.Errorf("collect IMAP LIST: %w", err)
+				}
 				callbackErr = err
 				cancelFirst()
 				return result, err
@@ -150,7 +153,7 @@ func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
 		<-finished
 		require.FailNow("the follow-up waited for the local command limiter before checking the captured provider floor")
 	}
-	assert.Nil(ctx.Err(), "the follow-up must return while its context is still live")
+	require.NoError(ctx.Err(), "the follow-up must return while its parent context is still live")
 	var followupFloor interface{ RetryNotBefore() time.Time }
 	require.ErrorAs(followupErr, &followupFloor)
 	assert.True(followupFloor.RetryNotBefore().After(time.Now()))
