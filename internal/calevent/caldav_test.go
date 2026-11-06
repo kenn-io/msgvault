@@ -20,6 +20,25 @@ import (
 
 const calDAVFixture = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\nSUMMARY:Planning\\, session\r\nDTSTART;TZID=America/New_York:20270307T090000\r\nDTEND;TZID=America/New_York:20270307T100000\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE;TZID=America/New_York:20270314T090000\r\nORGANIZER;CN=Example Organizer:mailto:owner@example.org\r\nATTENDEE;CN=Example Room;CUTYPE=ROOM:mailto:room@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 
+func TestCalDAVMetadataEventTimeZone(t *testing.T) {
+	for _, tc := range []struct{ name, start, calendarZone, want string }{
+		{"event zone", "DTSTART;TZID=America/New_York:20270307T090000", "UTC", "America/New_York"},
+		{"UTC event", "DTSTART:20270307T090000Z", "America/New_York", "UTC"},
+		{"floating event", "DTSTART:20270307T090000", "America/New_York", "America/New_York"},
+		{"all-day event", "DTSTART;VALUE=DATE:20270307", "America/New_York", "America/New_York"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:zone@example.org\r\n" + tc.start + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			events, err := ParseCalDAVResource(t.Context(), []byte(raw), tc.calendarZone)
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			var meta CalDAVMetadata
+			meta.SetEventTimes(events[0].Event)
+			assert.Equal(t, tc.want, meta.TimeZone)
+		})
+	}
+}
+
 func TestCalDAVCompoundProjection(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -47,7 +47,10 @@ func (m *CalDAVMetadata) SetEventTimes(e Event) {
 	if !e.AllDay && e.End != nil {
 		m.End = e.End.Format(time.RFC3339)
 	}
-	m.AllDay, m.TimeZone = e.AllDay, e.CalendarTimeZone
+	m.AllDay, m.TimeZone = e.AllDay, e.EventTimeZone
+	if m.TimeZone == "" {
+		m.TimeZone = e.CalendarTimeZone
+	}
 }
 
 type CalDAVEvent struct {
@@ -155,7 +158,7 @@ func calDAVID(uid, key string) (string, error) {
 	return string(raw), err
 }
 func dateProp(p *ical.Prop) bool {
-	return p != nil && (p.ValueType() == ical.ValueDate || (p.ValueType() == ical.ValueDefault && len(p.Value) == 8))
+	return p != nil && p.ValueType() == ical.ValueDate
 }
 
 func calDAVCivilDate(p *ical.Prop) (string, error) {

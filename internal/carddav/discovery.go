@@ -466,8 +466,12 @@ func resolveDiscoveryHref(ctx context.Context, client *Client, base *url.URL, hr
 		return nil, ErrUnsafeHref
 	}
 	resolved, err := base.Parse(href)
-	if err != nil || resolved.User != nil || resolved.Fragment != "" || !netguard.SameOrigin(client.origin, resolved) {
+	if err != nil || resolved.User != nil || resolved.Fragment != "" {
 		return nil, ErrUnsafeHref
+	}
+	if !netguard.SameOrigin(client.origin, resolved) {
+		origin := (&url.URL{Scheme: resolved.Scheme, Host: resolved.Host}).String()
+		return nil, fmt.Errorf("discovery href origin %s differs from configured origin; set url to %s: %w", origin, origin, ErrUnsafeHref)
 	}
 	if _, err := client.validateTarget(ctx, resolved); err != nil {
 		return nil, fmt.Errorf("discovery href: %w", ErrUnsafeHref)
