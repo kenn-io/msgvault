@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,6 +30,53 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 }
 
 func TestImportedCallReadableAndSearchable(t *testing.T) {
+	t.Run("normalized timezone offsets", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := storetest.New(t).Store
+		o, sourceID := validCallObservation(t, st)
+		var ids []int64
+		for i, timestamp := range []string{"2026-10-01T00:30:00-04:00", "2026-10-01T01:30:00Z"} {
+			o.RecordID = fmt.Sprintf("offset-call-%d", i)
+			var err error
+			o.OccurredAt, err = time.Parse(time.RFC3339, timestamp)
+			require.NoError(err)
+			o.EndedAt = new(o.OccurredAt.Add(time.Minute))
+			o.Raw = []byte(fmt.Sprintf(`{"occurred_at":%q}`, timestamp))
+			record, err := json.Marshal(o)
+			require.NoError(err)
+			imported, err := (callhistory.ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
+			require.NoError(err)
+			id, err := st.PutCallObservationContext(t.Context(), sourceID, imported)
+			require.NoError(err)
+			ids = append(ids, id)
+			raw, err := st.GetMessageRawContext(t.Context(), id)
+			require.NoError(err)
+			assert.Equal(string(o.Raw), string(raw))
+		}
+		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("message_type:call_record"), 0, 10)
+		require.NoError(err)
+		require.EqualValues(2, total)
+		require.Len(matches, 2)
+		assert.Equal([]int64{ids[0], ids[1]}, []int64{matches[0].ID, matches[1].ID})
+		after := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC)
+		before := time.Date(2026, 10, 1, 5, 0, 0, 0, time.UTC)
+		query := search.Parse("message_type:call_record")
+		query.AfterDate, query.BeforeDate = &after, &before
+		matches, total, err = st.SearchMessagesQueryContext(t.Context(), query, 0, 10)
+		require.NoError(err)
+		assert.EqualValues(1, total)
+		if assert.Len(matches, 1) {
+			assert.Equal(ids[0], matches[0].ID)
+		}
+		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{After: &after, Before: &before})
+		require.NoError(err)
+		require.Len(calls, 1)
+		assert.Equal(ids[0], calls[0].MessageID)
+		assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.Format(time.RFC3339))
+		require.NotNil(calls[0].EndedAt)
+		assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.Format(time.RFC3339))
+	})
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
