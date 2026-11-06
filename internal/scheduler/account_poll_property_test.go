@@ -2,9 +2,11 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,5 +60,57 @@ func TestAccountPollingGenerationReplacementInvalidatesCallbacks(t *testing.T) {
 			old.Run()
 		}
 		assert.Zero(ht, calls, "dispatched callbacks cannot cross registration generations")
+	})
+}
+
+func TestAccountPollingBackoffStaysWithinAdaptiveBounds(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		seconds := hegel.Draw(ht, hegel.Integers(15, 120))
+		failures := hegel.Draw(ht, hegel.Integers(0, math.MaxInt))
+		delay := accountPollBackoff(time.Duration(seconds)*time.Second, failures)
+		minimum := time.Duration(min(seconds<<min(failures, 10), 900)) * time.Second
+		assert.GreaterOrEqual(ht, delay, minimum, "jitter never shortens the adaptive delay")
+		assert.LessOrEqual(ht, delay, 15*time.Minute)
+		if failures == 0 {
+			assert.Equal(ht, time.Duration(seconds)*time.Second, delay)
+		}
+	})
+}
+
+func TestAccountPollingMixedBurstFailureRetainsOrdinaryIntent(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		actions := hegel.Draw(ht, hegel.Lists(hegel.Booleans()))
+		// Limit materialized work while drawing the complete sequence domain.
+		actions = actions[:min(len(actions), 1000)]
+		var s *Scheduler
+		calls := 0
+		ordinary := false
+		s = pollingSchedulerFixture(ht.T, func(context.Context, string) error {
+			calls++
+			if calls != 1 {
+				return nil
+			}
+			s.mu.Lock()
+			r := s.accounts["sample@example.test"]
+			r.nextEligible = time.Time{} // a due timer during the executing pass
+			s.mu.Unlock()
+			for _, cron := range actions {
+				if cron {
+					ordinary = true
+					s.onAccountTick("sample@example.test")
+				} else {
+					s.onRegisteredAccountTick("sample@example.test", r, true)
+				}
+			}
+			return errors.New("synthetic acquisition failure")
+		})
+		defer func() { <-s.Stop().Done() }()
+		s.onAccountTick("sample@example.test")
+		s.wg.Wait()
+		want := 1
+		if ordinary {
+			want = 2
+		}
+		assert.Equal(ht, want, calls, "only accepted ordinary intent bypasses adaptive poll backoff")
 	})
 }

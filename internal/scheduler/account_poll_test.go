@@ -107,3 +107,90 @@ func TestAccountPollingOrdinaryIntentSurvivesPollAndFailure(t *testing.T) {
 		<-s.Stop().Done()
 	})
 }
+
+func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls, completions atomic.Int32
+		floor := time.Now().Add(time.Hour)
+		s := pollingSchedulerFixture(t, func(context.Context, string) error {
+			if calls.Add(1) == 1 {
+				return &AcquisitionError{Outcome: AcquisitionIncomplete, NotBefore: floor}
+			}
+			return nil
+		}).WithCompletion(func() { completions.Add(1) })
+		s.Start()
+		synctest.Wait()
+		status := s.Status()[0]
+		assert.True(t, status.LastCompleted.IsZero(), "partial acquisition is not catchup")
+		assert.True(t, status.LastRun.IsZero())
+		assert.False(t, status.NextEligiblePoll.Before(floor), "provider floor is independent of the 15m adaptive cap")
+		require.NoError(t, s.TriggerSync("sample@example.test", true))
+		synctest.Wait()
+		assert.Error(t, s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
+		s.onAccountTick("sample@example.test")
+		synctest.Wait()
+		assert.EqualValues(t, 1, calls.Load(), "manual and cron cannot bypass a known provider prohibition")
+		assert.Zero(t, completions.Load())
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		assert.EqualValues(t, 2, calls.Load())
+		assert.EqualValues(t, 1, completions.Load(), "accepted manual work completes after the floor")
+		assert.False(t, s.Status()[0].LastCompleted.IsZero())
+		<-s.Stop().Done()
+	})
+}
+
+func TestAccountPollingOrdinaryNonSuccessPreservesAdaptiveDeadline(t *testing.T) {
+	for _, outcome := range []error{ErrDeferUntilNextTrigger, &AcquisitionError{Outcome: AcquisitionDeferred}, &AcquisitionError{Outcome: AcquisitionCancelled}} {
+		t.Run(outcome.Error(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				s := pollingSchedulerFixture(t, func(context.Context, string) error {
+					if calls.Add(1) <= 2 {
+						return context.DeadlineExceeded
+					}
+					return outcome
+				})
+				s.Start()
+				synctest.Wait()
+				time.Sleep(90 * time.Second)
+				synctest.Wait()
+				require.EqualValues(t, 2, calls.Load())
+				deadline := s.Status()[0].NextEligiblePoll
+				time.Sleep(time.Second)
+				s.onAccountTick("sample@example.test")
+				synctest.Wait()
+				assert.False(t, s.Status()[0].NextEligiblePoll.Before(deadline), "ordinary bypass cannot reset poll backoff without complete acquisition")
+				time.Sleep(60 * time.Second)
+				synctest.Wait()
+				assert.EqualValues(t, 3, calls.Load(), "poll cannot run before the retained adaptive deadline")
+				<-s.Stop().Done()
+			})
+		})
+	}
+}
+
+func TestAccountPollingStartupPreservesDeferredManualIntent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls, completions atomic.Int32
+		floor := time.Now().Add(time.Hour)
+		s := pollingSchedulerFixture(t, func(context.Context, string) error {
+			if calls.Add(1) == 1 {
+				return &AcquisitionError{Outcome: AcquisitionDeferred, NotBefore: floor}
+			}
+			return nil
+		}).WithCompletion(func() { completions.Add(1) })
+		require.NoError(t, s.TriggerSync("sample@example.test", false))
+		synctest.Wait()
+		require.NoError(t, s.TriggerSync("sample@example.test", true))
+		synctest.Wait()
+		s.Start()
+		synctest.Wait()
+		assert.EqualValues(t, 1, calls.Load())
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		assert.EqualValues(t, 2, calls.Load())
+		assert.EqualValues(t, 1, completions.Load(), "startup cannot replace an accepted ordinary manual request with poll-only intent")
+		<-s.Stop().Done()
+	})
+}
