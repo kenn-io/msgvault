@@ -50,9 +50,18 @@ components:
       properties:
         email:
           type: string
+        last_attempted:
+          format: date-time
+          type: string
+        last_completed:
+          format: date-time
+          type: string
         last_error:
           type: string
         last_run:
+          format: date-time
+          type: string
+        next_eligible_poll:
           format: date-time
           type: string
         next_run:
@@ -60,6 +69,10 @@ components:
           type: string
         pending:
           type: boolean
+        poll_interval:
+          type: string
+        poll_state:
+          type: string
         queued:
           type: boolean
         queued_at:
