@@ -15,7 +15,7 @@ export async function selectWorkspace(page: Page, label: string): Promise<void> 
   if (await opener.isVisible()) await opener.click();
   if (['Deletions', 'Staged deletions'].includes(label)) {
     await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Help', exact: true }).click();
-    await page.getByRole('button', { name: 'Commands', exact: true }).click();
+    await page.getByRole('button', { name: /^Open command palette/ }).click();
     await page.getByRole('dialog', { name: 'Messages commands' }).getByRole('option', { name: label === 'Deletions' ? 'Staged deletions' : label, exact: true }).click();
     return;
   }

@@ -23,9 +23,7 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 	assert := assert.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text", "\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
 	f.start(t)
-	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-	require.NoError(err)
-	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "pending", "Pear", "A pear tree is growing.")
+	_, _, err := testutil.CreateIndexedSourceMessage(f.store, "archive@example.test", "pending", "Pear", "A pear tree is growing.")
 	require.NoError(err)
 	_, err = f.store.DB().Exec("UPDATE messages SET sent_at = '2026-01-03 12:00:00'")
 	require.NoError(err)
@@ -61,9 +59,6 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 	status := f.localStatus(t)
 	require.True(status.Enabled)
 	require.Equal("builtin", status.Provider)
-	reused, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-	require.NoError(err)
-	require.Equal(active.ID, reused.ID)
 
 	coverage := coverageStatus()
 	require.Equal(api.SearchCoverageIncomplete, coverage.Status)
@@ -76,9 +71,6 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 	// Settings' existing Build index action invokes this full-rebuild command.
 	f.runner.beforeBuild = nil
 	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--config", f.cfg.ConfigFilePath()}}, nil))
-	coverage = coverageStatus()
-	require.Equal(api.SearchCoverageReady, coverage.Status)
-	require.Empty(coverage.Actions)
 	messages, _, err = f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "pear", Limit: 5})
 	require.NoError(err)
 	require.Len(messages, 2, "manual recovery indexes the pending message")

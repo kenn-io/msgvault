@@ -1,5 +1,5 @@
 import { stubOperationStatus } from './kit-ui';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
@@ -290,3 +290,125 @@ test.describe('touch reading', () => {
     await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
   });
 });
+
+test('selected rows keep their fill and accent on stripes and in the reader', async ({ page }) => {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [1, 2].map(id => ({ ...row, key: `message:${id}`, title: `Example ${id}` })), total_count: 2, cache_revision: 'spacing', search_provenance: {}
+  } }));
+  await selectWorkspace(page, 'Messages');
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.focus();
+  await page.keyboard.press('Space');
+  await expect(grid.locator('.data-row--selected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  await page.keyboard.press('Space');
+  await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+  const selected = grid.locator('.data-row--selected');
+  await expect(selected).toHaveCount(2);
+  for (const selectedRow of await selected.all()) {
+    await expect(selectedRow).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  }
+  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundColor));
+  expect((await colors())[0]).toBe((await colors())[1]);
+  await grid.getByText('Example 1', { exact: true }).click();
+  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
+  expect((await colors())[0]).toBe((await colors())[1]);
+  await grid.focus();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Space');
+  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+});
+
+
+async function mockMeetingSelection(page: Page, {
+  meetingCount, selectedCount, totalCount = meetingCount, extraRows = [],
+}: { meetingCount: number; selectedCount: number; totalCount?: number; extraRows?: typeof row[] }) {
+  const meetings = Array.from({ length: meetingCount }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [...meetings, ...extraRows], total_count: totalCount, cache_revision: 'spacing', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
+    count: selectedCount, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
+    unavailable_actions: [
+      { action: 'export', reason: 'browser_export_requires_single_message' },
+      { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+      { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
+    ], action_targets: []
+  } }));
+}
+
+test.describe('all-matching selection', () => {
+  // Touch controls leave less room for the selection summary.
+  test.use({ hasTouch: true });
+
+  test('filtered all-matching selection shows size and exclusions at 1024px', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await mockMeetingSelection(page, { meetingCount: 50, selectedCount: 49 });
+    const explore = { filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], presentation: 'table' };
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(explore))}`);
+    const grid = page.getByRole('grid', { name: 'Messages results' });
+    await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+    await page.getByRole('button', { name: 'Select all 50 matching', exact: true }).click();
+    await grid.getByRole('checkbox', { name: 'Unselect Meeting 1', exact: true }).uncheck();
+    const bar = page.locator('.selection-bar');
+    const count = bar.locator('.selection-count');
+    await expect(count).toHaveText(/^All 50 .*except 1 · .+$/);
+    await page.evaluate(() => document.fonts.ready);
+    const geometry = await count.evaluate(element => ({ content: element.scrollWidth, available: element.clientWidth }));
+    expect(geometry.content).toBeLessThanOrEqual(geometry.available);
+  });
+});
+
+for (const width of [1024, 1440]) {
+  test(`selection bar stays on one row and anchors meeting context at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockMeetingSelection(page, {
+      meetingCount: 500, selectedCount: 500, totalCount: 10035,
+      extraRows: [{ ...row, key: 'message:501', title: 'Example email' }],
+    });
+    await selectWorkspace(page, 'Messages');
+    const grid = page.getByRole('grid', { name: 'Messages results' });
+    await grid.focus();
+    await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+    await grid.focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Space');
+    const bar = page.locator('.selection-bar');
+    await expect(bar.getByRole('button', { name: 'Select all 10,035 matching', exact: true })).toBeVisible();
+    const layout = await bar.evaluate(element => ({
+      tops: Array.from(element.querySelectorAll('button')).filter(button => button.getBoundingClientRect().height > 0).map(button => button.getBoundingClientRect().top),
+      clipped: element.querySelector('.selection-count')!.scrollWidth > element.querySelector('.selection-count')!.clientWidth
+    }));
+    expect(new Set(layout.tops).size).toBe(1);
+    expect(layout.clipped).toBe(false);
+    const countText = await bar.locator('.selection-count').evaluate(element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getBoundingClientRect().right;
+    });
+    const selectAll = (await bar.getByRole('button', { name: 'Select all 10,035 matching', exact: true }).boundingBox())!;
+    expect(selectAll.x - countText).toBeLessThanOrEqual(12);
+    const trigger = bar.getByRole('button', { name: 'Meeting context…' });
+    for (const remounted of [false, true]) {
+      if (remounted) {
+        await grid.focus();
+        await page.keyboard.press('Space');
+        await expect(trigger).toHaveCount(0);
+        await page.keyboard.press('Space');
+      }
+      await trigger.click();
+      const panel = page.getByRole('dialog', { name: 'Meeting context', exact: true });
+      await expect(panel).toBeVisible();
+      const buttonBox = (await trigger.boundingBox())!;
+      const panelBox = (await panel.boundingBox())!;
+      expect(panelBox.x).toBeGreaterThanOrEqual(0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(0);
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(width);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(900);
+      expect(Math.abs(panelBox.x - buttonBox.x)).toBeLessThanOrEqual(1);
+      const gap = panelBox.y < buttonBox.y ? buttonBox.y - panelBox.y - panelBox.height : panelBox.y - buttonBox.y - buttonBox.height;
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(16);
+      await page.keyboard.press('Escape');
+    }
+  });
+}

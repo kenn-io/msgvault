@@ -39,8 +39,11 @@ func (c *localSetupTestController) Enable(ctx context.Context, builtin bool, rep
 	}
 	select {
 	case <-c.release:
-		if c.failurePhase == "" {
+		if c.failurePhase != "downloading" {
 			report(LocalEmbeddingsStatus{Phase: "indexing"})
+		}
+		if c.failurePhase == "idle" {
+			report(LocalEmbeddingsStatus{Phase: "idle"})
 		}
 		return errors.New("build interrupted")
 	case <-ctx.Done():
@@ -65,7 +68,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					controller.failurePhase = "downloading"
 				}
 				if behavior == "publication failure" {
-					// An installed model can fail publication before emitting progress.
+					// Scheduling can fail after the index build and idle publication.
 					controller.failurePhase = "idle"
 				}
 				srv.SetLocalEmbeddings(controller)

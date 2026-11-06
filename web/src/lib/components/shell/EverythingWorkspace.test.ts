@@ -613,10 +613,8 @@ describe('EverythingWorkspace', () => {
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
 
-    expect(await screen.findByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
+    const exportButton = await screen.findByRole('button', { name: 'Export selection' });
+    expect((exportButton as HTMLButtonElement).disabled).toBe(true);
     const body = await preflightRequests[0]!.clone().json();
     expect(body.selection).toMatchObject({
       mode: 'explicit', row_keys: ['message:1'], cache_revision: 'cache-1'
@@ -821,7 +819,7 @@ describe('EverythingWorkspace', () => {
       grid.focus();
       await fireEvent.keyDown(grid, { key: ' ' });
       expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
-      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching' }));
       await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
       expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
     } finally {
@@ -878,7 +876,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 8');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching' }));
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
@@ -2520,11 +2518,11 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    expect(screen.getByRole('button', { name: 'Select all 2 matching items' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Select all 2 matching' })).toBeDefined();
 
     state.commitSearch('new predicate', 'full_text');
     await waitFor(() => expect(calls).toBe(2));
-    expect(screen.queryByRole('button', { name: 'Select all 2 matching items' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select all 2 matching' })).toBeNull();
 
     resolveNext?.(Response.json(exploreResponse({
       rows: [entry(3)],

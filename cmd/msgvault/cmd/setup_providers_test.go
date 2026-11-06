@@ -2070,6 +2070,9 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			deps.probeOllama = func(_ context.Context, address string) ollamaProbeResult {
 				probes++
 				assert.Equal(t, strings.TrimRight(server, "/"), address)
+				if server == "http://localhost:11435" {
+					return ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:v2"}}
+				}
 				return ollamaProbeResult{}
 			}
 			deps.localEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {

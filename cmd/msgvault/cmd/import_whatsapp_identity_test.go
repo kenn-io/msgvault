@@ -29,7 +29,7 @@ func TestImportWhatsAppConfirmsDefaultIdentityWithRecoverableErrors(t *testing.T
 	require.NoError(err)
 	assert.Contains(output, "Confirmed identity "+whatsappIdentityTestPhone)
 	assert.Contains(output, "phone-e164")
-	assert.Contains(output, "Messages:       3 processed, 1 added, 2 skipped")
+	assert.Contains(output, "Messages:       3 processed, 1 added, 0 updated, 2 skipped")
 	assert.Contains(output, "Errors:         1")
 
 	identities := whatsappIdentityTestIdentities(t, home)

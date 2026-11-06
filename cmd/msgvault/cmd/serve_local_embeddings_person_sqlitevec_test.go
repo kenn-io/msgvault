@@ -16,56 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-func TestLocalEmbeddingsPreservesAuthorizedPeopleAcrossSwitch(t *testing.T) {
-	for _, model := range []string{"nomic-embed-text", "different-model"} {
-		t.Run(model, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newLocalActivationFixture(t, model, "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
-			participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Cut Person")
-			must.NoError(err)
-			_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
-			must.NoError(err)
-			desired := f.cfg.Vector
-			desired.Embeddings.LocalOnly = true
-			desired.Embeddings.Endpoint = ""
-			desired.Embeddings.APIKeyEnv = ""
-			desired.Embeddings.Model = "nomic-embed-text"
-			for _, cfg := range []vector.Config{f.cfg.Vector, desired} {
-				profile, err := cfg.SemanticPersonEmbeddingProfile()
-				must.NoError(err)
-				_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
-				must.NoError(err)
-				_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
-				must.NoError(err)
-			}
-			f.start(t)
-			before, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "Curated Cut Person", 5)
-			must.NoError(err)
-			must.Len(before, 1)
-			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			must.NoError(err)
-			must.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			must.NoError(err)
-			after, searchErr := f.handle.vf.PersonSearchEngine.Search(f.ctx, "Curated Cut Person", 5)
-			checks.NoError(searchErr, "existing authorized people search must survive activation without automatic scheduling")
-			checks.Len(after, 1)
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			must.NoError(err)
-			saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
-			must.NoError(err)
-			checks.Empty(saved.Vector.Embed.Schedule.Cron)
-			checks.False(saved.Vector.Embed.Schedule.RunAfterSync)
-			if model == "nomic-embed-text" {
-				checks.Equal(old.ID, active.ID)
-			} else {
-				checks.NotEqual(old.ID, active.ID)
-			}
-		})
-	}
-}
-
 func TestLocalEmbeddingsBuildRechecksLivePersonAuthorization(t *testing.T) {
 	for _, change := range []string{"allow", "disable", "remove config", "remove custom config", "revoke consent"} {
 		t.Run(change, func(t *testing.T) {

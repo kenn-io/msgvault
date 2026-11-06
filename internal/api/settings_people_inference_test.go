@@ -187,7 +187,10 @@ func TestPeopleInferencePresetRejectsDaemonEnvironmentReference(t *testing.T) {
 	assert.Equal(read.Header().Get("ETag"), after.Header().Get("ETag"))
 }
 
-type failingPeopleInferenceStore struct{ *store.Store }
+type failingPeopleInferenceStore struct {
+	MessageStore
+	peoplesweep.ProviderAuthority
+}
 
 func (f failingPeopleInferenceStore) HasSuccessfulPersonInferenceCheck(context.Context, string) (bool, error) {
 	return false, errors.New("database unavailable")
@@ -197,7 +200,8 @@ func TestPeopleInferenceSelectionReportsStoreFailureAsServerError(t *testing.T) 
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, path := newSettingsTestServer(t, "")
-	srv.store = failingPeopleInferenceStore{Store: testutil.NewTestStore(t)}
+	st := testutil.NewTestStore(t)
+	srv.store = failingPeopleInferenceStore{MessageStore: st, ProviderAuthority: st}
 	before, err := config.ReadConfigFile(path)
 	require.NoError(err)
 	service := personenrollment.NewService(path, nil)

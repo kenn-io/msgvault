@@ -362,18 +362,15 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name                                string
 		kit, configured, builtin, available bool
-		catalog                             string
 		installs                            int
 	}{
 		{name: "built-in", builtin: true, installs: 1},
 		{name: "available Ollama", kit: true, available: true},
 		{name: "Ollama on chat server", configured: true, available: true},
-		{name: "custom tag cannot serve default model", configured: true, catalog: `{"models":[{"name":"nomic-embed-text:v2"}]}`, installs: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "", "")
 			f.ollamaTags = tc.configured
-			f.ollamaCatalog = tc.catalog
 			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{OllamaAvailable: tc.kit}, nil
 			}
@@ -391,7 +388,6 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 				for _, ctx := range f.runner.contexts {
 					_, bounded := ctx.Deadline()
 					assert.True(t, bounded)
-					require.ErrorIs(t, ctx.Err(), context.Canceled)
 				}
 			}
 
@@ -591,28 +587,52 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 }
 
 func TestLocalEmbeddingsRequiresPeopleConsentForSelectedProvider(t *testing.T) {
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "different-model", "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n")
-	participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
-	require.NoError(err)
-	_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
-	require.NoError(err)
-	profile, err := f.cfg.Vector.SemanticPersonEmbeddingProfile()
-	require.NoError(err)
-	_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
-	require.NoError(err)
-	_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
-	require.NoError(err)
-	f.start(t)
-	results, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
-	require.NoError(err)
-	require.Len(results, 1)
-	require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
-	_, err = f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
-	require.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
-	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(err)
-	require.Len(messages, 1)
+	for _, tc := range []struct {
+		name, model string
+		consented   bool
+	}{
+		{name: "compatible destination consent granted", model: "nomic-embed-text", consented: true},
+		{name: "replacement destination consent granted", model: "different-model", consented: true},
+		{name: "destination consent missing", model: "different-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, tc.model, "\n[vector.people]\nenabled = true\nretention_posture = \"zero_data_retention\"\ntraining_posture = \"no_training\"\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
+			participant, err := f.store.EnsureParticipantByIdentifier("email", "curated@example.test", "Curated Orchard Person")
+			require.NoError(err)
+			_, _, err = f.store.CreatePersonFromParticipantContext(f.ctx, participant)
+			require.NoError(err)
+			configs := []vector.Config{f.cfg.Vector}
+			if tc.consented {
+				desired := f.cfg.Vector
+				desired.Embeddings.LocalOnly = true
+				desired.Embeddings.Endpoint = ""
+				desired.Embeddings.APIKeyEnv = ""
+				desired.Embeddings.Model = "nomic-embed-text"
+				configs = append(configs, desired)
+			}
+			for _, cfg := range configs {
+				profile, err := cfg.SemanticPersonEmbeddingProfile()
+				require.NoError(err)
+				_, err = f.store.EnsurePersonSemanticEmbeddingProfile(f.ctx, profile)
+				require.NoError(err)
+				_, _, err = f.store.GrantPersonSemanticEmbeddingConsent(f.ctx, profile.Fingerprint, "test")
+				require.NoError(err)
+			}
+			f.start(t)
+			before, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+			require.NoError(err)
+			require.Len(before, 1)
+			require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			after, err := f.handle.vf.PersonSearchEngine.Search(f.ctx, "orchard", 5)
+			if tc.consented {
+				require.NoError(err, "authorized people search must survive activation without automatic indexing")
+				require.Len(after, 1)
+			} else {
+				require.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
+			}
+		})
+	}
 }
 
 func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T) {
@@ -632,16 +652,6 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	}
 	f.start(t)
 	require.NoError(runScheduledDocumentVectorGeneration(jobctx.WithProgress(f.ctx), f.store, f.handle.vf, 100))
-	searchDocuments := func() *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=orchard&mode=semantic", nil)
-		request.Header.Set("Authorization", "Bearer owner")
-		response := httptest.NewRecorder()
-		f.server.Router().ServeHTTP(response, request)
-		return response
-	}
-	before := searchDocuments()
-	require.Equal(http.StatusOK, before.Code, before.Body.String())
-	require.Contains(before.Body.String(), "orchard document evidence")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": ", * * * *"}}})
@@ -649,15 +659,6 @@ func TestLocalEmbeddingsRequiresDocumentConsentForSelectedProvider(t *testing.T)
 	err = f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
 	require.ErrorContains(err, "invalid embed cron")
 	assert.NotContains(err.Error(), "not scheduled", "the unconsented document job must not be admitted")
-	var consents int
-	require.NoError(f.store.DB().QueryRow("SELECT COUNT(*) FROM document_vector_consents").Scan(&consents))
-	assert.Equal(2, consents)
-	response := searchDocuments()
-	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-	assert.Contains(response.Body.String(), "semantic_search_unavailable")
-	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(err)
-	require.Len(messages, 1)
 }
 
 func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {

@@ -70,7 +70,7 @@ for (const width of [1280, 390]) {
       expect(spacing.firstGap).toBeLessThanOrEqual(spacing.rowPadding + (provider === 'ollama' ? spacing.rowGap : 0));
       expect(spacing.errorGap).toBeGreaterThanOrEqual(0);
       if (width === 1280 && provider === 'ollama') {
-        const chip = await row.locator('.row__local .kit-chip').boundingBox();
+        const chip = await row.locator('.kit-search-by-meaning > .kit-chip').boundingBox();
         const switchAction = await row.getByRole('button', { name: 'Use built-in instead' }).boundingBox();
         expect(switchAction!.x - chip!.x - chip!.width).toBeGreaterThanOrEqual(spacing.columnGap);
         expect(Math.abs(switchAction!.x + switchAction!.width - action!.x - action!.width)).toBeLessThanOrEqual(1);

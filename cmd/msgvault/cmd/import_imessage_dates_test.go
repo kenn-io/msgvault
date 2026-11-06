@@ -156,11 +156,13 @@ func TestFinishImessageImportSkipsCacheBuildForPostgres(t *testing.T) {
 	assert.Equal("Synthetic Person", title)
 }
 
-func TestPrintImessageSummaryReportsClearedDates(t *testing.T) {
+func TestPrintImessageSummaryReportsCountersAndClearedDates(t *testing.T) {
 	assert := assert.New(t)
 	done := captureStdout(t)
-	printImessageSummary(&imessage.ImportSummary{DatesCleared: 2}, time.Now())
-	assert.Contains(done(), "  Dates cleared:    2\n")
+	printImessageSummary(&imessage.ImportSummary{DatesCleared: 2, MessagesImported: 3, MessagesAdded: 1, MessagesUpdated: 2}, time.Now())
+	output := done()
+	assert.Contains(output, "  Dates cleared:    2\n")
+	assert.Contains(output, "3 imported, 1 added, 2 updated")
 
 	done = captureStdout(t)
 	printImessageSummary(&imessage.ImportSummary{}, time.Now())

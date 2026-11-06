@@ -154,11 +154,6 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.keyboard.press('Space');
   await expect(page.getByRole('status', { name: 'Selection status' })).toHaveText('1 selected');
   await expect(page.getByRole('button', { name: 'Export selection' })).toBeVisible();
-  await page.getByRole('button', { name: 'More selection actions' }).click();
-  await expect(page.getByRole('menuitem', { name: 'Open selection in source' })).toBeDisabled();
-  await expect(page.getByText('Your sources don’t provide links to open these items.')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('menuitem', { name: 'Open selection in source' })).toHaveCount(0);
   await grid.focus();
   await expect.poll(() => preflights[0]).toMatchObject({ selection: {
     mode: 'explicit', row_keys: ['source:1:message:m1'], cache_revision: 'cache-management'
@@ -170,7 +165,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByRole('button', { name: 'Stage 1 message' })).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Select all 1 matching items' }).click();
+  await page.getByRole('button', { name: 'Select all 1 matching' }).click();
   await page.keyboard.press('Shift+d');
   await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'Selection status' })).toHaveText('All 1 matching items selected');
@@ -194,4 +189,32 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
   await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
+});
+
+test('meeting context follows the browser tab order', async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [{ ...row, message_type: 'meeting_transcript' }], total_count: 1, cache_revision: 'meeting', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
+    count: 1, deletable_count: 0, estimated_bytes: 20, cache_revision: 'meeting', search_provenance: {},
+    unavailable_actions: [
+      { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+      { action: 'export', reason: 'selection_has_no_exportable_raw_message' }
+    ], action_targets: []
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid.getByText('Reviewed message')).toBeVisible();
+  await grid.focus();
+  await page.keyboard.press('Space');
+  const trigger = page.getByRole('button', { name: 'Meeting context…' });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Meeting context', exact: true });
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('radio', { name: 'JSON' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('checkbox', { name: 'Include transcript' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Export meeting context' })).toBeFocused();
 });

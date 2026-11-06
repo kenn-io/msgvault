@@ -104,6 +104,30 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	require.Error(err)
 }
 
+func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	chatDBPath := createAppleChatFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	st := testutil.NewSQLiteTestStore(t)
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
+		WHEN NEW.status = 'running'
+		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
+	require.NoError(err)
+	summary, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, appleTestOptions())
+	require.ErrorContains(err, "synthetic checkpoint failure")
+	require.NotNil(summary)
+	require.Equal(int64(1), summary.MessagesProcessed)
+	require.Equal(int64(1), summary.MessagesAdded)
+	src, err := st.GetSourceByTypeAndIdentifier("whatsapp", "+15555550100")
+	require.NoError(err)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	assert.Equal(int64(1), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.ErrorsCount)
+}
+
 func TestImportAppleTextMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -723,4 +747,24 @@ func assertStoreCount(t *testing.T, db *sql.DB, table string, want int) {
 	var got int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got))
 	assert.Equal(t, want, got, table)
+}
+
+func TestImportAppleSkippedChatWarningsRecorded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := createAppleType7DuplicateFixture(t)
+	execAppleFixture(t, path, appleMarkerSchema+`INSERT INTO Z_METADATA VALUES (1, 'store-uuid-a', NULL);`)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	opts := ImportOptions{Phone: "+15555550100", BatchSize: 2}
+	summary, err := importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	require.Positive(summary.MessagesProcessed)
+	summary, err = importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesProcessed)
+	assert.Equal(int64(1), summary.Errors)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(int64(1), run.ErrorsCount)
 }
