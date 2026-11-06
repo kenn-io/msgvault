@@ -44,3 +44,92 @@ func TestEmailPollRetryFloorIsUncappedAndDeferred(t *testing.T) {
 		})
 	}
 }
+
+func TestEmailPollMIMEFloorIsSharedWithOriginalClient(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
+	client.DeferProviderRetries()
+	start := time.Now()
+	_, err := client.GetRawWithTimeout(t.Context(), "/mime", time.Minute)
+	require.Error(t, err)
+	assert.False(t, client.RetryNotBefore().Before(start.Add(time.Hour)), "per-request timeout clones share floor evidence with the acquisition client")
+	_, err = client.GetRawWithTimeout(t.Context(), "/mime", time.Minute)
+	require.Error(t, err)
+	assert.EqualValues(t, 1, requests.Load(), "a new MIME timeout clone must respect the existing shared floor")
+}
+
+type emailPollQueuedContextKey struct{}
+
+func TestEmailPollQueuedRequestRechecksProviderFloorBeforeSend(t *testing.T) {
+	firstStarted, releaseFirst := make(chan struct{}), make(chan struct{})
+	queuedAdmitted, releaseQueued := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path == "/first" {
+			close(firstStarted)
+			select {
+			case <-releaseFirst:
+			case <-r.Context().Done():
+				return
+			}
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte("unexpected queued MIME"))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	client := NewClient(server.URL, func(ctx context.Context) (string, error) {
+		if ctx.Value(emailPollQueuedContextKey{}) == true {
+			// Token acquisition is the real public blocking seam AFTER local
+			// rate admission. It holds this unsent request deterministically;
+			// there is no dependency on how fast the HTTP runner responds.
+			close(queuedAdmitted)
+			select {
+			case <-releaseQueued:
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		return "fixture-token", nil
+	}, 1000)
+	client.DeferProviderRetries()
+	await := func(signal <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-signal:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err(), "expected request transition did not occur")
+		}
+	}
+	firstResult, queuedResult := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := client.GetRawWithTimeout(ctx, "/first", time.Minute); firstResult <- err }()
+	await(firstStarted)
+	go func() {
+		_, err := client.GetRawWithTimeout(context.WithValue(ctx, emailPollQueuedContextKey{}, true), "/queued", time.Minute)
+		queuedResult <- err
+	}()
+	await(queuedAdmitted)
+	close(releaseFirst)
+	firstErr := <-firstResult
+	var firstFloor *ThrottledError
+	require.ErrorAs(t, firstErr, &firstFloor)
+	assert.NotErrorIs(t, firstErr, ErrNotSent, "the initial 429 request reached the real HTTP server")
+	close(releaseQueued)
+	err := <-queuedResult
+	var queuedFloor *ThrottledError
+	require.ErrorAs(t, err, &queuedFloor)
+	assert.ErrorIs(t, err, ErrNotSent, "the queued request is deferred before its first send")
+	assert.Equal(t, firstFloor.RetryNotBefore(), queuedFloor.RetryNotBefore())
+	assert.Equal(t, firstFloor.RetryNotBefore(), client.RetryNotBefore())
+	assert.EqualValues(t, 1, requests.Load(), "a floor learned during local admission blocks every still-unsent MIME worker")
+}
