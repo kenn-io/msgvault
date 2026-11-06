@@ -53,11 +53,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 			return nil, "", fmt.Errorf("%w: call participant", callhistory.ErrInvalid)
 		}
 	}
-	timestampExpr, candidateExpr, boundExpr := "i.occurred_at", "c.occurred_at", "?"
-	if !s.IsPostgreSQL() {
-		timestampExpr, candidateExpr, boundExpr = "julianday(i.occurred_at)", "julianday(c.occurred_at)", "julianday(?)"
-	}
-	where := timestampExpr + " >= " + boundExpr + " AND " + timestampExpr + " < " + boundExpr
+	where := "i.occurred_at >= ? AND i.occurred_at < ?"
 	bounds := []any{q.After.UTC(), q.Before.UTC()}
 	if len(q.ParticipantIDs) != 0 {
 		clause, args := messageExportInClause("p.participant_id", q.ParticipantIDs)
@@ -70,10 +66,10 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 		if !ok || err != nil || !validLogicalCallTime(timestamp) || !strings.HasPrefix(key, "m:") || len(key) <= 2 {
 			return nil, "", fmt.Errorf("%w: logical call cursor", callhistory.ErrInvalid)
 		}
-		where += " AND (" + timestampExpr + " > " + boundExpr + " OR (" + timestampExpr + " = " + boundExpr + " AND i.identity_key > ?))"
+		where += " AND (i.occurred_at > ? OR (i.occurred_at = ? AND i.identity_key > ?))"
 		bounds = append(bounds, timestamp.UTC(), timestamp.UTC(), key)
 	}
-	ctes, args := s.callScopedIdentityCTEs(ctx, candidateExpr+" >= "+boundExpr+" AND "+candidateExpr+" < "+boundExpr, q.After.UTC(), q.Before.UTC())
+	ctes, args := s.callScopedIdentityCTEs(ctx, "c.occurred_at >= ? AND c.occurred_at < ?", q.After.UTC(), q.Before.UTC())
 	args = append(args, bounds...)
 	args = append(args, q.Limit+1)
 	calls := []LogicalCall{}
@@ -180,15 +176,11 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q CallContactQu
  AND `+candidateSubject+`)`, subjectArgs...)
 	args = append(args, subjectArgs...)
 	args = append(args, q.Now.UTC())
-	timestampExpr, boundExpr := "i.occurred_at", "?"
-	if !s.IsPostgreSQL() {
-		timestampExpr, boundExpr = "julianday(i.occurred_at)", "julianday(?)"
-	}
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `WITH `+ctes+`
  SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing)
  FROM identities i JOIN call_participants p ON p.identity_key = i.identity_key
- WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered' AND `+timestampExpr+` <= `+boundExpr+`
+ WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered' AND i.occurred_at <= ?
  GROUP BY i.identity_key, i.occurred_at ORDER BY i.occurred_at, i.identity_key`, args...)
 		if err != nil {
 			return fmt.Errorf("aggregate call contact: %w", err)

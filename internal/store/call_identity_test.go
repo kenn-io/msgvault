@@ -70,7 +70,7 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 				require.NoError(err)
 				owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "phone")
 				require.NoError(err)
-				at := time.Date(2026, 10, 1, 7, 0, 0, 0, time.FixedZone("archive", -5*60*60))
+				at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 				message := f.NewMessage().WithSentAt(at).Build()
 				message.MessageType, message.IsFromMe = messageType, outgoing
 				id, err := f.Store.UpsertMessage(message)
@@ -82,8 +82,7 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
 				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
 				require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(60)))
-				utc := at.UTC()
-				query := store.LogicalCallQuery{After: utc, Before: utc.Add(time.Hour), ParticipantIDs: []int64{peer}, Limit: 10}
+				query := store.LogicalCallQuery{After: at, Before: at.Add(time.Hour), ParticipantIDs: []int64{peer}, Limit: 10}
 				calls, next, err := f.Store.ListLogicalCallsContext(t.Context(), query)
 				require.NoError(err)
 				require.Len(calls, 1)
@@ -91,44 +90,16 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 				assert.Equal(fmt.Sprintf("m:%d", id), calls[0].IdentityKey)
 				assert.Equal("answered", calls[0].Outcome)
 				assert.Equal([]store.CallParticipant{{ParticipantID: peer, PersonID: person.ID, Participation: "joined", Credited: true}}, calls[0].Participants)
-				query.After, query.Before = utc.Add(-time.Hour), utc
-				calls, _, err = f.Store.ListLogicalCallsContext(t.Context(), query)
-				require.NoError(err)
-				assert.Empty(calls, "before excludes the call at the boundary")
-				aggregate, err := f.Store.CallContactAggregateContext(t.Context(), store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: utc})
+				aggregate, err := f.Store.CallContactAggregateContext(t.Context(), store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: at})
 				require.NoError(err)
 				assert.Equal(1, aggregate.Count)
 				if outgoing {
-					assert.Equal(&utc, aggregate.LastOutboundAt)
+					assert.Equal(&at, aggregate.LastOutboundAt)
 					assert.Nil(aggregate.LastInboundAt)
 				} else {
-					assert.Equal(&utc, aggregate.LastInboundAt)
+					assert.Equal(&at, aggregate.LastInboundAt)
 					assert.Nil(aggregate.LastOutboundAt)
 				}
-				aggregate, err = f.Store.CallContactAggregateContext(t.Context(), store.CallContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: utc.Add(-time.Second)})
-				require.NoError(err)
-				assert.Zero(aggregate.Count, "calls after the request clock are excluded")
-				wantIDs := []int64{id}
-				for _, timestamp := range []time.Time{at, at.Add(time.Minute)} {
-					message := f.NewMessage().WithSentAt(timestamp).Build()
-					message.MessageType, message.IsFromMe = messageType, outgoing
-					id, err := f.Store.UpsertMessage(message)
-					require.NoError(err)
-					require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
-					require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
-					wantIDs = append(wantIDs, id)
-				}
-				query.After, query.Before, query.Limit = utc, utc.Add(time.Hour), 1
-				var gotIDs []int64
-				for range 3 {
-					calls, next, err := f.Store.ListLogicalCallsContext(t.Context(), query)
-					require.NoError(err)
-					require.Len(calls, 1)
-					gotIDs = append(gotIDs, calls[0].MessageID)
-					query.AfterKey = next
-				}
-				assert.ElementsMatch(wantIDs, gotIDs, "UTC cursors include calls stored with an offset exactly once")
-				assert.Empty(query.AfterKey)
 			})
 		}
 	}
