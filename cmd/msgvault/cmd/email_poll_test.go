@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/store/storetest"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestRapidEmailRejectsNonCanonicalTargetsBeforeCredentials(t *testing.T) {

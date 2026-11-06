@@ -11,6 +11,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
@@ -21,7 +22,10 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 	go func() { _, _ = remote.Write([]byte("* PREAUTH fixture ready\r\n")); close(greeted) }()
 	require.NoError(t, conn.WaitGreeting())
 	<-greeted
-	client := &Client{conn: conn, logger: slog.Default()}
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
+	client := newTestClient(t, addr)
+	client.conn = conn
+	client.logger = slog.Default()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
@@ -44,6 +48,11 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 		<-finished
 		assert.Fail(t, "cancelled read command did not terminate its captured transport")
 	}
+	require.Nil(t, client.conn, "the cancelled current transport must not be reused")
+	require.NoError(t, client.withConn(t.Context(), func(active *imapclient.Client) error {
+		return active.Noop().Wait()
+	}), "the next read reconnects through the real loopback server")
+	assert.NotSame(t, conn, client.conn)
 	select {
 	case <-conn.Closed():
 	default:

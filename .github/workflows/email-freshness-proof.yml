@@ -40,3 +40,31 @@ jobs:
       - name: Strict target contract
         if: ${{ !cancelled() }}
         run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./cmd/msgvault/cmd -run '^TestRapidEmail'
+  module-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2 -trimpath'
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve current Hegel release
+        run: |
+          go get hegel.dev/go/hegel@latest
+          go list -m -json hegel.dev/go/hegel > hegel-module.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hegel-module-metadata
+          path: |
+            go.mod
+            go.sum
+            hegel-module.json
+          retention-days: 2
+          if-no-files-found: error
