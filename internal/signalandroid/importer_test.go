@@ -278,6 +278,7 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 		{"mention range", `ALTER TABLE mention DROP COLUMN range_start`, "mention details are missing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			dir := t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
 			st, storage := testutil.NewSQLiteTestStore(t), t.TempDir()
@@ -288,15 +289,15 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
 			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-			require.ErrorIs(t, err, ErrUnsupportedDatabase)
-			assert.Contains(t, err.Error(), tc.want)
-			assert.Equal(t, before, importedMessages(t, st))
-			assert.Equal(t, reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
+			require.ErrorIs(err, ErrUnsupportedDatabase)
+			assert.Contains(err.Error(), tc.want)
+			assert.Equal(before, importedMessages(t, st))
+			assert.Equal(reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
 
 			fresh := testutil.NewSQLiteTestStore(t)
 			_, err = NewImporter(fresh, nil).Import(t.Context(), path, opts)
-			require.ErrorIs(t, err, ErrUnsupportedDatabase)
-			assert.Zero(t, countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
+			require.ErrorIs(err, ErrUnsupportedDatabase)
+			assert.Zero(countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
 		})
 	}
 }
