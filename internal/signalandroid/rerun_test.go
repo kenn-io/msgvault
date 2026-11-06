@@ -35,30 +35,6 @@ func countRows(t *testing.T, st *store.Store, query string, args ...any) int {
 	return n
 }
 
-func TestImportOwnerChangesNumber(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	dir, storage := t.TempDir(), t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	first := runImport(t, st, dir, storage)
-	before := importedMessages(t, st)
-
-	const newPhone = "+15555550109"
-	changeFixture(t, dir, `UPDATE recipient SET e164 = '`+newPhone+`' WHERE _id = 1`)
-	opts := DefaultOptions()
-	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = newPhone, dir, storage
-	summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-	require.NoError(err)
-	assert.Equal(first.SourceID, summary.SourceID)
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = 'signal'`))
-	assert.Equal(len(before), countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(before, importedMessages(t, st))
-	source, err := st.GetSourceByID(first.SourceID)
-	require.NoError(err)
-	assert.Equal(newPhone, source.Identifier)
-}
-
 func TestRerunReplacesReactions(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

@@ -467,7 +467,7 @@ func mapAttachments(attachments []Attachment, messageFlags int) []store.Attachme
 			StoragePath:        attachment.URL,
 			Size:               int(attachment.Size),
 			SourceAttachmentID: "discord:" + attachment.ID,
-			MediaType:          attachmentpolicy.MediaType(attachment.ContentType),
+			MediaType:          attachmentMediaType(attachment.ContentType),
 			DurationMS:         int64(math.Round(attachment.Duration * 1000)),
 			State:              attachmentpolicy.StatePending,
 		}
@@ -483,4 +483,17 @@ func mapAttachments(attachments []Attachment, messageFlags int) []store.Attachme
 		refs = append(refs, ref)
 	}
 	return refs
+}
+
+func attachmentMediaType(contentType string) string {
+	switch {
+	case strings.HasPrefix(contentType, "image/"):
+		return "image"
+	case strings.HasPrefix(contentType, "video/"):
+		return "video"
+	case strings.HasPrefix(contentType, "audio/"):
+		return "audio"
+	default:
+		return "document"
+	}
 }

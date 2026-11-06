@@ -109,7 +109,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		}
 	}
 
-	source, err := r.source(ctx)
+	source, err := imp.store.GetOrCreateSource(SourceType, r.opts.Phone)
 	if err != nil {
 		return nil, fmt.Errorf("get or create source: %w", err)
 	}
@@ -156,7 +156,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	}()
 
 	imp.progress.OnStart()
-	if err := r.ensureSelf(ctx); err != nil {
+	if err := r.ensureSelf(); err != nil {
 		return r.summary, err
 	}
 
@@ -176,38 +176,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		}
 	}
 
-	return r.summary, nil
-}
-
-// source keeps an owner's archive when Signal changes the account's number.
-func (r *run) source(ctx context.Context) (*store.Source, error) {
-	if aci := r.recipients[r.selfRecipientID].ACI; aci != "" {
-		owner, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, aci)
-		if err != nil {
-			return nil, err
-		}
-		if owner != 0 {
-			sources, err := r.imp.store.ListSourcesContext(ctx, SourceType)
-			if err != nil {
-				return nil, err
-			}
-			for _, source := range sources {
-				pid, err := r.imp.store.PhoneParticipantContext(ctx, source.Identifier)
-				if err != nil {
-					return nil, err
-				}
-				if pid == owner {
-					if source.Identifier != r.opts.Phone {
-						if err := r.imp.store.UpdateSourceIdentifier(source.ID, r.opts.Phone); err != nil {
-							return nil, err
-						}
-					}
-					return source, nil
-				}
-			}
-		}
-	}
-	return r.imp.store.GetOrCreateSource(SourceType, r.opts.Phone)
+	return r.summary, ctx.Err()
 }
 
 // resolveSelf finds the account owner's recipient row from the backup
@@ -253,15 +222,10 @@ func (r *run) resolveSelf(ctx context.Context) error {
 	return nil
 }
 
-func (r *run) ensureSelf(ctx context.Context) error {
+func (r *run) ensureSelf() error {
 	pid, err := r.imp.store.EnsureParticipantByPhone(r.opts.Phone, r.opts.DisplayName, SourceType)
 	if err != nil {
 		return fmt.Errorf("ensure self participant: %w", err)
-	}
-	if aci := r.recipients[r.selfRecipientID].ACI; aci != "" {
-		if err := r.bindACI(ctx, pid, aci); err != nil {
-			return err
-		}
 	}
 	r.participants[r.selfRecipientID] = pid
 	r.summary.Participants++

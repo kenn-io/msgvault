@@ -1,9 +1,14 @@
 package whatsapp
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 type databaseKind int
@@ -13,6 +18,40 @@ const (
 	databaseKindAndroid
 	databaseKindApple
 )
+
+func openReadOnlyDatabase(ctx context.Context, path string) (*sql.DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("stat database: %w", err)
+	}
+
+	dsn, err := sqliteDatabaseDSN(path, "_busy_timeout=5000&_query_only=1")
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func sqliteDatabaseDSN(path, rawQuery string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(absPath)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: rawQuery}).String(), nil
+}
 
 func detectDatabaseKind(db *sql.DB) (databaseKind, error) {
 	rows, err := db.Query(`

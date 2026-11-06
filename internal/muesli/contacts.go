@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/meetingidentity"
-	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // ContactsState reports how much of the macOS Contacts directory a sync could
@@ -254,7 +253,7 @@ func (c *Contacts) readStore(ctx context.Context, path string) error {
 		{"ZABCDEMAILADDRESS", "ZOWNER"}, {"ZABCDEMAILADDRESS", "ZADDRESS"},
 		{"ZABCDPHONENUMBER", "ZOWNER"}, {"ZABCDPHONENUMBER", "ZFULLNUMBER"},
 	} {
-		columns, err := sqliteutil.TableColumns(ctx, db, required.table)
+		columns, err := tableColumns(ctx, db, required.table)
 		if err != nil {
 			return err
 		}
@@ -262,7 +261,7 @@ func (c *Contacts) readStore(ctx context.Context, path string) error {
 			return fmt.Errorf("contacts store %s lacks %s.%s", filepath.Base(filepath.Dir(path)), required.table, required.column)
 		}
 	}
-	recordColumns, err := sqliteutil.TableColumns(ctx, db, "ZABCDRECORD")
+	recordColumns, err := tableColumns(ctx, db, "ZABCDRECORD")
 	if err != nil {
 		return err
 	}

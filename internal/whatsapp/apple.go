@@ -14,7 +14,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -627,7 +626,7 @@ func loadAppleLIDMap(ctx context.Context, chatDBPath string) (map[string]string,
 		return nil, err
 	}
 
-	db, err := sqliteutil.OpenReadOnlyDatabase(ctx, lidPath)
+	db, err := openReadOnlyDatabase(ctx, lidPath)
 	if err != nil {
 		return nil, err
 	}

@@ -71,6 +71,26 @@ type cancelProgress struct {
 
 func (p cancelProgress) OnProgress(_, _, _ int64) { p.cancel() }
 
+type cancelChatProgress struct {
+	NullProgress
+
+	cancel context.CancelFunc
+}
+
+func (p cancelChatProgress) OnChatStart(string, string, int) { p.cancel() }
+
+func TestInterruptedFinalGroupChatReturnsCancellation(t *testing.T) {
+	st, dir := testutil.NewTestStore(t), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `DELETE FROM thread WHERE _id <> 11`)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	opts := DefaultOptions()
+	opts.Phone = signalfixture.OwnPhone
+	_, err := NewImporter(st, cancelChatProgress{cancel: cancel}).Import(ctx, path, opts)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestInterruptedImportKeepsConversationState(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewTestStore(t), t.TempDir()

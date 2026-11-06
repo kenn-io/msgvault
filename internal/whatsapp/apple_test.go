@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,41 @@ func TestDetectDatabaseKind(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestOpenReadOnlyDatabase(t *testing.T) {
+	require := require.New(t)
+
+	missingPath := filepath.Join(t.TempDir(), "missing.sqlite")
+	_, err := openReadOnlyDatabase(context.Background(), missingPath)
+	require.Error(err)
+	_, err = os.Stat(missingPath)
+	require.ErrorIs(err, os.ErrNotExist)
+
+	path := filepath.Join(t.TempDir(), "source # data.sqlite")
+	createDSN, err := sqliteDatabaseDSN(path, "")
+	require.NoError(err)
+	db, err := sql.Open("sqlite3", createDSN)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	var journalMode string
+	require.NoError(db.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&journalMode))
+	require.Equal("wal", strings.ToLower(journalMode))
+	_, err = db.Exec(`
+		CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
+		INSERT INTO source_rows (id) VALUES (1);
+	`)
+	require.NoError(err)
+
+	readOnly, err := openReadOnlyDatabase(context.Background(), path)
+	require.NoError(err)
+	defer func() { require.NoError(readOnly.Close()) }()
+	var count int
+	require.NoError(readOnly.QueryRow(`SELECT COUNT(*) FROM source_rows`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	_, err = readOnly.Exec(`INSERT INTO source_rows (id) VALUES (2)`)
+	require.Error(err)
 }
 
 func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
