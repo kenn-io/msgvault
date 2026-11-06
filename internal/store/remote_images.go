@@ -54,6 +54,43 @@ func (s *Store) MessageRemoteImagesContext(ctx context.Context, messageID int64)
 	return s.messageProviderAttachmentsContext(ctx, messageID, "remote-image:")
 }
 
+// RecomputeRemoteImageAttachmentStatsContext retains expected MIME occurrences
+// while the acquisition ledger still requires them to be saved.
+func (s *Store) RecomputeRemoteImageAttachmentStatsContext(ctx context.Context, messageID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		// Serialize this decision with MIME and remote-image publication.
+		var sourceID int64
+		var sourceMessageID string
+		if err := q.QueryRow(`SELECT source_id, source_message_id FROM messages WHERE id = ?`+s.dialect.SelectForUpdate(), messageID).
+			Scan(&sourceID, &sourceMessageID); err != nil {
+			return err
+		}
+		// Use the same latest-outcome and completed-incremental boundary as
+		// ListUnresolvedSyncItemErrors. Image-only debt does not retain MIME counts.
+		var pending bool
+		if err := q.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM sync_run_items WHERE id = (
+				SELECT i.id FROM sync_run_items i JOIN sync_runs r ON r.id = i.sync_run_id
+				WHERE r.source_id = ? AND i.source_message_id = ? AND i.phase IN ('fetch', 'ingest')
+				AND r.id >= COALESCE((SELECT id FROM sync_runs WHERE source_id = ?
+					AND sync_type = 'incremental' AND status = 'completed'
+					ORDER BY completed_at DESC, id DESC LIMIT 1), 0)
+				ORDER BY i.id DESC LIMIT 1
+			) AND status = 'error' AND error_kind IN ('attachment_error', 'attachment_remote_image_error')
+		)`, sourceID, sourceMessageID, sourceID).Scan(&pending); err != nil {
+			return err
+		}
+		if pending {
+			return nil
+		}
+		return recomputeMessageAttachmentStatsWith(q, messageID)
+	})
+}
+
 // RemoteImageBackfillMessageIDs pages email identities without scanning body
 // storage. Bodies are subsequently read by message primary key.
 func (s *Store) RemoteImageBackfillMessageIDs(ctx context.Context, after, sourceID int64, limit int) ([]int64, error) {

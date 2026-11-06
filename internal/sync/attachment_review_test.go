@@ -5,15 +5,198 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
+
+func TestAttachmentReviewFTSOverflowCommitsOriginal(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	e := attachmentPersistenceEnv(t)
+	if !e.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL tsvector capacity")
+	}
+	// Each field fits the production caps and an individual tsvector. Their
+	// distinct lexemes overflow PostgreSQL's combined vector during ingestion.
+	var subject, body strings.Builder
+	for i := range 45000 {
+		fmt.Fprintf(&subject, "subject%05d ", i)
+		fmt.Fprintf(&body, "body%05d ", i)
+	}
+	var vector string
+	err := e.Store.DB().QueryRow(`SELECT to_tsvector('simple', $1) || to_tsvector('simple', $2)`, subject.String(), body.String()).Scan(&vector)
+	var overflow *pgconn.PgError
+	require.ErrorAs(err, &overflow)
+	require.Equal("54000", overflow.Code)
+	raw := testemail.NewMessage().Subject(subject.String()).Body(body.String()).Bytes()
+	e.Mock.AddMessage("fts-overflow", raw, []string{"INBOX"})
+	summary, err := New(e.Mock, e.Store, &Options{}).Full(t.Context(), testEmail)
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Zero(summary.Errors)
+	source := e.CreateSource(t)
+	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"fts-overflow"})
+	require.NoError(err)
+	require.Contains(ids, "fts-overflow")
+	reopenAcquisitionStore(t, e)
+	saved, err := e.Store.GetMessageRaw(ids["fts-overflow"])
+	require.NoError(err)
+	assert.True(bytes.Equal(raw, saved), "overflow must not discard or alter RAW")
+	var terminal bool
+	require.NoError(e.Store.DB().QueryRow(`SELECT search_fts = ''::tsvector AND indexing_version = $1 FROM messages WHERE id = $2`,
+		store.CurrentFTSIndexingVersion, ids["fts-overflow"]).Scan(&terminal))
+	assert.True(terminal)
+	needs := e.Store.NeedsFTSBackfill()
+	assert.False(needs, "terminal overflow must not request another indexing attempt")
+	results, total, err := e.Store.SearchMessages("subject00001", 0, 10)
+	require.NoError(err)
+	assert.Zero(total)
+	assert.Empty(results)
+	e.Mock.GetMessageCalls = nil
+	summary, err = New(e.Mock, e.Store, &Options{}).Full(t.Context(), testEmail)
+	require.NoError(err)
+	assert.Zero(summary.MessagesAdded)
+	assert.Zero(summary.Errors)
+	assert.Empty(e.Mock.GetMessageCalls)
+	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+	require.NoError(err)
+	assert.Empty(debt, "terminal FTS overflow is not unfinished acquisition")
+}
+
+func TestAttachmentReviewOtherFTSFailureRemainsVisible(t *testing.T) {
+	for _, route := range []string{"full", "incremental"} {
+		t.Run(route, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			e := attachmentPersistenceEnv(t)
+			if !e.Store.IsPostgreSQL() {
+				t.Skip("PostgreSQL FTS transaction failure")
+			}
+			source := e.CreateSourceWithHistory(t, "1000")
+			e.Mock.AddMessage("fts-failure", testMIME(), []string{"INBOX"})
+			allow := acquisitionWriteFault(t, e, "messages", "UPDATE OF search_fts", "NEW.search_fts IS NOT NULL")
+			service := New(e.Mock, e.Store, &Options{})
+			var summaryErrors int64
+			if route == "full" {
+				summary, err := service.Full(t.Context(), testEmail)
+				require.NoError(err)
+				summaryErrors = summary.Errors
+			} else {
+				e.SetHistory(1001, historyAdded("fts-failure"))
+				summary, err := service.Incremental(t.Context(), source)
+				require.NoError(err)
+				summaryErrors = summary.Errors
+			}
+			assert.Equal(int64(1), summaryErrors)
+			ids, err := e.Store.MessageExistsBatch(source.ID, []string{"fts-failure"})
+			require.NoError(err)
+			assert.Empty(ids)
+			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+			require.NoError(err)
+			require.Len(debt, 1)
+			assert.Contains(debt[0].ErrorMessage, "synthetic acquisition write failure")
+			allow()
+		})
+	}
+}
+
+func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
+	for _, kind := range []string{"mime", "mime-and-images", "no-mime-debt"} {
+		t.Run(kind, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			e := attachmentPersistenceEnv(t)
+			source := e.CreateSourceWithHistory(t, "1000")
+			raw := revisionHTMLMIME()
+			parsed, err := mime.Parse(raw)
+			require.NoError(err)
+			dir := filepath.Join(e.TmpDir, "attachments")
+			opts := &Options{}
+			pending := kind != "no-mime-debt"
+			blocked := filepath.Join(dir, parsed.Attachments[0].ContentHash[:2])
+			if pending {
+				require.NoError(os.MkdirAll(dir, 0700))
+				require.NoError(os.WriteFile(blocked, []byte("blocked MIME prefix"), 0600))
+				opts.AttachmentsDir = dir
+			}
+			fetcher, requests := revisionImageServer(t)
+			if kind == "mime-and-images" {
+				opts.RemoteImages = fetcher
+			}
+			e.Mock.AddMessage("backfill-debt", raw, []string{"INBOX"})
+			summary, err := New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
+			require.NoError(err)
+			if pending {
+				require.Equal(int64(1), summary.Errors)
+			} else {
+				require.Zero(summary.Errors)
+			}
+			ids, err := e.Store.MessageExistsBatch(source.ID, []string{"backfill-debt"})
+			require.NoError(err)
+			id := ids["backfill-debt"]
+			wantCount := 1
+			if pending {
+				wantCount = 2
+			}
+			for range 2 {
+				result, err := fetcher.Backfill(t.Context(), e.Store, dir, source.ID, 0, slog.Default())
+				require.NoError(err)
+				assert.Zero(result.Errors)
+				assert.Equal(1, result.Downloaded+result.Reused)
+				var count int
+				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				assert.Equal(wantCount, count, "preserve only MIME occurrences backed by active debt")
+				refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
+				require.NoError(err)
+				assert.Empty(refs)
+			}
+			images, err := e.Store.MessageRemoteImages(id)
+			require.NoError(err)
+			require.Len(images, 1)
+			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+			require.NoError(err)
+			if pending {
+				require.Len(debt, 1, "backfill must not settle unfinished MIME work")
+				e.Mock.GetMessageCalls = nil
+				replay := &Options{AttachmentsDir: dir, RemoteImages: fetcher}
+				summary, err = New(e.Mock, e.Store, replay).Incremental(t.Context(), source)
+				require.NoError(err)
+				assert.Equal(int64(1), summary.Errors)
+				var count int
+				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				assert.Equal(2, count, "a failed repair must retain the expected count after backfill")
+				require.NoError(os.Remove(blocked))
+				reopenAcquisitionStore(t, e)
+				summary, err = New(e.Mock, e.Store, replay).Incremental(t.Context(), source)
+				require.NoError(err)
+				assert.Zero(summary.Errors)
+				assert.Empty(e.Mock.GetMessageCalls)
+				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				assert.Equal(2, count)
+				refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
+				require.NoError(err)
+				assert.Len(refs, 1)
+				debt, err = e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+				require.NoError(err)
+			}
+			assert.Empty(debt)
+			after, err := e.Store.MessageRemoteImages(id)
+			require.NoError(err)
+			assert.Equal(images, after)
+			assert.Equal(int64(1), requests.Load())
+			saved, err := e.Store.GetMessageRaw(id)
+			require.NoError(err)
+			assert.Equal(raw, saved)
+		})
+	}
+}
 
 func TestAttachmentReviewNULContentIDRecovery(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
@@ -146,61 +329,6 @@ func TestAttachmentReviewGCRetiresOnlyPurgedDebt(t *testing.T) {
 	deleted, err = e.Store.ExecuteGCContext(t.Context(), plan)
 	require.NoError(err)
 	assert.Zero(deleted)
-}
-
-func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	e := attachmentPersistenceEnv(t)
-	source := e.CreateSourceWithHistory(t, "1000")
-	raw := revisionHTMLMIME()
-	parsed, err := mime.Parse(raw)
-	require.NoError(err)
-	dir := filepath.Join(e.TmpDir, "attachments")
-	require.NoError(os.MkdirAll(dir, 0700))
-	blocked := filepath.Join(dir, parsed.Attachments[0].ContentHash[:2])
-	require.NoError(os.WriteFile(blocked, []byte("blocked MIME prefix"), 0600))
-	fetcher, requests := revisionImageServer(t)
-	opts := &Options{AttachmentsDir: dir, RemoteImages: fetcher}
-	e.Mock.AddMessage("partial-stats", raw, []string{"INBOX"})
-	sum, err := New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
-	require.NoError(err)
-	require.Equal(int64(1), sum.Errors)
-	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"partial-stats"})
-	require.NoError(err)
-	id := ids["partial-stats"]
-	for attempt := range 3 {
-		var count int
-		require.NoError(e.Store.DB().QueryRow(e.Store.Rebind("SELECT attachment_count FROM messages WHERE id = ?"), id).Scan(&count))
-		assert.Equal(2, count, "one expected MIME occurrence and one stored remote image, attempt %d", attempt)
-		refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
-		require.NoError(err)
-		assert.Empty(refs, "the expected count must not fabricate a stored MIME row")
-		images, err := e.Store.MessageRemoteImages(id)
-		require.NoError(err)
-		require.Len(images, 1)
-		debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
-		require.NoError(err)
-		require.Len(debt, 1)
-		e.Mock.GetMessageCalls = nil
-		sum, err = New(e.Mock, e.Store, opts).Incremental(t.Context(), source)
-		require.NoError(err)
-		assert.Equal(int64(1), sum.Errors)
-		assert.Empty(e.Mock.GetMessageCalls)
-	}
-	require.NoError(os.Remove(blocked))
-	sum, err = New(e.Mock, e.Store, opts).Incremental(t.Context(), source)
-	require.NoError(err)
-	assert.Zero(sum.Errors)
-	var count int
-	require.NoError(e.Store.DB().QueryRow(e.Store.Rebind("SELECT attachment_count FROM messages WHERE id = ?"), id).Scan(&count))
-	assert.Equal(2, count)
-	refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
-	require.NoError(err)
-	assert.Len(refs, 1)
-	assert.Equal(int64(1), requests.Load(), "valid images must be reused on every retry")
-	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
-	require.NoError(err)
-	assert.Empty(debt)
 }
 
 func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {

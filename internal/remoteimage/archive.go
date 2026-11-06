@@ -217,7 +217,7 @@ func (f *Fetcher) ArchiveWithOptions(ctx context.Context, st *store.Store, dir s
 		result.Downloaded++
 	}
 	if !options.PreserveExpectedAttachments && (result.Downloaded > 0 || result.Reused > 0) {
-		if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+		if err := st.RecomputeRemoteImageAttachmentStatsContext(ctx, messageID); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("update remote image metadata: %w", err))
 		}
 	}
