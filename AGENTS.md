@@ -141,6 +141,16 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 - A timeout may bound a wait for an observable transition. Do not make runner
   throughput a correctness requirement, such as ten polls within one second.
 
+## CI runners
+
+CI jobs use GitHub-hosted runners. The `CI gate` job in `ci-pr.yml` only checks
+the CI run's result and runs on the Namespace profile
+`namespace-profile-linux-1cpu`, so it does not wait in the GitHub-hosted queue.
+That profile uses Namespace's
+[Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+which disables workload access to Namespace features and APIs. GitHub fork
+approvals, token permissions, and secrets are separate controls.
+
 ## Test data
 
 Use synthetic names and reserved example addresses in ordinary fixtures. Never
