@@ -1023,7 +1023,13 @@
                     >
                     <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
-                    <span class="cell--people" role="gridcell" aria-colindex={personScoped ? 6 : 5}><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label || people(row)}</span></span>
+                    <span class="cell--people" role="gridcell" aria-colindex={personScoped ? 6 : 5}>
+                      {#if compact.current}
+                        <span class="phone-sender">{row.sender_label || people(row)}</span>
+                      {:else}
+                        <span class="desktop-people">{people(row)}</span>
+                      {/if}
+                    </span>
                     <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
                     <span class="cell--message" role="gridcell" aria-colindex={personScoped ? 8 : 7}>
                       {#if onOpenItem}
@@ -1295,7 +1301,7 @@
     background: var(--bg-inset);
     text-align: center;
   }
-  .file-kind, .phone-sender { display: none; }
+  .file-kind { display: none; }
   @media (max-width: 640px) {
     .table-header, .data-row { min-width: 0; }
     .table-header { display: flex; gap: var(--space-2); padding: 0 var(--pane-pad-x); }
@@ -1311,8 +1317,6 @@
     .data-row span { padding: 0; }
     .data-row .file-kind { display: block; grid-area: icon; color: var(--artifact-ink); }
     .file-kind :global(.row-kind__label) { display: none; }
-    .desktop-people { display: none; }
-    .phone-sender { display: inline; }
     .cell--name { grid-area: name; color: var(--text-primary); font-size: var(--font-size-sm); }
     .cell--date { grid-area: date; }
     .cell--size { grid-area: size; }

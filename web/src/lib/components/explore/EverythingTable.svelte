@@ -535,8 +535,11 @@
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
                       {@const label = people(row)}
-                      <span class="desktop-people"><Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip></span>
-                      <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label || label}</span>
+                      {#if compact.current}
+                        <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label || label}</span>
+                      {:else}
+                        <span class="desktop-people"><Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip></span>
+                      {/if}
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}
@@ -874,7 +877,6 @@
       scroll-behavior: auto !important;
     }
   }
-  .phone-sender { display: none; }
   @media (max-width: 640px) {
     .virtual-spacer { min-width: 0; }
     .data-row {
@@ -894,8 +896,6 @@
     .data-row:hover .selection-cell ~ .cell--kind, .data-row:focus-within .selection-cell ~ .cell--kind, .selection-mode .selection-cell ~ .cell--kind { visibility: hidden; }
     .cell--kind { grid-area: kind; justify-self: center; color: var(--artifact-ink); }
     .cell--kind :global(.row-kind__label) { display: none; }
-    .desktop-people { display: none; }
-    .phone-sender { display: inline; }
     .cell--people { grid-area: people; font-weight: 500; }
     .cell--time { grid-area: time; font-size: var(--font-size-xs); }
     .cell--attachments { grid-area: att; }
