@@ -78,7 +78,7 @@ func TestRapidEmailResolverRejectsAliasAndRetiredSource(t *testing.T) {
 	_, err = f.Store.UpdateSourceSettingsContext(t.Context(), old.ID, store.SourceSettingsUpdate{Alias: &alias})
 	require.NoError(err)
 	_, err = rapidEmailSource(f.Store, alias)
-	assert.Error(err, "archive aliases are not canonical rapid selectors")
+	require.Error(err, "archive aliases are not canonical rapid selectors")
 	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: old.ID, IntoSourceID: current.ID})
 	require.NoError(err)
 	_, err = rapidEmailSource(f.Store, old.Identifier)
