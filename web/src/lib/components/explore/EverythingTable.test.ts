@@ -400,9 +400,11 @@ describe('EverythingTable', () => {
     const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(grid.getAttribute('aria-busy')).toBe('true');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();
-    expect(skeleton.style.gridTemplateColumns).toBe(
-      screen.getByRole('row', { name: /Kind/ }).style.gridTemplateColumns
-    );
+    const skeletonTemplate = skeleton.style.getPropertyValue('--row-template').trim();
+    const headerTemplate = screen.getByRole('row', { name: /Kind/ }).style.getPropertyValue('--row-template').trim();
+    expect(skeletonTemplate).not.toBe('');
+    expect(headerTemplate).not.toBe('');
+    expect(skeletonTemplate).toBe(headerTemplate);
     expect(skeleton.children).toHaveLength(7);
 
     void rerender({ rows: [], selection, loading: false });
