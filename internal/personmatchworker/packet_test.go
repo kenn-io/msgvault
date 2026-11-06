@@ -95,7 +95,7 @@ func TestLocalPolicyInputChecksPairSummaryGuards(t *testing.T) {
 		"a matching phone is positive evidence and different stable-ID scopes do not conflict")
 }
 
-func TestLocalPolicyInputBlocksConflictingSignalACIsWithoutDisclosingThem(t *testing.T) {
+func TestLocalPolicyInputBlocksConflictingSignalACIs(t *testing.T) {
 	summaries := store.PersonMatchPairSummaries{
 		LeftGuardIdentifiers:  []personmatch.PairIdentifier{{Type: "signal_aci", Value: "00000000-0000-4000-8000-000000000001"}},
 		RightGuardIdentifiers: []personmatch.PairIdentifier{{Type: "signal_aci", Value: "00000000-0000-4000-8000-000000000002"}},

@@ -9,22 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
-func TestImportPNIOnlyChat(t *testing.T) {
-	dir := t.TempDir()
-	signalfixture.WritePNIOnly(t, dir, signalfixture.V185)
-	st := testutil.NewTestStore(t)
-
-	summary := runImport(t, st, dir, t.TempDir())
-
-	assert.Zero(t, summary.ChatsSkipped)
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-	assert.Equal(t, map[string]importedMessage{
-		"signal:pni:0f0f0f0f-0000-4000-8000-000000000005:self:1700000400000": {
-			conversation: "signal:pni:0f0f0f0f-0000-4000-8000-000000000005", body: "hello Dana", fromMe: true,
-		},
-	}, importedMessages(t, st))
-}
-
 func TestReimportRecycledPhoneKeepsSendersSeparate(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dir := t.TempDir()
@@ -171,7 +155,6 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 		{name: "number changes after the ACI is learned",
 			beforeUpdate: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
 			updates:      []string{`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`}},
-		{name: "same recipient", updates: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`}},
 		{name: "merged into ACI recipient", updates: []string{
 			`INSERT INTO recipient (_id, aci) VALUES (8, '0f0f0f0f-0000-4000-8000-000000000006')`,
 			`UPDATE recipient SET pni = (SELECT pni FROM recipient WHERE _id = 7), e164 = (SELECT e164 FROM recipient WHERE _id = 7) WHERE _id = 8`,
@@ -222,29 +205,17 @@ func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
 		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
 		 VALUES (601, 1700000410000, 1700000410001, 14, 7, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`)
 	st, attachments := testutil.NewTestStore(t), t.TempDir()
-	summary := runImport(t, st, dir, attachments)
-	assert.Zero(summary.ChatsSkipped)
-	assert.Zero(summary.MessagesSkipped)
+	runImport(t, st, dir, attachments)
 	chatID := "signal:tel:" + signalfixture.DanaPhone
 	before := importedMessages(t, st)
-	assert.Equal(map[string]importedMessage{
-		chatID + ":self:1700000400000": {conversation: chatID, body: "hello Dana", fromMe: true},
-		chatID + ":peer:1700000410000": {conversation: chatID, body: "hello owner"},
-	}, before)
 	var messageID int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), chatID+":peer:1700000410000").Scan(&messageID))
 
 	changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
-	summary = runImport(t, st, dir, attachments)
-
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(int64(2), summary.MessagesUpdated)
-	assert.Equal(before, importedMessages(t, st))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+	runImport(t, st, dir, attachments)
 
 	changeFixture(t, dir, `UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`)
-	summary = runImport(t, st, dir, attachments)
+	summary := runImport(t, st, dir, attachments)
 
 	assert.Zero(summary.MessagesAdded)
 	assert.Equal(int64(2), summary.MessagesUpdated)

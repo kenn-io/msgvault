@@ -23,11 +23,10 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 }
 
 func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
-	// Inject scan failures to guard the importer's attachment and mention
-	// error returns. SQLite SELECTs cannot be rejected by triggers.
+	// Remove a source table after schema detection to exercise read failures.
 	for _, tc := range []struct{ name, change, wantError string }{
-		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
-		{"mentions", `UPDATE mention SET range_start = 'invalid' WHERE message_id = 200`, "read Signal mentions"},
+		{"attachments", `DROP TABLE attachment`, "read Signal attachments"},
+		{"mentions", `DROP TABLE mention`, "read Signal mentions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -41,10 +40,11 @@ func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
 			id := "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
 			require.Equal("Hi @Alice Example, look searchablesuffix\n\nBeach", before[id].body)
 
-			changeFixture(t, dir, tc.change)
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			_, err := NewImporter(st, longTextReadFailureProgress{onStart: func() {
+				changeFixture(t, dir, tc.change)
+			}}).Import(t.Context(), path, opts)
 			require.ErrorContains(err, tc.wantError)
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
