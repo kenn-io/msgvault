@@ -149,21 +149,11 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 // meetingCopyStarts lists the occurrence's effective and original starts plus
 // each calendar copy's start and resolved exception row, resolving series copies in their own zones.
 func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, []CalendarEventRow, error) {
-	starts := []any{target.Start}
-	var resolvedRows []CalendarEventRow
-	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
-		if original.AllDay {
-			zone, err := calendarEventZone(target.Row.Event)
-			if err != nil {
-				return nil, nil, err
-			}
-			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		starts = append(starts, original.Instant)
+	starts, err := meetingOccurrenceStarts(target.Row, target.Identity.OccurrenceKey, target.Start)
+	if err != nil {
+		return nil, nil, err
 	}
+	var resolvedRows []CalendarEventRow
 	for _, row := range copies {
 		ref := OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}
 		if row.Event.Kind == meetingExceptionKind {
@@ -176,12 +166,34 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 		if err != nil {
 			return nil, nil, err
 		}
-		starts = append(starts, copied.Start)
+		copiedStarts, err := meetingOccurrenceStarts(row, target.Identity.OccurrenceKey, copied.Start)
+		if err != nil {
+			return nil, nil, err
+		}
+		starts = append(starts, copiedStarts...)
 		if copied.Row.MessageID != row.MessageID {
 			resolvedRows = append(resolvedRows, copied.Row)
 		}
 	}
 	return starts, resolvedRows, nil
+}
+
+func meetingOccurrenceStarts(row CalendarEventRow, key string, start time.Time) ([]any, error) {
+	starts := []any{start}
+	if _, original, ok := calrecur.ParseInstanceID("event_" + key); ok {
+		if original.AllDay {
+			zone, err := calendarEventZone(row.Event)
+			if err != nil {
+				return nil, err
+			}
+			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
+			if err != nil {
+				return nil, err
+			}
+		}
+		starts = append(starts, original.Instant)
+	}
+	return starts, nil
 }
 
 // Gather only notes scheduled at the occurrence's original or copied starts,

@@ -65,6 +65,26 @@ func TestMeetingRecordAllDayCopiesShareNotesAcrossCalendarZones(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordMovedAllDayCopiesShareOriginalStartsAcrossZones(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"series","iCalUID":"all-day@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+	_, utc := calendarFixture(t, st, "utc", raw)
+	tokyoData, tokyo := calendarFixture(t, st, "tokyo", raw, "copy@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(tokyoData.Message.SourceID, `{"calendar_id":"copy@example.com","time_zone":"Asia/Tokyo"}`))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"all-day@example.org","startsAt":"2027-03-13T15:00:00Z"}}`)
+	wantRef := fmt.Sprintf("evt:%d@20270314", tokyo)
+	require.Equal(wantRef, linkedMeetingRefs(t, st, note)[note])
+	calendarFixture(t, st, "moved", `{"id":"series_20270314","iCalUID":"all-day@example.org","recurringEventId":"series","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-15"},"end":{"date":"2027-03-16"}}`, "copy@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(tokyoData.Message.SourceID, `{"calendar_id":"copy@example.com","time_zone":"Asia/Tokyo"}`))
+	require.Equal(wantRef, linkedMeetingRefs(t, st, note)[note])
+	for _, id := range []int64{tokyo, utc} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id, Key: "20270314"})
+		require.NoError(err)
+		assert.Equal([]int64{note}, record.MessageIDs, "calendar copy %d", id)
+	}
+}
+
 func TestMeetingRecordRecurringGoogleEvidence(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
