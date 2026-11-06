@@ -2249,10 +2249,10 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 		return nil, false, nil
 	}
 	// A full page from this date prefix is also the full archive's page.
-	// Include cutoff ties to preserve the existing id ordering within a date.
+	// Exclude cutoff ties to keep the prefix within the window bound.
 	conditions = []string{
 		conditions[0],
-		"m.sent_at >= (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
+		"m.sent_at > (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
 		store.SQLiteFTSRowIDCondition(conditions[1]),
 	}
 	args = append([]any{window - 1}, args...)

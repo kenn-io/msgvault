@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,6 +59,42 @@ func TestSearchFTSPagingPreservesDetails(t *testing.T) {
 		assert.Equal("billing@example.com", msg.FromEmail)
 		assert.Equal("Billing", msg.FromName)
 		assert.Equal("Invoice thread", msg.ConversationTitle)
+	}
+}
+
+func TestSearchCommonWordExcludesCutoffTies(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`WITH RECURSIVE seq(x) AS (
+		VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x < 3014
+	) INSERT INTO messages (id, source_message_id, source_id, conversation_id, message_type, sent_at, subject)
+	SELECT 100+x, 'window-' || x, 1, 1, 'email',
+		CASE WHEN x <= 3000 THEN '2025-01-01' ELSE '2025-02-01' END,
+		'invoice' FROM seq`)
+	require.NoError(t, err)
+	env.EnableFTS()
+	q := search.Parse("invoice")
+	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
+	for _, tc := range []struct {
+		offset int
+		rows   int
+		full   bool
+	}{
+		{offset: 0, rows: 7, full: true},
+		{offset: 7, rows: 7, full: true},
+		{offset: 14, rows: 0, full: false},
+	} {
+		t.Run(strconv.Itoa(tc.offset), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			page, full, err := env.Engine.searchNewestFirst(env.Ctx, q, conditions, args, ftsJoin, 7, tc.offset)
+			require.NoError(err)
+			assert.Len(page, tc.rows, "the cutoff date's tie group must stay outside the window")
+			assert.Equal(tc.full, full)
+			want, err := env.Engine.executeSearchQuery(env.Ctx, conditions, args, ftsJoin, 7, tc.offset)
+			require.NoError(err)
+			assert.Equal(want, env.MustSearch(q, 7, tc.offset))
+		})
 	}
 }
 
