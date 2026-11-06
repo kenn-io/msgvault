@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-06"
 title: Beeper
-description: Archive every chat network connected to Beeper Desktop via its local API.
+description: Archive chats through a Beeper Desktop API or compatible headless Server.
 ---
 
-Archive the chat networks you have connected to
-[Beeper Desktop](https://www.beeper.com) through its local API. Each network
-account becomes a separate msgvault source, so you can search them together
-or filter to one account.
+Archive chat networks through a configured
+[Beeper Desktop](https://www.beeper.com) API or compatible headless Server.
+Each network account becomes a separate msgvault source, so you can search
+them together or filter to one account.
 
 All messages imported this way use `message_type = beeper`. Sync only reads
 Beeper; it does not send or edit messages or mark conversations read.
@@ -19,10 +19,10 @@ typed between the check and write can still be lost.
 
 ## Prerequisites
 
-- Beeper Desktop installed and running on the same machine as the msgvault
-  daemon (the API listens on `localhost:23373` only).
-- A Beeper Desktop access token: in Beeper Desktop open **Settings →
-  Developer** and create an access token.
+- A running Beeper Desktop API or compatible headless Server reachable at
+  `[beeper].url`. Desktop defaults to `http://localhost:23373`.
+- An access token for that endpoint, saved with `msgvault add-beeper`.
+  For Desktop, open **Settings → Developer** to create the token.
 
 ## Review identities across sources
 
@@ -46,7 +46,7 @@ for the difference between an observed participant and a curated profile.
 msgvault add-beeper
 ```
 
-The command validates the token against the running Beeper Desktop, stores it
+The command validates the token against the configured API, stores it
 at `tokens/beeper.json` (0600), and registers one `beeper` source per
 connected network account (e.g. `signal`, `telegram`, `whatsapp`,
 `imessage_…`).
@@ -403,6 +403,33 @@ A scheduled run keeps other sources on their cadence:
 
 Manual `msgvault sync-beeper` runs have no time budget.
 
+### Wake imports from live events
+
+To reduce the wait for new messages, opt into Beeper's experimental live events:
+
+```toml
+[beeper]
+enabled = true
+schedule = "*/5 * * * *"
+events = true
+```
+
+Restart `msgvault serve` after changing the configuration. `events` defaults to
+`false` and requires a successfully registered schedule. The configured Desktop
+API or headless Server must advertise `endpoints.ws_events` through `/v1/info`.
+msgvault uses the existing saved token and accepts only the configured origin.
+
+Live events wake the same bounded HTTP importer used by scheduled syncs. Bursts
+are coalesced over a fixed one-second window. Account include and exclude filters
+still apply. A successful subscription and each reconnection request HTTP
+catch-up; the subscription log does not mean the archive is up to date.
+
+Keep the cron schedule: polling recovers missed events when the socket or
+experimental protocol is unavailable. Reconnection retries use bounded backoff.
+Events carry no durable replay cursor, and edits and deletions retain the
+importer's existing bounded reconciliation coverage described under [Sync](#sync).
+Set `events = false` and restart the daemon to return to polling alone.
+
 ## Configuration
 
 ```toml
@@ -410,6 +437,7 @@ Manual `msgvault sync-beeper` runs have no time budget.
 # url = "http://localhost:23373"   # Beeper Desktop API (default)
 enabled = true                     # gate for the daemon schedule below
 schedule = "*/30 * * * *"          # 5-field cron; empty = manual sync only
+events = false                     # optional live wakeups; keep the schedule
 accounts = []                      # accountID include filter (empty = all)
 exclude_accounts = []              # e.g. ["whatsapp"] — see below
 rate_limit_qps = 20                # request rate against the local API
@@ -452,8 +480,9 @@ Telegram users also link to [Telegram Desktop imports](text-messages.md#import-t
   with one warning instead of failing every run. After repairing Beeper
   Desktop, run `msgvault sync-beeper --account <id>` to verify again and clear
   the mark, or remove and re-add the Beeper source.
-- **Remote daemons**: the Beeper API is loopback-only, so the msgvault daemon
-  must run on the same machine as Beeper Desktop.
+- **API reachability**: Desktop's default endpoint is local to its machine.
+  A remote daemon needs a reachable compatible API configured with `[beeper].url`
+  and an existing token for that endpoint.
 - **iMessage**: Beeper only carries iMessage on macOS, so archiving it this way
   needs a Mac running Beeper Desktop beside the msgvault daemon. Networks found
   from chat data are looked for in a bounded scan of your most recently active
