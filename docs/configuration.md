@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-06"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1483,16 +1483,17 @@ exclude_rooms = []                # exact room IDs to skip; wins over rooms
 
 ### `[beeper]`
 
-Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
-block (not a list): the Beeper Desktop API is loopback-only, so there is one
-instance per machine and the daemon must run beside it. Authorize first with
-`msgvault add-beeper`.
+Archive chats through a reachable [Beeper Desktop API or compatible headless
+Server](/docs/usage/beeper/). This single block configures one endpoint. Desktop
+defaults to its local API; set `url` for another compatible endpoint. Save its
+existing access token with `msgvault add-beeper` first.
 
 ```toml
 [beeper]
 # url = "http://localhost:23373"  # Beeper Desktop API (default)
 enabled = true                    # gate for the daemon schedule
 schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+events = false                    # optional live wakeups; keep the schedule
 accounts = []                     # accountID include filter (empty = all)
 exclude_accounts = []             # skip networks archived natively, e.g. ["whatsapp"]
 rate_limit_qps = 20               # request rate against the local API
@@ -1508,9 +1509,10 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 
 | Key | Default | Description |
 |---|---|---|
-| `url` | `http://localhost:23373` | Beeper Desktop API base URL |
+| `url` | `http://localhost:23373` | Beeper Desktop API or compatible headless Server base URL |
 | `enabled` | `false` | Whether the daemon schedules Beeper sync |
 | `schedule` | — | Cron expression used by `msgvault serve` |
+| `events` | `false` | Opt into [live importer wakeups](/docs/usage/beeper/#wake-imports-from-live-events); requires `enabled` and a valid schedule |
 | `accounts` | all | Beeper accountIDs to sync (include filter) |
 | `exclude_accounts` | — | Beeper accountIDs to skip (wins over `accounts`) |
 | `rate_limit_qps` | `20` | Request rate limit against the local API |

@@ -1763,10 +1763,9 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 	return nil
 }
 
-// BeeperConfig configures the Beeper Desktop archive source ([beeper] table).
-// A single block, not a slice: the Beeper Desktop API is loopback-only, so
-// there is exactly one instance per machine and the daemon must be co-located
-// with it.
+// BeeperConfig configures one Beeper archive endpoint ([beeper] table).
+// Desktop defaults to its loopback URL; a compatible headless Server can be
+// configured with URL.
 type BeeperConfig struct {
 	MaxParticipants int `toml:"max_participants"`
 	// URL is the Beeper Desktop API base URL. Empty means the default
@@ -1776,6 +1775,8 @@ type BeeperConfig struct {
 	Enabled bool `toml:"enabled"`
 	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
 	Schedule string `toml:"schedule"`
+	// Events opts into live event hints for the successfully scheduled importer.
+	Events bool `toml:"events"`
 	// Accounts is an accountID include filter (empty = sync all accounts).
 	Accounts []string `toml:"accounts"`
 	// ExcludeAccounts skips specific accountIDs — e.g. ["whatsapp"] when the

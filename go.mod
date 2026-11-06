@@ -16,6 +16,7 @@ require (
 	github.com/cenkalti/backoff/v7 v7.0.2
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
@@ -65,6 +66,7 @@ require (
 	golang.org/x/time v0.16.0
 	golang.org/x/tools v0.52.0
 	google.golang.org/api v0.310.0
+	hegel.dev/go/hegel v0.9.29
 	howett.net/plist v1.0.1
 	maunium.net/go/mautrix v0.32.0
 )

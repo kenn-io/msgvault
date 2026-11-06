@@ -610,6 +610,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schedule person enrichment: %w", err)
 	}
 
+	beeperJobRegistered := false
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
 		logger.Warn("beeper is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
 			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [beeper] entry`)
@@ -620,6 +621,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})); err != nil {
 			logger.Error("failed to schedule beeper sync", "error", err)
 		} else {
+			beeperJobRegistered = true
 			logger.Info("scheduled beeper sync", "schedule", cfg.Beeper.Schedule)
 		}
 	}
@@ -928,6 +930,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start the schedulers
 	sched.Start()
+	stopBeeperEvents := startBeeperEvents(ctx, cfg, sched, beeperJobRegistered, logger)
+	defer stopBeeperEvents()
 	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
 
@@ -1142,6 +1146,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Stop background work first: vector init honors ctx, so cancelling
 	// lets the operation-gate drain inside shutdownServeRuntime complete.
 	cancel()
+	stopBeeperEvents()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
