@@ -36,6 +36,8 @@ func TestSignalNativeStatuses(t *testing.T) {
 		{"Adhoc", "Deleted", "", "", ""},
 		{"Adhoc", "Unknown", "unknown", "unknown", ""},
 		{"FutureMode", "Accepted", "unknown", "unknown", ""},
+		{"", "Deleted", "", "", ""},
+		{"FutureMode", "Deleted", "", "", ""},
 	} {
 		t.Run(tc.mode+"/"+tc.status, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -66,6 +68,25 @@ func TestSignalNativeStatuses(t *testing.T) {
 }
 
 func TestNormalizedImportValidatesObservation(t *testing.T) {
+	for _, field := range []string{"occurred_at", "ended_at"} {
+		t.Run(field+" exceeds UTC year range", func(t *testing.T) {
+			require := require.New(t)
+			o := exampleObservation()
+			at, err := time.Parse(time.RFC3339, "9999-12-31T23:30:00-01:00")
+			require.NoError(err)
+			if field == "occurred_at" {
+				o.OccurredAt = at
+			} else {
+				o.EndedAt = &at
+			}
+			record, err := json.Marshal(o)
+			require.NoError(err)
+			_, err = (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
+			require.ErrorIs(err, ErrInvalid)
+			assert.ErrorContains(t, err, "timestamps")
+		})
+	}
+
 	_, err := (ImportRequest{Format: "normalized", Account: "example",
 		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"a","native_call_id":"n1","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T12:00:00Z","participants":[{"participant_id":1,"participation":"joined"}],"raw":{}}`),
 	}).Observation()
