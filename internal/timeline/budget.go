@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"maps"
+	"slices"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -47,12 +49,9 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	if err = preparePage(&out, &original, totals, counts, format); err != nil {
 		return nil, err
 	}
-	base, err := timelineSize(&out, format)
+	base, err := fitPersonText(&out, &original, totals, counts, format, budget)
 	if err != nil {
 		return nil, err
-	}
-	if base > budget {
-		return nil, ErrBudgetTooSmall
 	}
 	available := budget - base
 	// A running ceiling passes each unused share to the following section.
@@ -81,18 +80,14 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 				}
 				// A section's first row always makes progress, using a minimal identity
 				// stub when the complete row exceeds its share. It may borrow from the
-				// remaining budget when even its stub exceeds that share.
+				// remaining budget, then shorten optional relationship text, before refusing.
 				candidate = clonePage(out)
 				appendItem(&candidate, item, true)
 				if err = preparePage(&candidate, &original, totals, candidateCounts, format); err != nil {
 					return nil, err
 				}
-				size, err = timelineSize(&candidate, format)
-				if err != nil {
+				if _, err = fitPersonText(&candidate, &original, totals, candidateCounts, format, budget); err != nil {
 					return nil, err
-				}
-				if size > budget {
-					return nil, ErrBudgetTooSmall
 				}
 			}
 			out = candidate
@@ -118,6 +113,59 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 		return nil, ErrBudgetTooSmall
 	}
 	return &out, nil
+}
+
+// fitPersonText measures a page that must be sent, halving the optional relationship
+// brief and then the longest agenda title until it fits the budget. The runes
+// cut are reported under Omitted.Budget.
+func fitPersonText(out, original *Timeline, totals, counts map[string]int, format string, budget int) (int, error) {
+	if p := out.Person; p != nil {
+		header := *p
+		header.Agenda = slices.Clone(p.Agenda)
+		if p.Brief != nil {
+			brief := *p.Brief
+			header.Brief = &brief
+		}
+		out.Person = &header
+	}
+	for {
+		size, err := timelineSize(out, format)
+		if err != nil || size <= budget {
+			return size, err
+		}
+		key, text := personTextToCut(out.Person)
+		if text == nil {
+			return 0, ErrBudgetTooSmall
+		}
+		runes := utf8.RuneCountInString(text.Text)
+		boundText(text, runes/2)
+		if original.Omitted.Budget == nil {
+			original.Omitted.Budget = map[string]any{}
+		}
+		cut, _ := original.Omitted.Budget[key].(int)
+		original.Omitted.Budget[key] = cut + runes - runes/2
+		if err = preparePage(out, original, totals, counts, format); err != nil {
+			return 0, err
+		}
+	}
+}
+func personTextToCut(p *PersonHeader) (string, *UntrustedText) {
+	if p == nil {
+		return "", nil
+	}
+	if p.Brief != nil && p.Brief.Text != "" {
+		return "brief_text", p.Brief
+	}
+	var longest *UntrustedText
+	for i := range p.Agenda {
+		if p.Agenda[i].Text != "" && (longest == nil || len(p.Agenda[i].Text) > len(longest.Text)) {
+			longest = &p.Agenda[i]
+		}
+	}
+	if longest == nil {
+		return "", nil
+	}
+	return "agenda_text", longest
 }
 
 type pageItem struct {
