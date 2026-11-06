@@ -40,7 +40,7 @@ func replyReceipt(a store.LineReplyAttempt) ReplyReceipt {
 	if a.State == store.LineReplyRemoteAccepted {
 		r.Status = "sent_archive_pending"
 	}
-	if a.State == store.LineReplyAdmitted || a.State == store.LineReplyRemoteUnknown || a.State == store.LineReplyAcceptedUnresolved {
+	if a.State == store.LineReplyAdmitted || a.State == store.LineReplyRemoteUnknown {
 		deadline := a.NextRetryAt
 		r.RetryAfter = &deadline
 	}
@@ -49,7 +49,7 @@ func replyReceipt(a store.LineReplyAttempt) ReplyReceipt {
 
 func replyDone(a store.LineReplyAttempt) bool {
 	switch a.State {
-	case store.LineReplySent, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired:
+	case store.LineReplySent, store.LineReplyProviderRejected, store.LineReplyExpired:
 		return true
 	}
 	return false
@@ -243,7 +243,6 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 			receipt.Accepted = true
 			receipt.RemoteMessageID = result.MessageID
 			receipt.RequestID = result.RequestID
-			receipt.Status = "accepted_receipt_pending"
 			receipt.RetryAfter = &deadline
 		}
 		return receipt, err

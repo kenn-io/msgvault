@@ -4836,7 +4836,7 @@ CREATE TABLE IF NOT EXISTS line_reply_attempts (
     body TEXT NOT NULL,
     quote_token TEXT NOT NULL DEFAULT '',
     retry_key TEXT NOT NULL UNIQUE,
-    state TEXT NOT NULL CHECK(state IN ('admitted','remote_unknown','accepted_unresolved','remote_accepted','sent','provider_rejected','remote_unknown_expired','accepted_unresolved_expired')),
+    state TEXT NOT NULL CHECK(state IN ('admitted','remote_unknown','remote_accepted','sent','provider_rejected','expired')),
     admitted_at DATETIME NOT NULL,
     retry_until DATETIME NOT NULL,
     next_retry_at DATETIME NOT NULL,

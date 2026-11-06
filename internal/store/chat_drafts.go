@@ -196,14 +196,19 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockSyncSourceTx(ctx, tx, draft.SourceID); err != nil {
-			return err
+		if draft.SourceType == lineSourceType {
+			if err := s.lockSyncSourceTx(ctx, tx, draft.SourceID); err != nil {
+				return err
+			}
 		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
 		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
 			return err
+		}
+		if draft.SourceType != lineSourceType {
+			return nil
 		}
 		// An admitted attempt has never reached LINE. Retire it after deletion
 		// so an admission that held the draft row is visible to this statement.
@@ -215,7 +220,7 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 			return err
 		}
 		if attempt.State == LineReplyAdmitted {
-			attempt.State = LineReplyRemoteUnknownExpired
+			attempt.State = LineReplyExpired
 		} else if !expireLineReply(&attempt, now) {
 			return nil
 		}

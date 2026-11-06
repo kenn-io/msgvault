@@ -12,14 +12,12 @@ import (
 )
 
 const (
-	LineReplyAdmitted                  = "admitted"
-	LineReplyRemoteUnknown             = "remote_unknown"
-	LineReplyAcceptedUnresolved        = "accepted_unresolved"
-	LineReplyRemoteAccepted            = "remote_accepted"
-	LineReplySent                      = "sent"
-	LineReplyProviderRejected          = "provider_rejected"
-	LineReplyRemoteUnknownExpired      = "remote_unknown_expired"
-	LineReplyAcceptedUnresolvedExpired = "accepted_unresolved_expired"
+	LineReplyAdmitted         = "admitted"
+	LineReplyRemoteUnknown    = "remote_unknown"
+	LineReplyRemoteAccepted   = "remote_accepted"
+	LineReplySent             = "sent"
+	LineReplyProviderRejected = "provider_rejected"
+	LineReplyExpired          = "expired"
 )
 
 var (

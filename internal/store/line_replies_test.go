@@ -98,18 +98,19 @@ func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
 	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
 	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, RequestID: "original-request", StatusCode: 200, NextRetryAt: now.Add(time.Minute)})
 	require.NoError(err)
-	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
 	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
 	require.ErrorIs(err, store.ErrLineReplyRetryWait)
 	attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(time.Minute), now.Add(90*time.Second))
 	require.NoError(err)
-	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
 	_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 503, NextRetryAt: now.Add(3 * time.Minute)})
 	require.NoError(err)
 	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, NextRetryAt: now.Add(time.Minute)})
 	require.NoError(err)
-	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
 	assert.Equal("original-request", attempt.RequestID)
+	assert.Equal(200, attempt.StatusCode)
 	assert.Equal(now.Add(3*time.Minute), attempt.NextRetryAt)
 }
 
@@ -276,11 +277,11 @@ func TestLineReplyCompletionProjectsDirectChatRoster(t *testing.T) {
 
 func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
 	for _, accepted := range []bool{false, true} {
-		state := store.LineReplyRemoteUnknownExpired
+		name := "unknown"
 		if accepted {
-			state = store.LineReplyAcceptedUnresolvedExpired
+			name = "accepted without ID"
 		}
-		t.Run(state, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st, draft, _ := replyStoreFixture(t)
@@ -300,7 +301,7 @@ func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
 			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now.Add(24*time.Hour)))
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
-			assert.Equal(state, receipt.State)
+			assert.Equal(store.LineReplyExpired, receipt.State)
 			assert.Empty(receipt.Body)
 			assert.Empty(receipt.QuoteToken)
 			assert.Empty(receipt.RemoteQuoteToken)
@@ -342,11 +343,9 @@ func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 			}
 			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
+			assert.Equal(store.LineReplyExpired, expired.State)
 			if phase == "accepted" {
-				assert.Equal(store.LineReplyAcceptedUnresolvedExpired, expired.State)
 				assert.Equal("original-request", expired.RequestID)
-			} else {
-				assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
 			}
 			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
@@ -488,7 +487,7 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 			must.NoError(err)
 			accepted, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
 			must.NoError(err)
-			must.Equal(store.LineReplyAcceptedUnresolved, accepted.State)
+			must.Equal(store.LineReplyRemoteUnknown, accepted.State)
 			must.Equal("Thanks!", accepted.Body)
 			must.Equal("synthetic-parent-quote", accepted.QuoteToken)
 			must.Equal("remote-quote", accepted.RemoteQuoteToken)
@@ -508,8 +507,8 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 			must.ErrorIs(err, store.ErrChatDraftNotFound)
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			must.NoError(err)
-			checks.Equal(store.LineReplyAcceptedUnresolvedExpired, receipt.State)
-			checks.True(store.LineReplyHasAcceptance(receipt.State))
+			checks.Equal(store.LineReplyExpired, receipt.State)
+			checks.False(store.LineReplyHasAcceptance(receipt.State))
 			checks.Equal(admitted.RetryKey, receipt.RetryKey)
 			checks.Equal("accepted-request", receipt.RequestID)
 			checks.Equal(200, receipt.StatusCode)
@@ -536,7 +535,7 @@ func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
 		must.ErrorIs(err, store.ErrLineReplyExpired)
 		receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 		must.NoError(err)
-		must.Equal(store.LineReplyRemoteUnknownExpired, receipt.State)
+		must.Equal(store.LineReplyExpired, receipt.State)
 		checks.Equal(admitted.RetryKey, receipt.RetryKey)
 		checks.Empty(receipt.Body)
 		checks.Empty(receipt.QuoteToken)
@@ -554,11 +553,9 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 		{store.LineReplyAdmitted, true, false},
 		{store.LineReplyRemoteUnknown, false, false},
 		{store.LineReplyRemoteUnknown, false, true},
-		{store.LineReplyAcceptedUnresolved, false, false},
 		{store.LineReplyRemoteAccepted, false, false},
 		{store.LineReplyProviderRejected, false, false},
-		{store.LineReplyRemoteUnknownExpired, false, false},
-		{store.LineReplyAcceptedUnresolvedExpired, false, false},
+		{store.LineReplyExpired, false, false},
 		{store.LineReplySent, false, false},
 	} {
 		name := tc.state
@@ -592,14 +589,12 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 					outcome.StatusCode = 400
 				}
 				switch state {
-				case store.LineReplyAcceptedUnresolved, store.LineReplyAcceptedUnresolvedExpired:
-					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200}
 				case store.LineReplyRemoteAccepted, store.LineReplySent:
 					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"}
 				case store.LineReplyProviderRejected:
 					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
 				}
-				if state != store.LineReplyRemoteUnknownExpired {
+				if state != store.LineReplyExpired {
 					attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
 					require.NoError(err)
 				}
@@ -607,7 +602,7 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 					attempt, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 					require.NoError(err)
 				}
-				if state == store.LineReplyRemoteUnknownExpired || state == store.LineReplyAcceptedUnresolvedExpired {
+				if state == store.LineReplyExpired {
 					attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 					require.ErrorIs(err, store.ErrLineReplyExpired)
 				}
@@ -628,16 +623,16 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 			require.NoError(err)
 			wantReceipt := attempt
 			if state == store.LineReplyAdmitted {
-				wantReceipt.State = store.LineReplyRemoteUnknownExpired
+				wantReceipt.State = store.LineReplyExpired
 			}
-			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected || state == store.LineReplyRemoteUnknownExpired {
+			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected || state == store.LineReplyExpired {
 				wantReceipt.Body = ""
 				wantReceipt.QuoteToken = ""
 				wantReceipt.SourceConversationID = ""
 			}
 			assert.Equal(wantReceipt, receipt)
 			switch state {
-			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent:
+			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyExpired, store.LineReplySent:
 				target, err := st.GetOrCreateSource("line", "2000000002")
 				require.NoError(err)
 				if state == store.LineReplyAdmitted {
@@ -653,7 +648,7 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 				require.NoError(err)
 				want := state
 				if state == store.LineReplyAdmitted {
-					want = store.LineReplyRemoteUnknownExpired
+					want = store.LineReplyExpired
 				}
 				assert.Equal(want, receipt.State)
 				assert.Equal(attempt.RetryKey, receipt.RetryKey)

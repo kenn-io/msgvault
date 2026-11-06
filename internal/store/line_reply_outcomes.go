@@ -23,11 +23,11 @@ type LineReplyOutcome struct {
 
 // LineReplyHasAcceptance reports whether a state retains provider acceptance evidence.
 func LineReplyHasAcceptance(state string) bool {
-	return state == LineReplyAcceptedUnresolved || state == LineReplyAcceptedUnresolvedExpired || state == LineReplyRemoteAccepted || state == LineReplySent
+	return state == LineReplyRemoteAccepted || state == LineReplySent
 }
 
 func lineReplyExpired(state string) bool {
-	return state == LineReplyRemoteUnknownExpired || state == LineReplyAcceptedUnresolvedExpired
+	return state == LineReplyExpired
 }
 
 // lineReplyRefusalState resolves a live first submission LINE did not accept.
@@ -53,11 +53,7 @@ func expireLineReply(a *LineReplyAttempt, now time.Time) bool {
 	if lineReplyTerminal(a.State) || a.RemoteMessageID != "" || (!lineReplyExpired(a.State) && now.Before(a.RetryUntil)) {
 		return false
 	}
-	accepted := LineReplyHasAcceptance(a.State)
-	a.State = LineReplyRemoteUnknownExpired
-	if accepted {
-		a.State = LineReplyAcceptedUnresolvedExpired
-	}
+	a.State = LineReplyExpired
 	return true
 }
 
@@ -165,13 +161,11 @@ func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, ou
 		if lineReplyTerminal(a.State) {
 			return nil
 		}
-		known := LineReplyHasAcceptance(a.State)
-		expired := lineReplyExpired(a.State)
 		if outcome.Accepted {
 			if a.RemoteMessageID != "" && outcome.MessageID != "" && a.RemoteMessageID != outcome.MessageID {
 				return ErrLineReplyReceiptConflict
 			}
-			if known && a.RequestID != "" && outcome.RequestID != "" && a.RequestID != outcome.RequestID {
+			if a.RequestID != "" && outcome.RequestID != "" && a.RequestID != outcome.RequestID {
 				return ErrLineReplyReceiptConflict
 			}
 			if outcome.MessageID != "" {
@@ -184,14 +178,10 @@ func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, ou
 				a.RequestID = outcome.RequestID
 			}
 			a.StatusCode = outcome.StatusCode
-			a.State = LineReplyAcceptedUnresolved
-			if expired {
-				a.State = LineReplyAcceptedUnresolvedExpired
-			}
 			if a.RemoteMessageID != "" {
 				a.State = LineReplyRemoteAccepted
 			}
-		} else if !known {
+		} else if a.RequestID == "" {
 			a.State = lineReplyRefusalState(a.State, outcome)
 			a.StatusCode = outcome.StatusCode
 		}
