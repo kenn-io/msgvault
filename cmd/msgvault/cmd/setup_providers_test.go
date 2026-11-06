@@ -2031,7 +2031,6 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			assert := assert.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+"\n[vector]\nenabled = false\n[vector.embeddings]\nendpoint = \"http://localhost:11434/v1\"\nmodel = \"custom-model\"\ndimension = 768\n[vector.embed.schedule]\n"+tc.fields)
 			cfg := fixture.load(t)
-			var keys toml.MetaData
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
 			require.NoError(err)
 			ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
