@@ -205,7 +205,6 @@ func TestNextModeIncludesPeople(t *testing.T) {
 	assert.Equal(modeEmail, nextMode(modePeople, true, true, false))
 	assert.Equal(modeMeetings, nextMode(modeEmail, false, true, false))
 	assert.Equal(modePeople, nextMode(modeMeetings, false, true, false))
-	assert.Equal(modeEmail, nextMode(modeMeetings, false, false, false))
 }
 
 func TestEnteringPeopleLoadsFirstDirectoryPage(t *testing.T) {

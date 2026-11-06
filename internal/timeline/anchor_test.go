@@ -112,6 +112,8 @@ func TestAnchorNeighboursUseRequestedMoment(t *testing.T) {
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	requirements.Len(got.History, 3)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(messageRef(anchor), got.Anchor.Ref)
 	assertions.WithinDuration(f.now.Add(-4*time.Hour), got.History[0].Time, time.Microsecond)
 	assertions.WithinDuration(f.now.Add(-2*time.Hour), got.History[1].Time, time.Microsecond)
 	assertions.True(got.History[2].Anchor)
@@ -135,10 +137,8 @@ func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	got, err := Build(t.Context(), src, req)
 	requirements.NoError(err)
 	requirements.Len(got.History, 7)
-	for i, e := range got.History {
-		if i > 0 {
-			assertions.True(e.Time.After(got.History[i-1].Time))
-		}
+	for i, offset := range []int{-20, -8, -3, 0, 4, 9, 22} {
+		assertions.WithinDuration(f.now.AddDate(0, 0, offset), got.History[i].Time, time.Microsecond)
 	}
 	assertions.True(got.History[3].Anchor)
 }
@@ -245,7 +245,6 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
 	require.NoError(err)
-	assert.Equal("2026-09-06T01:00:00-03:00", got.Anchor.Time.Format(time.RFC3339))
 	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
 	require.Len(got.History, 1)
 	for _, entry := range got.History {

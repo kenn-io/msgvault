@@ -6,7 +6,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMarkdownDayGolden(t *testing.T) {
@@ -46,9 +45,7 @@ func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 				v.History = budgetTimeline(1).History
 				v.History[0].Message.Snippet.Text = strings.Repeat("猫😀", 250)
 			}
-			fitted, err := Fit(v, "markdown", 8192)
-			require.NoError(t, err)
-			got := Markdown(fitted)
+			got := Markdown(v)
 			assert.True(utf8.ValidString(got))
 			assert.Contains(got, strings.Repeat("猫😀", 40)+"…")
 			assert.NotContains(got, strings.Repeat("猫😀", 41))
@@ -69,22 +66,11 @@ func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 }
 
 func TestMarkdownSummaryCountsMessagesAndCalls(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	at := f.now.AddDate(0, 0, -2)
-	for range 3 {
-		f.add(at, false)
-	}
-	f.project()
-	req := dayRequest()
-	req.Date, req.Days = "", 3
-	v, err := Build(t.Context(), f.src, req)
-	requirements.NoError(err)
-	assertions.Contains(Markdown(v), "Tue Oct 20 · 3 messages · 1 people")
-	f.call(at)
-	v, err = Build(t.Context(), f.src, req)
-	requirements.NoError(err)
-	assertions.Contains(Markdown(v), "Tue Oct 20 · 3 messages · 1 calls · 1 people")
+	v := sampleTimeline(ModeDay)
+	v.Days = []Day{{Date: "2026-10-20", Summary: &DaySummary{Messages: 3, PeopleCount: 1}}}
+	assert.Contains(t, Markdown(v), "Tue Oct 20 · 3 messages · 1 people")
+	v.Days[0].Summary.Calls = 1
+	assert.Contains(t, Markdown(v), "Tue Oct 20 · 3 messages · 1 calls · 1 people")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v := sampleTimeline(ModeAnchor)

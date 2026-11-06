@@ -1567,12 +1567,7 @@ func TestGeneratedTimelineDecodesPrimitiveMaps(t *testing.T) {
 	require.Len(response.JSON200.Days[0].Bursts, 1)
 	openers := response.JSON200.Days[0].Bursts[0].Open
 	require.Len(openers, 2)
-	for i, want := range []string{`{"id":42}`, `{"ref":"e77"}`} {
-		got, err := json.Marshal(openers[i].Args)
-		require.NoError(err)
-		assert.JSONEq(t, want, string(got))
-	}
-	budget, err := json.Marshal(response.JSON200.Omitted.Budget)
-	require.NoError(err)
-	assert.JSONEq(t, `{"history":2,"open_loops":"more"}`, string(budget))
+	assert.Equal(t, map[string]any{"id": float64(42)}, openers[0].Args)
+	assert.Equal(t, map[string]any{"ref": "e77"}, openers[1].Args)
+	assert.Equal(t, map[string]any{"history": float64(2), "open_loops": "more"}, response.JSON200.Omitted.Budget)
 }

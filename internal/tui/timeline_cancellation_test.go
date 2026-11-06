@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -127,18 +128,30 @@ func TestTimelineCancelledRefreshEscapeRestoresPreviousPage(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	m := timelineModeModel()
 	previous := m.timelineState.request
+	previousResult := m.timelineState.result
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	requirements.True(ok)
 	m.timelineState.scroll = 1
 	m.timelineState.result.Cursor = "second-page"
 	m, cmd := sendKey(t, m, key('n'))
 	requirements.NotNil(cmd)
 	m = sendMsg(t, m, cmd())
+	requirements.Len(m.timelineState.history, 1)
 	m, cmd = sendKey(t, m, key('r'))
 	defer m.cancelTimelineRequest()
 	requirements.NotNil(cmd)
+	late := cmd()
 	m, _ = sendKey(t, m, keyEsc())
+	requirements.Len(backend.contexts, 2)
+	requirements.ErrorIs(backend.contexts[1].Err(), context.Canceled)
+	assertions.Same(previousResult, m.timelineState.result)
 	assertions.Equal(previous, m.timelineState.request)
 	assertions.Equal(1, m.timelineState.scroll)
 	assertions.Empty(m.timelineState.history)
+	m = sendMsg(t, m, late)
+	assertions.Same(previousResult, m.timelineState.result)
+	assertions.Equal(previous, m.timelineState.request)
+	assertions.Equal(1, m.timelineState.scroll)
 }
 
 func TestTimelineHistoryStopsAtTwenty(t *testing.T) {

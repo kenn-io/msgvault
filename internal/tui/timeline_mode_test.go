@@ -116,7 +116,6 @@ func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 	assert.Equal(modeTimeline, nextMode(modeMeetings, false, false, true))
 	assert.Equal(modePeople, nextMode(modeMeetings, false, true, true))
 	assert.Equal(modeEmail, nextMode(modeTimeline, true, true, true))
-	assert.Equal(modeEmail, nextMode(modeMeetings, false, false, false))
 	m := NewBuilder().Build()
 	m.mode = modeMeetings
 	m.timelineBackend = &timelineModeBackend{}

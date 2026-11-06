@@ -128,6 +128,8 @@ func TestFitBudgetsFreshness(t *testing.T) {
 			requirements.NoError(err)
 			assertions.LessOrEqual(encodedSize(t, out, format), 4096)
 			assertions.NotEmpty(out.History)
+			assertions.NotEmpty(out.Freshness.Sources)
+			assertions.Less(len(out.Freshness.Sources), 100)
 			assertions.Equal(100-len(out.Freshness.Sources), out.Omitted.Budget["freshness"])
 			assertions.Empty(out.Cursor)
 		})
@@ -178,6 +180,7 @@ func TestFitOmitsOversizedFreshnessWarning(t *testing.T) {
 	out, err := Fit(v, "json", 4096)
 	requirements.NoError(err)
 	assertions.Empty(out.Freshness.Warnings)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
 	assertions.Equal(1, out.Omitted.Budget["freshness"])
 	assertions.Empty(out.Cursor)
 }
@@ -268,19 +271,37 @@ func TestFitReportsCountsOrMore(t *testing.T) {
 	assertions.Empty(out.Cursor)
 }
 func TestFitJSONEscapingAndMultibyte(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	v := budgetTimeline(80)
-	for i := range v.History {
-		v.History[i].Message.Snippet.Text = strings.Repeat("猫😀<>&\"\\", 100)
+	for _, kind := range []string{"snippet", "title"} {
+		t.Run(kind, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			v := budgetTimeline(80)
+			text := strings.Repeat("猫😀<>&\"\\", 100)
+			for i := range v.History {
+				if kind == "title" {
+					v.History[i].Message = nil
+					v.History[i].Kind = "meeting"
+					v.History[i].Meeting = &MeetingEntry{Title: UntrustedText{Text: text}, Start: v.Now, End: v.Now.Add(time.Hour)}
+				} else {
+					v.History[i].Message.Snippet.Text = text
+				}
+			}
+			out, err := Fit(v, "json", 4096)
+			requirements.NoError(err)
+			b, err := json.Marshal(out, jsontext.EscapeForHTML(true))
+			requirements.NoError(err)
+			assertions.LessOrEqual(len(b), 4096)
+			assertions.True(utf8.Valid(b))
+			requirements.NotEmpty(out.History)
+			var got UntrustedText
+			if kind == "title" {
+				got = out.History[0].Meeting.Title
+			} else {
+				got = out.History[0].Message.Snippet
+			}
+			assertions.True(got.Truncated)
+			assertions.Equal(strings.Repeat("猫😀<>&\"\\", 11)+"猫😀<", got.Text)
+		})
 	}
-	out, err := Fit(v, "json", 4096)
-	requirements.NoError(err)
-	b, err := json.Marshal(out, jsontext.EscapeForHTML(true))
-	requirements.NoError(err)
-	assertions.LessOrEqual(len(b), 4096)
-	assertions.True(utf8.Valid(b))
-	assertions.True(out.History[0].Message.Snippet.Truncated)
 }
 func TestFitSectionSharesFlowForward(t *testing.T) {
 	assertions := assert.New(t)
@@ -435,6 +456,9 @@ func TestFitMarksClippedInvalidUTF8(t *testing.T) {
 	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.Snippet.Text)
 	assert.True(out.History[0].Message.People[0].Truncated)
 	assert.Equal(strings.Repeat("\ufffd", 80), out.History[0].Message.People[0].Name)
+	markdown := Markdown(out)
+	assert.True(utf8.ValidString(markdown))
+	assert.Contains(markdown, strings.Repeat("\ufffd", 80)+"…")
 }
 
 func TestFitBoundsGapItemsAtMinimumBudget(t *testing.T) {

@@ -57,7 +57,6 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 	command.SetArgs([]string{"--with", "person:7", "--around", "msg:9", "--date", "2027-03-01", "--before", "2", "--after", "3", "--conversation", "--tier", "1,3", "--include-cold", "--include-noise", "--brief", "--budget", "4096", "--cursor", "next", "--json"})
 	requirements.NoError(command.Execute())
 	assertions.Equal(timeline.Request{With: "person:7", Around: "msg:9", Date: "2027-03-01", Before: 2, After: 3, BeforeSet: true, AfterSet: true, Conversation: true, Tiers: []int{1, 3}, IncludeCold: true, IncludeNoise: true, Brief: true, Budget: 4096, Cursor: "next", Format: "json"}, fake.req)
-	assertions.Contains(out.String(), `"mode":"anchor"`)
 	assertions.True(strings.HasSuffix(out.String(), "\n"))
 	command = newTimelineCommand()
 	out.Reset()

@@ -136,14 +136,26 @@ func TestBuildDayRanksTiersThenExchanges(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("conv:%d", newer), entries[2].Ref)
 }
 func TestBuildDayTierFilterDropsUnsaved(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	f.add(f.now, false)
 	f.project()
 	req := dayRequest()
 	req.Tiers = []int{1, 2}
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(t, err)
-	assert.Empty(t, allDayEntries(got))
+	requirements.NoError(err)
+	assertions.Empty(allDayEntries(got))
+
+	person := f.savePerson()
+	f.tier(person, 2)
+	f.project()
+	got, err = Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	requirements.Len(entries[0].Burst.People, 1)
+	assertions.Equal(person, entries[0].Burst.People[0].PersonID)
+	assertions.Equal(2, entries[0].Burst.People[0].Tier)
 }
 
 type blockingLoops struct{}
@@ -516,6 +528,7 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 		})
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	}
+	f.call(at)
 	f.project()
 
 	req := dayRequest()
@@ -526,6 +539,8 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 	requirements.NotNil(got.Days[0].Summary)
 	assertions.Equal("2026-10-20", got.Days[0].Date)
 	assertions.Equal(1, got.Days[0].Summary.PeopleCount)
+	assertions.Equal(2, got.Days[0].Summary.Messages)
+	assertions.Equal(1, got.Days[0].Summary.Calls)
 }
 
 func TestBuildDaySkippedMidnightKeepsHours(t *testing.T) {

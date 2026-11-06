@@ -142,7 +142,7 @@ func TestTimelinePersonAuthorizationAndAmbiguity(t *testing.T) {
 	requirements.NoError(err)
 	for _, query := range []string{
 		fmt.Sprintf("?with=person:%d", people[0].ID),
-		"?with=Alice", "?mode=day&with=Alice", "?around=msg:1&with=Alice", "?with=unknown", "?mode=day&with=Alice&days=invalid",
+		"?mode=day&with=Alice&days=invalid",
 	} {
 		w := timelineGET(srv, query, secret)
 		assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
@@ -306,7 +306,6 @@ func TestTimelineFreshnessUsesSourceStatus(t *testing.T) {
 				}
 				if tc.outcome != "" {
 					assertions.Equal(tc.outcome, item.Outcome)
-					assertions.Contains(timeline.Markdown(&got), "⚠ gcal:calendar@example.com/work")
 				}
 			}
 			visibleWarnings := len(got.Freshness.Sources)

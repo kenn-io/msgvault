@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/loops"
-	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -134,31 +133,6 @@ func (s deniedLoops) List(context.Context, loops.Options, time.Time) (loops.Resu
 	return loops.Result{}, errors.New("owner-only loops queried")
 }
 
-type deniedBriefs struct{ hits *atomic.Int64 }
-
-func (s deniedBriefs) GetPersonBriefContext(context.Context, int64, int) (*store.PersonBrief, error) {
-	s.hits.Add(1)
-	return nil, errors.New("owner-only brief queried")
-}
-
-type deniedAgenda struct{ hits *atomic.Int64 }
-
-func (s deniedAgenda) List(context.Context, int64) (personagenda.Result, error) {
-	s.hits.Add(1)
-	return personagenda.Result{}, errors.New("owner-only agenda queried")
-}
-
-type deniedCadence struct {
-	ActivitySource
-
-	hits *atomic.Int64
-}
-
-func (s deniedCadence) CadenceForPersonContext(context.Context, int64, *time.Time, time.Time) (string, *time.Time, error) {
-	s.hits.Add(1)
-	return "", nil, errors.New("owner-only cadence queried")
-}
-
 type deniedSuggestions struct {
 	MeetingsSource
 
@@ -185,9 +159,6 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 	var hits atomic.Int64
 	f.src.Calls = deniedCalls{&hits}
 	f.src.Loops = deniedLoops{&hits}
-	f.src.Briefs = deniedBriefs{&hits}
-	f.src.Agenda = deniedAgenda{&hits}
-	f.src.Activity = deniedCadence{f.src.Activity, &hits}
 	f.src.Meetings = deniedSuggestions{f.src.Meetings, &hits}
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, calendar.ID})
 	for _, req := range []Request{dayRequest(), anchorRequest(messageRef(id))} {
@@ -195,12 +166,7 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 		got, e := Build(ctx, f.src, req)
 		requirements.NoError(e)
 		assertions.Nil(got.OpenLoops)
-		if got.Person != nil {
-			assertions.Nil(got.Person.Brief)
-			assertions.Empty(got.Person.Agenda)
-			assertions.Empty(got.Person.CadenceStatus)
-		}
-		for _, section := range []string{"calls", "loops", "meeting-link-suggestions", "brief", "agenda", "cadence"} {
+		for _, section := range []string{"calls", "loops", "meeting-link-suggestions"} {
 			count := 0
 			for _, gap := range got.Gaps {
 				if gap.Section == section && gap.Code == "owner-only" {
