@@ -5251,9 +5251,12 @@ are kept. Beeper and Discord sources also recompute their provider-derived
 text and metadata, and email retained under those labels is repaired from its
 MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
-them. Source syncs and imports run the same work first, so use this command
-for on-demand repair, file imports you will not run again, or retrying an
-interrupted pass.
+them. Every source also indexes the Message-ID, In-Reply-To, References and
+attached-original identifiers of emails still pending it, which
+related-copy lookups read. Missing or unreadable payloads are recorded
+as incomplete and do not block later messages. Source syncs and imports run the
+same work first, so use this command for on-demand repair, file imports you will
+not run again, or retrying an interrupted pass.
 
 ## gc
 
