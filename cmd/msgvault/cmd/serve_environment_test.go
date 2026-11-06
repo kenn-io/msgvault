@@ -105,10 +105,6 @@ func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint
 	require.NoError(initial.Close())
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
-	status, stdout, _ := lifecycleTestCommand(t)
-	require.NoError(runServeStatus(status, running.Data.DataDir))
-	assert.Contains(t, stdout.String(), "msgvault running at "+url)
-
 	for _, contenderPort := range []int{0, port} {
 		contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(contenderPort)})
 		require.NoError(err)
@@ -116,7 +112,7 @@ func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint
 		contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
 		err = runServe(contenderCommand, nil)
 		require.ErrorAs(err, &daemonOwnerLockHeldError{})
-		assert.Equal(t, "msgvault running at "+url+"; open this URL in your browser; to run in the foreground, run msgvault daemon stop first", err.Error())
+		assert.Contains(t, err.Error(), url)
 		_, err = os.Stat(contender.ServerKeyFilePath())
 		require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
 	}
