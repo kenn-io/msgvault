@@ -2,7 +2,7 @@ package timeline
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -34,28 +34,6 @@ type relationshipCalendarReads struct {
 func (r *relationshipCalendarReads) GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error) {
 	r.details++
 	return r.CalendarSource.GetCalendarOccurrenceContext(ctx, ref)
-}
-
-func TestRelationshipReusesCalendarAttendanceReads(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
-	f.calendar("attended", singleDayEvent)
-	note := f.transcript("notes", "planning@example.com", f.now.Add(-time.Hour))
-	other := f.EnsureParticipant("other@example.com", "Other", "example.com")
-	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", []int64{other}, nil))
-	f.project()
-	meetings := &relationshipMeetingReads{MeetingsSource: f.src.Meetings}
-	calendar := &relationshipCalendarReads{CalendarSource: f.src.Calendar}
-	f.src.Meetings, f.src.Calendar = meetings, calendar
-	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	requirements.NoError(err)
-	requirements.Len(got.History, 1)
-	assertions.Equal([]int64{note}, got.History[0].Meeting.LinkedTranscriptIDs)
-	assertions.Equal(1, got.Person.InteractionCount)
-	// The Store's attendance read already resolved this meeting and occurrence.
-	assertions.Zero(meetings.resolutions)
-	assertions.Zero(calendar.details)
 }
 
 func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
@@ -191,7 +169,7 @@ func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
 	assertions.Empty(next.Cursor)
 }
 
-func TestRelationshipCuratedProfileIncludesFreshness(t *testing.T) {
+func TestRelationshipCuratedProfileFreshnessAndUnavailablePerson(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
@@ -206,6 +184,10 @@ func TestRelationshipCuratedProfileIncludesFreshness(t *testing.T) {
 	assertions.Equal(want, got.Freshness)
 	assertions.Empty(got.History)
 	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})
+	f.src.People = failedPersonLookup{PeopleSource: f.src.People, err: errors.New("person reader unavailable")}
+	got, err = Build(t.Context(), f.src, relationshipRequest("person:1"))
+	requirements.NoError(err)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
 }
 func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

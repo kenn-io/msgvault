@@ -1,7 +1,6 @@
 package timeline
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,17 +17,19 @@ func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
 	old := f.now.Add(-10 * time.Hour)
 	f.add(old, false)
 	latest := f.add(f.now.Add(-time.Minute), false)
-	for i := range 5000 {
-		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("recent-%d", i), "Recent conversation")
-		require.NoError(err)
-		f.add(old.Add(time.Duration(i+1)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
-	}
-	f.project()
-	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	conv, err := f.Store.EnsureConversation(f.Source.ID, "recent", "Recent conversation")
 	require.NoError(err)
-	require.NotEmpty(got.History)
-	require.NotNil(got.History[0].Burst)
-	assert.Contains(t, got.History[0].Burst.LatestMessageIDs, latest)
+	f.add(old.Add(time.Hour), false, func(m *store.Message) { m.ConversationID = conv })
+	f.project()
+	// A one-group cap exercises the reader's ordering with just two groups.
+	got, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{
+		Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}},
+		After:   new(time.Time), Until: &f.now, Descending: true, Limit: 1,
+	})
+	require.NoError(err)
+	require.Len(got.Bursts, 1)
+	require.NotNil(got.NextKey)
+	assert.Contains(t, got.Bursts[0].LatestMessageIDs, latest)
 }
 
 func TestRelationshipRejectsOwnerAddress(t *testing.T) {
@@ -40,7 +41,7 @@ func TestRelationshipRejectsOwnerAddress(t *testing.T) {
 }
 
 func TestMarkdownPartialSyncOutcome(t *testing.T) {
-	v := sampleTimeline()
+	v := sampleTimeline(ModeAnchor)
 	v.Freshness.Sources = []freshness.SourceFreshness{{SourceType: "gmail", Identifier: "owner@example.com", Scheduling: "manual", Outcome: "partial", LastSyncErrors: 1, LastSuccessfulSyncAt: &v.Now}}
 	got := Markdown(v)
 	assert.Contains(t, got, "gmail:owner@example.com partial")

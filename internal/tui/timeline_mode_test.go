@@ -646,14 +646,16 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 		offset          int
 		upcoming, empty bool
 		previous, next  string
+		zone            string
 	}{
-		{"day", timeline.ModeDay, "2027-03-14", "2027-03-14", 0, false, false, "2027-03-13", "2027-03-15"},
-		{"outside default window", timeline.ModeDay, "2027-03-13", "2027-03-14", 0, false, false, "2027-03-12", "2027-03-15"},
-		{"earlier upcoming", timeline.ModeDay, "2027-03-14", "2027-03-14", -4, true, false, "2027-03-13", "2027-03-15"},
-		{"later upcoming", timeline.ModeDay, "2027-03-14", "2027-03-14", 2, true, false, "2027-03-13", "2027-03-15"},
-		{"anchor", timeline.ModeAnchor, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-15", "2027-03-17"},
-		{"relationship", timeline.ModeRelationship, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-13", "2027-03-15"},
-		{"empty relationship", timeline.ModeRelationship, "2027-03-12", "2027-03-14", 0, false, true, "2027-03-11", "2027-03-15"},
+		{"day", timeline.ModeDay, "2027-03-14", "2027-03-14", 0, false, false, "2027-03-13", "2027-03-15", "UTC"},
+		{"outside default window", timeline.ModeDay, "2027-03-13", "2027-03-14", 0, false, false, "2027-03-12", "2027-03-15", "UTC"},
+		{"earlier upcoming", timeline.ModeDay, "2027-03-14", "2027-03-14", -4, true, false, "2027-03-13", "2027-03-15", "UTC"},
+		{"later upcoming", timeline.ModeDay, "2027-03-14", "2027-03-14", 2, true, false, "2027-03-13", "2027-03-15", "UTC"},
+		{"anchor", timeline.ModeAnchor, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-15", "2027-03-17", "UTC"},
+		{"relationship", timeline.ModeRelationship, "2027-02-11", "2027-04-14", 0, false, false, "2027-03-13", "2027-03-15", "UTC"},
+		{"empty relationship", timeline.ModeRelationship, "2027-03-12", "2027-03-14", 0, false, true, "2027-03-11", "2027-03-15", "UTC"},
+		{"skipped midnight", timeline.ModeDay, "2026-09-06", "2026-09-06", 0, false, false, "2026-09-05", "2026-09-07", "America/Santiago"},
 	} {
 		for _, step := range []struct {
 			key  rune
@@ -665,6 +667,7 @@ func TestTimelineDayKeysUseViewSubject(t *testing.T) {
 			t.Run(tc.name+string(step.key), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
 				m := timelineModeModel()
+				m.timelineState.result.Timezone = tc.zone
 				m.timelineState.result.Mode = tc.mode
 				m.timelineState.result.Window = timeline.Window{From: tc.from, To: tc.to}
 				if tc.mode != timeline.ModeDay && !tc.empty {

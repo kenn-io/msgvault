@@ -99,20 +99,3 @@ func TestTimelineFailedNavigationKeepsPageAndRetriesRequest(t *testing.T) {
 		})
 	}
 }
-
-func TestTimelineDayStepAcrossSkippedMidnight(t *testing.T) {
-	for _, tc := range []struct {
-		key  rune
-		date string
-	}{{'[', "2026-09-05"}, {']', "2026-09-07"}} {
-		t.Run(string(tc.key), func(t *testing.T) {
-			m := timelineModeModel()
-			m.timelineState.result.Timezone = "America/Santiago"
-			m.timelineState.result.Window = timeline.Window{From: "2026-09-06", To: "2026-09-06"}
-			m, cmd := sendKey(t, m, key(tc.key))
-			defer m.cancelTimelineRequest()
-			require.NotNil(t, cmd)
-			assert.Equal(t, tc.date, m.timelineState.request.Date)
-		})
-	}
-}

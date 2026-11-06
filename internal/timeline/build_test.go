@@ -33,7 +33,6 @@ func TestBuildRejectsInvalidRequests(t *testing.T) {
 		{"too many days", Request{Days: 32}, nil, ErrWindowTooLarge},
 		{"too many neighbours", Request{Before: 51}, nil, ErrInvalidRequest},
 		{"negative neighbours", Request{After: -1}, nil, ErrInvalidRequest},
-		{"small budget", Request{Budget: 2000}, nil, ErrInvalidRequest},
 		{"negative budget", Request{Budget: -1}, nil, ErrInvalidRequest},
 		{"budget below minimum", Request{Budget: 2047}, nil, ErrInvalidRequest},
 		{"budget above maximum", Request{Budget: 65537}, nil, ErrInvalidRequest},

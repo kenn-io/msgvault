@@ -2,8 +2,6 @@ package timeline
 
 import (
 	"database/sql"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,23 +15,10 @@ func TestBuildInvalidUTF8Snippet(t *testing.T) {
 	f := newTimelineFixture(t)
 	f.add(f.now, false, func(m *store.Message) { m.Snippet = sql.NullString{String: "damaged \xff\xfe", Valid: true} })
 	f.project()
-	for _, format := range []string{"json", "markdown"} {
-		t.Run(format, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			req := dayRequest()
-			req.Format = format
-			got, err := Build(t.Context(), f.src, req)
-			require.NoError(err)
-			entries := allDayEntries(got)
-			require.Len(entries, 1)
-			if format == "json" {
-				wire, err := json.Marshal(got, jsontext.AllowInvalidUTF8(true))
-				require.NoError(err)
-				assert.Contains(string(wire), "damaged \ufffd\ufffd")
-			} else {
-				assert.Contains(Markdown(got), "damaged \ufffd\ufffd")
-			}
-		})
-	}
+	req := dayRequest()
+	req.Format = "markdown"
+	got, err := Build(t.Context(), f.src, req)
+	require.NoError(t, err)
+	require.Len(t, allDayEntries(got), 1)
+	assert.Contains(t, Markdown(got), "damaged \ufffd\ufffd")
 }

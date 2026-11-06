@@ -14,7 +14,7 @@ import (
 )
 
 func budgetTimeline(n int) *Timeline {
-	v := sampleTimeline()
+	v := sampleTimeline(ModeAnchor)
 	v.Person = nil
 	v.Anchor = nil
 	v.Candidates = nil
@@ -46,17 +46,27 @@ func encodedSize(t *testing.T, v *Timeline, format string) int {
 	return len(b)
 }
 func TestFitMeasuresFinalEncoding(t *testing.T) {
-	for _, format := range []string{"json", "markdown"} {
-		t.Run(format, func(t *testing.T) {
-			assertions := assert.New(t)
-			v := budgetTimeline(100)
-			out, err := Fit(v, format, 4096)
-			require.NoError(t, err)
-			assertions.LessOrEqual(encodedSize(t, out, format), 4096)
+	for _, tc := range []struct {
+		format          string
+		budget, entries int
+	}{
+		{"json", 4096, 100}, {"markdown", 4096, 100}, {"json", 2048, 50},
+	} {
+		t.Run(fmt.Sprintf("%s/%d", tc.format, tc.budget), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			v := budgetTimeline(tc.entries)
+			out, err := Fit(v, tc.format, tc.budget)
+			requirements.NoError(err)
+			assertions.LessOrEqual(encodedSize(t, out, tc.format), tc.budget)
+			if tc.format == "json" {
+				cursor, err := DecodeCursor(out.Cursor, cursorBinding())
+				requirements.NoError(err)
+				assertions.Equal(fmt.Sprintf("%03d", len(out.History)), cursor.Positions["history"])
+			}
 			assertions.NotEmpty(out.Cursor)
 			assertions.NotEmpty(out.History)
-			assertions.Less(len(out.History), 100)
-			assertions.Len(v.History, 100)
+			assertions.Less(len(out.History), tc.entries)
+			assertions.Len(v.History, tc.entries)
 			assertions.Empty(v.Cursor)
 		})
 	}
@@ -70,17 +80,6 @@ func TestFitMinimumEnvelopeSucceedsAt2048(t *testing.T) {
 	}
 }
 
-func TestFitSmallBudgetContinuationSucceeds(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	v := budgetTimeline(50)
-	out, err := Fit(v, "json", 2048)
-	requirements.NoError(err)
-	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
-	c, err := DecodeCursor(out.Cursor, cursorBinding())
-	requirements.NoError(err)
-	assertions.Equal(fmt.Sprintf("%03d", len(out.History)), c.Positions["history"])
-}
 func TestFitFallbackCursorKeysPreserveSubsecondOrder(t *testing.T) {
 	for _, section := range []string{"history", "upcoming"} {
 		t.Run(section, func(t *testing.T) {
@@ -137,7 +136,7 @@ func TestFitForwardProgressStub(t *testing.T) {
 		}},
 		{name: "burst", build: func() *Timeline {
 			v := budgetTimeline(0)
-			entry := sampleTimeline().History[2]
+			entry := sampleTimeline(ModeAnchor).History[2]
 			entry.Burst.Inbound, entry.Burst.Outbound = 2, 1
 			entry.Burst.People = make([]Person, 8)
 			for i := range entry.Burst.People {
@@ -215,8 +214,8 @@ func TestFitJSONEscapingAndMultibyte(t *testing.T) {
 func TestFitSectionSharesFlowForward(t *testing.T) {
 	assertions := assert.New(t)
 	v := budgetTimeline(50)
-	v.OpenLoops = &OpenLoops{Items: []Entry{sampleTimeline().History[5]}}
-	v.Upcoming = []Entry{sampleTimeline().History[0]}
+	v.OpenLoops = &OpenLoops{Items: []Entry{sampleTimeline(ModeDay).OpenLoops.Items[0]}}
+	v.Upcoming = []Entry{sampleTimeline(ModeAnchor).History[0]}
 	out, err := Fit(v, "json", 4096)
 	require.NoError(t, err)
 	assertions.Len(out.OpenLoops.Items, 1)
@@ -286,7 +285,7 @@ func TestFitBoundsPeoplePreservingCountsAndTierSource(t *testing.T) {
 	assertions.Equal("observed", p.People[1].TierSource)
 	assertions.Contains(Markdown(out), "+5")
 	v = budgetTimeline(0)
-	e := sampleTimeline().Upcoming[0]
+	e := sampleTimeline(ModeDay).Upcoming[0]
 	for i := range 12 {
 		e.Meeting.Attendees = append(e.Meeting.Attendees, Person{Name: fmt.Sprintf("Person %d", i+1)})
 	}

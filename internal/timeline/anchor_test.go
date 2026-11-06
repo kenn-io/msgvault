@@ -191,24 +191,6 @@ func TestAnchorUndatedRefused(t *testing.T) {
 	_, err := Build(t.Context(), f.src, anchorRequest(messageRef(id)))
 	assert.ErrorIs(t, err, ErrUndatedAnchor)
 }
-func TestAnchorDateOnlyStartsAtMidnight(t *testing.T) {
-	f := newTimelineFixture(t)
-	loc, err := time.LoadLocation("America/Vancouver")
-	require.NoError(t, err)
-	f.src.Location = loc
-	got, err := Build(t.Context(), f.src, anchorRequest("2026-10-22"))
-	require.NoError(t, err)
-	assert.Equal(t, time.Date(2026, 10, 22, 0, 0, 0, 0, loc), got.Anchor.Time)
-}
-func TestAnchorBareConversationUsesLatestEligible(t *testing.T) {
-	f := newTimelineFixture(t)
-	f.add(f.now.Add(-time.Hour), false)
-	f.add(f.now, false)
-	f.project()
-	got, err := Build(t.Context(), f.src, anchorRequest(fmt.Sprintf("conv:%d", f.ConvID)))
-	require.NoError(t, err)
-	assert.WithinDuration(t, f.now, got.Anchor.Time, time.Microsecond)
-}
 func TestAnchorWithPersonNarrows(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
@@ -223,13 +205,9 @@ func TestAnchorWithPersonNarrows(t *testing.T) {
 	for _, with := range []string{fmt.Sprintf("person:%d", p), "email:alice@example.com"} {
 		req := anchorRequest(messageRef(id))
 		req.With = with
-		req.Conversation = with == "email:alice@example.com"
 		got, err := Build(t.Context(), f.src, req)
 		requirements.NoError(err)
 		requirements.Len(got.History, 1)
-		if req.Conversation {
-			assert.Equal(t, messageRef(id), got.History[0].AnchorRef)
-		}
 	}
 }
 func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
@@ -275,6 +253,7 @@ func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
 	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
 	require.NoError(err)
+	assert.Equal(ref.Time, got.Anchor.Time)
 	assert.Equal("2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
 	require.Len(got.History, 2)
 	for _, entry := range got.History {

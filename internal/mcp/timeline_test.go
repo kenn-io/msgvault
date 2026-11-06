@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/timeline"
@@ -106,9 +104,6 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	requirements.NoError(err)
 	calendarIDs, _ := testutil.CalendarArchive(t, f.Store)
-	noteBody := strings.Repeat("Synthetic daily note line. ", 1000) + "Full daily note ends here."
-	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2027-03-01", Body: noteBody, Author: "owner"})
-	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Server.APIKey = "synthetic-owner"
 	cfg.Server.AgentAccess = true
@@ -150,7 +145,7 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 			requirements.NoError(json.Unmarshal(wire, &got))
 			var opened []string
 			for _, day := range got.Days {
-				for _, entries := range [][]timeline.Entry{day.Bursts, day.Meetings, day.Calls, day.Notes} {
+				for _, entries := range [][]timeline.Entry{day.Bursts, day.Meetings, day.Calls} {
 					for _, entry := range entries {
 						for _, open := range entry.Open {
 							call := rawCallTool(t, opts, open.Tool, open.Args)

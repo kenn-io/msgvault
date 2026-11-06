@@ -3,7 +3,7 @@
 	"timezone": "UTC",
 	"timezone_is_default": true,
 	"window": {
-		"from": "2026-10-21",
+		"from": "2026-10-20",
 		"to": "2026-10-22"
 	},
 	"now": "2026-10-22T13:30:00Z",
@@ -13,13 +13,13 @@
 		"sources": [
 			{
 				"source_id": 1,
-				"source_type": "mail",
-				"identifier": "",
+				"source_type": "gmail",
+				"identifier": "owner@example.com",
 				"scheduling": "manual",
 				"last_successful_sync_at": null,
 				"last_sync_errors": 0,
 				"outcome": "failed",
-				"reason": "stale",
+				"reason": "never_synced",
 				"sync_command": "msgvault sync"
 			}
 		],
@@ -31,73 +31,9 @@
 			}
 		],
 		"warnings": [
-			"incomplete"
+			"The latest sync failed for gmail source owner@example.com."
 		]
 	},
-	"person": {
-		"person": {
-			"tier_source": "applied",
-			"person_id": 7,
-			"participant_id": 8,
-			"name": "Alice",
-			"tier": 1,
-			"credited": false
-		},
-		"ref": "person:7",
-		"channels": [
-			"email"
-		],
-		"first_at": "2026-10-22T13:30:00Z",
-		"last_at": "2026-10-22T13:30:00Z",
-		"last_inbound_at": "2026-10-22T13:30:00Z",
-		"last_outbound_at": "2026-10-22T13:30:00Z",
-		"interaction_count": 3,
-		"cadence_status": "due",
-		"due_at": "2026-10-22T13:30:00Z",
-		"initiated_by_contact": 2,
-		"initiated_by_owner": 1,
-		"monthly": [
-			1,
-			2,
-			3,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0
-		],
-		"brief": {
-			"text": "Talked about plans",
-			"truncated": false
-		},
-		"agenda": [
-			{
-				"text": "Review",
-				"truncated": false
-			}
-		]
-	},
-	"anchor": {
-		"ref": "msg:31",
-		"kind": "message",
-		"time": "2026-10-22T13:30:00Z",
-		"filtered": true
-	},
-	"candidates": [
-		{
-			"person_id": 7,
-			"person_uid": "synthetic-7",
-			"participant_ids": [
-				8
-			],
-			"display_name": "Alice",
-			"address": "alice@example.com"
-		}
-	],
 	"open_loops": {
 		"items": [
 			{
@@ -105,12 +41,12 @@
 				"key": "msg:51",
 				"ref": "msg:51",
 				"anchor_ref": "msg:51",
-				"time": "2026-10-22T13:30:00Z",
+				"time": "2026-10-18T13:30:00Z",
 				"open": [
 					{
 						"tool": "get_message",
 						"args": {
-							"id": 31
+							"id": 51
 						}
 					}
 				],
@@ -138,15 +74,15 @@
 	"upcoming": [
 		{
 			"kind": "meeting",
-			"key": "occ:evt:12",
-			"ref": "evt:12",
-			"anchor_ref": "evt:12",
-			"time": "2026-10-22T13:30:00Z",
+			"key": "occ:evt:13",
+			"ref": "evt:13",
+			"anchor_ref": "evt:13",
+			"time": "2026-10-22T14:30:00Z",
 			"open": [
 				{
-					"tool": "get_message",
+					"tool": "get_calendar_event",
 					"args": {
-						"id": 31
+						"ref": "evt:13"
 					}
 				}
 			],
@@ -155,13 +91,13 @@
 			"hidden_text": false,
 			"meeting": {
 				"attendee_count": 1,
-				"people_count": 0,
+				"people_count": 1,
 				"untrusted_text": {
-					"text": "Weekly sync",
+					"text": "Tomorrow's plans",
 					"truncated": false
 				},
-				"start": "2026-10-22T13:30:00Z",
-				"end": "2026-10-22T14:30:00Z",
+				"start": "2026-10-22T14:30:00Z",
+				"end": "2026-10-22T15:30:00Z",
 				"all_day": false,
 				"attendees": [
 					{
@@ -173,14 +109,18 @@
 						"credited": false
 					}
 				],
-				"attended": true,
-				"linked_transcript_ids": [
-					21
+				"people": [
+					{
+						"tier_source": "applied",
+						"person_id": 7,
+						"participant_id": 8,
+						"name": "Alice",
+						"tier": 1,
+						"credited": false
+					}
 				],
-				"possibly_related": [
-					"msg:22"
-				],
-				"action_item_count": 2
+				"attended": false,
+				"action_item_count": 0
 			}
 		}
 	],
@@ -196,9 +136,17 @@
 					"time": "2026-10-22T13:30:00Z",
 					"open": [
 						{
-							"tool": "get_message",
+							"tool": "get_calendar_event",
 							"args": {
-								"id": 31
+								"ref": "evt:12"
+							}
+						},
+						{
+							"tool": "get_meeting_context",
+							"args": {
+								"message_ids": [
+									21
+								]
 							}
 						}
 					],
@@ -207,7 +155,7 @@
 					"hidden_text": false,
 					"meeting": {
 						"attendee_count": 1,
-						"people_count": 0,
+						"people_count": 1,
 						"untrusted_text": {
 							"text": "Weekly sync",
 							"truncated": false
@@ -225,27 +173,39 @@
 								"credited": false
 							}
 						],
+						"people": [
+							{
+								"tier_source": "applied",
+								"person_id": 7,
+								"participant_id": 8,
+								"name": "Alice",
+								"tier": 1,
+								"credited": false
+							}
+						],
 						"attended": true,
 						"linked_transcript_ids": [
 							21
 						],
 						"possibly_related": [
-							"msg:22"
+							"msg:23"
 						],
 						"action_item_count": 2
 					}
 				},
 				{
 					"kind": "transcript",
-					"key": "msg:21",
-					"ref": "msg:21",
-					"anchor_ref": "msg:21",
+					"key": "msg:22",
+					"ref": "msg:22",
+					"anchor_ref": "msg:22",
 					"time": "2026-10-22T13:30:00Z",
 					"open": [
 						{
-							"tool": "get_message",
+							"tool": "get_meeting_context",
 							"args": {
-								"id": 31
+								"message_ids": [
+									22
+								]
 							}
 						}
 					],
@@ -285,6 +245,12 @@
 					"time": "2026-10-22T13:30:00Z",
 					"open": [
 						{
+							"tool": "list_messages",
+							"args": {
+								"conversation_id": 2
+							}
+						},
+						{
 							"tool": "get_message",
 							"args": {
 								"id": 31
@@ -322,42 +288,6 @@
 							"31": 2
 						}
 					}
-				},
-				{
-					"kind": "message",
-					"key": "msg:31",
-					"ref": "msg:31",
-					"anchor_ref": "msg:31",
-					"time": "2026-10-22T13:30:00Z",
-					"open": [
-						{
-							"tool": "get_message",
-							"args": {
-								"id": 31
-							}
-						}
-					],
-					"anchor": true,
-					"filtered": true,
-					"hidden_text": true,
-					"message": {
-						"people_count": 1,
-						"direction": "inbound",
-						"people": [
-							{
-								"tier_source": "applied",
-								"person_id": 7,
-								"participant_id": 8,
-								"name": "Alice",
-								"tier": 1,
-								"credited": false
-							}
-						],
-						"untrusted_text": {
-							"text": "",
-							"truncated": false
-						}
-					}
 				}
 			],
 			"calls": [
@@ -371,7 +301,7 @@
 						{
 							"tool": "get_message",
 							"args": {
-								"id": 31
+								"id": 41
 							}
 						}
 					],
@@ -400,17 +330,10 @@
 				{
 					"kind": "note",
 					"key": "note:61",
-					"ref": "note:61",
+					"ref": "2026-10-22",
 					"anchor_ref": "2026-10-22",
 					"time": "2026-10-22T13:30:00Z",
-					"open": [
-						{
-							"tool": "get_message",
-							"args": {
-								"id": 31
-							}
-						}
-					],
+					"open": [],
 					"anchor": false,
 					"filtered": false,
 					"hidden_text": false,
@@ -453,279 +376,9 @@
 			}
 		}
 	],
-	"history": [
-		{
-			"kind": "meeting",
-			"key": "occ:evt:12",
-			"ref": "evt:12",
-			"anchor_ref": "evt:12",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"meeting": {
-				"attendee_count": 1,
-				"people_count": 0,
-				"untrusted_text": {
-					"text": "Weekly sync",
-					"truncated": false
-				},
-				"start": "2026-10-22T13:30:00Z",
-				"end": "2026-10-22T14:30:00Z",
-				"all_day": false,
-				"attendees": [
-					{
-						"tier_source": "applied",
-						"person_id": 7,
-						"participant_id": 8,
-						"name": "Alice",
-						"tier": 1,
-						"credited": false
-					}
-				],
-				"attended": true,
-				"linked_transcript_ids": [
-					21
-				],
-				"possibly_related": [
-					"msg:22"
-				],
-				"action_item_count": 2
-			}
-		},
-		{
-			"kind": "transcript",
-			"key": "msg:21",
-			"ref": "msg:21",
-			"anchor_ref": "msg:21",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"meeting": {
-				"attendee_count": 0,
-				"people_count": 1,
-				"untrusted_text": {
-					"text": "Notes",
-					"truncated": false
-				},
-				"time": "2026-10-22T13:30:00Z",
-				"all_day": false,
-				"people": [
-					{
-						"tier_source": "applied",
-						"person_id": 7,
-						"participant_id": 8,
-						"name": "Alice",
-						"tier": 1,
-						"credited": false
-					}
-				],
-				"attended": false,
-				"action_item_count": 2
-			}
-		},
-		{
-			"kind": "burst",
-			"key": "burst:1:2:2026-10-22",
-			"ref": "conv:2",
-			"anchor_ref": "burst:1:2:2026-10-22",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"burst": {
-				"people_count": 1,
-				"channel": "email",
-				"people": [
-					{
-						"tier_source": "applied",
-						"person_id": 7,
-						"participant_id": 8,
-						"name": "Alice",
-						"tier": 1,
-						"credited": false
-					}
-				],
-				"inbound": 2,
-				"outbound": 1,
-				"first_at": "2026-10-22T13:30:00Z",
-				"last_at": "2026-10-22T13:30:00Z",
-				"untrusted_text": {
-					"text": "Hello",
-					"truncated": false
-				},
-				"latest_message_ids": [
-					31
-				],
-				"copies": {
-					"31": 2
-				}
-			}
-		},
-		{
-			"kind": "message",
-			"key": "msg:31",
-			"ref": "msg:31",
-			"anchor_ref": "msg:31",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": true,
-			"filtered": true,
-			"hidden_text": true,
-			"message": {
-				"people_count": 1,
-				"direction": "inbound",
-				"people": [
-					{
-						"tier_source": "applied",
-						"person_id": 7,
-						"participant_id": 8,
-						"name": "Alice",
-						"tier": 1,
-						"credited": false
-					}
-				],
-				"untrusted_text": {
-					"text": "",
-					"truncated": false
-				}
-			}
-		},
-		{
-			"kind": "call",
-			"key": "m:41",
-			"ref": "msg:41",
-			"anchor_ref": "msg:41",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"call": {
-				"people_count": 1,
-				"outcome": "answered",
-				"duration_seconds": 60,
-				"people": [
-					{
-						"tier_source": "none",
-						"person_id": 0,
-						"participant_id": 0,
-						"name": "Alice",
-						"tier": 0,
-						"participation": "joined",
-						"credited": true
-					}
-				]
-			}
-		},
-		{
-			"kind": "loop",
-			"key": "msg:51",
-			"ref": "msg:51",
-			"anchor_ref": "msg:51",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"loop": {
-				"kind": "reply_owed",
-				"age": "4d",
-				"person": {
-					"tier_source": "applied",
-					"person_id": 7,
-					"participant_id": 8,
-					"name": "Alice",
-					"tier": 1,
-					"credited": false
-				}
-			}
-		},
-		{
-			"kind": "note",
-			"key": "note:61",
-			"ref": "note:61",
-			"anchor_ref": "2026-10-22",
-			"time": "2026-10-22T13:30:00Z",
-			"open": [
-				{
-					"tool": "get_message",
-					"args": {
-						"id": 31
-					}
-				}
-			],
-			"anchor": false,
-			"filtered": false,
-			"hidden_text": false,
-			"note": {
-				"people_count": 1,
-				"untrusted_text": {
-					"text": "Follow up",
-					"truncated": false
-				},
-				"people": [
-					{
-						"tier_source": "applied",
-						"person_id": 7,
-						"participant_id": 8,
-						"name": "Alice",
-						"tier": 1,
-						"credited": false
-					}
-				]
-			}
-		}
-	],
 	"gaps": [
 		{
-			"section": "days",
+			"section": "meetings",
 			"code": "partial",
 			"retryable": true,
 			"items": [
@@ -735,7 +388,7 @@
 	],
 	"omitted": {
 		"budget": {
-			"history": 2,
+			"days": 2,
 			"open_loops": "more"
 		},
 		"noise": 2,

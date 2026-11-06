@@ -51,8 +51,6 @@ func TestTimelineOwnerFormatsAndErrors(t *testing.T) {
 	}{
 		{"?date=2027-03-01", `"mode":"day"`, 200},
 		{"?date=2027-03-01&format=markdown", "", 200},
-		{"?days=32", "", 400}, {"?days=0", "", 400}, {"?budget=0", "", 400},
-		{"?days=1&days=2", "", 400}, {"?include_cold=bad", "", 400},
 		{"?cursor=invalid", "cursor_expired", 400},
 		{"?with=person%3Aabc", `"error":"invalid_request"`, 400},
 	} {
@@ -270,4 +268,8 @@ func TestTimelineParserPresenceAndExplicitZero(t *testing.T) {
 	require.NoError(t, err)
 	assertions.Zero(got.Days)
 	assertions.Zero(got.Budget)
+	for _, query := range []string{"days=0", "budget=0", "days=1&days=2", "include_cold=bad"} {
+		_, err := parseTimelineRequest(query)
+		assertions.ErrorIs(err, timeline.ErrInvalidRequest, query)
+	}
 }
