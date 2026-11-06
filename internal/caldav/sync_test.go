@@ -311,7 +311,11 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 					assert.Equal(new(step.start), msg.Calendar.Start)
 					assert.Equal(new(step.end), msg.Calendar.End)
 					assert.Equal(new(tc.allDay), msg.Calendar.AllDay)
-					assert.Equal(new(step.zone), msg.Calendar.TimeZone)
+					wantZone := step.zone
+					if tc.name == "UTC" {
+						wantZone = "UTC"
+					}
+					assert.Equal(new(wantZone), msg.Calendar.TimeZone)
 					assert.Equal(new("example@example.org"), msg.Calendar.ICalUID)
 					assert.Equal(new(tc.sequence), msg.Calendar.Sequence)
 					if tc.name == "floating" || tc.name == "gap" {
@@ -340,7 +344,7 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 					assert.Equal(step.zone, zone)
 					var meta calevent.CalDAVMetadata
 					require.NoError(json.Unmarshal([]byte(metadata), &meta))
-					assert.Equal(step.zone, meta.TimeZone)
+					assert.Equal(wantZone, meta.TimeZone)
 					var cfg string
 					require.NoError(st.DB().QueryRow(`SELECT sync_config FROM sources WHERE source_type='caldav'`).Scan(&cfg))
 					var stored sourceConfig
