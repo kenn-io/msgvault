@@ -31,7 +31,8 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 func TestImportedCallReadableAndSearchable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := storetest.New(t).Store
+	f := storetest.New(t)
+	st := f.Store
 	duration := 600.0
 	o, sourceID := validCallObservation(t, st)
 	o.DurationSeconds = &duration
@@ -50,12 +51,12 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		assert.Equal(1, count)
 		assert.True(latest.Valid)
 		assert.True(o.OccurredAt.Equal(latest.Time))
-		assert.False(subject.Valid, "the call summary belongs in the body, not a duplicate subject")
-		assert.Equal(tc.text, snippet.String)
+		assert.Equal(tc.text, subject.String)
+		assert.False(snippet.Valid)
 		assert.Equal(tc.text, title)
 		body, err := st.GetMessageBodyTextContext(t.Context(), id)
 		require.NoError(err)
-		assert.Equal(tc.text, body)
+		assert.Empty(body)
 		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(tc.direction+" seconds"), 0, 10)
 		require.NoError(err)
 		assert.EqualValues(1, total)
@@ -105,6 +106,26 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		require.Len(matches, 1, query)
 		assert.Equal(id, matches[0].ID, query)
 	}
+	peerID := f.NewMessage().WithSubject("Call incoming").WithSentAt(o.OccurredAt.Add(time.Hour)).Create(t, st)
+	require.NoError(st.UpsertFTS(peerID, "Call incoming", "", "", "", ""))
+	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	require.NoError(err)
+	require.EqualValues(2, total)
+	var importedOrder []int64
+	for _, match := range matches {
+		importedOrder = append(importedOrder, match.ID)
+	}
+	assert.Equal([]int64{peerID, id}, importedOrder)
+	_, err = st.RebuildFTSContext(t.Context(), nil)
+	require.NoError(err)
+	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	require.NoError(err)
+	assert.EqualValues(2, total)
+	var rebuiltOrder []int64
+	for _, match := range matches {
+		rebuiltOrder = append(rebuiltOrder, match.ID)
+	}
+	assert.Equal(importedOrder, rebuiltOrder)
 }
 
 func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
