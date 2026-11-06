@@ -230,6 +230,11 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err != nil {
 		return err
 	}
+	// Clear stale interrupts before selecting the batch.
+	select {
+	case <-p.interrupt:
+	default:
+	}
 	rows, err := pass.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 500)
 	if err != nil {
 		return err
@@ -343,11 +348,6 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	}
 	if err = settle(ctx); err != nil {
 		return err
-	}
-	// Clear stale interrupts before enrichment.
-	select {
-	case <-p.interrupt:
-	default:
 	}
 	for i, row := range rows {
 		work := enrichments[i]
