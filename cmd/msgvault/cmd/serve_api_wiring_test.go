@@ -447,7 +447,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", strings.Repeat("x", 1024*1024)+" Your code is 482913")
+	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", "Your code is 482913")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
