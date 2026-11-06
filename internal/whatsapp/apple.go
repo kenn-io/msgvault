@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -126,11 +125,24 @@ func (imp *Importer) importApple(
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
 	defer func() {
+		if summary != nil {
+			retErr = errors.Join(retErr, imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+				MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded,
+				MessagesUpdated: summary.MessagesUpdated, ErrorsCount: summary.Errors,
+			}))
+		}
 		if retErr != nil {
-			_ = imp.store.FailSync(syncID, retErr.Error())
+			if summary != nil {
+				_ = imp.store.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
+					MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded,
+					MessagesUpdated: summary.MessagesUpdated, ErrorsCount: summary.Errors,
+				})
+			} else {
+				_ = imp.store.FailSync(syncID, retErr.Error())
+			}
 			return
 		}
-		if err := imp.store.CompleteSync(syncID, ""); err != nil {
+		if err := imp.store.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, source.ID, ""); err != nil {
 			retErr = fmt.Errorf("complete sync: %w", err)
 		}
 	}()
@@ -394,7 +406,7 @@ func (imp *Importer) importApple(
 						FromAddr: senderPhone,
 					},
 				}
-				if existing, ok := stored[sourceMessage.StanzaID]; ok && appleMessageStored(existing, data) {
+				if existing, ok := stored[sourceMessage.StanzaID]; ok && existing.Matches(data.Message, data.RawMIME) {
 					unchanged, err := imp.store.MessageContentMatchesContext(
 						ctx, existing.ID, data.BodyText, *data.FTS,
 					)
@@ -409,7 +421,11 @@ func (imp *Importer) importApple(
 				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
-				summary.MessagesAdded++
+				if _, exists := stored[sourceMessage.StanzaID]; exists {
+					summary.MessagesUpdated++
+				} else {
+					summary.MessagesAdded++
+				}
 				chatAdded++
 				totalAdded++
 			}
@@ -417,6 +433,8 @@ func (imp *Importer) importApple(
 			if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 				MessagesProcessed: summary.MessagesProcessed,
 				MessagesAdded:     summary.MessagesAdded,
+				MessagesUpdated:   summary.MessagesUpdated,
+				ErrorsCount:       summary.Errors,
 			}); err != nil {
 				return summary, fmt.Errorf("checkpoint Apple import: %w", err)
 			}
@@ -793,30 +811,6 @@ func isImportableAppleMessage(message appleMessage, duplicateStanzas map[string]
 	}
 	_, duplicate := duplicateStanzas[message.StanzaID]
 	return !duplicate
-}
-
-// appleMessageStored reports whether the stored message columns and raw
-// payload already equal the derived message. Body and search document are
-// checked separately because they need a per-message read.
-func appleMessageStored(stored store.StoredMessage, data *store.MessagePersistData) bool {
-	message := data.Message
-	return stored.ConversationID == message.ConversationID &&
-		stored.SenderID == message.SenderID &&
-		stored.SourceIsFromMe.Valid && stored.SourceIsFromMe.Bool == message.IsFromMe &&
-		stored.MessageType == message.MessageType &&
-		sameAppleInstant(stored.SentAt, message.SentAt) &&
-		sameAppleInstant(stored.InternalDate, message.InternalDate) &&
-		stored.Snippet == message.Snippet &&
-		stored.SizeEstimate == message.SizeEstimate &&
-		bytes.Equal(stored.Raw, data.RawMIME)
-}
-
-// sameAppleInstant ignores differences below the microsecond PostgreSQL keeps.
-func sameAppleInstant(stored, derived sql.NullTime) bool {
-	if stored.Valid != derived.Valid {
-		return false
-	}
-	return !stored.Valid || stored.Time.Sub(derived.Time).Abs() < time.Microsecond
 }
 
 func appleMessageTimestamp(value appleTimestampValue) sql.NullTime {

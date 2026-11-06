@@ -539,6 +539,27 @@ type StoredMessage struct {
 	Raw []byte
 }
 
+// Matches reports whether the stored columns and raw payload equal the derived message.
+func (stored StoredMessage) Matches(message *Message, raw []byte) bool {
+	return stored.ConversationID == message.ConversationID &&
+		stored.SenderID == message.SenderID &&
+		stored.SourceIsFromMe.Valid && stored.SourceIsFromMe.Bool == message.IsFromMe &&
+		stored.MessageType == message.MessageType &&
+		sameAppleInstant(stored.SentAt, message.SentAt) &&
+		sameAppleInstant(stored.InternalDate, message.InternalDate) &&
+		stored.Snippet == message.Snippet &&
+		stored.SizeEstimate == message.SizeEstimate &&
+		bytes.Equal(stored.Raw, raw)
+}
+
+// sameAppleInstant ignores differences below the microsecond PostgreSQL keeps.
+func sameAppleInstant(stored, derived sql.NullTime) bool {
+	if stored.Valid != derived.Valid {
+		return false
+	}
+	return !stored.Valid || stored.Time.Sub(derived.Time).Abs() < time.Microsecond
+}
+
 // StoredMessagesContext returns the stored output of the given source
 // messages, keyed by source_message_id. Bodies are left out; read them one
 // message at a time with MessageContentMatchesContext.
@@ -3227,6 +3248,25 @@ func (s *Store) MessageLabelIDsContext(ctx context.Context, messageID int64) ([]
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// MessageLabelIDsBatchContext returns the label IDs assigned to each requested message.
+func (s *Store) MessageLabelIDsBatchContext(ctx context.Context, messageIDs []int64) (map[int64][]int64, error) {
+	labels := make(map[int64][]int64, len(messageIDs))
+	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
+		`SELECT message_id, label_id FROM message_labels WHERE message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var messageID, labelID int64
+			if err := rows.Scan(&messageID, &labelID); err != nil {
+				return err
+			}
+			labels[messageID] = append(labels[messageID], labelID)
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("load message labels: %w", err)
+	}
+	return labels, nil
 }
 
 // ReplaceMessageLabels replaces all labels for a message atomically.

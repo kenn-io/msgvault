@@ -910,8 +910,9 @@ messages or contact a provider.
 
 `[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share
 one attachment policy vocabulary. It decides which chat media is downloaded
-during sync and backfill; message text is always archived. `[imessage]` takes
-only `media_max_participants` and `max_media_mb`.
+during sync and backfill; message text is always archived. For attachment policy,
+`[imessage]` accepts `media_max_participants` and `max_media_mb`. It also accepts
+`enabled`, `schedule`, `db_path`, and `me`; see the [iMessage settings](#imessage).
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
@@ -1824,23 +1825,57 @@ max_media_mb = 500
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
+### Apple WhatsApp sources
+
+Keep WhatsApp for Mac current with `msgvault serve`. Add one entry per owner
+phone number; `path` defaults to the native WhatsApp `ChatStorage.sqlite`.
+Grant Full Disk Access to the process running the daemon. These imports copy
+message text and metadata; they don't copy media.
+
+```toml
+[[whatsapp_apple]]
+name = "personal"
+enabled = true
+phone = "+15550000000"
+display_name = "Me"
+schedule = "*/10 * * * *"
+# path = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
+```
+
+`phone` must start with `+`. `path` accepts `~` and resolves relative paths
+against the configuration directory when loaded with `--config`. The Sources page shows run history and
+offers **Sync now** for scheduled stores.
+
 ### `[imessage]`
 
-Media limits for [`import-imessage`](/docs/usage/text-messages/). The command
-reads these keys on every run; the `--max-media-mb` flag overrides
+Schedule imports with `msgvault serve` and set media limits for
+[`import-imessage`](/docs/usage/text-messages/). The `--max-media-mb` flag overrides
 `max_media_mb` for one run. [`purge-excluded-media`](cli-reference.md#purge-excluded-media)
 reads the same keys, so it removes stored iMessage attachments that exceed them.
 
 ```toml
 [imessage]
+enabled = true
+schedule = "*/10 * * * *"
+# db_path = "~/Library/Messages/chat.db"
+# me = "+15550000000"
 media_max_participants = 20
 max_media_mb = 250
 ```
 
 | Key | Default | Description |
 |---|---|---|
+| `enabled` | `false` | Enable daemon imports when a schedule is set |
+| `schedule` | — | Five-field cron schedule; Sources also offers **Sync now** |
+| `db_path` | `~/Library/Messages/chat.db` | Source database; accepts `~` and paths relative to the configuration directory when loaded with `--config` |
+| `me` | — | Your phone or email for sender and recipient attribution |
 | `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment size cap in MiB |
+
+Grant Full Disk Access to the process running the daemon. Every run re-reads
+all of `chat.db` and writes only what changed, including late arrivals
+and edits.
+Choose a schedule interval that allows for the time it takes to read your database.
 
 ### Omi Sources
 
