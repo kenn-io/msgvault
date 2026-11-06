@@ -208,3 +208,50 @@ func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
 	assertions.Equal(1, got.Person.Monthly[10])
 	assertions.Equal(1, got.Person.Monthly[11])
 }
+
+func TestRelationshipHistoryKeepsLatestBeyondGroupCap(t *testing.T) {
+	require := require.New(t)
+	f := newTimelineFixture(t)
+	old := f.now.Add(-10 * time.Hour)
+	f.add(old, false)
+	latest := f.add(f.now.Add(-time.Minute), false)
+	conv, err := f.Store.EnsureConversation(f.Source.ID, "recent", "Recent conversation")
+	require.NoError(err)
+	f.add(old.Add(time.Hour), false, func(m *store.Message) { m.ConversationID = conv })
+	f.project()
+	// A one-group cap exercises the reader's ordering with just two groups.
+	got, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{
+		Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}},
+		After:   new(time.Time), Until: &f.now, Descending: true, Limit: 1,
+	})
+	require.NoError(err)
+	require.Len(got.Bursts, 1)
+	require.NotNil(got.NextKey)
+	assert.Contains(t, got.Bursts[0].LatestMessageIDs, latest)
+}
+
+func TestRelationshipRejectsOwnerAddress(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	_, err := Build(t.Context(), f.src, relationshipRequest("email:owner@example.com"))
+	require.ErrorIs(t, err, ErrInvalidRequest)
+}
+
+func TestRelationshipHistoryKeepsPastPartOfBurst(t *testing.T) {
+	f := newTimelineFixture(t)
+	past := f.now.Add(-time.Hour)
+	id := f.add(past, false)
+	f.add(f.now.Add(time.Minute), false)
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	require := require.New(t)
+	require.NoError(err)
+	require.NotNil(got.Person)
+	assert := assert.New(t)
+	assert.Equal(1, got.Person.InteractionCount)
+	require.Len(got.History, 1)
+	assert.WithinDuration(past, got.History[0].Time, time.Microsecond)
+	assert.Equal(1, got.History[0].Burst.Inbound)
+	assert.Equal([]int64{id}, got.History[0].Burst.LatestMessageIDs)
+}

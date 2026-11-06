@@ -16,10 +16,7 @@ func (m *Model) rebuildTimelineRows() {
 	state := &m.timelineState
 	text, entries := timeline.MarkdownWithEntries(state.result)
 	state.lines = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	state.entries = nil
-	for _, entry := range entries {
-		state.entries = append(state.entries, timelineSelectableEntry{entry: entry.Entry, line: entry.Line})
-	}
+	state.entries = entries
 	state.cursor = min(max(state.cursor, 0), max(len(state.entries)-1, 0))
 }
 
@@ -42,7 +39,7 @@ func (m Model) renderTimelineView() string {
 		lines := make([]string, 0, m.visibleRows())
 		selectedLine := -1
 		if len(m.timelineState.entries) > 0 {
-			selectedLine = m.timelineState.entries[m.timelineState.cursor].line
+			selectedLine = m.timelineState.entries[m.timelineState.cursor].Line
 		}
 		start := min(m.timelineState.scroll, max(len(m.timelineState.lines)-1, 0))
 		for i := start; i < len(m.timelineState.lines) && len(lines) < m.visibleRows(); i++ {

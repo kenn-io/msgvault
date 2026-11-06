@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -302,4 +303,102 @@ func TestTimelineDefaultWindowAfterSkippedMidnight(t *testing.T) {
 	got, err := Build(t.Context(), f.src, req)
 	require.NoError(t, err)
 	assert.Equal(t, Window{From: "2026-09-06", To: "2026-09-07"}, got.Window)
+}
+
+func TestColdConversationIncludesAllMessages(t *testing.T) {
+	for _, cold := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cold=%t", cold), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := newTimelineFixture(t)
+			conv, err := f.Store.EnsureConversation(f.Source.ID, "cold-conversation", "Cold conversation")
+			requirements.NoError(err)
+			if cold {
+				requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-conversation"))
+			}
+			ids := []int64{}
+			n := 30
+			if cold {
+				n = 8
+			}
+			for i := range n {
+				at := f.now.Add(-time.Hour + time.Duration(i)*time.Second)
+				if cold {
+					at = f.now.Add(-time.Hour + time.Duration(i/2)*time.Minute)
+				}
+				ids = append(ids, f.add(at, !cold && i%2 == 0, func(m *store.Message) {
+					m.ConversationID = conv
+					if !cold {
+						m.Snippet = sql.NullString{String: strings.Repeat("message ", 30), Valid: true}
+					}
+				}))
+			}
+			f.project()
+			before := n / 2
+			if cold {
+				before = 2
+			}
+			req := Request{Around: messageRef(ids[before]), Conversation: true, Before: before, After: n - before - 1, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
+			if cold {
+				hiddenReq := req
+				hiddenReq.Before, hiddenReq.After = 0, 0
+				hiddenReq.BeforeSet, hiddenReq.AfterSet = true, true
+				hidden, err := Build(t.Context(), f.src, hiddenReq)
+				requirements.NoError(err)
+				requirements.Len(hidden.History, 1)
+				assertions.True(hidden.Anchor.Filtered)
+				assertions.Equal(8, hidden.Omitted.Cold)
+			}
+			req.IncludeCold = cold
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			requirements.Len(got.History, n)
+			assertions.False(got.Anchor.Filtered)
+			assertions.Zero(got.Omitted.Cold)
+			want := []string{}
+			for _, id := range ids {
+				want = append(want, messageRef(id))
+			}
+			anchor := anchorRequest(messageRef(ids[len(ids)-1]))
+			anchor.IncludeCold = cold
+			message, err := Build(t.Context(), f.src, anchor)
+			requirements.NoError(err)
+			t.Run("conversation anchor", func(t *testing.T) {
+				anchor.Around = fmt.Sprintf("conv:%d", conv)
+				conversation, err := Build(t.Context(), f.src, anchor)
+				require.NoError(t, err)
+				assert.Equal(t, message.Anchor.Time, conversation.Anchor.Time)
+				latest := f.now.Add(-time.Hour + time.Duration(n-1)*time.Second)
+				if cold {
+					latest = f.now.Add(-time.Hour + time.Duration((n-1)/2)*time.Minute)
+				}
+				assert.WithinDuration(t, latest, conversation.Anchor.Time, time.Microsecond)
+				assert.Equal(t, message.History, conversation.History)
+			})
+
+			req.Budget = 2048
+			seen := map[string]bool{}
+			refs := []string{}
+			pages := 0
+			for page := range 20 {
+				got, err = Build(t.Context(), f.src, req)
+				requirements.NoError(err)
+				requirements.NotEmpty(got.History)
+				pages++
+				for _, entry := range got.History {
+					assertions.False(seen[entry.Ref], "duplicate entry on page %d", page)
+					seen[entry.Ref] = true
+					refs = append(refs, entry.Ref)
+					assertions.Equal("message", entry.Kind)
+					assertions.True(strings.HasPrefix(entry.Key, "msg:"))
+				}
+				if got.Cursor == "" {
+					break
+				}
+				req.Cursor = got.Cursor
+			}
+			assertions.Greater(pages, 1)
+			assertions.Equal(want, refs)
+		})
+	}
 }

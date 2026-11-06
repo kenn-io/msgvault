@@ -24,11 +24,6 @@ const (
 	timelineReaderNote
 )
 
-type timelineSelectableEntry struct {
-	entry timeline.Entry
-	line  int
-}
-
 type timelineNavigation struct {
 	request        timeline.Request
 	result         *timeline.Timeline
@@ -39,7 +34,7 @@ type timelineState struct {
 	request        timeline.Request
 	result         *timeline.Timeline
 	lines          []string
-	entries        []timelineSelectableEntry
+	entries        []timeline.RenderedEntry
 	cursor, scroll int
 	history        []timelineNavigation
 	requestID      uint64
@@ -71,6 +66,6 @@ func (m Model) highlightedTimelineEntry() *timeline.Entry {
 	if m.timelineState.cursor < 0 || m.timelineState.cursor >= len(m.timelineState.entries) {
 		return nil
 	}
-	entry := m.timelineState.entries[m.timelineState.cursor].entry
+	entry := m.timelineState.entries[m.timelineState.cursor].Entry
 	return &entry
 }

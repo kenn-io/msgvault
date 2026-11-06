@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"go.kenn.io/msgvault/internal/freshness"
 )
 
 func TestMarkdownDayGolden(t *testing.T) {
@@ -79,4 +80,12 @@ func TestMarkdownUsesAnchorAndShortRelatedRefs(t *testing.T) {
 	assert.Contains(t, got, "#9031")
 	assert.NotContains(t, got, "c412")
 	assert.Contains(t, got, "possibly related #9032, e8812@20261022T1330Z")
+}
+
+func TestMarkdownPartialSyncOutcome(t *testing.T) {
+	v := sampleTimeline(ModeAnchor)
+	v.Freshness.Sources = []freshness.SourceFreshness{{SourceType: "gmail", Identifier: "owner@example.com", Scheduling: "manual", Outcome: "partial", LastSyncErrors: 1, LastSuccessfulSyncAt: &v.Now}}
+	got := Markdown(v)
+	assert.Contains(t, got, "gmail:owner@example.com partial")
+	assert.NotContains(t, got, "gmail:owner@example.com current")
 }

@@ -117,7 +117,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 	if len(m.timelineState.entries) > 0 {
-		m.timelineState.scroll = calculateScrollOffset(m.timelineState.entries[m.timelineState.cursor].line, m.timelineState.scroll, m.visibleRows())
+		m.timelineState.scroll = calculateScrollOffset(m.timelineState.entries[m.timelineState.cursor].Line, m.timelineState.scroll, m.visibleRows())
 	}
 	return m, nil
 }

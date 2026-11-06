@@ -35,7 +35,7 @@ func TestTimelineViewRendersSharedMarkdownRows(t *testing.T) {
 		}
 	}
 	require.Len(m.timelineState.entries, 1)
-	assert.Equal("burst:1:7:2027-03-14", m.timelineState.entries[0].entry.AnchorRef)
+	assert.Equal("burst:1:7:2027-03-14", m.timelineState.entries[0].Entry.AnchorRef)
 	assert.Contains(view, "[Timeline]")
 }
 func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
@@ -50,7 +50,7 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	}
 	m.rebuildTimelineRows()
 	require.Len(m.timelineState.entries, 2)
-	assert.Equal(m.timelineState.entries[0].line, m.timelineState.entries[1].line)
+	assert.Equal(m.timelineState.entries[0].Line, m.timelineState.entries[1].Line)
 	originalLines := append([]string(nil), m.timelineState.lines...)
 	moved, _ := sendKey(t, m, key('j'))
 	assert.Equal("msg:21", moved.highlightedTimelineEntry().Ref)
@@ -111,12 +111,12 @@ func TestTimelineRowsMapRepeatedRefsToTheirOwnRenderedOccurrences(t *testing.T) 
 			require.Len(m.timelineState.entries, 2)
 			assert.Equal(strings.Split(strings.TrimSuffix(timeline.Markdown(m.timelineState.result), "\n"), "\n"), m.timelineState.lines)
 			firstRow, secondRow := m.timelineState.entries[0], m.timelineState.entries[1]
-			assert.NotEqual(firstRow.line, secondRow.line)
-			assert.Contains(m.timelineState.lines[firstRow.line], tc.firstLabel)
-			assert.Contains(m.timelineState.lines[secondRow.line], tc.secondText)
-			assert.NotContains(m.timelineState.lines[secondRow.line], tc.firstLabel)
+			assert.NotEqual(firstRow.Line, secondRow.Line)
+			assert.Contains(m.timelineState.lines[firstRow.Line], tc.firstLabel)
+			assert.Contains(m.timelineState.lines[secondRow.Line], tc.secondText)
+			assert.NotContains(m.timelineState.lines[secondRow.Line], tc.firstLabel)
 			moved, _ := sendKey(t, m, key('j'))
-			assert.Equal(secondRow.line, moved.timelineState.entries[moved.timelineState.cursor].line)
+			assert.Equal(secondRow.Line, moved.timelineState.entries[moved.timelineState.cursor].Line)
 			around, cmd := sendKey(t, moved, key('a'))
 			require.NotNil(cmd)
 			assert.Equal(second.AnchorRef, around.timelineState.request.Around)

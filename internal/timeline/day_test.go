@@ -610,3 +610,24 @@ func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
 	assertions.True(summary.PeopleTruncated)
 	assertions.Contains(Markdown(fitted), "Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, +2")
 }
+
+func TestBuildDayIncludesOverlappingMeeting(t *testing.T) {
+	for _, date := range []string{"2026-10-21", "2026-10-22"} {
+		t.Run(date, func(t *testing.T) {
+			f := newTimelineFixture(t)
+			f.calendar("overnight", strings.NewReplacer("2026-10-22T10:00:00Z", "2026-10-21T23:30:00Z", "2026-10-22T11:00:00Z", "2026-10-22T00:30:00Z").Replace(singleDayEvent))
+			req := dayRequest()
+			req.Date = date
+			got, err := Build(t.Context(), f.src, req)
+			require := require.New(t)
+			require.NoError(err)
+			entries := allDayEntries(got)
+			require.Len(entries, 1)
+			assert := assert.New(t)
+			assert.Equal(date, got.Days[0].Date)
+			assert.Equal("2026-10-21T23:30:00Z", entries[0].Time.Format(time.RFC3339))
+			assert.Equal(entries[0].Time, entries[0].Meeting.Start)
+			assert.Equal("2026-10-22T00:30:00Z", entries[0].Meeting.End.Format(time.RFC3339))
+		})
+	}
+}

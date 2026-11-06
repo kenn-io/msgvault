@@ -172,3 +172,79 @@ func TestICSMeetingExcludesAccountIdentities(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(f.peer, entries[0].Meeting.Attendees[0].ParticipantID)
 }
+
+// Shared flags change history admission and message omissions, while the
+// relationship header continues to describe default-filter contact evidence.
+func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := newTimelineFixture(t)
+			ref := "email:alice@example.com"
+			if saved {
+				ref = fmt.Sprintf("person:%d", f.savePerson())
+			}
+
+			for i, group := range []struct {
+				cold, noise bool
+				count       int
+			}{
+				{false, false, 1}, {false, true, 2}, {true, false, 2}, {true, true, 2},
+			} {
+				key := fmt.Sprintf("shared-flags-%d", i)
+				conv, err := f.Store.EnsureConversationWithType(f.Source.ID, key, "direct_chat", "Shared flags")
+				requirements.NoError(err)
+				for n := range group.count {
+					f.add(f.now.Add(-time.Duration(60+i*5+n)*time.Minute), false, func(m *store.Message) {
+						m.ConversationID = conv
+						if group.noise {
+							m.ListID = sql.NullString{String: "updates.example.com", Valid: true}
+						}
+					})
+				}
+				if group.cold {
+					requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, key))
+				}
+			}
+			f.project()
+			baseline, err := Build(t.Context(), f.src, relationshipRequest(ref))
+			requirements.NoError(err)
+			requirements.NotNil(baseline.Person)
+			requirements.Equal(1, baseline.Person.InteractionCount)
+			if saved {
+				assertions.Positive(baseline.Person.Person.PersonID)
+			} else {
+				assertions.Zero(baseline.Person.Person.PersonID)
+			}
+			for _, tc := range []struct {
+				cold, noise                        bool
+				entries, coldOmitted, noiseOmitted int
+			}{
+				{false, false, 1, 2, 2}, {false, true, 2, 4, 0},
+				{true, false, 2, 0, 4}, {true, true, 4, 0, 0},
+			} {
+				t.Run(fmt.Sprintf("cold=%t/noise=%t", tc.cold, tc.noise), func(t *testing.T) {
+					assertions := assert.New(t)
+					requirements := require.New(t)
+					req := relationshipRequest(ref)
+					req.IncludeCold, req.IncludeNoise = tc.cold, tc.noise
+					got, err := Build(t.Context(), f.src, req)
+					requirements.NoError(err)
+					assertions.Equal(baseline.Person, got.Person)
+					assertions.Len(got.History, tc.entries)
+					assertions.Equal(tc.coldOmitted, got.Omitted.Cold)
+					assertions.Equal(tc.noiseOmitted, got.Omitted.Noise)
+					req.Around = "2026-10-22T12:00:00Z"
+					req.Before, req.After = tc.entries, 0
+					req.AfterSet = true
+					got, err = Build(t.Context(), f.src, req)
+					requirements.NoError(err)
+					assertions.Len(got.History, tc.entries)
+					assertions.Equal(tc.coldOmitted, got.Omitted.Cold)
+					assertions.Equal(tc.noiseOmitted, got.Omitted.Noise)
+				})
+			}
+		})
+	}
+}
