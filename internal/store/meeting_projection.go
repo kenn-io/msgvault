@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
@@ -46,11 +45,6 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	}
 	if err != nil {
 		return fmt.Errorf("read meeting projection message: %w", err)
-	}
-	if messageType.String == callhistory.MessageType {
-		if err := s.refreshCallProjectionWith(ctx, tx, messageID, metadata.String); err != nil {
-			return err
-		}
 	}
 	if messageType.String != "meeting_transcript" {
 		// The common non-meeting path does no derived writes unless a prior meeting

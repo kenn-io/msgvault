@@ -63,9 +63,10 @@ type PersonCallSummary struct {
 // stay unknown, and undated legacy calls are excluded from both call readers.
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
-	return `SELECT message_id, '' AS direction,
-		outcome, owner_participation, occurred_at, NULL AS duration_seconds FROM call_details
-		WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id = message_id AND m.message_type = '` + callhistory.MessageType + `')
+	return `SELECT m.id AS message_id, '' AS direction,
+		m.metadata ->> 'outcome' AS outcome, m.metadata ->> 'owner_participation' AS owner_participation,
+		m.sent_at AS occurred_at, NULL AS duration_seconds
+		FROM messages m WHERE m.message_type = '` + callhistory.MessageType + `'
 		UNION ALL
 		SELECT m.id,
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,

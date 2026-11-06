@@ -44,7 +44,33 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. When `native_call_id` is set, `record_id` must equal it; reimporting that record replaces its evidence. See the [HTTP contract](../api-server.md#call-history). |
+| `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. When `native_call_id` is set, `record_id` must equal it; reimporting that record replaces its evidence. See the example below. |
+
+This normalized request binds the call to existing archive participant `42`. Timestamps use RFC3339; `ended_at` is optional.
+
+```json
+{
+  "format": "normalized",
+  "account": "example-signal-account",
+  "record": {
+    "version": 1,
+    "provider": "signal",
+    "account": "example-signal-account",
+    "native_call_id": "example-call",
+    "record_id": "example-call",
+    "direction": "outgoing",
+    "outcome": "answered",
+    "owner_participation": "joined",
+    "occurred_at": "2026-10-01T09:00:00Z",
+    "ended_at": "2026-10-01T09:02:00Z",
+    "duration_seconds": 120,
+    "participants": [{"participant_id": 42, "participation": "joined"}],
+    "raw": {"callId": "example-call", "status": "Accepted"}
+  }
+}
+```
+
+Allowed values: `direction`: `incoming`, `outgoing`, `unknown`; `outcome`: `answered`, `missed`, `declined`, `cancelled`, `unknown`; `owner_participation`: `joined`, `not_joined`, `unknown`; participant `participation`: `joined`, `invited`, `unknown`.
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. No importer opens protected databases, retrieves encryption keys,
