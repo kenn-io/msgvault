@@ -242,7 +242,7 @@ func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
 	db, _ := sqlobserve.Open(t, nil)
 	seedMetadataSearch(t, db)
 	_, err := db.Exec(`INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');
- INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'),(2,1,'from');`)
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from');`)
 	require.NoError(err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))

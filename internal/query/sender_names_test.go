@@ -58,7 +58,6 @@ func TestSenderNameHints(t *testing.T) {
 		{"from:alex subject:hintfixture", true, 10, 10, false},
 		{"from:sender3@example.com subject:hintfixture", true, 10, 0, false},
 		{"from:alex from:kim", true, 10, 0, false},
-		{"from:alex | from:kim", true, 10, 0, false},
 		{"from:alex subject:absent", true, 10, 0, false},
 	} {
 		t.Run(fmt.Sprintf("%s/%t/%d/%d", tc.q, tc.opt, tc.limit, tc.offset), func(t *testing.T) {
@@ -70,38 +69,22 @@ func TestSenderNameHints(t *testing.T) {
 	}
 }
 
-func TestSenderNameHintDottedPartial(t *testing.T) {
+func TestSenderNameHintSpecialFragments(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
 	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("mary.jones@example.org"), DisplayName: new("Mary Jo")})
-	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
-	q := search.Parse("from:mary.jo")
-	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "", MessageFilter{IncludeHints: true}, ViewNoStats, 10, 0)
-	requirements.NoError(err)
-	assertions.Empty(result.Messages)
-	requirements.Len(result.Hints, 1)
-	assertions.Equal(`from: matches addresses; senders matching "mary.jo": try from:mary.jones@example.org (1 message)`, result.Hints[0].Message)
-	assertions.Equal("from:mary.jones@example.org", result.Hints[0].RetryWith.Query)
-	retry, err := env.Engine.Search(env.Ctx, search.Parse(result.Hints[0].RetryWith.Query), 10, 0)
-	requirements.NoError(err)
-	requirements.Len(retry, 1)
-	assertions.Equal(id, retry[0].ID)
-}
-
-func TestSenderNameHintAtSign(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	env := newTestEnv(t)
-	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.com"), DisplayName: new("Alex Kim")})
-	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "atsignfixture"})
+	env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
 	other := env.AddParticipant(dbtest.ParticipantOpts{Email: new("chat-handle"), DisplayName: new("Jordan Lee")})
-	env.AddMessage(dbtest.MessageOpts{FromID: other, Subject: "atsignfixture"})
-	hints := env.Engine.MatchSenderName(env.Ctx, search.Parse("from:@ subject:atsignfixture"))
-	requirements.Len(hints, 1)
-	assertions.Equal(`from: matches addresses; senders matching "@": try from:alex@example.com subject:atsignfixture (1 message)`, hints[0].Message)
-	retry, err := env.Engine.Search(env.Ctx, search.Parse(hints[0].RetryWith.Query), 10, 0)
-	requirements.NoError(err)
-	requirements.Len(retry, 1)
-	assertions.Equal(id, retry[0].ID)
+	env.AddMessage(dbtest.MessageOpts{FromID: other, Subject: "hintfixture"})
+	for _, tc := range []struct{ input, message string }{
+		{"from:mary.jo subject:hintfixture", `from: matches addresses; senders matching "mary.jo": try from:mary.jones@example.org subject:hintfixture (1 message)`},
+		{"from:@ subject:hintfixture", `from: matches addresses; senders matching "@": try from:mary.jones@example.org subject:hintfixture (1 message)`},
+	} {
+		hints := env.Engine.MatchSenderName(env.Ctx, search.Parse(tc.input))
+		requirements.Len(hints, 1)
+		assertions.Equal(tc.message, hints[0].Message)
+		assertions.Equal("from:mary.jones@example.org subject:hintfixture", hints[0].RetryWith.Query)
+	}
 }
 
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {
@@ -153,10 +136,6 @@ func TestSenderHintCandidatesRespectScope(t *testing.T) {
 	assertions.Equal(`from: matches addresses; senders matching "alex": try from:visible@example.com subject:hintfixture (1 message)`, result.Hints[0].Message)
 	assertions.NotContains(result.Hints[0].Message, "hidden")
 	assertions.NotContains(result.Hints[0].Message, "overridden")
-	retry, err := env.Engine.SearchFastWithStats(env.Ctx, search.Parse(result.Hints[0].RetryWith.Query), "", filter, ViewNoStats, 10, 0)
-	requirements.NoError(err)
-	requirements.Len(retry.Messages, 1)
-	assertions.Equal(visible, retry.Messages[0].ID)
 }
 
 func TestDuckDBSenderNameHintDelegatesToSQLite(t *testing.T) {

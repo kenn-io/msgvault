@@ -23,7 +23,7 @@ func (e *SQLiteEngine) MatchSenderName(ctx context.Context, q *search.Query) []S
 
 func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	buildParts func(context.Context, *search.Query) ([]string, []any, string)) []SearchHint {
-	if q.HasOR() || len(q.FromAddrs) != 1 {
+	if len(q.FromAddrs) != 1 {
 		return nil
 	}
 	scoped := *q

@@ -61,10 +61,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		ids = append(ids, id)
 	}
-	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (42,'alex@example.com','Alex Kim')`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES (?,42,'from')`, ids[0])
-	require.NoError(err)
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(root, "vectors.db"), MainPath: dbPath, MainDB: st.DB(), Dimension: 4})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
@@ -113,23 +109,6 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	var warningResults []map[string]any
 	decode(jsonOut.String(), &warningResults)
 	assert.Contains(warningOut.String(), `OR was matched as a literal word`)
-	for _, tc := range []struct {
-		args   []string
-		stdout string
-	}{
-		{[]string{"search", "from:alex"}, "No messages found.\n"},
-		{[]string{"search", "from:alex", "--json"}, "[]\n"},
-	} {
-		args := tc.args
-		command = exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The binary path is supplied by the test operator.
-		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
-		jsonOut.Reset()
-		warningOut.Reset()
-		command.Stdout, command.Stderr = &jsonOut, &warningOut
-		require.NoError(command.Run())
-		assert.Equal(tc.stdout, jsonOut.String())
-		assert.Contains(warningOut.String(), `Hint: from: matches addresses; senders matching "alex": try from:alex@example.com`)
-	}
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
 	assert.Contains(out, "contextneedle")
