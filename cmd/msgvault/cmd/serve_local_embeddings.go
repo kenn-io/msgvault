@@ -66,7 +66,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		}
 	}
 	return api.LocalEmbeddingsStatus{Host: host, DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
-		OllamaAvailable: status.OllamaAvailable, DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
+		OllamaAvailable: status.OllamaAvailable || provider == "ollama", DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 
 // Inspect the configured local Ollama server as CLI setup does. Kit covers its default port.

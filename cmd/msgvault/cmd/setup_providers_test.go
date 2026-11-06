@@ -2034,10 +2034,8 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			var keys toml.MetaData
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
 			require.NoError(err)
-			if tc.fields == "" {
-				ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
-				assert.Equal(planActionSkip, ordinary.Action)
-			}
+			ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
+			assert.Equal(planActionSkip, ordinary.Action)
 			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true})
 			snapshot, err := config.ReadConfigFile(fixture.path)
 			require.NoError(err)

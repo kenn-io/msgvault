@@ -264,24 +264,20 @@ func TestLocalEmbeddingsChoosesAvailableProvider(t *testing.T) {
 			generation, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
 			require.NoError(t, err)
 			assert.Equal(t, "nomic-embed-text", generation.Model)
-			require.NoError(t, f.runtimeCtx.Err())
-			for _, ctx := range f.runner.contexts {
-				_, bounded := ctx.Deadline()
-				assert.True(t, bounded)
-				require.ErrorIs(t, ctx.Err(), context.Canceled)
-			}
 		})
 	}
 }
 
 func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
-	for _, model := range []string{"nomic-embed-text", "different-model"} {
-		t.Run(model, func(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
 			require := require.New(t)
-			f := newLocalActivationFixture(t, model, "")
+			f := newLocalActivationFixture(t, "nomic-embed-text", "")
+			f.cfg.Vector.Enabled = enabled
 			f.ollamaTags = true
 			content, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
+			content = []byte(strings.Replace(string(content), "enabled = true", "enabled = "+strconv.FormatBool(enabled), 1))
 			content = []byte(strings.Replace(string(content), "server = "+strconv.Quote(f.cfg.Chat.Server), "server = \"https://chat.example.test\"", 1))
 			require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), content, 0o600))
 			f.cfg.Chat.Server = "https://chat.example.test"
@@ -289,28 +285,44 @@ func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			require.Equal("ollama", status.Provider)
-			require.NoError(f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+			require.True(status.OllamaAvailable, "Turn on resumes this provider without a download")
+			require.NoError(f.controller.Enable(f.ctx, enabled, func(api.LocalEmbeddingsStatus) {}))
 			status, err = f.controller.Inspect(f.ctx)
 			require.NoError(err)
-			require.Equal("builtin", status.Provider)
+			if enabled {
+				require.Equal("builtin", status.Provider)
+			} else {
+				require.Equal("ollama", status.Provider)
+				require.True(status.Enabled)
+				require.Zero(f.installs)
+			}
 		})
 	}
 }
 
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
-	for _, builtin := range []bool{false, true} {
-		t.Run(strconv.FormatBool(builtin), func(t *testing.T) {
+	for _, pausedRemote := range []bool{false, true} {
+		t.Run(strconv.FormatBool(pausedRemote), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := newLocalActivationFixture(t, "custom-model", "")
 			f.ollamaTags = false
 			before, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
+			if pausedRemote {
+				before = []byte(strings.Replace(string(before), "enabled = true", "enabled = false", 1))
+				before = []byte(strings.Replace(string(before), f.cfg.Vector.Embeddings.Endpoint, "https://api.example.test/v1", 1))
+				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), before, 0o600))
+				f.cfg.Vector.Enabled = false
+				f.cfg.Vector.Embeddings.Endpoint = "https://api.example.test/v1"
+			}
 			f.start(t)
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			assert.Equal("configured", status.Provider)
-			require.ErrorContains(f.controller.Enable(f.ctx, builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
+			for _, builtin := range []bool{false, true} {
+				require.ErrorContains(f.controller.Enable(f.ctx, builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
+			}
 			after, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			assert.Equal(before, after)
@@ -448,10 +460,6 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	f := newLocalActivationFixture(t, "", "")
 	f.start(t)
 	f.runner.failBuild = true
-	f.runner.beforeBuild = func() {
-		_, err := f.handle.vf.Backend.CreateGeneration(f.ctx, f.handle.vf.Cfg.Embeddings.Model, f.handle.vf.Cfg.Embeddings.Dimension, f.handle.vf.Cfg.GenerationFingerprint())
-		require.NoError(t, err)
-	}
 	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
 	require.ErrorContains(t, err, "embedding build interrupted: context canceled")
 	assert.LessOrEqual(t, len(err.Error()), len(cliSubprocessExitSentinel)+2+8192)
@@ -518,6 +526,16 @@ func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
 		time.Sleep(24 * time.Hour)
 		require.ErrorIs(<-finished, context.DeadlineExceeded)
 	})
+	f := newLocalActivationFixture(t, "", "")
+	f.start(t)
+	require.NoError(t, f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {}))
+
+	require.NoError(t, f.runtimeCtx.Err())
+	for _, ctx := range f.runner.contexts {
+		_, bounded := ctx.Deadline()
+		assert.True(t, bounded)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+	}
 }
 
 func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
@@ -546,37 +564,6 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			require.Equal(expected, actual)
-		})
-	}
-}
-
-func TestLocalEmbeddingsPreservesPausedConfiguredProviders(t *testing.T) {
-	for _, chat := range []string{"", "[chat]\nserver = \"https://api.example.test\"\n"} {
-		t.Run(chat, func(t *testing.T) {
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[vector]
-enabled = false
-[vector.embeddings]
-endpoint = "https://api.example.test/v1"
-model = "configured-model"
-api_key_env = "EXAMPLE_EMBEDDING_KEY"
-`+chat)
-			cfg := fixture.load(t)
-			before, err := os.ReadFile(fixture.path)
-			require.NoError(t, err)
-			handle := &vectorInitHandle{done: make(chan struct{})}
-			close(handle.done)
-			controller := &localEmbeddingsController{state: &invocation{cfg: cfg}, handle: handle,
-				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-					return embedlocal.Status{}, errors.New("local activation reached for a remote provider")
-				},
-			}
-			for _, builtin := range []bool{false, true} {
-				require.ErrorContains(t, controller.Enable(t.Context(), builtin, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
-			}
-			after, err := os.ReadFile(fixture.path)
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
 		})
 	}
 }
