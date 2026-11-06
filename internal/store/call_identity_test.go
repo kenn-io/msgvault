@@ -41,7 +41,7 @@ func (f *logicalCallFixture) put(t *testing.T, native string, change func(*callh
 		recordID = strconv.Itoa(f.serial)
 	}
 	o := callhistory.Observation{RecordID: recordID, Version: 1, Provider: "signal", Account: "a", NativeCallID: native,
-		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.at, Precision: "instant",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.at,
 		Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`)}
 	if change != nil {
 		change(&o)
