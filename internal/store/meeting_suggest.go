@@ -151,9 +151,10 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		return pageResult, err
 	}
 	defer release()
+	r := s.meetingReader().withMeetingCache()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
-		members, err := suggestionMembers(ctx, s.meetingReader(), []int64{ref.MessageID})
+		members, err := suggestionMembers(ctx, r, []int64{ref.MessageID})
 		if err != nil {
 			return pageResult, err
 		}
@@ -175,14 +176,13 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	} else {
-		target, err := resolveMeetingOccurrence(ctx, s.meetingReader(), ref.OccurrenceRef, &budget)
+		target, err := resolveMeetingOccurrence(ctx, r, ref.OccurrenceRef, &budget)
 		if err != nil {
 			return pageResult, err
 		}
 		if target.Row.Event.Status == meetingCancelledStatus {
 			return pageResult, nil
 		}
-		r := s.meetingReader()
 		// Use the longest archived duration to bound the start window without
 		// excluding a long recording that still overlaps the event.
 		var longest float64
@@ -234,7 +234,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			return pageResult, ErrQueryTooBroad
 		}
 		for start := 0; start < len(ids); start += 500 {
-			members, err := suggestionMembers(ctx, s.meetingReader(), ids[start:min(start+500, len(ids))])
+			members, err := suggestionMembers(ctx, r, ids[start:min(start+500, len(ids))])
 			if err != nil {
 				return pageResult, err
 			}
@@ -245,7 +245,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	}
-	pageResult.Suggestions, err = s.undecidedMeetingSuggestions(ctx, s.meetingReader(), pageResult.Suggestions, limit, &budget)
+	pageResult.Suggestions, err = s.undecidedMeetingSuggestions(ctx, r, pageResult.Suggestions, limit, &budget)
 	return pageResult, err
 }
 

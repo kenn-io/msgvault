@@ -36,6 +36,13 @@ type meetingExpansionKey struct {
 	from, to    time.Time
 }
 
+// Share recurrence work only within one read snapshot or decision transaction.
+func (r reboundReader) withMeetingCache() reboundReader {
+	r.expansions = make(map[meetingExpansionKey]meetingReadResult[[]linkOccurrence])
+	r.occurrences = make(map[OccurrenceRef]meetingReadResult[linkOccurrence])
+	return r
+}
+
 // MeetingRecordContext reads a record from either a note or an event reference.
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
@@ -44,10 +51,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		return record, err
 	}
 	defer release()
-	r := s.meetingReader()
-	// Reuse work only within this snapshot; charge each expansion and resolution once.
-	r.expansions = make(map[meetingExpansionKey]meetingReadResult[[]linkOccurrence])
-	r.occurrences = make(map[OccurrenceRef]meetingReadResult[linkOccurrence])
+	r := s.meetingReader().withMeetingCache()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
 		var found int64

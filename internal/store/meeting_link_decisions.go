@@ -56,7 +56,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, memberID).Scan(&found); err != nil {
 			return err
 		}
-		r := reboundReader{loggedReader: tx, dialect: s.dialect}
+		r := (reboundReader{loggedReader: tx, dialect: s.dialect}).withMeetingCache()
 		budget := calrecur.RequestReadBudget
 		decisions, err := s.boundedMeetingLinkDecisions(ctx, r, memberID)
 		if err != nil {

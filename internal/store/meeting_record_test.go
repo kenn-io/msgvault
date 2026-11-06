@@ -7,10 +7,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
+func repeatedMeetingSeriesFixture(t *testing.T, noteCount int) (*Store, int64, []int64) {
+	t.Helper()
 	st := newRFC822IDBackfillBackendStore(t)
 	raw := `{"id":"series","iCalUID":"daily@example.org","start":{"dateTime":"2010-01-01T10:00:00Z"},"end":{"dateTime":"2010-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`
 	var event int64
@@ -21,10 +22,25 @@ func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
 		}
 	}
 	var notes []int64
-	for i := range 7 {
+	for i := range noteCount {
 		_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"daily@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 		notes = append(notes, note)
 	}
+	return st, event, notes
+}
+
+func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st, event, notes := repeatedMeetingSeriesFixture(t, 7)
+	r := st.meetingReader().withMeetingCache()
+	budget := calrecur.RequestReadBudget
+	target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
+	require.NoError(err)
+	members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
+	// Five copies expanded and resolved once need fewer than 100,000 steps.
+	assert.Less(calrecur.RequestReadBudget-budget, 100_000)
+	require.NoError(err)
+	assert.Equal(notes, members)
 	for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, {Kind: "msg", MessageID: notes[0]}} {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(err, "record %s:%d", ref.Kind, ref.MessageID)
@@ -32,6 +48,42 @@ func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
 		require.Len(record.Links, 1)
 		assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), record.Links[0].Ref)
 	}
+}
+
+func TestMeetingSuggestionsReuseSeriesWork(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st, event, notes := repeatedMeetingSeriesFixture(t, 10)
+	ref := fmt.Sprintf("evt:%d@20270314T100000Z", event)
+	var candidates []MeetingSuggestion
+	for _, note := range notes {
+		candidates = append(candidates, MeetingSuggestion{MemberMessageID: note, Ref: ref})
+	}
+	budget := calrecur.RequestReadBudget
+	filtered, err := st.undecidedMeetingSuggestions(t.Context(), st.meetingReader().withMeetingCache(), candidates, 100, &budget)
+	assert.Less(calrecur.RequestReadBudget-budget, 100_000)
+	require.NoError(err)
+	assert.Empty(filtered)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, 100)
+	require.NoError(err)
+	assert.Empty(page.Suggestions)
+}
+
+func TestMeetingManualLinkRepeatedSeriesWork(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st, event, notes := repeatedMeetingSeriesFixture(t, 10)
+	_, note := projectionFixture(t, st, "manual", "plaud_json", `{}`)
+	r := st.meetingReader().withMeetingCache()
+	budget := calrecur.RequestReadBudget
+	target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
+	require.NoError(err)
+	members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
+	assert.Less(calrecur.RequestReadBudget-budget, 100_000)
+	require.NoError(err)
+	assert.Equal(notes, members)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}))
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(err)
+	assert.Equal(append(notes, note), record.MessageIDs)
 }
 
 func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
