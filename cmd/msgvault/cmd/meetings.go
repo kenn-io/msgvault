@@ -52,6 +52,7 @@ Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
 	}
 	command.AddCommand(
 		newMeetingContextCommand(deps),
+		newMeetingSubtitlesCommand(deps),
 		newMeetingActionsCommand(deps),
 		newMeetingMetricsCommand(deps),
 	)

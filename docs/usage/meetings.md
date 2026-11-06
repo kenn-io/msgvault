@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-06"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -47,6 +47,35 @@ matches. Meetings mode does not offer selection or deletion.
 
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
+
+## Export subtitles
+
+Export one archived meeting as SRT or WebVTT through the daemon:
+
+```bash
+msgvault meetings subtitles --id 42 --format srt
+msgvault meetings subtitles --id 42 --format vtt -o meeting.vtt
+```
+
+`--format` defaults to `srt`. Output goes to stdout unless `-o FILE` is
+specified; `-o -` also uses stdout. Both formats show available speakers as
+`Speaker: text`. Text and labels are escaped, and nonblank line breaks survive.
+Interior blank cue lines and multiline speaker labels cause an explicit error.
+The command validates and renders everything before replacing a file. Timing,
+formatting, and size errors leave an existing destination untouched.
+
+Export uses retained structured segments, independently of the recorder or
+transcription service. Complete start/end intervals are required. Absolute-only
+transcripts start at their earliest cue; explicit offsets preserve recording
+coordinates. Overlaps survive. Plain text, start-only offsets, incomplete
+transcripts, and ambiguous timing fail instead of acquiring estimated cue ends.
+The full JSON meeting context must fit within 1 MiB, including notes and summary;
+any truncation or omission fails before subtitle output.
+
+Hex ingestion requires the separate Hex integration. Once imported, its retained
+start offsets and recording-relative ends support export without calling Hex or
+enabling its Labs subtitle toggle. Other sources work when their archived
+normalized segments retain complete intervals. Export changes no archived data.
 
 ## Export context and read follow-ups
 

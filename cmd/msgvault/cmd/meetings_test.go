@@ -82,6 +82,8 @@ func executeMeetingsCommand(
 	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) {
 		return client, func() {}, nil
 	}})
+	// Match the root command's runtime-error output policy.
+	silenceUsageInRunE(command)
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)

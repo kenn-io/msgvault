@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-06"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -86,6 +86,21 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 
 Mixed or invalid selections fail. Truncated packets identify omitted content
 and meetings.
+
+### meetings subtitles
+
+`msgvault meetings subtitles --id ID [--format srt|vtt] [-o FILE]`
+
+Exports exactly one archived meeting through the daemon. `--id` must be a
+positive JavaScript-safe integer. The default format is `srt`; output defaults
+to stdout (`-o -` also selects stdout). A file is replaced atomically after
+successful rendering, with a notice on stderr. Both formats use visible speaker
+prefixes and escape text and labels.
+
+Complete retained timing and a complete context packet within 1 MiB are required.
+Unknown schemas, omitted or truncated evidence, unavailable timing, blank cue
+lines, and multiline labels fail before output. See [subtitle timing and source
+limits](usage/meetings.md#export-subtitles).
 
 ### meetings actions and meetings metrics
 
