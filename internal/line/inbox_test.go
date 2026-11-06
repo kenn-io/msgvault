@@ -1348,3 +1348,26 @@ func TestProcessorArchivesLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
 	require.NoError(t, f.st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
 	assert.Equal(t, 1, count, "the text in an acknowledged batch must be available while earlier optional media is downloading")
 }
+
+func TestGroupSummaryUnavailableRequestedOncePerPass(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			path := "/v2/bot/group/" + testGroup + "/summary"
+			for i := range 3 {
+				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: status})
+				f.enqueue(t, f.message(strconv.Itoa(i+1), "group text", f.now.UnixMilli()+int64(i)), time.Time{})
+			}
+			f.run(t)
+			checks.Equal(1, f.api.Count(http.MethodGet, path))
+			for i := range 3 {
+				checks.Equal("group text", f.archived(t, strconv.Itoa(i+1)).body)
+			}
+			inbox, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
+			must.NoError(err)
+			checks.Zero(inbox.Pending)
+		})
+	}
+}
