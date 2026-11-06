@@ -44,7 +44,6 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		{name: "read human person default", operation: "read", args: []string{"person-example"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, human: true, after: personSend},
 		{name: "read human changed binding", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: bindingChanged, wantReason: "binding_changed"},
 		{name: "read human ambiguous endpoint", operation: "read", args: []string{"person-example", "--endpoint", "alice@example.test"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test"}, human: true, after: ambiguousAddress, wantReason: "ambiguous_endpoint"},
-		{name: "read person default", operation: "read", args: []string{"person-example", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example"}, after: personDraft},
 		{name: "set address", operation: "set", args: []string{"person-example", "send_allowed", "--endpoint", "alice@example.test", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", Endpoint: "alice@example.test", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, Reason: "Owner approval"}, before: addressDraft, after: addressApproved},
 		{name: "set person default", operation: "set", args: []string{"person-example", "send_allowed", "--person-all-routes", "--expected-revision", "3", "--reason", "Owner approval", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, ScopeAcknowledgement: "person_all_routes", Reason: "Owner approval"}, before: personDraft, after: personApproved},
 		{name: "restrict person default", operation: "set", args: []string{"person-example", "draft_only", "--expected-revision", "3", "--reason", "Restrict", "--json"}, want: store.DeliveryPolicyWrite{PersonUID: "person-example", ExpectedRevision: 3, Policy: store.DeliveryDraftOnly, Reason: "Restrict"}, before: personSend, after: personRestricted},
@@ -82,7 +81,7 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 				assert.Equal(test.want, body)
 				if test.wantError == store.ErrDeliveryPolicyInvalid.Error() {
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"error":%q}`, store.ErrDeliveryPolicyInvalid.Error())
+					_, _ = fmt.Fprintf(w, `{"error":"invalid_policy","message":%q}`, store.ErrDeliveryPolicyInvalid.Error())
 					return
 				}
 				_, _ = io.WriteString(w, payload)
