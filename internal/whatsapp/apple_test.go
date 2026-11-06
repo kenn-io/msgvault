@@ -108,7 +108,7 @@ func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
 	chatDBPath := createAppleChatFixture(t)
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	st := testutil.NewSQLiteTestStore(t)
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
 		WHEN NEW.status = 'running'
 		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
 	require.NoError(err)
@@ -117,7 +117,7 @@ func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
 	require.NotNil(summary)
 	require.Equal(int64(1), summary.MessagesProcessed)
 	require.Equal(int64(1), summary.MessagesAdded)
-	src, err := st.GetSourceByTypeAndIdentifier("whatsapp", "+15555550100")
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "whatsapp", "+15555550100")
 	require.NoError(err)
 	run, err := st.GetLatestSync(src.ID)
 	require.NoError(err)

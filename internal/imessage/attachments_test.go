@@ -302,14 +302,14 @@ func TestImportAttachmentFailures(t *testing.T) {
 		testutil.SkipIfPostgres(t, "SQLite trigger injection")
 		require := require.New(t)
 		c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
-		_, err := db.Exec(`DELETE FROM message_attachment_join`)
+		_, err := db.ExecContext(t.Context(), `DELETE FROM message_attachment_join`)
 		require.NoError(err)
 		_, err = c.Import(t.Context(), st, source)
 		require.NoError(err)
 
-		_, err = db.Exec(`INSERT INTO message_attachment_join VALUES (1,1)`)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO message_attachment_join VALUES (1,1)`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
 		require.NoError(err)
 		summary, err := c.Import(t.Context(), st, source)
 		require.ErrorContains(err, "synthetic failure")
@@ -790,21 +790,21 @@ func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
 				return flag
 			}
 			for i, flag := range []int{0, 1, 0, 1, 1} {
-				_, err := f.db.Exec(`UPDATE message SET cache_has_attachments = ?`, flag)
+				_, err := f.db.ExecContext(t.Context(), `UPDATE message SET cache_has_attachments = ?`, flag)
 				require.NoError(err)
 				summary, err := c.Import(t.Context(), f.st, f.source)
 				require.NoError(err)
 				require.Equal(flag == 1, hasAttachments(), "source flag %d", flag)
 				require.Equal([]int{0, 2, 2, 2, 0}[i], summary.MessagesUpdated)
 				if i == 0 && tc.name == "no join rows" && !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-					_, err := f.st.DB().Exec(`CREATE TABLE synthetic_flag_updates (message_id INTEGER);
+					_, err := f.st.DB().ExecContext(t.Context(), `CREATE TABLE synthetic_flag_updates (message_id INTEGER);
 						CREATE TRIGGER synthetic_flag_updates AFTER UPDATE OF has_attachments ON messages
 						BEGIN INSERT INTO synthetic_flag_updates VALUES (NEW.id); END`)
 					require.NoError(err)
 					_, err = f.c.Import(t.Context(), f.st, f.source)
 					require.NoError(err)
 					var updates int
-					require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
+					require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
 					require.Zero(updates, "unchanged messages must leave the archive untouched")
 				}
 			}

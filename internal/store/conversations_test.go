@@ -19,7 +19,7 @@ func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "room-reply", "Declined: Planning")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "room-reply", "Declined: Planning")
 	requirements.NoError(err)
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	requirements.NoError(err)

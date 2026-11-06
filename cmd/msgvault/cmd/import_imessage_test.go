@@ -199,7 +199,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			home := t.TempDir()
 			path, chat := testutil.NewIMessageChatDB(t)
-			_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+			_, err := chat.ExecContext(t.Context(), `CREATE TABLE attachment (filename TEXT);
  CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
  INSERT INTO message (date, text, is_from_me) VALUES (700000000, 'outgoing', 1)`)
 			require.NoError(err)
@@ -212,7 +212,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
 			var owner string
-			require.NoError(st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
 			assert.Equal("owner@example.test", owner)
 			require.NoError(st.Close())
 
@@ -236,7 +236,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			st, err = store.Open(cfg.DatabaseDSN())
 			require.NoError(err)
 			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
 			assert.Equal("owner@example.test", owner)
 		})
 	}

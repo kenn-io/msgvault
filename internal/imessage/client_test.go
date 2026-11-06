@@ -2,6 +2,7 @@ package imessage
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
@@ -23,14 +24,14 @@ func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite trigger injection")
 	require := require.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date, text) VALUES (725760000, 'one'), (725760001, 'two'), (725760002, 'three')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date, text) VALUES (725760000, 'one'), (725760001, 'two'), (725760002, 'three')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	client.pageSize = 2
@@ -39,7 +40,7 @@ func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
 	summary, err := client.Import(ctx, st, src.ID)
 	require.NoError(err)
 	assert.Equal(t, 3, summary.Skipped)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_message`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_message`)
 	require.NoError(err)
 	retried, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
@@ -368,11 +369,11 @@ func TestNewClientDoesNotRequireHomeWhenAttachmentCaptureIsDisabled(t *testing.T
 
 func TestImportClearsSearchIndexWhenMessageTextIsRemoved(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, 'Synthetic oldmarker body')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000, 'Synthetic oldmarker body')`)
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	st := testutil.NewTestStore(t)
@@ -391,13 +392,13 @@ func TestImportClearsSearchIndexWhenMessageTextIsRemoved(t *testing.T) {
 	assert.Equal(int64(1), total)
 	assert.Equal([]int64{id}, ids)
 
-	_, err = db.Exec(`UPDATE message SET text = NULL`)
+	_, err = db.ExecContext(t.Context(), `UPDATE message SET text = NULL`)
 	require.NoError(err)
 	summary, err = client.Import(ctx, st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesImported)
 	assert.Equal(1, summary.MessagesUpdated)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Empty(body)
 	ids, total, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
@@ -424,29 +425,29 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	first, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(3, first.MessagesAdded)
 	// Pin a past modification time so even same-tick rewrites are observable.
-	_, err = st.DB().Exec(`UPDATE messages SET last_modified = '2020-01-01 00:00:00'`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET last_modified = '2020-01-01 00:00:00'`)
 	require.NoError(err)
 	var before, after time.Time
-	require.NoError(st.DB().QueryRow(`SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&before))
 	idle, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Zero(idle.MessagesAdded)
 	assert.Zero(idle.MessagesUpdated)
-	require.NoError(st.DB().QueryRow(`SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&after))
 	assert.Equal(before, after)
-	_, err = db.Exec(`UPDATE message SET text = 'edited' WHERE ROWID = 2;
+	_, err = db.ExecContext(t.Context(), `UPDATE message SET text = 'edited' WHERE ROWID = 2;
  INSERT INTO message (date,text) VALUES (723168000,'late arrival')`)
 	require.NoError(err)
 	edited, err := client.Import(t.Context(), st, src.ID)
@@ -454,7 +455,7 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 	assert.Equal(1, edited.MessagesAdded)
 	assert.Equal(1, edited.MessagesUpdated)
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_id = ? AND source_message_id = '2')`), src.ID).Scan(&body))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_id = ? AND source_message_id = '2')`), src.ID).Scan(&body))
 	assert.Equal("edited", body)
 }
 
@@ -464,25 +465,25 @@ func TestImportRepairsMissingProviderLabel(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			path, db := testutil.NewIMessageChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,service) VALUES (725760000,'hello',?)`, service)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text,service) VALUES (725760000,'hello',?)`, service)
 			require.NoError(err)
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("apple_messages", "local")
 			require.NoError(err)
-			client, err := NewClient(path)
+			client, err := NewClient(t.Context(), path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			_, err = client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
 			var id int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
-			provider, err := st.EnsureLabel(src.ID, service, service, "user")
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+			provider, err := st.EnsureLabel(t.Context(), src.ID, service, service, "user")
 			require.NoError(err)
-			custom, err := st.EnsureLabel(src.ID, "custom", "custom", "user")
+			custom, err := st.EnsureLabel(t.Context(), src.ID, "custom", "custom", "user")
 			require.NoError(err)
-			require.NoError(st.LinkMessageLabel(id, custom))
+			require.NoError(st.LinkMessageLabel(t.Context(), id, custom))
 			// Older imports committed body and raw data before linking the provider label.
-			_, err = st.DB().Exec(st.Rebind(`DELETE FROM message_labels WHERE message_id = ? AND label_id = ?`), id, provider)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_labels WHERE message_id = ? AND label_id = ?`), id, provider)
 			require.NoError(err)
 			summary, err := client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
@@ -501,14 +502,14 @@ func TestImportLimitAdvancesPastDuplicateChatRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three');
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three');
 		INSERT INTO chat (guid) VALUES ('any;-;one'), ('any;-;two');
 		INSERT INTO chat_message_join VALUES (1,1), (2,1)`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	client, err := NewClient(path, WithLimit(2))
+	client, err := NewClient(t.Context(), path, WithLimit(2))
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -517,7 +518,7 @@ func TestImportLimitAdvancesPastDuplicateChatRows(t *testing.T) {
 	assert.Equal(2, summary.MessagesAdded)
 	var count int
 	var lastID string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), MAX(source_message_id) FROM messages WHERE source_id = ?`), src.ID).Scan(&count, &lastID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*), MAX(source_message_id) FROM messages WHERE source_id = ?`), src.ID).Scan(&count, &lastID))
 	assert.Equal(2, count)
 	assert.Equal("2", lastID)
 }
@@ -526,14 +527,14 @@ func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'shared');
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000,'shared');
 		INSERT INTO chat (guid) VALUES ('any;-;one'), ('any;-;two');
 		INSERT INTO chat_message_join VALUES (1,1), (2,1)`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	first, err := client.Import(t.Context(), st, src.ID)
@@ -564,7 +565,7 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			path, db := testutil.NewIMessageChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,is_from_me) VALUES (725760000,'message',?);
+			_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text,is_from_me) VALUES (725760000,'message',?);
  INSERT INTO chat VALUES ('any;-;synthetic', '', 'peer@example.test');
  INSERT INTO chat_message_join VALUES (1,1);
  INSERT INTO chat_handle_join VALUES (1,1)`, tt.isFromMe)
@@ -572,26 +573,26 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("apple_messages", "local")
 			require.NoError(err)
-			client, err := NewClient(path)
+			client, err := NewClient(t.Context(), path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			_, err = client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
 			query := `SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = ?`
 			var recipient string
-			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			require.NoError(st.DB().QueryRowContext(t.Context(), query, tt.recipientType).Scan(&recipient))
 			originalRecipient := "peer@example.test"
 			if tt.failOwner {
 				originalRecipient = "me@imessage.local"
 			}
 			require.Equal(originalRecipient, recipient)
-			_, err = db.Exec(`UPDATE handle SET id = 'new-peer@example.test'`)
+			_, err = db.ExecContext(t.Context(), `UPDATE handle SET id = 'new-peer@example.test'`)
 			require.NoError(err)
 			trigger := `CREATE TRIGGER fail_participant BEFORE INSERT ON participants WHEN NEW.email_address = 'new-peer@example.test' BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`
 			if tt.failOwner {
 				trigger = `CREATE TRIGGER fail_participant BEFORE INSERT ON participants WHEN NEW.email_address = 'me@imessage.local' BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`
 			}
-			_, err = st.DB().Exec(trigger)
+			_, err = st.DB().ExecContext(t.Context(), trigger)
 			require.NoError(err)
 			summary, err := client.Import(t.Context(), st, src.ID)
 			if tt.failOwner {
@@ -600,15 +601,15 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(1, summary.Skipped)
 			}
-			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			require.NoError(st.DB().QueryRowContext(t.Context(), query, tt.recipientType).Scan(&recipient))
 			assert.Equal(originalRecipient, recipient)
-			_, err = st.DB().Exec(`DROP TRIGGER fail_participant`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_participant`)
 			require.NoError(err)
 			retried, err := client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
 			assert.Zero(retried.Skipped)
 			assert.Equal(1, retried.MessagesUpdated)
-			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			require.NoError(st.DB().QueryRowContext(t.Context(), query, tt.recipientType).Scan(&recipient))
 			if tt.failOwner {
 				assert.Equal("me@imessage.local", recipient)
 			} else {
@@ -622,12 +623,12 @@ func TestImportOwnerChangeRefreshesRecipients(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'incoming')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000,'incoming')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = client.Import(t.Context(), st, src.ID)
@@ -637,7 +638,7 @@ func TestImportOwnerChangeRefreshesRecipients(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesUpdated)
 	var recipient string
-	require.NoError(st.DB().QueryRow(`SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = 'to'`).Scan(&recipient))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = 'to'`).Scan(&recipient))
 	assert.Equal("owner@example.test", recipient)
 	idle, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
@@ -649,40 +650,40 @@ func TestImportChangedMessageRollsBackOnRawFailure(t *testing.T) {
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "SQLite trigger injection")
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'original')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000,'original')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("apple_messages", "local")
 	require.NoError(err)
-	client, err := NewClient(path)
+	client, err := NewClient(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	var id int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
-	label, err := st.EnsureLabel(src.ID, "custom", "custom", "user")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	label, err := st.EnsureLabel(t.Context(), src.ID, "custom", "custom", "user")
 	require.NoError(err)
-	require.NoError(st.LinkMessageLabel(id, label))
-	_, err = db.Exec(`UPDATE message SET text = 'edited'`)
+	require.NoError(st.LinkMessageLabel(t.Context(), id, label))
+	_, err = db.ExecContext(t.Context(), `UPDATE message SET text = 'edited'`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_raw BEFORE UPDATE ON message_raw BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_raw BEFORE UPDATE ON message_raw BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
 	require.NoError(err)
 	summary, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, summary.Skipped)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("original", body)
 	var snippet string
-	require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE id = ?`, id).Scan(&snippet))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE id = ?`, id).Scan(&snippet))
 	assert.Equal("original", snippet)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_raw`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_raw`)
 	require.NoError(err)
 	summary, err = client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesUpdated)
-	body, err = st.GetMessageBodyText(id)
+	body, err = st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("edited", body)
 	labels, err := st.MessageLabelIDsContext(t.Context(), id)

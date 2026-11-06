@@ -4003,7 +4003,7 @@ func TestHandleSourceStatusMappedJobScheduled(t *testing.T) {
 			require.NoError(err, "GetOrCreateSource %s", tc.sourceType)
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
@@ -4078,7 +4078,7 @@ func TestHandleSourceStatusGenericJobUnscheduled(t *testing.T) {
 			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 
 			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status", nil))
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var resp SourceStatusResponse
 			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
@@ -9428,7 +9428,7 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 			sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "0 */6 * * *", NextRun: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)}}
 			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status", nil))
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var resp SourceStatusResponse
 			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
@@ -9454,7 +9454,7 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 			}
 			assert.ElementsMatch(wantIDs, gotIDs)
 
-			response := servePOSTTestRequest(srv, "/api/v1/sync/"+tc.trigger+"?source_type=apple_messages")
+			response := servePOSTTestRequest(t.Context(), srv, "/api/v1/sync/"+tc.trigger+"?source_type=apple_messages")
 			assert.Equal(tc.wantCode, response.Code, response.Body.String())
 			if tc.wantCode == http.StatusAccepted {
 				assert.Equal([]string{"apple-messages"}, sched.startedJobs)
@@ -9482,7 +9482,7 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 	for _, query := range []string{"", "?source_type=apple_messages"} {
 		st.sourceLists.Store(0)
 		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status"+query, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status"+query, nil))
 		require.Equal(http.StatusOK, w.Code)
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}

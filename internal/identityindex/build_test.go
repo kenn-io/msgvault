@@ -22,18 +22,18 @@ func TestBuildExcludesRooms(t *testing.T) {
 	requirements := require.New(t)
 	root, db := writeRelationshipBaseFixture(t, false)
 	// Calendar rooms arrive as message recipients, outside the conversation roster.
-	_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE room_participants AS
 			SELECT * FROM read_parquet(?) UNION ALL
 			SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', ''`, parquetDatasetGlob(root, "participants"))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
-	_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE room_messages AS
 			SELECT * FROM read_parquet(?) UNION ALL
 			SELECT * REPLACE (101 AS id, NULL::BIGINT AS sender_id, 11::BIGINT AS conversation_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM room_messages")
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, 'Alice' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 100, 5, 'to', 'Room 4B' UNION ALL SELECT 101, 5, 'to', 'Room 4B'`)
-	_, err = db.Exec(`CREATE TEMP TABLE room_conversations AS
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE room_conversations AS
 		SELECT * FROM read_parquet(?) UNION ALL
 		SELECT 11, 'thread-11', 'Room invitation', 'email_thread'`, parquetDatasetGlob(root, "conversations"))
 	requirements.NoError(err)
@@ -42,15 +42,15 @@ func TestBuildExcludesRooms(t *testing.T) {
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 	requirements.NoError(err)
 	var roomRows, aliceCount int64
-	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(root, DatasetPeople)).Scan(&roomRows))
+	requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(root, DatasetPeople)).Scan(&roomRows))
 	assertions.Zero(roomRows)
-	requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&aliceCount))
+	requirements.NoError(db.QueryRowContext(t.Context(), `SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&aliceCount))
 	assertions.Equal(int64(1), aliceCount, "Alice's activity is preserved while the room-only message is excluded")
-	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&roomRows))
+	requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&roomRows))
 	assertions.Zero(roomRows)
-	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetActivity)).Scan(&roomRows))
+	requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetActivity)).Scan(&roomRows))
 	assertions.Zero(roomRows)
-	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetActivity)).Scan(&aliceCount))
+	requirements.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetActivity)).Scan(&aliceCount))
 	assertions.Positive(aliceCount)
 }
 
