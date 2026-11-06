@@ -37,10 +37,8 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 		return err
 	}
 	key := "line:" + m.ID
-	if prior, found := refs[key]; found {
-		if !attachmentpolicy.RetryEligible(prior.State) {
-			return nil
-		}
+	if prior, found := refs[key]; found && !p.mediaPolicy.RetryAllows(prior.State, attachmentpolicy.Conversation{}, int64(prior.Size)) {
+		return nil
 	}
 	filename := m.FileName
 	if filename == "" {
