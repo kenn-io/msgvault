@@ -219,36 +219,20 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	args = append(args, limit, q.Offset)
 	out := []PersonCallSummary{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT m.metadata
+		// The projection stores each record's evidence version, so the check
+		// never decodes metadata.
+		var unsupported sql.NullInt64
+		err := tx.QueryRowContext(ctx, `SELECT MIN(c.evidence_version)
 			FROM call_details c JOIN messages m ON m.id = c.message_id
-			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`)
+			WHERE c.evidence_version <> 1 AND NOT c.withdrawn
+			AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`).Scan(&unsupported)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var metadata string
-			if err := rows.Scan(&metadata); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			var evidence callhistory.Evidence
-			if err := json.Unmarshal([]byte(metadata), &evidence); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("decode call evidence: %w", err)
-			}
-			if evidence.Version != 1 {
-				_ = rows.Close()
-				return fmt.Errorf("%w: unsupported call evidence version %d", callhistory.ErrInvalid, evidence.Version)
-			}
+		if unsupported.Valid {
+			return fmt.Errorf("%w: unsupported call evidence version %d", callhistory.ErrInvalid, unsupported.Int64)
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		rows, err = tx.QueryContext(ctx, `
+		rows, err := tx.QueryContext(ctx, `
 		WITH active AS (
 			SELECT c.*
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id

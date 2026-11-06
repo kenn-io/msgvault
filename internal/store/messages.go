@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -1484,26 +1485,47 @@ type bodylessMessageJournalState struct {
 	deleted        bool
 }
 
+// readBodylessMessageJournalState reads the row an upsert will replace, if any.
+func readBodylessMessageJournalState(q querier, msg *Message) (bodylessMessageJournalState, error) {
+	var prior bodylessMessageJournalState
+	err := q.QueryRow(`
+		SELECT m.id, m.message_type, m.conversation_id, m.sent_at, m.received_at, m.internal_date,
+		       m.sender_id, m.subject,
+		       EXISTS (SELECT 1 FROM embedding_changes ec WHERE ec.message_id = m.id),
+		       EXISTS (SELECT 1 FROM message_bodies mb WHERE mb.message_id = m.id),
+		       (m.deleted_at IS NOT NULL OR m.deleted_from_source_at IS NOT NULL)
+		FROM messages m WHERE m.source_id = ? AND m.source_message_id = ?`,
+		msg.SourceID, msg.SourceMessageID).Scan(
+		&prior.id, &prior.messageType, &prior.conversationID, &prior.sentAt, &prior.receivedAt,
+		&prior.internalDate, &prior.senderID, &prior.subject, &prior.journaled, &prior.hasBody, &prior.deleted)
+	switch {
+	case err == nil:
+		prior.found = true
+	case !errors.Is(err, sql.ErrNoRows):
+		return prior, fmt.Errorf("read bodyless message journal state: %w", err)
+	}
+	return prior, nil
+}
+
+// clearReclassifiedCallWith drops the scalar projection of a call that an
+// upsert rewrote as another type. Without a prior read it clears blindly.
+func clearReclassifiedCallWith(q querier, id int64, known bool, prior bodylessMessageJournalState, msg *Message) error {
+	if msg.MessageType == callhistory.MessageType || (known && prior.messageType.String != callhistory.MessageType) {
+		return nil
+	}
+	if _, err := q.Exec(`DELETE FROM call_details WHERE message_id = ?`, id); err != nil {
+		return fmt.Errorf("clear reclassified call projection: %w", err)
+	}
+	return nil
+}
+
 func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
 	if journalCandidate {
-		err := q.QueryRow(`
-			SELECT m.id, m.message_type, m.conversation_id, m.sent_at, m.received_at, m.internal_date,
-			       m.sender_id, m.subject,
-			       EXISTS (SELECT 1 FROM embedding_changes ec WHERE ec.message_id = m.id),
-			       EXISTS (SELECT 1 FROM message_bodies mb WHERE mb.message_id = m.id),
-			       (m.deleted_at IS NOT NULL OR m.deleted_from_source_at IS NOT NULL)
-			FROM messages m WHERE m.source_id = ? AND m.source_message_id = ?`,
-			msg.SourceID, msg.SourceMessageID).Scan(
-			&prior.id, &prior.messageType, &prior.conversationID, &prior.sentAt, &prior.receivedAt,
-			&prior.internalDate, &prior.senderID, &prior.subject, &prior.journaled, &prior.hasBody, &prior.deleted)
-		switch {
-		case err == nil:
-			prior.found = true
-		case errors.Is(err, sql.ErrNoRows):
-		default:
-			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
+		var err error
+		if prior, err = readBodylessMessageJournalState(q, msg); err != nil {
+			return 0, err
 		}
 	}
 	sql := upsertMessageSQL(d.Now())
@@ -1542,6 +1564,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		).Scan(&id); err != nil {
 			return 0, err
 		}
+	}
+	if err := clearReclassifiedCallWith(q, id, journalCandidate, prior, msg); err != nil {
+		return 0, err
 	}
 	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
 		if err := appendBodylessMessageChange(q, d, id, prior, msg); err != nil {

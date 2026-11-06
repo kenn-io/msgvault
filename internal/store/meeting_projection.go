@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
@@ -39,18 +40,15 @@ func (s *Store) lockMeetingEvidenceWith(ctx context.Context, tx *loggedTx, messa
 func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var messageType, metadata sql.NullString
-	var hasCallProjection bool
-	err := q.QueryRow(`SELECT message_type, metadata,
-		EXISTS (SELECT 1 FROM call_details c WHERE c.message_id = messages.id)
-		FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &hasCallProjection)
+	err := q.QueryRow(`SELECT message_type, metadata FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read meeting projection message: %w", err)
 	}
-	if hasCallProjection || messageType.String == "call_record" {
-		if err := s.refreshCallProjectionWith(ctx, tx, messageID, messageType.String, metadata.String); err != nil {
+	if messageType.String == callhistory.MessageType {
+		if err := s.refreshCallProjectionWith(ctx, tx, messageID, metadata.String); err != nil {
 			return err
 		}
 	}

@@ -97,12 +97,9 @@ func (s *Store) refreshCallConversationStatsWith(ctx context.Context, tx *logged
 
 // Scalar projections share the message lock and transaction of their metadata.
 // Original provider data remains in message_raw; participant IDs never appear
-// in scalar metadata and follow the existing recipient lifecycle.
-func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id int64, messageType, metadata string) error {
-	if messageType != callhistory.MessageType {
-		_, err := tx.ExecContext(ctx, `DELETE FROM call_details WHERE message_id = ?`, id)
-		return err
-	}
+// in scalar metadata and follow the existing recipient lifecycle. Persistence
+// clears the projection when it rewrites a call as another message type.
+func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id int64, metadata string) error {
 	var e callhistory.Evidence
 	if err := json.Unmarshal([]byte(metadata), &e); err != nil {
 		return fmt.Errorf("%w: scalar metadata", callhistory.ErrInvalid)
@@ -112,14 +109,15 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
-		(message_id, outcome, owner_participation, occurred_at, withdrawn)
-		VALUES (?, ?, ?, ?, ?)
+		(message_id, outcome, owner_participation, occurred_at, withdrawn, evidence_version)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
 			outcome = excluded.outcome,
 			owner_participation = excluded.owner_participation,
 			occurred_at = excluded.occurred_at,
-			withdrawn = excluded.withdrawn`,
-		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Withdrawn)
+			withdrawn = excluded.withdrawn,
+			evidence_version = excluded.evidence_version`,
+		id, e.Outcome, e.OwnerParticipation, e.OccurredAt.UTC(), e.Withdrawn, e.Version)
 	if err != nil {
 		return fmt.Errorf("write call projection: %w", err)
 	}

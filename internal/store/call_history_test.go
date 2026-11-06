@@ -167,6 +167,8 @@ func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 		require.NoError(err)
 		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
 		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`UPDATE call_details SET evidence_version = ? WHERE message_id = ?`), version, id)
+		require.NoError(err)
 		_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
 		require.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
 		_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
