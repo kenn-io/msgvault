@@ -350,7 +350,8 @@ func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
 		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
 		limitCount: 4, limitDelays: []string{"0", "0", "0", "60"},
 	}
-	testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 1}, nil)
+	user := testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 0}, nil)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "rapid-floor@example.test")
 	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
 	st := storetest.New(t)
 	src := pollingIMAPSource(t, st.Store, ic)
@@ -417,7 +418,9 @@ func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
 		limitCount: 4, limitDelays: []string{"0", "0", "0", "1"},
 	}
-	testutil.ServeIMAPMemServer(t, counted, map[string]int{"Archive": 1, "INBOX": 1}, nil)
+	user := testutil.ServeIMAPMemServer(t, counted, map[string]int{"Archive": 0, "INBOX": 0}, nil)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "rapid-floor-archive@example.test")
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "rapid-floor-inbox@example.test")
 	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
 	st := storetest.New(t)
 	src := pollingIMAPSource(t, st.Store, ic)
