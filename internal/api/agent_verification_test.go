@@ -114,7 +114,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"code", "Account", "Your code is 482913", "", "", ""},
 		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", "", ""},
 		{"filename", "Ordinary", "", "", "code-482913.png", ""},
-		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "", ""},
+		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "image.png", "https://example.test/image.png"},
 		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", "", ""},
 		{"attachment URL", "Account", "Your code is 482913", "", "image.png", "https://example.test/reset?token=abcDEF1234567890"},
 	} {
@@ -136,6 +136,11 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 				paths := []string{fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/messages/%d", id)}
 				if withEngine {
 					srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+					if tc.filename != "" {
+						var attachmentID int64
+						requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), id).Scan(&attachmentID))
+						paths = append(paths, fmt.Sprintf("/attachments/%d", attachmentID))
+					}
 				} else {
 					srv.SetAnalyticsEngine(nil, "")
 					paths = paths[1:]
@@ -155,6 +160,17 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						srv.Router().ServeHTTP(w, req)
 						assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 						responses[mode] = w.Body.String()
+						if strings.HasPrefix(path, "/attachments/") {
+							var attachment AttachmentInfo
+							requirements.NoError(json.Unmarshal(w.Body.Bytes(), &attachment))
+							assertions.Equal(tc.filename, attachment.Filename)
+							if mode == "masked" && tc.name != "ordinary" {
+								assertions.Empty(attachment.URL, "%s %s", mode, path)
+							} else {
+								assertions.Equal(tc.url, attachment.URL, "%s %s", mode, path)
+							}
+							continue
+						}
 						var body struct {
 							BodyText    string           `json:"body_text"`
 							BodyHTML    string           `json:"body_html"`
