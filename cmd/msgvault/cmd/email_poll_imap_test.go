@@ -252,8 +252,12 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	state := testInvocationWithConfig(cfg)
 	var callbacks, retryWaits atomic.Int32
 	var firstErr error
+	firstDone := make(chan struct{})
 	s := scheduler.New(func(ctx context.Context, identifier string) error {
-		callbacks.Add(1)
+		if callbacks.Add(1) > 1 {
+			return nil
+		}
+		defer close(firstDone)
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		state.logger = slog.New(cancelIMAPRetryHandler{cancel: cancel, observed: &retryWaits})
@@ -264,7 +268,15 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	require.NoError(t, s.AddAccount(src.Identifier, "0 0 1 1 *"))
 	require.NoError(t, s.SetAccountPollInterval(src.Identifier, 30*time.Second))
 	require.NoError(t, s.TriggerSync(src.Identifier, false))
-	s.wg.Wait()
+	select {
+	case <-firstDone:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the first rapid IMAP acquisition did not finish")
+	}
+	require.Eventually(t, func() bool {
+		status := s.Status()[0]
+		return !status.Running && !status.Queued
+	}, 5*time.Second, 10*time.Millisecond, "the scheduler records the completed acquisition")
 	var acquisition *scheduler.AcquisitionError
 	require.ErrorAs(t, firstErr, &acquisition)
 	assert.Equal(t, scheduler.AcquisitionCancelled, acquisition.Outcome)
@@ -274,7 +286,10 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	assert.False(t, s.Status()[0].NextEligiblePoll.Before(acquisition.NotBefore), "the account lane preserves the provider floor")
 
 	require.NoError(t, s.TriggerSync(src.Identifier, false))
-	s.wg.Wait()
+	require.Eventually(t, func() bool {
+		status := s.Status()[0]
+		return status.Pending && !status.Running && !status.Queued
+	}, 5*time.Second, 10*time.Millisecond, "the accepted follow-up remains deferred until the provider floor")
 	assert.EqualValues(t, 1, callbacks.Load(), "another manual acquisition waits for the provider floor")
 	assert.EqualValues(t, 1, counted.accepted.Load(), "the deferred acquisition opens no second IMAP connection")
 	assert.True(t, s.Status()[0].Pending, "the accepted manual retry remains pending")
