@@ -47,6 +47,20 @@ func lineReplyTerminal(state string) bool {
 	return state == LineReplySent || state == LineReplyProviderRejected
 }
 
+// expireLineReply stops recovery at its deadline while preserving acceptance.
+// Known message receipts remain available for local archival after the deadline.
+func expireLineReply(a *LineReplyAttempt, now time.Time) bool {
+	if lineReplyTerminal(a.State) || a.RemoteMessageID != "" || (!lineReplyExpired(a.State) && now.Before(a.RetryUntil)) {
+		return false
+	}
+	accepted := LineReplyHasAcceptance(a.State)
+	a.State = LineReplyRemoteUnknownExpired
+	if accepted {
+		a.State = LineReplyAcceptedUnresolvedExpired
+	}
+	return true
+}
+
 // Every state writer takes source-before-attempt ownership. Evidence writes
 // remain possible after retirement; admission and actual requests do not.
 func (s *Store) changeLineReply(ctx context.Context, id string, change func(*loggedTx, *LineReplyAttempt) error) (LineReplyAttempt, error) {
@@ -109,12 +123,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 		if lineReplyTerminal(a.State) || a.RemoteMessageID != "" {
 			return ErrLineReplyInvalidState
 		}
-		if lineReplyExpired(a.State) || !now.Before(a.RetryUntil) {
-			accepted := LineReplyHasAcceptance(a.State)
-			a.State = LineReplyRemoteUnknownExpired
-			if accepted {
-				a.State = LineReplyAcceptedUnresolvedExpired
-			}
+		if expireLineReply(a, now) {
 			resultErr = ErrLineReplyExpired
 			return nil // persist the stop before returning the caller-facing error
 		}

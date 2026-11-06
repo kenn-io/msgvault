@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ChatDraftIDPrefix marks draft IDs owned by the local chat draft table.
@@ -214,6 +215,8 @@ func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expe
 		}
 		if attempt.State == LineReplyAdmitted {
 			attempt.State = LineReplyRemoteUnknownExpired
+		} else {
+			expireLineReply(&attempt, time.Now())
 		}
 		return writeLineReplyTx(ctx, tx, &attempt)
 	})
