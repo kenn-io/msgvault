@@ -308,7 +308,9 @@ func (i *Importer) upsertTextMessage(ctx context.Context, sourceID, convID int64
 	if err := i.store.ReplaceMessageRecipientsContext(ctx, msgID, "to", recipientIDs, blankNames(len(recipientIDs))); err != nil {
 		return msgID, fmt.Errorf("replace to recipient: %w", err)
 	}
-	if err := i.store.UpsertFTSContext(ctx, msgID, subject, body, "", "", ""); err != nil {
+	// The message is saved; index it even when a stop request arrives now,
+	// or it stays out of search until a reimport.
+	if err := i.store.UpsertFTSContext(context.WithoutCancel(ctx), msgID, subject, body, "", "", ""); err != nil {
 		slog.Warn("failed to update Synctech message FTS index",
 			"message_id", msgID,
 			"message_type", messageType,
