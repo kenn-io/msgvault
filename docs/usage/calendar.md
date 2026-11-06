@@ -1,11 +1,11 @@
 ---
-last_edited: "2026-10-27"
-title: Google Calendar
-description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
+last_edited: "2026-11-05"
+title: Calendars
+description: Archive Google Calendar and CalDAV events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
 
-msgvault can archive your Google Calendar events into the same local database as
-your email. Events become searchable by keyword (and semantically, when vector
+msgvault can archive your Google Calendar and CalDAV events into the same local
+database as your email. Events become searchable by keyword (and semantically, when vector
 search is enabled), and their organizers and attendees join the same contact
 graph as the people you email — so a meeting with `alice@example.com` dedupes
 against the messages you exchanged with her.
@@ -353,3 +353,26 @@ Calendar sync is read-only and runs only when you invoke it (or on the schedule
 you configure). OAuth tokens are stored under your msgvault home directory with
 owner-only permissions and are never written into `config.toml`, logs, or
 exported data.
+
+## CalDAV calendars, unreleased
+
+Configure a named source and an owner-only password file under [CalDAV sources](../configuration.md#caldav-sources-unreleased), then run:
+
+```bash
+msgvault sync-caldav personal
+msgvault sync-caldav personal --full
+```
+
+Sync preserves each calendar resource and archives its events for search and `msgvault calendar events`. It only reads the server. Sync runs manually; `--full` reconciles a complete snapshot, and incremental syncs also mark events deleted at the source.
+
+Attendees without a `mailto:` address keep their names, roles, and RSVPs. An `EMAIL` parameter supplies their email address when present.
+
+IANA and Windows zones work; see [CalDAV configuration](../configuration.md#caldav-sources-unreleased) for skip rules and duplicate UIDs.
+
+A skipped resource is retried only after it changes on the server or you run `msgvault sync-caldav <name> --full`.
+
+To correct a wrong zone, update `time_zone` and run `msgvault sync-caldav <name>` again. Sync refreshes event times while preserving message IDs and archived history.
+
+A day-based duration such as `DURATION:P1D` ends every occurrence at the same local time, including across a daylight-saving change. All-day events keep civil dates.
+
+Subset copies include CalDAV events and their original iCalendar data.

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -99,6 +103,32 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
 	requirements.NoError(err)
+}
+
+func TestCalendarEventRowsDeletedSeriesBudget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, master := calendarFixture(t, st, "deleted-master", `{"id":"deleted-series","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
+	_, err := st.db.Exec(`UPDATE messages SET deleted_from_source_at = ?`, time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC))
+	requirements.NoError(err)
+	_, live := calendarFixture(t, st, "live-master", `{"id":"live-series","start":{"dateTime":"2027-03-14T09:00:00Z"},"end":{"dateTime":"2027-03-14T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	_, exception := calendarFixture(t, st, "archived-exception", `{"id":"archived-edit","recurringEventId":"deleted-series","originalStartTime":{"dateTime":"2027-03-14T09:00:00Z"},"start":{"dateTime":"2027-03-14T09:15:00Z"},"end":{"dateTime":"2027-03-14T09:45:00Z"}}`)
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`, time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC), exception)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 14, 9, 0, 0, 0, time.UTC)
+	for _, width := range []time.Duration{24 * time.Hour, time.Hour} {
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(width))
+		requirements.NoError(err)
+		assertions.Empty(page.Unexpandable)
+		requirements.Len(page.Occurrences, 2)
+		assertions.Equal(live, page.Occurrences[0].MessageID)
+		assertions.Equal(exception, page.Occurrences[1].MessageID)
+		assertions.Equal(master, page.Occurrences[1].SeriesMessageID)
+		assertions.True(page.Occurrences[1].DeletedFromSource)
+		assertions.Equal("2027-03-14T09:15:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
+		assertions.Equal("2027-03-14T09:45:00Z", page.Occurrences[1].End.Format(time.RFC3339))
+	}
 }
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
@@ -342,4 +372,43 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 			}
 		})
 	}
+}
+
+func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, "calendar@example.com")
+	requirements.NoError(err)
+	masterRaw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:weekly@example.com\r\nDTSTART:20270302T090000Z\r\nDTEND:20270302T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	raw := strings.Replace(masterRaw, "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:weekly@example.com\r\nRECURRENCE-ID:20270302T090000Z\r\nDTSTART:20270303T090000Z\r\nDTEND:20270303T100000Z\r\nEND:VEVENT", 1)
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	ids := make([]int64, len(events))
+	for i, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
+		requirements.NoError(err)
+		ids[i], err = st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ProviderEventID, ConversationType: "calendar"},
+			RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+	}
+	requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], []byte(masterRaw), calevent.CalDAVRawFormat))
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, ids[1])
+	requirements.NoError(err)
+
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 1)
+	occurrence := page.Occurrences[0]
+	assertions.Equal(ids[0], occurrence.MessageID)
+	assertions.Zero(occurrence.SeriesMessageID)
+	assertions.Equal("confirmed", occurrence.Status)
+	assertions.Equal("2027-03-02T09:00:00Z", occurrence.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", occurrence.End.Format(time.RFC3339))
 }

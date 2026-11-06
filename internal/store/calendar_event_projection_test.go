@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -90,6 +92,53 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	requirements.Len(calendarRows(t, st, id), 1)
 	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(`{}`), "unknown_calendar"))
 	assertions.Empty(calendarRows(t, st, id))
+}
+
+func TestCalDAVProjectionWindowsTimeZone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
+	require.NoError(err)
+	const raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+		"UID:outlook@example.org\r\nSUMMARY:Planning\r\n" +
+		"DTSTART;TZID=\"Eastern Standard Time\":20270307T090000\r\nDURATION:PT1H\r\n" +
+		"RRULE:FREQ=WEEKLY;COUNT=2\r\n" +
+		"ATTENDEE;CN=Example Guest:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	id, err := st.PersistMessage(&MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "outlook", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "outlook", ConversationType: "calendar"},
+		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+		Metadata: &sql.NullString{String: `{"event_id":"[\"outlook@example.org\",\"\"]","account_email":"guest@example.org"}`, Valid: true},
+	})
+	require.NoError(err)
+	for i, tc := range []struct{ raw, start, body, zone string }{
+		{raw, "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "Eastern Standard Time"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "tzone://Microsoft/Eastern Standard Time"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "tzone://Microsoft/Eastern Standard Time"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "/freeassociation.sourceforge.net/America/New_York"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "/freeassociation.sourceforge.net/America/New_York"},
+		{strings.ReplaceAll(raw, "20270307", "20270314"), "2027-03-14T13:00:00Z", "2027-03-14 09:00 - 2027-03-14 10:00", "Eastern Standard Time"},
+	} {
+		if i > 0 {
+			require.NoError(st.UpsertMessageRawWithFormat(id, []byte(tc.raw), calevent.CalDAVRawFormat))
+		}
+		rows := calendarRows(t, st, id)
+		require.Len(rows, 1)
+		assert.Equal(tc.start, rows[0].Event.Start.UTC().Format(time.RFC3339))
+		assert.Equal(tc.zone, rows[0].Event.EventTimeZone)
+		require.Len(rows[0].Event.Attendees, 1)
+		assert.True(rows[0].Event.Attendees[0].IsCopySelf)
+		var body string
+		require.NoError(st.db.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, id).Scan(&body))
+		assert.Contains(body, tc.body)
+		assert.Contains(body, "Planning")
+		assert.Contains(body, "Example Guest")
+		from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+		require.NoError(err)
+		assert.Empty(page.Unexpandable)
+		require.Len(page.Occurrences, 2)
+		assert.Equal(tc.start, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	}
 }
 
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
@@ -179,6 +228,29 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 	assertions.False(end.Valid)
 }
 
+func TestCalendarEventUpgradeRebuildsNameOnlyOrganizer(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"name-only","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"organizer":{"displayName":"Example Host"}}`
+	_, archivedID := calendarFixture(t, st, "archived", raw)
+	// Version 2 omitted organizers without an email address.
+	for _, query := range []string{
+		`DELETE FROM calendar_event_attendees`,
+		`UPDATE calendar_events SET projection_version = 2`,
+		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
+	} {
+		_, err := st.db.Exec(query)
+		require.NoError(err)
+	}
+	require.NoError(st.InitSchemaContext(t.Context()))
+	_, syncedID := calendarFixture(t, st, "newly-synced", raw)
+	archived, synced := calendarRows(t, st, archivedID), calendarRows(t, st, syncedID)
+	require.Len(archived, 1)
+	require.Len(synced, 1)
+	assert.Equal([]calevent.Attendee{{DisplayName: "Example Host", Role: "organizer", RSVP: "unknown"}}, archived[0].Event.Attendees)
+	assert.Equal(synced[0].Event.Attendees, archived[0].Event.Attendees)
+}
+
 func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -249,6 +321,82 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	rows := calendarRows(t, copied, id)
 	requirements.Len(rows, 1)
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
+}
+
+func TestCalDAVSubsetIncludesEventsAndGoogle(t *testing.T) {
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite subset copy")
+	}
+	assertions, requirements := assert.New(t), require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(sourcePath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSource("caldav", "calendar@example.org")
+	requirements.NoError(err)
+	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:event@example.org\r\nDTSTART:20270314T130000Z\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:event@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(resource), "UTC")
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	var wantIDs []int64
+	for _, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
+		requirements.NoError(err)
+		id, err := st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ProviderEventID, ConversationType: "calendar"},
+			RawMIME:      []byte(resource), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+		wantIDs = append(wantIDs, id)
+		rows := calendarRows(t, st, id)
+		requirements.Len(rows, 1)
+		assertions.Equal(item.Event.ProviderEventID, rows[0].Event.ProviderEventID)
+		assertions.Equal("confirmed", rows[0].Event.Status)
+	}
+	_, googleID := calendarFixture(t, st, "google", calendarRaw)
+	wantIDs = append(wantIDs, googleID)
+	requirements.NoError(st.Close())
+	destination := filepath.Join(t.TempDir(), "subset")
+	result, err := CopySubsetWithOptions(sourcePath, destination, 10, CopySubsetOptions{})
+	requirements.NoError(err)
+	assertions.Equal(int64(3), result.Messages)
+	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = copied.Close() })
+	rows, err := copied.db.Query(`SELECT m.id, r.raw_format FROM messages m JOIN message_raw r ON r.message_id = m.id`)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var ids []int64
+	var formats []string
+	for rows.Next() {
+		var id int64
+		var format string
+		requirements.NoError(rows.Scan(&id, &format))
+		ids = append(ids, id)
+		formats = append(formats, format)
+	}
+	requirements.NoError(rows.Err())
+	assertions.ElementsMatch(wantIDs, ids)
+	assertions.ElementsMatch([]string{"caldav_ics", "caldav_ics", "gcal_json"}, formats)
+	requirements.NoError(rows.Close())
+	var calDAVMessages int
+	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&calDAVMessages))
+	assertions.Equal(2, calDAVMessages)
+	assertions.Len(calendarRows(t, copied, wantIDs...), 3)
+	for _, id := range wantIDs {
+		raw, err := copied.GetMessageRawContext(t.Context(), id)
+		requirements.NoError(err)
+		want := resource
+		if id == googleID {
+			want = calendarRaw
+		}
+		assertions.Equal(want, string(raw))
+	}
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {

@@ -136,7 +136,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, s.db, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -171,7 +171,11 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+func expandCalendarSeries(ctx context.Context, r *loggedDB, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+	exceptionRows, err := currentCalendarExceptions(ctx, r, row, exceptionRows)
+	if err != nil {
+		return nil, 0, "", err
+	}
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -185,7 +189,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == "cancelled" {
+	if row.DeletedFromSource || row.Event.Kind == "single" || row.Event.Status == "cancelled" {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
@@ -283,7 +287,7 @@ func calendarEventZone(e calevent.Event) (*time.Location, error) {
 	if name == "" {
 		return time.UTC, nil
 	}
-	zone, err := time.LoadLocation(name)
+	zone, err := calrecur.LoadZone(name)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
@@ -314,7 +318,7 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	if err != nil {
 		return set, 0, 0, err
 	}
-	days := 0
+	duration, days := e.End.Sub(*e.Start), e.RecurrenceDurationDays
 	if e.AllDay {
 		first, err := time.Parse(time.DateOnly, e.StartDate)
 		if err != nil {
@@ -325,6 +329,18 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 			return set, 0, 0, fmt.Errorf("calendar end date: %w", err)
 		}
 		days = int(last.Sub(first) / (24 * time.Hour))
+	} else if days > 0 {
+		// Timed civil days are measured in the series zone; the rest is elapsed.
+		start := e.Start.In(zone)
+		end, err := calrecur.AddCivilDays(start, days)
+		if err != nil {
+			return set, 0, 0, err
+		}
+		civil := end.Sub(start)
+		if civil > duration {
+			return set, 0, 0, errors.New("calendar civil duration exceeds event bounds")
+		}
+		duration -= civil
 	}
-	return set, e.End.Sub(*e.Start), days, nil
+	return set, duration, days, nil
 }

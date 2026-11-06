@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/calsync"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/mime"
@@ -491,7 +491,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 				len(snippet.String) == 200 &&
 				bodyText.Valid && utf8.ValidString(bodyText.String) &&
 				strings.HasPrefix(bodyText.String, snippet.String) {
-				repairedSnippet = calsync.Snippet(bodyText.String)
+				repairedSnippet = calevent.Snippet(bodyText.String)
 			}
 			repair.newSnippet = sql.NullString{String: repairedSnippet, Valid: true}
 			needsRepair = true

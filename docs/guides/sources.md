@@ -57,6 +57,7 @@ through normal sync; use `--full` after raising a size cap or to retry older qui
 | Omi, Granola, Plaud, Pocket, Circleback, Notion AI Meeting Notes, Muesli, Twilio calls, or Twenty call recordings | [Meeting notes and transcripts](../usage/meetings.md) | Searchable notes, context exports, recorded actions, and meeting-time coverage |
 | Another meeting capture tool | [Meeting import workflow](../usage/meetings.md#import-from-any-meeting-source) | Provider-neutral ingestion keyed by source and external meeting ID |
 | Google Calendar | [Calendar sync](../usage/calendar.md) | Events, organizers, attendees, recurrence, and cancellation state |
+| CalDAV calendar, unreleased | [CalDAV setup](../usage/calendar.md#caldav-calendars-unreleased) | Events, organizers, attendees, recurrence, and cancellation state |
 | CardDAV address book | [CardDAV contacts](../usage/people-carddav.md) | Imported contacts and explicit publication of curated profiles |
 
 Meeting and calendar sync reads source data. CardDAV can also write to address

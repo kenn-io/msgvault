@@ -32,7 +32,7 @@ var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject,
  m.deleted_from_source_at IS NOT NULL,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_duration_days
  ` + calendarEventFrom
 
 var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
@@ -94,7 +94,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var originalDate, recurrence string
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &e.RecurrenceDurationDays)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
@@ -171,8 +171,8 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	// A cancelled master generates nothing; its archived exceptions load it below.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	// Cancelled and source-deleted masters generate nothing; their archived exceptions load them below.
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND m.deleted_from_source_at IS NULL AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +286,14 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
 	var stored []byte
 	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
+	var format string
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
 		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	}
+	// Only Google sends sparse cancellations; an iCalendar override is a
+	// complete component and inherits nothing from its master.
+	if format != gcalmodel.RawFormat {
+		return row, nil
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
@@ -340,4 +346,38 @@ func inheritSparseCalendarAttendees(own, master []calevent.Attendee, fields map[
 			return organizer.Role == "organizer" && gcalmodel.NormalizeParticipantEmail(organizer.Email) == gcalmodel.NormalizeParticipantEmail(a.Email)
 		})
 	})
+}
+
+// CalDAV overrides belong to the master's latest snapshot. Live overrides of a
+// deleted master belong to a newer, override-only resource.
+func currentCalendarExceptions(ctx context.Context, r *loggedDB, master CalendarEventRow, exceptions []CalendarEventRow) ([]CalendarEventRow, error) {
+	if len(exceptions) == 0 {
+		return exceptions, nil
+	}
+	var stored []byte
+	var compression sql.NullString
+	// Filter before fetching bytes so Google series keep using their projection.
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ? AND raw_format = ?`, master.MessageID, calevent.CalDAVRawFormat).Scan(&stored, &compression); errors.Is(err, sql.ErrNoRows) {
+		return exceptions, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("read calendar master evidence: %w", err)
+	}
+	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return nil, err
+	}
+	events, err := calevent.ParseCalDAVResource(ctx, raw, master.Event.CalendarTimeZone)
+	if err != nil {
+		return nil, fmt.Errorf("decode calendar master evidence: %w", err)
+	}
+	members := make(map[string]bool, len(events))
+	for _, event := range events {
+		members[event.Event.ProviderEventID] = true
+	}
+	return slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
+		if master.DeletedFromSource && !row.DeletedFromSource {
+			return false
+		}
+		return !members[row.Event.ProviderEventID]
+	}), nil
 }

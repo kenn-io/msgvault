@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -803,22 +804,36 @@ func newDeduplicateRoutingTestCommand() *cobra.Command {
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f, accountID, _ := setupScopeFixture(t)
+	st := testutil.NewTestStore(t)
+	const accountID = "test@example.com"
 
-	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
+	calDAV, err := st.GetOrCreateSource(sourceTypeCalDAV, `["test@example.com","https://calendar.example.org:443/home/cal/"]`)
+	require.NoError(err, "GetOrCreateSource CalDAV")
+	// Name the calendar before adding mail with the same identifier.
+	require.NoError(st.UpdateSourceDisplayName(calDAV.ID, accountID))
+	mail, err := st.GetOrCreateSource("gmail", accountID)
+	require.NoError(err)
+	cal, err := st.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
 	require.NoError(err, "GetOrCreateSource calendar")
 	cfg, err := json.Marshal(map[string]string{
 		"account_email": accountID,
 		"calendar_id":   "primary",
 	})
 	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	require.NoError(st.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	calDAVCfg, err := json.Marshal(map[string]string{
+		"account_email": accountID,
+		"calendar_id":   accountID,
+	})
+	require.NoError(err, "marshal CalDAV sync_config")
+	require.NoError(st.UpdateSourceSyncConfig(calDAV.ID, string(calDAVCfg)), "UpdateSourceSyncConfig CalDAV")
 
-	scope, err := ResolveEmailAccountFlag(f.Store, accountID)
+	scope, err := ResolveEmailAccountFlag(st, accountID)
 	require.NoError(err)
 
-	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
+	assert.ElementsMatch([]int64{mail.ID}, scope.SourceIDs())
 	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
+	assert.NotContains(scope.SourceIDs(), calDAV.ID, "dedup account scope must not include CalDAV sources")
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands

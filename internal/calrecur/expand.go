@@ -31,25 +31,44 @@ type Occurrence struct {
 	HasException       bool
 }
 
+// timedEnd ends a timed instance durationDays civil days after start in s's
+// location, plus the elapsed duration, so a day keeps its wall time across a
+// daylight-saving change.
+func (s Set) timedEnd(start time.Time, duration time.Duration, durationDays int) (time.Time, error) {
+	if durationDays > 0 {
+		var err error
+		start, err = AddCivilDays(start.In(s.location()), durationDays)
+		if err != nil {
+			return time.Time{}, err
+		}
+	}
+	return start.Add(duration), nil
+}
+
 func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occurrence, error) {
 	start, err := s.identityStart(id)
 	if err != nil {
 		return Occurrence{}, unsupported("original identity", err)
 	}
-	o := Occurrence{Original: id, Start: start, End: start.Add(duration), AllDay: s.AllDay}
+	o := Occurrence{Original: id, Start: start, AllDay: s.AllDay}
 	if s.AllDay {
 		o.Start, _, err = s.instanceStart(start)
 		if err != nil {
 			return Occurrence{}, unsupported("occurrence start date", err)
 		}
 		o.StartDate = id.Date
-		o.EndDate, err = addCivilDays(id.Date, durationDays)
+		o.EndDate, err = AddCivilDateDays(id.Date, durationDays)
 		if err != nil {
 			return Occurrence{}, unsupported("occurrence end date", err)
 		}
 		o.End, _, err = CivilDateBoundary(o.EndDate, s.location())
 		if err != nil {
 			return Occurrence{}, unsupported("occurrence end date", err)
+		}
+	} else {
+		o.End, err = s.timedEnd(start, duration, durationDays)
+		if err != nil {
+			return Occurrence{}, unsupported("occurrence end", err)
 		}
 	}
 	return o, nil
@@ -74,10 +93,12 @@ func EffectiveException(s Set, e Exception, duration time.Duration, durationDays
 	if o.AllDay {
 		if s.AllDay {
 			o.StartDate = e.Original.Date
-			o.EndDate, err = addCivilDays(e.Original.Date, durationDays)
+			o.EndDate, err = AddCivilDateDays(e.Original.Date, durationDays)
 		} else {
 			o.StartDate = start.In(zone).Format(dateLayout)
-			o.EndDate = start.Add(duration).In(zone).Format(dateLayout)
+			var end time.Time
+			end, err = s.timedEnd(start, duration, durationDays)
+			o.EndDate = end.In(zone).Format(dateLayout)
 		}
 		if err != nil {
 			return Occurrence{}, unsupported("exception nominal dates", err)
@@ -105,7 +126,7 @@ func EffectiveException(s Set, e Exception, duration time.Duration, durationDays
 	} else {
 		if s.AllDay {
 			o.Start = start
-			o.EndDate, err = addCivilDays(e.Original.Date, durationDays)
+			o.EndDate, err = AddCivilDateDays(e.Original.Date, durationDays)
 			if err != nil {
 				return Occurrence{}, unsupported("exception nominal end date", err)
 			}
@@ -123,7 +144,10 @@ func EffectiveException(s Set, e Exception, duration time.Duration, durationDays
 			}
 		} else {
 			o.Start = start
-			o.End = start.Add(duration)
+			o.End, err = s.timedEnd(start, duration, durationDays)
+			if err != nil {
+				return Occurrence{}, unsupported("exception end", err)
+			}
 		}
 		if e.Start != nil {
 			o.Start = *e.Start
@@ -155,7 +179,8 @@ func Overlaps(start, end, from, to time.Time) bool {
 }
 
 // Expand returns effective occurrences overlapping the half-open [from,to)
-// window, sorted by effective start and original identity.
+// window, sorted by effective start and original identity. Timed instances last
+// durationDays civil days in the series zone plus duration.
 // A generation error returns no partial result.
 func Expand(ctx context.Context, s Set, duration time.Duration, durationDays int, from, to time.Time, budget int) ([]Occurrence, int, error) {
 	counter := &candidateBudget{ctx: ctx, limit: budget}
@@ -226,9 +251,9 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if ctx.Err() != nil {
 			return false
 		}
-		candidate := start.Add(duration)
+		var candidate time.Time
 		if s.AllDay {
-			endDate, err := addCivilDays(start.UTC().Format(dateLayout), durationDays)
+			endDate, err := AddCivilDateDays(start.UTC().Format(dateLayout), durationDays)
 			if err != nil {
 				return false
 			}
@@ -237,6 +262,12 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 				return false
 			}
 			candidate = candidate.Add(14 * time.Hour)
+		} else {
+			var err error
+			candidate, err = s.timedEnd(start, duration, durationDays)
+			if err != nil {
+				return false
+			}
 		}
 		if candidate.After(end) {
 			end = candidate
