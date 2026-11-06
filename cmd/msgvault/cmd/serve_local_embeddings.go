@@ -124,6 +124,15 @@ func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 	return embeddingProviderName(endpoint) == "local" && probeOllamaServer(ctx, server).Catalog
 }
 
+// Kit falls back to the shared server when Ollama stops after inspection; never save that as Ollama.
+func discoverOllamaEmbeddingEndpoint(ctx context.Context, dir string) (string, error) {
+	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
+	if err == nil && !isOllamaEmbeddingEndpoint(ctx, endpoint) {
+		return "", errors.New("Ollama stopped during setup. Turn on to retry.")
+	}
+	return endpoint, err
+}
+
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) (result error) {
 	// Large archives may take hours; retries resume an unfinished message build.
 	runtimeCtx := ctx
@@ -165,7 +174,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if useOllama && !configured {
 		detection.embeddingEndpoint = ollamaEndpoint
 		if detection.embeddingEndpoint == "" {
-			detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
+			detection.embeddingEndpoint, err = discoverOllamaEmbeddingEndpoint(ctx, dir)
 			if err != nil {
 				return err
 			}

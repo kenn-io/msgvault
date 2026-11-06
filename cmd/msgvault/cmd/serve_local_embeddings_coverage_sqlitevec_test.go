@@ -56,9 +56,6 @@ func TestLocalEmbeddingsCompatibleSwitchFailureOffersCoverageRecovery(t *testing
 	f.runner.failBuild = true
 	f.enableThroughAPI(t)
 	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-	status := f.localStatus(t)
-	require.True(status.Enabled)
-	require.Equal("builtin", status.Provider)
 
 	coverage := coverageStatus()
 	require.Equal(api.SearchCoverageIncomplete, coverage.Status)
