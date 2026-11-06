@@ -51,9 +51,9 @@ func (r ImportRequest) Observation() (Observation, error) {
 		if err = json.Unmarshal(r.Record, &o, json.RejectUnknownMembers(true)); err != nil {
 			return o, invalid("normalized record")
 		}
-		o.OccurredAt = o.OccurredAt.Truncate(time.Microsecond)
+		o.OccurredAt = o.OccurredAt.UTC().Truncate(time.Microsecond)
 		if o.EndedAt != nil {
-			*o.EndedAt = o.EndedAt.Truncate(time.Microsecond)
+			*o.EndedAt = o.EndedAt.UTC().Truncate(time.Microsecond)
 		}
 		if o.Account != r.Account {
 			return o, invalid("account mismatch")
