@@ -45,6 +45,6 @@ for (const kind of ['on', 'ollama'] as const) {
 }
 
 it('discloses the download size and remote host before hint activation', () => {
- expect(localSearchHintLabels(off,'archive.example.test').hint).toBe('Search by meaning is off · Downloads 276.6 MB once to archive.example.test');
+ expect(localSearchHintLabels(off,'archive.example.test').hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
  expect(localSearchHintLabels({...off,ollama_available:true},'archive.example.test').hint).toBe('Search by meaning is off · Uses Ollama on this computer');
 });

@@ -731,7 +731,7 @@
   {#if localSearchOff && localSetup}
     <div class="local-search-hint">
       <SearchByMeaningHint labels={localSearchHintLabels(localSetup, window.location.hostname)} onturnon={() => void turnOnSearchByMeaning()} />
-      {#if localSetupError}<p role="alert">{localSetupError}</p>{/if}
+      {#if localSetupError}<p role="alert">{localSetupError}{(/[.!?]$/.test(localSetupError)) ? '' : '.'}</p>{/if}
     </div>
   {/if}
   {#if session.coverage || loader.result?.searchDeletionScope === 'active'}
@@ -913,7 +913,7 @@
 </svelte:element>
 
 <style>
-  .local-search-hint { margin: 0 0 var(--control-gap); }
+  .local-search-hint { margin: 0; }
   .local-search-hint :global(button) { text-decoration: underline; }
   .local-search-hint p { margin: var(--control-gap) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
   .search-notes { display: grid; gap: var(--control-gap); }

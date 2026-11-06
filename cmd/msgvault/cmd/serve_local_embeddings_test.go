@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -40,12 +41,14 @@ type localBuildTestRunner struct {
 	t           *testing.T
 	home        string
 	calls       [][]string
+	contexts    []context.Context
 	inspectOnly bool
 	failBuild   bool
 }
 
 func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
 	r.calls = append(r.calls, slices.Clone(req.Args))
+	r.contexts = append(r.contexts, ctx)
 	index := slices.Index(req.Args, "--config")
 	require.Positive(r.t, index)
 	snapshot, err := config.ReadConfigFile(req.Args[index+1])
@@ -252,8 +255,10 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			}
 			before := inputs.Load()
 			installs := 0
+			var runtimeContext context.Context
 			controller := &localEmbeddingsController{state: state, store: st, dbPath: cfg.DatabaseDSN(), handle: handle, server: srv, scheduler: sched, runner: runner,
 				refreshMCP: func(ctx context.Context, active *invocation) error {
+					runtimeContext = ctx
 					return installServeMCP(ctx, mcpCommand, srv, active)
 				},
 				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
@@ -272,6 +277,7 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 				},
 			}
 			srv.SetLocalEmbeddings(controller)
+			contextsBefore := len(runner.contexts)
 			runner.failBuild = pendingKind == "build-failure"
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":`+strconv.FormatBool(!useOllama)+`}`))
@@ -300,6 +306,13 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 				require.NoError(t, err)
 				assert.Equal(t, "different-model", saved.Vector.Embeddings.Model)
 				return
+			}
+			require.NotNil(t, runtimeContext)
+			require.NoError(t, runtimeContext.Err())
+			for _, buildContext := range runner.contexts[contextsBefore:] {
+				_, bounded := buildContext.Deadline()
+				assert.True(t, bounded)
+				require.ErrorIs(t, buildContext.Err(), context.Canceled)
 			}
 			if pendingKind == "build-failure" {
 				var failure api.LocalEmbeddingsStatus
@@ -393,6 +406,18 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestLocalEmbeddingsSetupDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		controller := &localEmbeddingsController{handle: &vectorInitHandle{done: make(chan struct{})}}
+		finished := make(chan error, 1)
+		go func() { finished <- controller.Enable(context.Background(), false, func(api.LocalEmbeddingsStatus) {}) }()
+		synctest.Wait()
+		time.Sleep(24 * time.Hour)
+		require.ErrorIs(<-finished, context.DeadlineExceeded)
+	})
 }
 
 func TestLocalEmbeddingsDownloadFailureAndConfigConflictKeepSavedSettings(t *testing.T) {

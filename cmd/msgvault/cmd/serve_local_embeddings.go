@@ -70,6 +70,10 @@ func isOllamaEmbeddingEndpoint(endpoint, configuredServer string) bool {
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {
+	// Large archives may take hours; retries resume an unfinished message build.
+	runtimeCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
+	defer cancel()
 	if !c.handle.WaitContext(ctx) {
 		return ctx.Err()
 	}
@@ -165,8 +169,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	runtimeConfig.Vector.Embed.Schedule = nextConfig.Vector.Embed.Schedule
 	state := *c.state
 	state.cfg = &runtimeConfig
-	nextCtx := withInvocation(ctx, &state)
-	vecCfg, err := resolvedVectorConfig(nextCtx, c.store, runtimeConfig.Vector)
+	nextCtx := withInvocation(runtimeCtx, &state)
+	workCtx := withInvocation(ctx, &state)
+	vecCfg, err := resolvedVectorConfig(workCtx, c.store, runtimeConfig.Vector)
 	if err != nil {
 		return err
 	}
@@ -176,7 +181,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
 		return err
 	}
-	rebuildDocuments, err := c.retainLocalSearchConsents(nextCtx, &previousState, &state)
+	rebuildDocuments, err := c.retainLocalSearchConsents(workCtx, &previousState, &state)
 	if err != nil {
 		return err
 	}
@@ -225,7 +230,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	run := func(args ...string) error {
 		args = append(args, "--config", file.Name(), "--home", runtimeConfig.HomeDir)
 		var stderr string
-		err := c.runner.RunCLICommand(nextCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+		err := c.runner.RunCLICommand(workCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
 			if event.Type == cliStreamStderr {
 				stderr += event.Data
 				if len(stderr) > 8192 {

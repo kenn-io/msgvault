@@ -122,6 +122,7 @@
   .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
   .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { text-wrap: balance; }
+  .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
   .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; gap: var(--control-gap) var(--section-gap); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); grid-column: 1 / 3; color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; }
@@ -179,5 +180,6 @@
     .row__recovery--builtin .row__coverage { grid-row: 3; }
     .row__local :global(.kit-search-by-meaning__action) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
     .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { grid-row: 3; }
+    .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: 0; }
   }
 </style>
