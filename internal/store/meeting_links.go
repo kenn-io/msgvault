@@ -486,20 +486,8 @@ candidatesLoop:
 			if key.ScheduledAt == nil {
 				continue
 			}
-			cached := false
-			if r.batch != nil {
-				// A moved exception can put another occurrence at the same start.
-				predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
-				related, loaded := r.batch.events[meetingQueryKey(predicate, args)]
-				ref, err := automaticMeetingRef(row, key)
-				if err != nil {
-					return nil, err
-				}
-				if o, ok := r.batch.occurrences[ref]; loaded && len(related) == 0 && ok && o.Start.Equal(*key.ScheduledAt) {
-					candidates = append(candidates, o)
-					cached = true
-				}
-			}
+			var cached bool
+			candidates, cached = cachedMeetingSeriesCandidates(r, row, *key.ScheduledAt)
 			if !cached {
 				// PostgreSQL rounds a nanosecond window to zero; compare exact starts below.
 				candidates, err = expandMeetingSeries(ctx, r, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second), budget)

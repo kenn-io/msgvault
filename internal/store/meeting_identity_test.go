@@ -203,6 +203,37 @@ func TestMeetingIdentityTwoLongRunningDailySeriesBatch(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityEditedDailySeriesReuseExpansion(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var refs, public []string
+	var notes []int64
+	for _, name := range []string{"first", "second"} {
+		uid := name + "@example.org"
+		_, series := calendarFixture(t, st, name, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, name, uid))
+		for day := 1; day <= 31; day++ {
+			original := time.Date(2027, 3, day, 10, 0, 0, 0, time.UTC)
+			at := original.Add(2 * time.Hour)
+			key := name + "_" + original.Format("20060102T150405Z")
+			_, edited := calendarFixture(t, st, key, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"recurringEventId":%q,"originalStartTime":{"dateTime":%q},"start":{"dateTime":%q},"end":{"dateTime":%q}}`, key, uid, name, original.Format(time.RFC3339), at.Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339)))
+			_, note := projectionFixture(t, st, "note-"+key, "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":%q}}`, uid, at.Format(time.RFC3339)))
+			refs = append(refs, fmt.Sprintf("evt:%d@%s", series, original.Format("20060102T150405Z")))
+			public = append(public, fmt.Sprintf("evt:%d", edited))
+			notes = append(notes, note)
+		}
+	}
+	for _, requested := range [][]string{refs, nil} {
+		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested, TranscriptIDs: notes})
+		require.NoError(err)
+		require.Len(got.ByTranscript, 62)
+		for i, ref := range refs {
+			assert.Equal("occ:"+ref, got.ByTranscript[notes[i]].Key)
+			assert.Equal(public[i], got.ByTranscript[notes[i]].OccurrenceRef)
+			assert.Equal([]int64{notes[i]}, got.ByOccurrence[public[i]].LinkedTranscriptIDs)
+		}
+	}
+}
+
 func TestMeetingIdentityNotesOnlyFourDailySeries(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

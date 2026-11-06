@@ -22,6 +22,35 @@ type meetingIdentityBatch struct {
 	occurrences     map[OccurrenceRef]linkOccurrence
 }
 
+// The batch plans the scheduled reference before resolving notes. Reuse all
+// effective starts, including coincident moved occurrences, to retain ambiguity.
+func cachedMeetingSeriesCandidates(r reboundReader, row CalendarEventRow, at time.Time) ([]linkOccurrence, bool) {
+	if r.batch == nil {
+		return nil, false
+	}
+	predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, at, at.Add(time.Second))
+	related, loaded := r.batch.events[meetingQueryKey(predicate, args)]
+	if !loaded {
+		return nil, false
+	}
+	for _, exception := range related {
+		ref := OccurrenceRef{MessageID: exception.MessageID}
+		if exception.Event.Original != nil {
+			ref = OccurrenceRef{MessageID: row.MessageID, Key: exception.Event.Original.Key()}
+		}
+		if _, ok := r.batch.occurrences[ref]; !ok {
+			return nil, false
+		}
+	}
+	var candidates []linkOccurrence
+	for _, o := range r.batch.occurrences {
+		if (o.Ref.MessageID == row.MessageID || o.Row.SourceID == row.SourceID && o.Row.Event.SeriesProviderID == row.Event.ProviderEventID) && o.Start.Equal(at) {
+			candidates = append(candidates, o)
+		}
+	}
+	return candidates, len(candidates) > 0
+}
+
 // Reuse successful resolutions only within the batch's read snapshot.
 func resolvedMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
 	if err := ctx.Err(); err != nil {
