@@ -212,7 +212,7 @@ func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
 	cleaned := false
 	s.closeCleanup = func() { cleaned = true }
 	require.NoError(s.db.Close())
-	_, actualErr := s.db.DB.ExecContext(context.Background(), "PRAGMA optimize=0x10002")
+	_, actualErr := s.db.Conn(context.Background())
 	require.Error(actualErr)
 
 	buf := captureSlog(t)
