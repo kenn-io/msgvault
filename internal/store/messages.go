@@ -7339,41 +7339,14 @@ func (s *Store) PhoneParticipantContext(ctx context.Context, phone string) (int6
 // as its primary address or as an alias, without creating identities from
 // review-only evidence. A missing or ambiguous email returns zero.
 func (s *Store) EmailParticipantContext(ctx context.Context, email string) (int64, error) {
-	participants, err := emailParticipantsContext(ctx, s.db, []string{email}, "", nil)
+	id, err := s.soleAddressParticipantContext(ctx, `
+		SELECT id FROM participants WHERE LOWER(email_address) = LOWER(?)
+		UNION
+		SELECT participant_id FROM participant_identifiers WHERE LOWER(identifier_value) = LOWER(?)`, email)
 	if err != nil {
 		return 0, fmt.Errorf("look up email participant: %w", err)
 	}
-	return participants[strings.ToLower(email)].ParticipantID, nil
-}
-
-func emailParticipantsContext(ctx context.Context, q chunkQuerier, addresses []string, scope string, scopeArgs []any) (map[string]AddressParticipant, error) {
-	result := map[string]AddressParticipant{}
-	// Bind the scope before the requested addresses for the shared chunk reader.
-	query := `WITH visible AS (SELECT p.id FROM participants p WHERE 1=1` + scope + `),
- requested(address) AS (VALUES %s), matches AS (SELECT r.address,p.id FROM requested r JOIN participants p ON LOWER(p.email_address)=LOWER(r.address)
- UNION SELECT r.address,p.participant_id FROM requested r JOIN participant_identifiers p ON LOWER(p.identifier_value)=LOWER(r.address))
- SELECT a.address,p.id,COALESCE(pp.person_id,0) FROM matches a
- JOIN visible p ON p.id=a.id LEFT JOIN person_participants pp ON pp.participant_id=p.id`
-	ambiguous := map[string]bool{}
-	err := queryInChunksWithValueExprContext(ctx, q, addresses, scopeArgs, query, "(?)", func(rows *loggedRows) error {
-		var address string
-		var participant AddressParticipant
-		if err := rows.Scan(&address, &participant.ParticipantID, &participant.PersonID); err != nil {
-			return err
-		}
-		if previous, ok := result[strings.ToLower(address)]; ok && previous.ParticipantID != participant.ParticipantID {
-			ambiguous[strings.ToLower(address)] = true
-		}
-		result[strings.ToLower(address)] = participant
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("look up email participants: %w", err)
-	}
-	for address := range ambiguous {
-		delete(result, address)
-	}
-	return result, nil
+	return id, nil
 }
 
 func (s *Store) soleAddressParticipantContext(ctx context.Context, query, address string) (int64, error) {
