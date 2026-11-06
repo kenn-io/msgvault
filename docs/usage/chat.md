@@ -16,6 +16,7 @@ replayed. If recovery fails, the tool reports `daemon_unavailable` and suggests
 checking `msgvault daemon status`.
 
 MCP searches the archive, manages drafts, and can edit native email tags through the daemon.
+On unreleased `main`, the owner can also send reviewed LINE replies with a per-channel opt-in.
 It cannot send email or read Google credentials. Semantic searches call your
 configured embedding endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).

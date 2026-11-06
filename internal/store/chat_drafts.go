@@ -189,11 +189,27 @@ func (s *Store) UpdateChatDraftContext(
 
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
 func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
+	draft, err := s.GetChatDraftContext(ctx, draftID)
+	if err != nil {
+		return err
+	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockSyncSourceTx(ctx, tx, draft.SourceID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
-		return chatDraftWriteResult(ctx, tx, draftID, result, err)
+		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
+			return err
+		}
+		// An admitted attempt has never reached LINE. Retire it after deletion
+		// so an admission that held the draft row is visible to this statement.
+		if _, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='remote_unknown_expired',body='',quote_token='',source_conversation_id=''
+ WHERE draft_id=? AND state='admitted'`, draftID); err != nil {
+			return fmt.Errorf("retire unsubmitted LINE reply: %w", err)
+		}
+		return nil
 	})
 }
 

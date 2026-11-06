@@ -186,14 +186,6 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if req.DryRun {
 			return nil
 		}
-		// An admitted attempt has never reached LINE. Once its draft is gone,
-		// retirement can stop it and clear its payload without policy or credentials.
-		if from.SourceType == lineSourceType {
-			if _, err := tx.ExecContext(ctx, `UPDATE line_reply_attempts SET state='remote_unknown_expired',body='',quote_token='',source_conversation_id=''
- WHERE source_id=? AND state='admitted' AND NOT EXISTS(SELECT 1 FROM chat_drafts d WHERE d.draft_id=line_reply_attempts.draft_id)`, req.FromSourceID); err != nil {
-				return fmt.Errorf("retire unsubmitted LINE replies: %w", err)
-			}
-		}
 		if err := s.applySourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, plan); err != nil {
 			return fmt.Errorf("transfer source archive: %w", err)
 		}

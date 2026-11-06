@@ -850,7 +850,7 @@ func TestProbeDeletedAdmittedStillSends(t *testing.T) {
 	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
 	must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
 	_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
-	checks.ErrorIs(err, store.ErrChatDraftNotFound)
+	must.ErrorIs(err, store.ErrChatDraftNotFound)
 	f.now = receipt.RetryAfter.Add(time.Second)
 	repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 	must.NoError(err)
@@ -865,7 +865,7 @@ func TestProbeDeletedAdmittedStillSends(t *testing.T) {
 	checks.Empty(attempt.SourceConversationID)
 }
 
-func TestReplyUnsubmittedDeletedDraftRechecksPolicy(t *testing.T) {
+func TestReplyPendingAttemptRechecksPolicy(t *testing.T) {
 	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown} {
 		t.Run(state, func(t *testing.T) {
 			must := require.New(t)
@@ -882,9 +882,9 @@ func TestReplyUnsubmittedDeletedDraftRechecksPolicy(t *testing.T) {
 			if state == store.LineReplyAdmitted {
 				must.ErrorIs(err, line.ErrCredentialsUnavailable)
 				checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
 			} else {
 				must.NoError(err)
+				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
 			}
 			must.Equal(state, receipt.Status)
 			pushes := f.fake.Count(http.MethodPost, "/v2/bot/message/push")

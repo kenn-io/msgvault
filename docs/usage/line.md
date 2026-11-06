@@ -201,7 +201,8 @@ The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
 | `sent` | The sent message is archived in the original chat. Its parent link is empty if archive cleanup removed the original message. The draft is removed; repeat calls return the same receipt. |
 | `sent_archive_pending` | LINE accepted the message and its ID is saved. Repeat the same command to repair the archive locally. This recovery does not send again, even after policy revocation or retry expiry. |
 | `accepted_receipt_pending` | LINE accepted the request, but msgvault could not save its receipt. Keep any returned IDs. Repeat the same command after `retry_after`, before the cutoff, with sending still enabled and credentials available. Recovery can call LINE with the same key; it is not local-only and may remain unarchived if policy is revoked or the window expires. |
-| `admitted` or `remote_unknown` | A send may have reached LINE. Repeat the same command after `retry_after`; the draft can be deleted and its receipt is kept. |
+| `admitted` | Nothing has reached LINE. Repeat the same command after `retry_after`, or delete the draft to cancel the unsent reply. Its receipt is kept. |
+| `remote_unknown` | A send may have reached LINE. Repeat the same command after `retry_after`; the draft can be deleted and its receipt is kept. |
 | `accepted_unresolved` | LINE accepted the request but supplied no usable single-message ID. Repeat the same command after `retry_after` to recover the receipt. The draft can be deleted; its receipt is kept. |
 | `provider_rejected` | The first submission was definitively rejected. The draft stays frozen for edits and can be deleted. This draft ID keeps its terminal receipt; a new send requires a new reviewed draft. |
 | `remote_unknown_expired` | Provider retries have stopped without acceptance evidence. The draft can be deleted; its receipt is retained. Sending a replacement could duplicate a message already accepted by LINE. |
@@ -210,15 +211,16 @@ The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
 | HTTP 429 | A rate limit on the first submission produces `provider_rejected`. A rate limit during recovery keeps the attempt retryable with the same key after `retry_after`. |
 
 Every admitted LINE draft can be deleted, even after sending is disabled.
-Deletion keeps the attempt and receipt; it does not cancel a request that may
-have reached LINE. Editing stays refused once admitted. Repeat
+Deletion cancels an unsent `admitted` attempt and keeps its receipt. A request
+that may have reached LINE remains recoverable after deletion. Editing stays
+refused once admitted. Repeat
 `send-line-reply` with the deleted draft ID and reviewed revision to recover
 the saved attempt or return its receipt. Provider retries still require
 sending to be enabled and credentials to be available.
 
-Deleting a rejected draft or one whose retry window expired without acceptance
-also clears the attempt's text, quote token, and conversation key. Attempts that
-can still send or recover keep their frozen content.
+Deleting an unsent `admitted` draft, a rejected draft, or one whose retry window
+expired without acceptance clears the attempt's text, quote token, and
+conversation key. Attempts that can still send or recover keep their frozen content.
 
 An admitted attempt keeps one persisted UUID. Its text, recipient, and quote
 token stay frozen while it can still send or recover. Explicit retries reuse

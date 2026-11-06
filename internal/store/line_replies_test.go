@@ -479,7 +479,7 @@ func TestLineReplyDeletedDraftTerminalTransitionScrubsPayload(t *testing.T) {
 	}
 }
 
-func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
+func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
 		t.Run(state, func(t *testing.T) {
 			assert := assert.New(t)
@@ -528,7 +528,10 @@ func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
 			wantReceipt := attempt
-			if state == store.LineReplyProviderRejected || state == store.LineReplyRemoteUnknownExpired {
+			if state == store.LineReplyAdmitted {
+				wantReceipt.State = store.LineReplyRemoteUnknownExpired
+			}
+			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected || state == store.LineReplyRemoteUnknownExpired {
 				wantReceipt.Body = ""
 				wantReceipt.QuoteToken = ""
 				wantReceipt.SourceConversationID = ""
@@ -543,7 +546,7 @@ func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
 					require.NoError(err)
 					previewed, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 					require.NoError(err)
-					assert.Equal(store.LineReplyAdmitted, previewed.State)
+					assert.Equal(wantReceipt, previewed)
 				}
 				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
 				require.NoError(err)
