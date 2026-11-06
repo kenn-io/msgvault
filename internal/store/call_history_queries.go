@@ -159,34 +159,26 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 		}
 		// A single snapshot keeps roles consistent with the scalar evidence,
 		// including during concurrent replacement or participant merges.
+		ids := make([]int64, len(out))
+		indices := make(map[int64]int, len(out))
 		for i := range out {
-			rows, err := tx.QueryContext(ctx, `SELECT participant_id,
-				CASE WHEN MAX(CASE WHEN recipient_type = 'call_joined' THEN 1 ELSE 0 END) = 1 THEN 'joined'
-				     WHEN MAX(CASE WHEN recipient_type = 'call_invited' THEN 1 ELSE 0 END) = 1 THEN 'invited'
-				     ELSE 'unknown' END
-				FROM (`+s.callRolesSQL()+`) r WHERE message_id = ?
-				GROUP BY participant_id ORDER BY participant_id`, out[i].MessageID)
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var p callhistory.Participant
-				if err := rows.Scan(&p.ID, &p.Participation); err != nil {
-					_ = rows.Close()
-					return err
-				}
-				out[i].Participants = append(out[i].Participants, p)
-			}
-			err = rows.Err()
-			closeErr := rows.Close()
-			if err != nil {
-				return err
-			}
-			if closeErr != nil {
-				return closeErr
-			}
+			ids[i], indices[out[i].MessageID] = out[i].MessageID, i
 		}
-		return nil
+		return queryInChunksContext(ctx, tx, ids, nil, `SELECT message_id, participant_id,
+			CASE WHEN MAX(CASE WHEN recipient_type = 'call_joined' THEN 1 ELSE 0 END) = 1 THEN 'joined'
+			     WHEN MAX(CASE WHEN recipient_type = 'call_invited' THEN 1 ELSE 0 END) = 1 THEN 'invited'
+			     ELSE 'unknown' END
+			FROM (`+s.callRolesSQL()+`) r WHERE message_id IN (%s)
+			GROUP BY message_id, participant_id ORDER BY message_id, participant_id`, func(rows *loggedRows) error {
+			var messageID int64
+			var p callhistory.Participant
+			if err := rows.Scan(&messageID, &p.ID, &p.Participation); err != nil {
+				return err
+			}
+			i := indices[messageID]
+			out[i].Participants = append(out[i].Participants, p)
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list call observations: %w", err)
