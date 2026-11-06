@@ -227,7 +227,8 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 
 func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
 	server = strings.TrimRight(strings.TrimSpace(server), "/")
-	if embeddingProviderName(server) == "local" && probe.Reachable && probe.hasModel(setupOllamaTextModel) {
+	if embeddingProviderName(server) == "local" && probe.Reachable &&
+		(slices.Contains(probe.Models, setupOllamaTextModel) || slices.Contains(probe.Models, setupOllamaTextModel+":latest")) {
 		return server + "/v1"
 	}
 	return ""
@@ -235,7 +236,7 @@ func ollamaTextEndpoint(server string, probe ollamaProbeResult) string {
 
 func (r ollamaProbeResult) hasModel(name string) bool {
 	for _, model := range r.Models {
-		if model == name || model == name+":latest" {
+		if model == name || strings.HasPrefix(model, name+":") {
 			return true
 		}
 	}
