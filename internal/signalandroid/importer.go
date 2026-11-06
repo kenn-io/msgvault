@@ -591,10 +591,10 @@ func (r *run) resolveArchivedID(existing map[string]int64, p *pendingMessage) (i
 	}
 	rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
 	if err != nil {
-		return 0, false, fmt.Errorf("rekey archived Signal message: %w", err)
+		return 0, false, err
 	}
 	if !rekeyed {
-		return 0, false, fmt.Errorf("rekey archived Signal message %s: archived ID changed", p.id)
+		return 0, false, fmt.Errorf("message %s changed; run the import again", p.id)
 	}
 	delete(existing, p.id)
 	existing[preferredID] = archivedID
