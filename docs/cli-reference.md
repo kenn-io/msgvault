@@ -2766,7 +2766,7 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
-Newer `main` builds print a stderr hint when another full-text result exists, with the next `--offset` or a suggestion to raise `--limit`. Vector and hybrid text suggest raising `--limit`; their JSON objects gain a `hints` entry with `code`, `message`, and a runnable `next` command. Full-text JSON stays a bare array. Exactly full final pages add no hint. Semantic hints depend on the configured result cap; the default cap is 50.
+Newer `main` builds print a stderr hint when another full-text result exists, with the next `--offset` or a suggestion to raise `--limit`. Vector and hybrid text suggest raising `--limit`; their JSON objects gain a `hints` entry with `code`, `message`, and a runnable `next` command. Full-text JSON stays a bare array. Exactly full final pages add no hint. At the default semantic cap of 50, the hint first asks you to raise `vector.search.max_page_size_hybrid` on the server and restart the daemon, then raise `--limit`.
 
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,

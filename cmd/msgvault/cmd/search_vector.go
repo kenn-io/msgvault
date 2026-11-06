@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,17 +94,15 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	if strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 {
 		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", kind, &result)
 	}
-	next := ""
-	if resp.HasMore {
-		next = semanticMoreResultsCommand(cmd, queryStr)
-		if !searchJSON {
-			defer func() {
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: more messages match; raise --limit")
-			}()
-		}
-	}
 	if searchJSON {
+		next := ""
+		if resp.HasMore || resp.RankingLimitReached > 0 {
+			next = semanticMoreResultsCommand(cmd, queryStr)
+		}
 		return outputHybridResultsJSON(resp, explain, next)
+	}
+	if resp.HasMore || resp.RankingLimitReached > 0 {
+		defer func() { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+semanticMoreResultsMessage(resp)) }()
 	}
 	return outputHybridResultsTable(resp, explain)
 }
@@ -231,7 +230,7 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool, n
 		output["accelerator"] = resp.Accelerator
 	}
 	if next != "" {
-		output["hints"] = []map[string]string{{"code": "more_available", "message": "more messages match; raise --limit", "next": next}}
+		output["hints"] = []map[string]string{{"code": "more_available", "message": semanticMoreResultsMessage(resp), "next": next}}
 	}
 	return printJSON(output)
 }
@@ -266,8 +265,12 @@ func semanticMoreResultsCommand(cmd *cobra.Command, queryStr string) string {
 		}
 	})
 	args = append(args, "--limit", strconv.Itoa(searchLimit*2), "--", queryStr)
-	for i := range args {
-		args[i] = oauth.ShellQuote(args[i])
+	return oauth.FormatShellCommand(args, runtime.GOOS == "windows")
+}
+
+func semanticMoreResultsMessage(resp *daemonclient.CLIHybridSearch) string {
+	if resp.RankingLimitReached > 0 {
+		return fmt.Sprintf("more messages match; raise vector.search.max_page_size_hybrid above %d on the server and restart it, then raise --limit", resp.RankingLimitReached)
 	}
-	return strings.Join(args, " ")
+	return "more messages match; raise --limit"
 }

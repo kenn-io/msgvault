@@ -6853,6 +6853,9 @@ components:
           type: boolean
         query:
           type: string
+        ranking_limit_reached:
+          format: int64
+          type: integer
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"

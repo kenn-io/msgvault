@@ -12,6 +12,7 @@ export interface HybridSearchResponse {
   mode: string;
   pool_saturated: boolean;
   query: string;
+  ranking_limit_reached?: number;
   results: HybridSearchItem[];
   returned: number;
   scope_label?: string;

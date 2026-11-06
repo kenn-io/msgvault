@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -65,6 +67,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
 	vectorCfg := vector.Config{}
+	vectorCfg.Search.MaxPageSizeHybrid = new(vector.DefaultMaxPageSizeHybrid)
 	fingerprint := vectorCfg.GenerationFingerprint()
 	gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, fingerprint)
 	require.NoError(err)
@@ -74,7 +77,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		{MessageID: ids[2], Vector: []float32{1, 0, 0, 0}},
 	}))
 	require.NoError(backend.ActivateGeneration(t.Context(), gen, true))
-	engine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 10, SubjectBoost: 1})
+	engine := hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: 100, SubjectBoost: 1})
 	cfg := &config.Config{HomeDir: root}
 	cfg.Data.DataDir = root
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))}, Engine: query.NewSQLiteEngine(st.DB()), Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
@@ -171,11 +174,11 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		assert.Equal("more_available", page.Hints[0].Code)
 		assert.Equal("more messages match; raise --limit", page.Hints[0].Message)
 		assert.NotContains(stderr, "Hint:")
-		assert.Contains(page.Hints[0].Next, "'--mode="+mode+"'")
-		assert.Contains(page.Hints[0].Next, "'--account=archive@example.com'")
-		assert.Contains(page.Hints[0].Next, "'--home="+home+"'")
+		assert.Contains(page.Hints[0].Next, "--mode="+mode)
+		assert.Contains(page.Hints[0].Next, "--account=archive@example.com")
+		assert.Contains(page.Hints[0].Next, "--home="+home)
 		// Execute the advertised command, including its quoting and connection flags.
-		retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "'msgvault'", "'"+binary+"'", 1)) //nolint:gosec // Runs the CLI-generated command against isolated test state.
+		retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Runs the CLI-generated command against isolated test state.
 		retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		var retryOut, retryErr bytes.Buffer
 		retry.Stdout, retry.Stderr = &retryOut, &retryErr
@@ -211,6 +214,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
 		require.NoError(st.UpsertFTS(id, subject, "", address, "", ""))
+		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
 	}
 	for _, jsonMode := range []bool{false, true} {
 		for _, tc := range []struct{ query, offset, hint string }{
@@ -261,6 +265,57 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			} else {
 				assert.Contains(stderr, "Hint: more senders exist; raise -n")
 			}
+		}
+	}
+	// Default semantic cap still reports a measured match beyond the returned page.
+	client, err := daemonclient.New(daemonclient.Config{URL: httpServer.URL, AllowInsecure: true})
+	require.NoError(err)
+	for _, mode := range []string{"vector", "hybrid"} {
+		for _, limit := range []int{30, 50} {
+			page, err := client.GetCLIHybridSearch(t.Context(), daemonclient.CLIHybridSearchRequest{Query: "overflowboundary subject:overflowboundary", Mode: mode, Limit: limit})
+			require.NoError(err)
+			assert.Len(page.Results, limit)
+			assert.Equal(limit < 50, page.HasMore)
+			wantCap := 0
+			if limit == 50 {
+				wantCap = 50
+			}
+			assert.Equal(wantCap, page.RankingLimitReached)
+		}
+		for _, boundary := range []string{"overflowboundary", "exactboundary"} {
+			out, stderr := runWithStderr("search", boundary+" subject:"+boundary, "--mode", mode)
+			assert.Contains(out, "Showing 50 results")
+			if boundary == "overflowboundary" {
+				assert.Contains(stderr, "raise vector.search.max_page_size_hybrid above 50 on the server and restart it, then raise --limit")
+			} else {
+				assert.NotContains(stderr, "Hint:")
+			}
+			var page struct {
+				Results []json.RawMessage                      `json:"results"`
+				Hints   []struct{ Code, Message, Next string } `json:"hints"`
+			}
+			decode(run("search", boundary+" subject:"+boundary, "--mode", mode, "--json"), &page)
+			require.Len(page.Results, 50)
+			if boundary == "exactboundary" {
+				assert.Empty(page.Hints)
+				continue
+			}
+			require.Len(page.Hints, 1)
+			assert.Contains(page.Hints[0].Message, "vector.search.max_page_size_hybrid")
+			// Follow the prerequisite before executing the advertised larger-limit retry.
+			raised := vectorCfg
+			raised.Search.MaxPageSizeHybrid = new(100)
+			server.SetVectorFeatures(engine, nil, backend, raised)
+			retry := exec.CommandContext(t.Context(), "sh", "-c", strings.Replace(page.Hints[0].Next, "msgvault", oauth.ShellQuote(binary), 1)) //nolint:gosec // Executes the emitted retry against the isolated fixture.
+			retry.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+			var retryOut, retryErr bytes.Buffer
+			retry.Stdout, retry.Stderr = &retryOut, &retryErr
+			require.NoError(retry.Run(), retryErr.String())
+			page.Hints = nil
+			decode(retryOut.String(), &page)
+			assert.Len(page.Results, 51)
+			assert.Empty(page.Hints)
+			server.SetVectorFeatures(engine, nil, backend, vectorCfg)
 		}
 	}
 }
