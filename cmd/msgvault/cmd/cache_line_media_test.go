@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -79,7 +80,7 @@ func TestLineEnrichmentRetryRefreshesCachedResults(t *testing.T) {
 			} else {
 				api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusAccepted}, content)
 			}
-			raw := `{"type":"message","webhookEventId":"event-1","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"type":"file","id":"1","fileName":"synthetic.bin"}}`
+			raw := fmt.Sprintf(`{"type":"message","webhookEventId":"event-1","timestamp":%d,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"type":"file","id":"1","fileName":"synthetic.bin"}}`, now.UnixMilli())
 			must.NoError(st.EnqueueLineEventsContext(ctx, source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "event-1", EventType: "message", TargetMessageID: "1", EventTimestamp: now.UnixMilli(), RawJSON: raw, ReceivedAt: now}}))
 			must.NoError(processor.Process(ctx))
 			_, err = buildCache(dbPath, analyticsDir, true)

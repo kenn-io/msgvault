@@ -394,7 +394,8 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 func TestLineGCPurgesRetryPayloadsAfterSourceMerge(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
-	st := testutil.NewTestStore(t)
+	// Archive GC is SQLite-only, including when the test run selects PostgreSQL.
+	st := testutil.NewSQLiteTestStore(t)
 	fake := lineapi.New()
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
@@ -410,9 +411,6 @@ func TestLineGCPurgesRetryPayloadsAfterSourceMerge(t *testing.T) {
 		clean, err := line.SanitizeEvent(raw)
 		require.NoError(t, err)
 		require.NoError(t, st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: "gc-merged", EventTimestamp: event.Timestamp, RawJSON: string(clean), ReceivedAt: now}}))
-	}
-	if st.IsPostgreSQL() {
-		t.Skip("archive GC is SQLite-only")
 	}
 	ctx := t.Context()
 	message := line.Event{Type: "message", WebhookEventID: "event-gc-merged", Timestamp: now.UnixMilli(), Source: line.Source{Type: "group", GroupID: "C00000000000000000000000000000001", UserID: "U00000000000000000000000000000002"}, Message: &line.Message{ID: "gc-merged", Type: "text", Text: "text to purge after merge"}}

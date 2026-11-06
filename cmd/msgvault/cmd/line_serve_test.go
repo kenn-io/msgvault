@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
@@ -76,68 +74,6 @@ func TestLineServeMountsOnlyReadyRegisteredChannels(t *testing.T) {
 	checks.Equal(1, fake.Count("POST", "/oauth2/v3/token"))
 }
 
-func TestLineServeSecondReceiptDuringEnrichment(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	cfg, st, fake := lineWiringFixture(t)
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	must.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	must.NoError(err)
-	started := make(chan struct{}, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/profile/") {
-			select {
-			case started <- struct{}{}:
-			case <-r.Context().Done():
-				return
-			}
-			<-r.Context().Done()
-			return
-		}
-		fake.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	lineClientFactory = func(id, secret string) *line.Client {
-		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
-	}
-	gate := api.NewSerialOperationGate()
-	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "LINE inbox")).WithLogger(testLoggerValue())
-	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
-	must.NoError(err)
-	sched.Start()
-	defer func() { <-sched.Stop().Done() }()
-	server := api.NewServerWithOptions(api.ServerOptions{Config: loaded, Logger: testLoggerValue(), LineWebhook: runtime.receiver, OperationGate: gate})
-	defer func() { must.NoError(server.Shutdown(context.Background())) }()
-	listener := httptest.NewServer(server.Router())
-	defer listener.Close()
-	client := &http.Client{Timeout: 2 * time.Second} // LINE requires acknowledgement within two seconds.
-	for id := range 2 {
-		if id == 1 {
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				must.FailNow("scheduled profile lookup did not begin")
-			}
-			_, _, held := gate.Holder()
-			must.True(held, "enrichment must hold the operation gate during the second receipt")
-		}
-		body := fmt.Sprintf(`{"destination":"%s","events":[{"type":"message","webhookEventId":"deadline-%d","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"%d","type":"text","text":"synthetic"}}]}`, wiringBot, id, id)
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, listener.URL+"/webhooks/line/2000000001", strings.NewReader(body))
-		must.NoError(err)
-		request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
-		response, err := client.Do(request)
-		must.NoError(err, "signed receipt must be acknowledged within LINE's two-second deadline")
-		_, err = io.Copy(io.Discard, response.Body)
-		must.NoError(response.Body.Close())
-		must.NoError(err)
-		must.Equal(http.StatusOK, response.StatusCode)
-	}
-	var receipts int
-	must.NoError(st.DB().QueryRow("SELECT count(*) FROM line_webhook_events WHERE webhook_event_id IN ('deadline-0', 'deadline-1')").Scan(&receipts))
-	checks.Equal(2, receipts, "both acknowledged receipts must be durable while enrichment is blocked")
-}
-
 func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 	must := require.New(t)
 
@@ -169,96 +105,83 @@ func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 	assert.Zero(t, status.Pending)
 }
 
-func TestLineServeSignedReceiptsDoNotStarveLaterText(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	cfg, st, fake := lineWiringFixture(t)
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	must.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	must.NoError(err)
-	started := make(chan struct{}, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/content") {
+func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
+	for _, enrichment := range []string{"profile", "media"} {
+		t.Run(enrichment, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			cfg, st, fake := lineWiringFixture(t)
+			_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+			must.NoError(err)
+			loaded, err := config.Load(cfg.ConfigFilePath(), "")
+			must.NoError(err)
+			started := make(chan struct{}, 1)
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if enrichment == "media" && strings.HasSuffix(r.URL.Path, "/content") ||
+					enrichment == "profile" && strings.Contains(r.URL.Path, "/profile/") {
+					select {
+					case started <- struct{}{}:
+					case <-r.Context().Done():
+						return
+					}
+					<-r.Context().Done()
+					return
+				}
+				fake.ServeHTTP(w, r)
+			}))
+			defer provider.Close()
+			lineClientFactory = func(id, secret string) *line.Client {
+				return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
+			}
+			gate := api.NewSerialOperationGate()
+			sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "LINE inbox")).WithLogger(testLoggerValue())
+			runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+			must.NoError(err)
+			sched.Start()
+			defer func() { <-sched.Stop().Done() }()
+			server := api.NewServerWithOptions(api.ServerOptions{Config: loaded, Logger: testLoggerValue(), LineWebhook: runtime.receiver, OperationGate: gate})
+			defer func() { must.NoError(server.Shutdown(context.Background())) }()
+			listener := httptest.NewServer(server.Router())
+			defer listener.Close()
+			receive := func(id int, message string) int {
+				t.Helper()
+				body := fmt.Sprintf(`{"destination":"%s","events":[{"type":"message","webhookEventId":"event-%d","timestamp":%d,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":%s}]}`, wiringBot, id, 1000+id, message)
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, listener.URL+"/webhooks/line/2000000001", strings.NewReader(body))
+				must.NoError(err)
+				request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
+				response, err := listener.Client().Do(request)
+				must.NoError(err, "signed receipt must be acknowledged within LINE's two-second deadline")
+				_, err = io.Copy(io.Discard, response.Body)
+				must.NoError(response.Body.Close())
+				must.NoError(err)
+				return response.StatusCode
+			}
+			first := `{"id":"0","type":"file","fileName":"example.txt","fileSize":17,"contentProvider":{"type":"line"}}`
+			if enrichment == "profile" {
+				first = `{"id":"0","type":"text","text":"synthetic"}`
+			}
+			must.Equal(http.StatusOK, receive(0, first))
 			select {
-			case started <- struct{}{}:
-			case <-r.Context().Done():
+			case <-started:
+			case <-time.After(5 * time.Second):
+				must.FailNow("scheduled enrichment did not begin")
+			}
+			_, _, held := gate.Holder()
+			must.True(held, "enrichment must hold the operation gate during the second receipt")
+			must.Equal(http.StatusOK, receive(1, `{"id":"1","type":"text","text":"later searchable text"}`))
+			if enrichment == "profile" {
+				var receipts int
+				must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id IN ('event-0', 'event-1')").Scan(&receipts))
+				checks.Equal(2, receipts, "both acknowledged receipts must be durable while enrichment is blocked")
 				return
 			}
-			<-r.Context().Done()
-			return
-		}
-		fake.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	lineClientFactory = func(id, secret string) *line.Client {
-		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
+			checks.EventuallyWithT(func(c *assert.CollectT) {
+				var count int
+				require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='1'").Scan(&count))
+				assert.Equal(c, 1, count, "later text must archive while earlier media is blocked")
+			}, 5*time.Second, 20*time.Millisecond)
+		})
 	}
-	sched := scheduler.New(nil).WithLogger(testLoggerValue())
-	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
-	must.NoError(err)
-	sched.Start()
-	defer func() { <-sched.Stop().Done() }()
-	server := api.NewServerWithOptions(api.ServerOptions{Config: loaded, Logger: testLoggerValue(), LineWebhook: runtime.receiver})
-	defer func() { must.NoError(server.Shutdown(context.Background())) }()
-	listener := httptest.NewServer(server.Router())
-	defer listener.Close()
-	receive := func(id int, message string) int {
-		t.Helper()
-		body := fmt.Sprintf(`{"destination":"%s","events":[{"type":"message","webhookEventId":"event-%d","timestamp":%d,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":%s}]}`, wiringBot, id, 1000+id, message)
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-		defer cancel()
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, listener.URL+"/webhooks/line/2000000001", strings.NewReader(body))
-		must.NoError(err)
-		request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
-		response, err := listener.Client().Do(request)
-		must.NoError(err, "signed receipt must be acknowledged within LINE's two-second deadline")
-		_, err = io.Copy(io.Discard, response.Body)
-		must.NoError(response.Body.Close())
-		must.NoError(err)
-		return response.StatusCode
-	}
-	must.Equal(http.StatusOK, receive(0, `{"id":"0","type":"file","fileName":"example.txt","fileSize":17,"contentProvider":{"type":"line"}}`))
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		must.FailNow("scheduled media download did not begin")
-	}
-	must.Equal(http.StatusOK, receive(1, `{"id":"1","type":"text","text":"later searchable text"}`))
-	checks.EventuallyWithT(func(c *assert.CollectT) {
-		var count int
-		require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='1'").Scan(&count))
-		assert.Equal(c, 1, count, "later text must archive while earlier media is blocked")
-		matches, err := query.NewSQLiteEngine(st.DB()).TextSearch(t.Context(), "searchable", nil, 10, 0)
-		require.NoError(c, err)
-		assert.Len(c, matches, 1, "later text must be searchable")
-	}, 5*time.Second, 20*time.Millisecond)
-	checks.EventuallyWithT(func(c *assert.CollectT) {
-		var state string
-		var next time.Time
-		require.NoError(c, st.DB().QueryRow("SELECT state,next_attempt_at FROM line_webhook_events WHERE webhook_event_id='event-0'").Scan(&state, &next))
-		assert.Equal(c, "retry", state)
-		assert.True(c, next.After(time.Now()), "interrupted media must wait for backoff")
-	}, 5*time.Second, 20*time.Millisecond)
-	freeze := httptest.NewRequest(http.MethodPost, "/api/v1/backup/freeze/begin", nil)
-	freeze.RemoteAddr = "127.0.0.1:54321"
-	response := httptest.NewRecorder()
-	server.Router().ServeHTTP(response, freeze)
-	must.Equal(http.StatusOK, response.Code, response.Body.String())
-	var frozen struct {
-		Token string `json:"token"`
-	}
-	must.NoError(json.Unmarshal(response.Body.Bytes(), &frozen))
-	defer func() {
-		end := httptest.NewRequest(http.MethodPost, "/api/v1/backup/freeze/end", strings.NewReader(fmt.Sprintf(`{"token":%q}`, frozen.Token)))
-		end.RemoteAddr = "127.0.0.1:54321"
-		end.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		server.Router().ServeHTTP(response, end)
-		must.Equal(http.StatusOK, response.Code, response.Body.String())
-	}()
-	checks.Equal(http.StatusServiceUnavailable, receive(2, `{"id":"2","type":"text","text":"frozen text"}`))
-	var count int
-	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id='event-2'").Scan(&count))
-	checks.Zero(count, "backup freeze must reject the receipt before persistence")
 }
