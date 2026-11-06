@@ -13,6 +13,57 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
+func TestImportRejectsDuplicateAttachmentFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, rowID string
+		longText    bool
+		fileCount   int
+		wantStored  int64
+	}{
+		{name: "media", rowID: "500", fileCount: 2},
+		{name: "three media files", rowID: "500", fileCount: 3},
+		{name: "long text", rowID: "503", longText: true, fileCount: 2, wantStored: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			if tc.longText {
+				changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
+			}
+			for _, suffix := range []string{"-1", "1", "2"}[:tc.fileCount] {
+				require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_"+tc.rowID+"_"+suffix+".bin"), []byte("ambiguous export "+suffix), 0o600))
+			}
+
+			progress := &duplicateAttachmentProgress{}
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
+			summary, err := NewImporter(st, progress).Import(t.Context(), filepath.Join(dir, "database.sqlite"), opts)
+			require.NoError(err)
+
+			assert.Equal(int64(1), summary.Errors)
+			require.Len(progress.errors, 1)
+			assert.ErrorContains(progress.errors[0], "multiple attachment files")
+			assert.Equal(int64(2), summary.AttachmentsMissing)
+			assert.Equal(tc.wantStored, summary.AttachmentsStored)
+			assert.Equal(int(tc.wantStored), countRows(t, st, `SELECT COUNT(*) FROM attachments`))
+			if tc.longText {
+				id := "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol)
+				assert.Equal("Carol here", importedMessages(t, st)[id].body)
+			}
+		})
+	}
+}
+
+type duplicateAttachmentProgress struct {
+	NullProgress
+	errors []error
+}
+
+func (p *duplicateAttachmentProgress) OnError(err error) {
+	p.errors = append(p.errors, err)
+}
+
 func TestMissingLongTextOnRerun(t *testing.T) {
 	for _, tc := range []struct {
 		name, full, body, messageID, presentSearch, absentSearch string

@@ -318,8 +318,9 @@ var attachmentFileName = regexp.MustCompile(`^Attachment_(\d+)_(-?\d+)\.bin$`)
 
 // scanAttachmentFiles maps attachment row IDs to the Attachment_<id>_<unique>.bin
 // files signalbackup-tools writes into its output directory.
-func scanAttachmentFiles(dir string) (map[int64]string, error) {
+func (r *run) scanAttachmentFiles(dir string) (map[int64]string, error) {
 	files := make(map[int64]string)
+	ambiguous := make(map[int64]bool)
 	if dir == "" {
 		return files, nil
 	}
@@ -337,6 +338,16 @@ func scanAttachmentFiles(dir string) (map[int64]string, error) {
 		}
 		id, err := strconv.ParseInt(match[1], 10, 64)
 		if err != nil {
+			continue
+		}
+		if ambiguous[id] {
+			continue
+		}
+		if previous, ok := files[id]; ok {
+			delete(files, id)
+			ambiguous[id] = true
+			r.summary.Errors++
+			r.imp.progress.OnError(fmt.Errorf("multiple attachment files match %s and %s; export the backup into an empty directory", previous, entry.Name()))
 			continue
 		}
 		files[id] = entry.Name()

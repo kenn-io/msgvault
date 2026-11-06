@@ -102,7 +102,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		return nil, err
 	}
 	if opts.AttachmentFilesDir != "" {
-		if r.files, err = scanAttachmentFiles(opts.AttachmentFilesDir); err != nil {
+		if r.files, err = r.scanAttachmentFiles(opts.AttachmentFilesDir); err != nil {
 			return nil, err
 		}
 	}
