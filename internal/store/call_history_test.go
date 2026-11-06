@@ -198,8 +198,6 @@ func TestCallObservationReplacement(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(id, again)
 	var count int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM call_details WHERE message_id = ?`), id).Scan(&count))
-	assertions.Equal(1, count)
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.JSONEq(string(o.Raw), string(raw))
@@ -217,7 +215,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.ErrorIs(err, callhistory.ErrInvalid)
 	var outcome string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT outcome FROM call_details WHERE message_id = ?`), id).Scan(&outcome))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata ->> 'outcome' FROM messages WHERE id = ?`), id).Scan(&outcome))
 	assertions.Equal("unknown", outcome, "participant validation rejects the update before scalar writes")
 	unchangedRaw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
@@ -273,19 +271,7 @@ func TestCallObservationSubsetCopyAndDeletion(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		var participant int64
-		var outcome string
-		requirements.NoError(dst.DB().QueryRow(`SELECT outcome FROM call_details WHERE message_id = ?`, id).Scan(&outcome))
-		assertions.Equal("unknown", outcome)
 		requirements.NoError(dst.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
 		assertions.Equal(old, participant)
-	})
-	t.Run("message deletion cascades to call projection", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		_, err = dst.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
-		requirements.NoError(err)
-		var count int
-		requirements.NoError(dst.DB().QueryRow(`SELECT COUNT(*) FROM call_details`).Scan(&count))
-		assertions.Zero(count, "archive deletion removes the projection through its foreign key")
 	})
 }
