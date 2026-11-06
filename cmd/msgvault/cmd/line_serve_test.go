@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -184,4 +185,69 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			}, 5*time.Second, 20*time.Millisecond)
 		})
 	}
+}
+
+func TestLineBusyChannelRetainsMedia(t *testing.T) {
+	must := require.New(t)
+	cfg, st, fake := lineWiringFixture(t)
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	must.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/content") {
+			close(started)
+			select {
+			case <-r.Context().Done():
+				return
+			case <-release:
+			}
+			timer := time.NewTimer(100 * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-timer.C:
+			}
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	defer provider.Close()
+	lineClientFactory = func(id, secret string) *line.Client {
+		return line.NewClient(id, secret, line.WithBaseURLs(provider.URL, provider.URL))
+	}
+	sched := scheduler.New(nil).WithLogger(testLoggerValue())
+	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
+	must.NoError(err)
+	defer func() { <-sched.Stop().Done() }()
+	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	must.NoError(err)
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"media","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`}}))
+	runtime.wake(source.Identifier)
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		must.FailNow("download did not start")
+	}
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "text", EventType: "message", TargetMessageID: "2", EventTimestamp: 1001, RawJSON: `{"type":"message","timestamp":1001,"webhookEventId":"text","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"busy channel text"}}`}}))
+	for range 10 {
+		runtime.wake(source.Identifier)
+	}
+	// Model a download that completes after the new receipts have arrived.
+	close(release)
+	must.EventuallyWithT(func(c *assert.CollectT) {
+		var count int
+		require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
+		assert.Equal(c, 1, count)
+	}, 10*time.Second, 20*time.Millisecond)
+	row, err := st.LineMessageContext(t.Context(), source.ID, "1")
+	must.NoError(err)
+	refs, err := st.MessageProviderAttachments(row.ID, "line:")
+	must.NoError(err)
+	assert.Equal(t, attachmentpolicy.StateStored, refs["line:1"].State)
+	var count int
+	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
+	assert.Equal(t, 1, count)
 }
