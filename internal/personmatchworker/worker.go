@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -219,10 +220,17 @@ func localPolicyInput(candidate store.IdentityMatchCandidate, summaries store.Pe
 			input.SharedContactPoint = true
 		}
 	}
+	input.ConflictingStableID = conflictingStableID(
+		slices.Concat(summaries.Left.Identifiers, summaries.LeftGuardIdentifiers),
+		slices.Concat(summaries.Right.Identifiers, summaries.RightGuardIdentifiers))
+	return input
+}
+
+func conflictingStableID(left, right []personmatch.PairIdentifier) bool {
 	leftStable := map[string]map[string]bool{}
-	for _, identifier := range summaries.Left.Identifiers {
+	for _, identifier := range left {
 		switch identifier.Type {
-		case "beeper", "apple_id", "whatsapp", "signal", "imessage":
+		case "beeper", "apple_id", "whatsapp", "signal", "signal_aci", "imessage":
 			key := identifier.Type + "\x00" + identifier.ServiceSlug + "\x00" + identifier.ScopeKind + "\x00" + identifier.ScopeValue
 			if leftStable[key] == nil {
 				leftStable[key] = map[string]bool{}
@@ -230,13 +238,13 @@ func localPolicyInput(candidate store.IdentityMatchCandidate, summaries store.Pe
 			leftStable[key][identifier.Value] = true
 		}
 	}
-	for _, identifier := range summaries.Right.Identifiers {
+	for _, identifier := range right {
 		key := identifier.Type + "\x00" + identifier.ServiceSlug + "\x00" + identifier.ScopeKind + "\x00" + identifier.ScopeValue
 		if values := leftStable[key]; len(values) > 0 && !values[identifier.Value] {
-			input.ConflictingStableID = true
+			return true
 		}
 	}
-	return input
+	return false
 }
 
 func exactFullName(left, right string) bool {
