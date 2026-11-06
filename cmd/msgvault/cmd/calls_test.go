@@ -3,8 +3,11 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"io"
+	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +16,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -46,6 +53,41 @@ func (c *fakeCallCommandClient) SummarizeCalls(_ context.Context, q store.CallQu
 }
 
 func TestCallsCommandThroughDaemon(t *testing.T) {
+	t.Run("continue after rejected Signal row", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
+		logger := slog.New(slog.DiscardHandler)
+		daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
+		t.Cleanup(daemon.Close)
+		client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: daemon.Client()})
+		require.NoError(err)
+		t.Cleanup(func() { assert.NoError(client.Close()) })
+		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
+			return client, func() {}, nil
+		}})
+		var output, stderr bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&stderr)
+		command.SetIn(strings.NewReader(
+			`{"format":"signal_desktop","account":"example","record":{"callId":"one","mode":"Direct","status":"Accepted","timestamp":1790841600000}}` + "\n" +
+				`{"format":"signal_desktop","account":"example","record":{"callId":"deleted","mode":"Direct","status":"Deleted","timestamp":1790841600000}}` + "\n" +
+				`{"format":"signal_desktop","account":"example","record":{"callId":"two","mode":"Direct","status":"Accepted","timestamp":1790841660000}}`))
+		command.SetArgs([]string{"import", "-"})
+		require.ErrorContains(command.ExecuteContext(t.Context()), "1 call import records rejected")
+		assert.Contains(stderr.String(), "call import record 2:")
+		assert.Contains(stderr.String(), "Signal deleted call")
+
+		output.Reset()
+		command.SetArgs([]string{"list"})
+		require.NoError(command.ExecuteContext(t.Context()))
+		var calls generated.CallEvidenceResponse
+		require.NoError(json.Unmarshal(output.Bytes(), &calls))
+		require.Len(calls.Items, 2)
+		assert.ElementsMatch([]string{"one", "two"}, []string{calls.Items[0].RecordID, calls.Items[1].RecordID})
+	})
+
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	client := &fakeCallCommandClient{}

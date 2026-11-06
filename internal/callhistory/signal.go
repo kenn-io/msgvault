@@ -18,6 +18,9 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 	if err := json.Unmarshal(r.Record, &row); err != nil || row.Timestamp == nil {
 		return Observation{}, invalid("Signal row or timestamp")
 	}
+	if row.Status == "Deleted" {
+		return Observation{}, invalid("Signal deleted call")
+	}
 	o := Observation{
 		RecordID: row.CallID,
 
@@ -40,8 +43,6 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 	knownMode := row.Mode == "Direct" || row.Mode == "Group" || row.Mode == "Adhoc"
 	if knownMode {
 		switch row.Status {
-		case "Deleted":
-			return Observation{}, invalid("Signal deleted call")
 		case "Missed", "MissedNotificationProfile":
 			if row.Mode != "Adhoc" {
 				o.Outcome, o.OwnerParticipation = "missed", "not_joined"
