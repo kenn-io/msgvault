@@ -230,9 +230,12 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				return result, err
 			}
 			for _, row := range r.batch.events[meetingQueryKey(predicate, args)] {
-				ref := automaticMeetingRef(row, key)
+				ref, err := automaticMeetingRef(row, key)
+				if err != nil {
+					return result, err
+				}
 				if row.Event.Kind == meetingSeriesKind && key.Kind != "google_event_id" && key.ScheduledAt != nil {
-					predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+					predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
 					candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
 				}
 				candidateRefs = append(candidateRefs, ref)

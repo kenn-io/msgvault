@@ -144,7 +144,7 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 	for id, master := range masters {
 		windows[id] = coalesceMeetingWindows(windows[id])
 		for _, window := range windows[id] {
-			predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, master, window[0], window[1])
+			predicate, args := meetingSeriesExceptionsPredicate(r.dialect, master, window[0], window[1])
 			queries = append(queries, meetingEventQuery{predicate, args})
 		}
 	}

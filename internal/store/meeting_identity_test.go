@@ -496,6 +496,38 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 }
 
 func TestMeetingIdentityLongRunningDailySeriesWithNotes(t *testing.T) {
+	for _, zone := range []string{"UTC", "Asia/Tokyo", "America/New_York"} {
+		t.Run("all_day/"+zone, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			loc, err := time.LoadLocation(zone)
+			require.NoError(err)
+			refs := make([]string, 0, 62)
+			notes := make([]int64, 0, 62)
+			for _, name := range []string{"first", "second"} {
+				uid := name + "@example.org"
+				data, series := calendarFixture(t, st, name, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"start":{"date":"2000-01-01"},"end":{"date":"2000-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`, name, uid))
+				require.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, fmt.Sprintf(`{"time_zone":%q}`, zone)))
+				for day := 1; day <= 31; day++ {
+					at := time.Date(2027, 3, day, 0, 0, 0, 0, loc)
+					_, note := projectionFixture(t, st, fmt.Sprintf("%s-note-%d", name, day), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":%q}}`, uid, at.UTC().Format(time.RFC3339)))
+					refs = append(refs, fmt.Sprintf("evt:%d@202703%02d", series, day))
+					notes = append(notes, note)
+				}
+			}
+			for _, requested := range [][]string{refs, nil} {
+				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested, TranscriptIDs: notes})
+				require.NoError(err)
+				require.Len(got.ByOccurrence, 62)
+				require.Len(got.ByTranscript, 62)
+				for i, ref := range refs {
+					assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+					assert.Equal([]int64{notes[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assert.Equal(ref, got.ByTranscript[notes[i]].OccurrenceRef)
+				}
+			}
+		})
+	}
 	t.Run("granola_json", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
