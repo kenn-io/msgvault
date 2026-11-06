@@ -278,6 +278,32 @@ func TestMeetingIdentityInviteAndSyncedCopyShareIdentity(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityPreservesNoteScheduledRepresentative(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H")))
+	invites := emailEvents(t, st, source)
+	require.Len(invites, 1)
+	_, synced := calendarFixture(t, st, "synced", singleLinkRaw("synced", "family@example.com"))
+	_, note := identityNote(t, st, "note", "family@example.com")
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	syncedRef := formatMeetingOccurrence(OccurrenceRef{MessageID: synced})
+	assert.Equal(syncedRef, record.Links[0].Ref)
+	refs := []string{formatMeetingOccurrence(OccurrenceRef{MessageID: invites[0]}), syncedRef}
+	for _, requested := range [][]string{nil, refs, {refs[1], refs[0]}} {
+		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested, TranscriptIDs: []int64{note}})
+		require.NoError(err)
+		assert.Equal(record.Links[0].Ref, got.ByTranscript[note].OccurrenceRef)
+		assert.Equal([]string{syncedRef}, got.ByTranscript[note].ExactOccurrenceRefs)
+		for _, ref := range refs {
+			assert.Equal("occ:"+syncedRef, got.ByOccurrence[ref].Key)
+			assert.Equal(syncedRef, got.ByOccurrence[ref].OccurrenceRef)
+		}
+	}
+}
+
 func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
