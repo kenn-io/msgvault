@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   focused:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       GOMAXPROCS: '2'
@@ -28,3 +28,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - name: Config polling contract
         run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./internal/config -run '^TestAccountPolling'
+      - name: Startup polling contract
+        if: ${{ !cancelled() }}
+        run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./internal/scheduler -run '^TestAccountPolling'
+      - name: Graph provider state contract
+        if: ${{ !cancelled() }}
+        run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./internal/msmail -run '^TestProviderState'
+      - name: IMAP cancellation contract
+        if: ${{ !cancelled() }}
+        run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./internal/imap -run '^TestReadCommandCancellation'
+      - name: Strict target contract
+        if: ${{ !cancelled() }}
+        run: go test -tags 'fts5 sqlite_vec' -count=1 -v ./cmd/msgvault/cmd -run '^TestRapidEmail'
