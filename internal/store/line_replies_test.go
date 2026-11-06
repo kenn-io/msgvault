@@ -437,6 +437,48 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 	}
 }
 
+func TestLineReplyDeletedDraftTerminalTransitionScrubsPayload(t *testing.T) {
+	for _, transition := range []string{"expire", "reject", "retire"} {
+		t.Run(transition, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+			require.NoError(err)
+			if transition == "retire" {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true})
+				require.NoError(err)
+			}
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			wantState := store.LineReplyRemoteUnknownExpired
+			switch transition {
+			case "expire":
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
+				require.ErrorIs(err, store.ErrLineReplyExpired)
+			case "reject":
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
+				require.NoError(err)
+				wantState = store.LineReplyProviderRejected
+			case "retire":
+				target, err := st.GetOrCreateSource("line", "2000000002")
+				require.NoError(err)
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
+				require.NoError(err)
+			}
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			require.Equal(wantState, receipt.State)
+			assert.Equal(admitted.RetryKey, receipt.RetryKey)
+			assert.Empty(receipt.Body)
+			assert.Empty(receipt.QuoteToken)
+			assert.Empty(receipt.SourceConversationID)
+		})
+	}
+}
+
 func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
 	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
 		t.Run(state, func(t *testing.T) {
