@@ -728,15 +728,24 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 		backend    *filteredCoverageBackend
 		wantStatus SearchCoverageStatus
 		wantAction []SearchCoverageAction
+		building   bool
 	}{
 		{
-			name: "matching first build", status: VectorStatusReady,
+			name: "matching first build idle", status: VectorStatusReady,
 			backend: &filteredCoverageBackend{
 				activeErr: vector.ErrNoActiveGeneration,
 				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
 			},
 			wantStatus: SearchCoverageInitializing,
 			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
+		},
+		{
+			name: "matching first build running", status: VectorStatusReady, building: true,
+			backend: &filteredCoverageBackend{
+				activeErr: vector.ErrNoActiveGeneration,
+				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
+			},
+			wantStatus: SearchCoverageInitializing,
 		},
 		{
 			name: "no generation", status: VectorStatusReady,
@@ -812,6 +821,11 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			})
 			if tt.status == VectorStatusStale {
 				srv.SetVectorStale("old status")
+			}
+			if tt.building {
+				srv.scheduler = &embeddingStatusScheduler{mockScheduler: newMockScheduler(), status: vector.EmbeddingStatus{
+					Job: vector.EmbeddingJobState{State: "running"},
+				}}
 			}
 
 			body := getSearchCoverage(t, srv, `{}`)

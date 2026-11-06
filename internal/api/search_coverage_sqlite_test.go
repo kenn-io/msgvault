@@ -67,9 +67,10 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 			wantActions: []SearchCoverageAction{SearchCoverageActionRetry, SearchCoverageActionBuildIndex},
 		},
 		{
-			name: "matching first build", generation: "building-matching",
+			name: "matching first build idle", generation: "building-matching",
 			vectorStatus: VectorStatusInitializing,
 			wantStatus:   SearchCoverageInitializing,
+			wantActions:  []SearchCoverageAction{SearchCoverageActionBuildIndex},
 		},
 		{
 			name: "different first build", generation: "building-different",
