@@ -5271,6 +5271,18 @@ components:
       required:
         - error
       type: object
+    Event:
+      properties:
+        input:
+          $ref: "#/components/schemas/Input"
+        quotes:
+          items:
+            type: string
+          type: array
+      required:
+        - input
+        - quotes
+      type: object
     Evidence:
       properties:
         content_trust:
@@ -7408,6 +7420,100 @@ components:
         - signal
         - candidates
         - applied
+      type: object
+    Input:
+      properties:
+        action:
+          enum:
+            - request
+            - accept
+            - propose
+            - replace
+          type: string
+        actor:
+          enum:
+            - obligor
+            - beneficiary
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/Reference"
+          maxItems: 4
+          minItems: 1
+          type: array
+        expected_events:
+          format: int64
+          maximum: 31
+          minimum: 0
+          type: integer
+        id:
+          maxLength: 128
+          type: string
+        reviewed:
+          type: boolean
+        target:
+          maxLength: 128
+          type: string
+        terms:
+          $ref: "#/components/schemas/Terms"
+      required:
+        - id
+        - action
+        - actor
+        - expected_events
+        - reviewed
+        - evidence
+      type: object
+    KataAgreementRecordRequest:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - request
+            - accept
+            - propose
+            - replace
+          type: string
+        actor:
+          enum:
+            - obligor
+            - beneficiary
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/Reference"
+          maxItems: 4
+          minItems: 1
+          type: array
+        expected_events:
+          format: int64
+          maximum: 31
+          minimum: 0
+          type: integer
+        id:
+          maxLength: 128
+          type: string
+        reviewed:
+          type: boolean
+        target:
+          maxLength: 128
+          type: string
+        terms:
+          $ref: "#/components/schemas/Terms"
+      required:
+        - id
+        - action
+        - actor
+        - expected_events
+        - reviewed
+        - evidence
+      type: object
+    KataAgreementResponse:
+      properties:
+        agreement:
+          $ref: "#/components/schemas/View"
+      required:
+        - agreement
       type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
@@ -16343,6 +16449,25 @@ components:
         - raw_score
         - signals
       type: object
+    Terms:
+      additionalProperties: false
+      properties:
+        beneficiary:
+          maxLength: 128
+          type: string
+        due:
+          type: string
+        obligor:
+          maxLength: 128
+          type: string
+        text:
+          maxLength: 1000
+          type: string
+      required:
+        - text
+        - obligor
+        - beneficiary
+      type: object
     TextConversationRow:
       properties:
         conversation_id:
@@ -16856,6 +16981,27 @@ components:
       required:
         - status
       type: object
+    View:
+      properties:
+        accepted:
+          $ref: "#/components/schemas/Terms"
+        accepted_event_id:
+          type: string
+        history:
+          items:
+            $ref: "#/components/schemas/Event"
+          type: array
+        pending:
+          items:
+            type: string
+          type: array
+        replayed:
+          type: boolean
+      required:
+        - history
+        - pending
+        - replayed
+      type: object
     VirtualAccount:
       properties:
         account_address:
@@ -16988,7 +17134,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.44.0
+  version: 3.45.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24062,6 +24208,139 @@ paths:
       security:
         - apiKey: []
       summary: Create a Kata issue that quotes exact archive evidence
+      tags:
+        - API
+  /api/v1/integrations/kata/issues/{ref}/agreement:
+    get:
+      operationId: getKataAgreement
+      parameters:
+        - description: Kata issue in the configured project
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataAgreementResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read reviewed agreement history and last accepted terms on a Kata issue
+      tags:
+        - API
+    post:
+      operationId: recordKataAgreement
+      parameters:
+        - description: Kata issue in the configured project
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataAgreementRecordRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataAgreementResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Record a reviewed agreement event without changing unaccepted terms
       tags:
         - API
   /api/v1/integrations/kata/issues/{ref}/context:

@@ -136,6 +136,8 @@ type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest
 
+type RecordKataAgreementBody = KataAgreementRecordRequest
+
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
 type SnoozeLoopBody = SnoozeLoopRequest

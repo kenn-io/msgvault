@@ -337,6 +337,24 @@ func (g GetImportJobPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetKataAgreementPath struct {
+	// Ref Kata issue in the configured project
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetKataAgreementPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type RecordKataAgreementPath struct {
+	// Ref Kata issue in the configured project
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (r RecordKataAgreementPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type GetKataIssueContextPath struct {
 	// Ref Kata issue ref, qualified ref or UID
 	Ref string `json:"ref" validate:"required"`

@@ -4894,6 +4894,27 @@ func (s ErrorResponse) Error() string {
 	return "unmapped client error"
 }
 
+type Event struct {
+	Input  Input    `json:"input"`
+	Quotes []string `json:"quotes" validate:"required"`
+}
+
+func (e Event) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.Input).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Input", err)
+		}
+	}
+	if err := typesValidator.Var(e.Quotes, "required"); err != nil {
+		errors = errors.Append("Quotes", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Evidence struct {
 	ContentTrust string    `json:"content_trust" validate:"required"`
 	Display      Display   `json:"display"`
@@ -7067,6 +7088,149 @@ func (i ImportResult) Validate() error {
 	}
 	if err := typesValidator.Var(i.Signal, "required"); err != nil {
 		errors = errors.Append("Signal", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type Input struct {
+	Action         InputAction `json:"action" validate:"required"`
+	Actor          InputActor  `json:"actor" validate:"required"`
+	Evidence       []Reference `json:"evidence" validate:"required"`
+	ExpectedEvents int64       `json:"expected_events" validate:"gte=0,lte=31"`
+	ID             string      `json:"id" validate:"required,max=128"`
+	Reviewed       bool        `json:"reviewed"`
+	Target         *string     `json:"target,omitzero" validate:"omitempty,max=128"`
+	Terms          *Terms      `json:"terms,omitempty"`
+}
+
+func (i Input) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if v, ok := any(i.Actor).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Actor", err)
+		}
+	}
+	if err := typesValidator.Var(i.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	if i.Evidence != nil && len(i.Evidence) < 1 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at least 1 items, got %d", len(i.Evidence)))
+	}
+	if len(i.Evidence) > 4 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at most 4 items, got %d", len(i.Evidence)))
+	}
+	for i, item := range i.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.ExpectedEvents, "gte=0,lte=31"); err != nil {
+		errors = errors.Append("ExpectedEvents", err)
+	}
+	if err := typesValidator.Var(i.ID, "required,max=128"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if i.Target != nil {
+		if err := typesValidator.Var(i.Target, "omitempty,max=128"); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if i.Terms != nil {
+		if v, ok := any(i.Terms).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Terms", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataAgreementRecordRequest struct {
+	Action         KataAgreementRecordRequestAction `json:"action" validate:"required"`
+	Actor          KataAgreementRecordRequestActor  `json:"actor" validate:"required"`
+	Evidence       []Reference                      `json:"evidence" validate:"required"`
+	ExpectedEvents int64                            `json:"expected_events" validate:"gte=0,lte=31"`
+	ID             string                           `json:"id" validate:"required,max=128"`
+	Reviewed       bool                             `json:"reviewed"`
+	Target         *string                          `json:"target,omitzero" validate:"omitempty,max=128"`
+	Terms          *Terms                           `json:"terms,omitempty"`
+}
+
+func (k KataAgreementRecordRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(k.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if v, ok := any(k.Actor).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Actor", err)
+		}
+	}
+	if err := typesValidator.Var(k.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	if k.Evidence != nil && len(k.Evidence) < 1 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at least 1 items, got %d", len(k.Evidence)))
+	}
+	if len(k.Evidence) > 4 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at most 4 items, got %d", len(k.Evidence)))
+	}
+	for i, item := range k.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.ExpectedEvents, "gte=0,lte=31"); err != nil {
+		errors = errors.Append("ExpectedEvents", err)
+	}
+	if err := typesValidator.Var(k.ID, "required,max=128"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if k.Target != nil {
+		if err := typesValidator.Var(k.Target, "omitempty,max=128"); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if k.Terms != nil {
+		if v, ok := any(k.Terms).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Terms", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataAgreementResponse struct {
+	Agreement View `json:"agreement"`
+}
+
+func (k KataAgreementResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(k.Agreement).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Agreement", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -16452,6 +16616,17 @@ func (t TemperatureSummary) Validate() error {
 	return errors
 }
 
+type Terms struct {
+	Beneficiary string  `json:"beneficiary" validate:"required,max=128"`
+	Due         *string `json:"due,omitzero"`
+	Obligor     string  `json:"obligor" validate:"required,max=128"`
+	Text        string  `json:"text" validate:"required,max=1000"`
+}
+
+func (t Terms) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
 type TextConversationRow struct {
 	ConversationID   int64   `json:"conversation_id"`
 	LastMessageAt    *string `json:"last_message_at,omitzero"`
@@ -16845,6 +17020,42 @@ type VectorHealth struct {
 
 func (v VectorHealth) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type View struct {
+	Accepted        *Terms   `json:"accepted,omitempty"`
+	AcceptedEventID *string  `json:"accepted_event_id,omitzero"`
+	History         []Event  `json:"history" validate:"required"`
+	Pending         []string `json:"pending" validate:"required"`
+	Replayed        bool     `json:"replayed"`
+}
+
+func (v View) Validate() error {
+	var errors runtime.ValidationErrors
+	if v.Accepted != nil {
+		if v, ok := any(v.Accepted).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Accepted", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(v.History, "required"); err != nil {
+		errors = errors.Append("History", err)
+	}
+	for i, item := range v.History {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("History[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(v.Pending, "required"); err != nil {
+		errors = errors.Append("Pending", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type VirtualAccount struct {
