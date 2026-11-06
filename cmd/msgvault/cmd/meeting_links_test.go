@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 type meetingLinkFakeClient struct {
@@ -29,10 +30,10 @@ type meetingLinkFakeClient struct {
 func (f *meetingLinkFakeClient) APISchemaVersion(context.Context) (string, error) {
 	return f.version, nil
 }
-func (f *meetingLinkFakeClient) DecideMeetingLink(_ context.Context, id int64, event, decision string) error {
+func (f *meetingLinkFakeClient) DecideMeetingLink(_ context.Context, id int64, event, decision string) (generated.MeetingLinkDecisionResponse, error) {
 	f.calls++
 	f.id, f.event, f.decision = id, event, decision
-	return nil
+	return generated.MeetingLinkDecisionResponse{MessageID: id, Event: event, Decision: decision, CacheState: generated.MeetingLinkDecisionResponseCacheStateReady}, nil
 }
 func (f *meetingLinkFakeClient) SuggestMeetingLinks(_ context.Context, ref string) (store.MeetingSuggestionPage, error) {
 	f.calls++

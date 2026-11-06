@@ -70,7 +70,12 @@ func TestMeetingLinksClient(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(client.Close()) })
 	for _, decision := range []string{"link", "unlink"} {
-		requirements.NoError(client.DecideMeetingLink(t.Context(), 42, "evt:81@20270314T100000Z", decision))
+		result, err := client.DecideMeetingLink(t.Context(), 42, "evt:81@20270314T100000Z", decision)
+		requirements.NoError(err)
+		assertions.Equal(generated.MeetingLinkDecisionResponse{
+			MessageID: 42, Event: "evt:81@20270314T100000Z", Decision: decision,
+			CacheState: generated.MeetingLinkDecisionResponseCacheStateReady,
+		}, result)
 	}
 	assertions.Equal([]string{"link", "unlink"}, decisions)
 	suggestions, err := client.SuggestMeetingLinks(t.Context(), "evt:81@20270314T100000Z")

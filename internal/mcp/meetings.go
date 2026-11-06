@@ -32,7 +32,7 @@ const (
 type MeetingBackend interface {
 	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
 	SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error)
-	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error
+	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) (generated.MeetingLinkDecisionResponse, error)
 	GetMeetingContext(ctx context.Context, request generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error)
 	ListMeetingActionItems(ctx context.Context, request generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error)
 	GetMeetingMetrics(ctx context.Context, request generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error)
@@ -368,10 +368,11 @@ func (h *handlers) decideMeetingLink(ctx context.Context, req toolRequest, decis
 	if id == 0 || event == "" {
 		return toolErrorResult("message_id and event are required"), nil
 	}
-	if err := h.meetings.DecideMeetingLink(ctx, id, event, decision); err != nil {
+	result, err := h.meetings.DecideMeetingLink(ctx, id, event, decision)
+	if err != nil {
 		return meetingLinkError("decide meeting link", err)
 	}
-	return jsonResult(generated.MeetingLinkDecisionResponse{MessageID: id, Event: event, Decision: decision})
+	return jsonResult(result)
 }
 
 func getMeetingRecordDefinition() toolDefinition {

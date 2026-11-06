@@ -280,13 +280,15 @@ func (f *meetingBackendFixture) SuggestMeetingLinks(_ context.Context, ref strin
 	f.calls = append(f.calls, meetingBackendCall{tool: ToolSuggestMeetingLinks, ref: ref})
 	return store.MeetingSuggestionPage{Suggestions: []store.MeetingSuggestion{{Ref: "evt:302", MemberMessageID: 301, OverlapMinutes: 17, SharedAttendees: 2, TitleTokens: 1, Reasons: []string{"fixture reason"}}}, Unexpandable: []store.CalendarUnexpandable{}}, f.err
 }
-func (f *meetingBackendFixture) DecideMeetingLink(_ context.Context, id int64, ref, decision string) error {
+func (f *meetingBackendFixture) DecideMeetingLink(_ context.Context, id int64, ref, decision string) (generated.MeetingLinkDecisionResponse, error) {
 	tool := ToolLinkMeeting
+	state := generated.MeetingLinkDecisionResponseCacheStateReady
 	if decision == "unlink" {
 		tool = ToolUnlinkMeeting
+		state = generated.MeetingLinkDecisionResponseCacheStateStale
 	}
 	f.calls = append(f.calls, meetingBackendCall{tool: tool, ref: ref, decision: decision, messageID: id})
-	return f.err
+	return generated.MeetingLinkDecisionResponse{MessageID: id, Event: ref, Decision: decision, CacheState: state}, f.err
 }
 
 func TestMeetingLinkToolsRoundTrip(t *testing.T) {
@@ -310,8 +312,8 @@ func TestMeetingLinkToolsRoundTrip(t *testing.T) {
 	}{
 		{ToolSuggestMeetingLinks, map[string]any{"ref": "msg:73"}, meetingBackendCall{tool: ToolSuggestMeetingLinks, ref: "msg:73"}, map[string]any{"suggestions": []any{map[string]any{"ref": "evt:302", "member_message_id": float64(301), "overlap_minutes": float64(17), "shared_attendees": float64(2), "title_tokens": float64(1), "reasons": []any{"fixture reason"}}}, "unexpandable": []any{}}},
 		{ToolGetMeetingRecord, map[string]any{"ref": "evt:91@20270314T100000Z"}, meetingBackendCall{tool: ToolGetMeetingRecord, ref: "evt:91@20270314T100000Z"}, map[string]any{"links": []any{}, "message_ids": []any{float64(301)}}},
-		{ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolLinkMeeting, ref: "evt:91", decision: "link", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "link"}},
-		{ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolUnlinkMeeting, ref: "evt:91", decision: "unlink", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "unlink"}},
+		{ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolLinkMeeting, ref: "evt:91", decision: "link", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "link", "cache_state": "ready"}},
+		{ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolUnlinkMeeting, ref: "evt:91", decision: "unlink", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "unlink", "cache_state": "stale"}},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)

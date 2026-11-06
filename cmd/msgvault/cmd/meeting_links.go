@@ -14,13 +14,14 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const meetingLinksMinAPISchemaVersion = "3.46.0"
 
 type meetingLinkClient interface {
 	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
-	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error
+	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) (generated.MeetingLinkDecisionResponse, error)
 	SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error)
 	APISchemaVersion(ctx context.Context) (string, error)
 }
@@ -69,7 +70,8 @@ func newMeetingLinkDecisionCommand(decision string, open meetingLinkOpen) *cobra
 			return err
 		}
 		defer cleanup()
-		return client.DecideMeetingLink(cmd.Context(), id, event, decision)
+		_, err = client.DecideMeetingLink(cmd.Context(), id, event, decision)
+		return err
 	}
 	return command
 }

@@ -9,17 +9,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func (c *Client) DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error {
+func (c *Client) DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) (generated.MeetingLinkDecisionResponse, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.DecideMeetingLinkResp, error) {
 		return client.DecideMeetingLinkWithResponse(ctx, &generated.DecideMeetingLinkRequestOptions{Body: &generated.DecideMeetingLinkBody{MessageID: messageID, Event: event, Decision: generated.MeetingLinkDecisionRequestDecision(decision)}})
 	})
 	if err != nil {
-		return err
+		return generated.MeetingLinkDecisionResponse{}, err
 	}
 	if response.JSON200 == nil {
-		return errors.New("meeting link decision: empty response")
+		return generated.MeetingLinkDecisionResponse{}, errors.New("meeting link decision: empty response")
 	}
-	return nil
+	return *response.JSON200, nil
 }
 
 func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error) {
