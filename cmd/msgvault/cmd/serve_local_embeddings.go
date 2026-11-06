@@ -44,6 +44,16 @@ func (e localEmbeddingsConflictError) Unwrap() error {
 	return e.cause
 }
 
+type localEmbeddingsInterruptedError struct{ cause error }
+
+func (localEmbeddingsInterruptedError) Error() string {
+	return "Message index build interrupted. Use Build index to finish."
+}
+
+func (e localEmbeddingsInterruptedError) Unwrap() error {
+	return e.cause
+}
+
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
 	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
 		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
@@ -297,19 +307,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 			}
 			return nil
 		})
-		if detail := strings.TrimSpace(stderr); err != nil && detail != "" {
-			loggerFromContext(workCtx).Warn("Local search index command failed", "error", err, "stderr", detail)
-			if index := strings.LastIndex("\n"+detail, "\nError: "); index >= 0 {
-				detail = strings.TrimSpace(("\n" + detail)[index+len("\nError: "):])
-			} else if index := strings.LastIndex(detail, "\n"); index >= 0 {
-				detail = strings.TrimSpace(detail[index+1:])
-			}
-			if err.Error() == cliSubprocessExitSentinel {
-				return errors.New(detail)
-			}
-			return fmt.Errorf("%w: %s", err, detail)
-		}
-		return err
+		return localEmbeddingsCommandError(workCtx, args[1] == "build", err, stderr)
 	}
 	if building != nil && building.Fingerprint != fingerprint {
 		if err := run("embeddings", "retire", strconv.FormatInt(int64(building.ID), 10), "--yes"); err != nil {
@@ -328,6 +326,28 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		}
 	}
 	return run(args...)
+}
+
+// Log the full command output, then surface only its final error line.
+func localEmbeddingsCommandError(ctx context.Context, build bool, err error, stderr string) error {
+	detail := strings.TrimSpace(stderr)
+	if err == nil || detail == "" && !(build && errors.Is(err, context.Canceled)) {
+		return err
+	}
+	loggerFromContext(ctx).Warn("Local search index command failed", "error", err, "stderr", detail)
+	if index := strings.LastIndex("\n"+detail, "\nError: "); index >= 0 {
+		detail = strings.TrimSpace(("\n" + detail)[index+len("\nError: "):])
+	} else if index := strings.LastIndex(detail, "\n"); index >= 0 {
+		detail = strings.TrimSpace(detail[index+1:])
+	}
+	// An interrupted build resumes from its saved progress.
+	if build && (errors.Is(err, context.Canceled) || strings.HasSuffix(detail, context.Canceled.Error())) {
+		return localEmbeddingsInterruptedError{cause: err}
+	}
+	if err.Error() == cliSubprocessExitSentinel {
+		return errors.New(detail)
+	}
+	return fmt.Errorf("%w: %s", err, detail)
 }
 
 // Rebuild documents only when their selected destination already has exact consent.

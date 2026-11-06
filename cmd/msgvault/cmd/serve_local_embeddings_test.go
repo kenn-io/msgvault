@@ -633,13 +633,31 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	f.start(t)
 	f.runner.failBuild = true
 	err := f.controller.Enable(f.ctx, true, func(api.LocalEmbeddingsStatus) {})
-	require.EqualError(err, "embedding build interrupted: context canceled")
+	require.EqualError(err, "Message index build interrupted. Use Build index to finish.")
 	assert.Equal(1, f.refreshes, "published MCP capabilities refresh even when the initial build fails")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
 	require.NoError(err)
 	assert.True(saved.Vector.Enabled)
+}
+
+func TestLocalEmbeddingsCanceledBuildBeforeChildStarts(t *testing.T) {
+	require := require.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stderr string
+	err := runDaemonCLISubprocessStreamWithEnv(ctx, []string{"embeddings", "build", "--yes"}, nil, "", func(stream, data string) error {
+		if stream == cliStreamStderr {
+			stderr += data
+		}
+		return nil
+	})
+	require.ErrorIs(err, context.Canceled)
+	require.Empty(stderr)
+	err = localEmbeddingsCommandError(t.Context(), true, err, stderr)
+	require.EqualError(err, "Message index build interrupted. Use Build index to finish.")
+	require.ErrorIs(err, context.Canceled)
 }
 
 func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
@@ -653,7 +671,7 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 			f.runner.failBuild = true
 			f.enableThroughAPI(t)
 			require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-			require.Equal("embedding build interrupted: context canceled", f.localStatus(t).Error)
+			require.Equal("Message index build interrupted. Use Build index to finish.", f.localStatus(t).Error)
 			args := []string{"embeddings", "build", "--yes", "--config", f.cfg.ConfigFilePath()}
 			if empty {
 				var sourceID int64
