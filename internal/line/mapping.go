@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"maps"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -158,19 +159,19 @@ func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64,
 	if previous.ID != 0 {
 		p.recordMutation(ctx, 0, 1)
 	}
-	title := ""
+	title := p.groupNames[key]
 	var titleErr error
 	if kind == "direct_chat" {
 		title = profile.DisplayName
-	} else if e.Source.Type == "group" {
-		title = p.groupNames[key]
-		if title == "" {
-			var summary GroupSummary
-			summary, titleErr = p.client.GroupSummary(ctx, e.Source.GroupID)
-			if titleErr == nil {
-				title = summary.GroupName
-				p.groupNames[key] = title
-			}
+	} else if e.Source.Type == "group" && title == "" {
+		var summary GroupSummary
+		summary, titleErr = p.client.GroupSummary(ctx, e.Source.GroupID)
+		if apiErr, ok := errors.AsType[*APIError](titleErr); ok && (apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusNotFound) {
+			titleErr = nil
+		}
+		if titleErr == nil {
+			title = summary.GroupName
+			p.groupNames[key] = title
 		}
 	}
 	if title != "" {
