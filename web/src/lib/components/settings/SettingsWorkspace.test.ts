@@ -788,6 +788,41 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
 
+it.each(['manual', 'scheduled'] as const)('clears the setup failure after a successful %s index recovery', async recovery => {
+  let recovered = false;
+  let running = false;
+  const { client, operationsController } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') return Response.json({ enabled: true, provider: 'builtin', phase: 'idle', running: false, error: recovered ? undefined : 'Message index build interrupted.' });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'incomplete', actions: recovered ? [] : ['build_index'] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
+      configured: true, active: running ? { id: 'recovery-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } : undefined,
+    })) });
+    if (path === '/api/v1/cli/run') {
+      recovered = true;
+      return new Response('{"type":"complete"}\n');
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('alert');
+  const row = screen.getByText('Search by meaning').closest('li')!;
+  expect(within(row).getByRole('alert').textContent).toBe('Message index build interrupted.');
+  if (recovery === 'manual') {
+    await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Message search' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  } else {
+    running = true;
+    await operationsController.refreshStatus();
+    await within(row).findByText('Building 4 of 6');
+    running = false;
+    recovered = true;
+    await operationsController.refreshStatus();
+  }
+  await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
+  expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull();
+});
+
 it('refreshes local setup after a network interruption and explains activation refusal', async () => {
   let reads = 0;
   const { client, operationsController } = fixture(settingsDoc(), async request => {

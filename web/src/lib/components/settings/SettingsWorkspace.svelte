@@ -235,6 +235,14 @@
     return () => controller.abort();
   });
 
+  // A completed message build can settle a failed setup and its stale coverage.
+  let messageIndexBusy = false;
+  $effect(() => {
+    const busy = Boolean(building.messages || lanes.find(lane => lane.kind === 'message_embedding')?.active);
+    if (messageIndexBusy && !busy) untrack(() => { coverage = undefined; statusRevision += 1; void loadLocalSearch(); });
+    messageIndexBusy = busy;
+  });
+
   function refreshFeatureStatus(): void {
     statusRevision += 1;
     void operationsController.refreshStatus();
