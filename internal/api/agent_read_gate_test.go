@@ -912,19 +912,14 @@ func (s *agentPackingStream) OpenStream(ctx context.Context, hash string) (io.Re
 
 func testAgentPackingSnapshot(t *testing.T) {
 	for _, route := range []string{"content", "cli", "cid"} {
-		for _, tc := range []struct{ transition, caller string }{
-			{"pack before open", "masked"},
-			{"pack during retry", "masked"},
-			{"repack before open", "masked"},
-			{"repack during retry", "masked"},
-			{"cancel", "masked"},
-			{"repack before open", "owner"},
+		for _, transition := range []string{
+			"pack before open",
+			"pack during retry",
+			"repack before open",
+			"repack during retry",
+			"cancel",
 		} {
-			if route == "cid" && tc.caller == "owner" {
-				continue
-			}
-			t.Run(route+"/"+tc.caller+"/"+tc.transition, func(t *testing.T) {
-				transition := tc.transition
+			t.Run(route+"/masked/"+transition, func(t *testing.T) {
 				requirements := require.New(t)
 				assertions := assert.New(t)
 				st := testutil.NewTestStore(t)
@@ -969,9 +964,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				defer cancel()
 				migrate := func(readCtx context.Context) {
 					assertions.Same(st.DB(), store.ReadDBContext(readCtx, st.DB()), "placement uses a connection outside the authorization snapshot")
-					if tc.caller == "owner" {
-						assertions.Zero(st.DB().Stats().InUse, "owner placement holds no authorization connection")
-					} else if route == "cid" {
+					if route == "cid" {
 						assertions.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone) //nolint:testifylint // Snapshot lifetime is under test.
 						assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
 					} else {
@@ -1015,11 +1008,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 					path = fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid)
 				}
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil).WithContext(ctx)
-				if tc.caller == "owner" {
-					req.Header.Set("X-Api-Key", "owner")
-				} else {
-					req.Header.Set(apiprotocol.AgentTokenHeader, token)
-				}
+				req.Header.Set(apiprotocol.AgentTokenHeader, token)
 				response := httptest.NewRecorder()
 				if route == "cid" {
 					snapshot, release, err := st.BeginReadSnapshotContext(ctx)

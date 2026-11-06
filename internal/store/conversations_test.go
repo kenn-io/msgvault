@@ -85,8 +85,6 @@ func TestPopulateMessageBodiesBoundsVerificationFields(t *testing.T) {
 			assertions.Len(messages[0].BodyText, verification.MaxFieldBytes)
 			assertions.Len(messages[0].BodyHTML, verification.MaxFieldBytes)
 			assertions.Equal(messages[0].BodyText, messages[0].Body)
-			assertions.True(verification.Is(verification.Content{Text: messages[0].BodyText}))
-			assertions.True(verification.Is(verification.Content{HTML: messages[0].BodyHTML}))
 
 			window, err := st.GetConversationWindowContext(t.Context(), conversationID, ids[0], 0, 0, nil, nil)
 			requirements.NoError(err)

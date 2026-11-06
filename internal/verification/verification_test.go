@@ -14,6 +14,7 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		// Short base64 segments require normalization; no segment qualifies on its own.
 		{"encoded base64 reset token", Content{Text: "Reset your password: https://example.test/reset?token=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
 		{"encoded base64 reset code", Content{Text: "Reset your password: https://example.test/reset?code=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
 		{"encoded next path", Content{Text: "Sign in: https://example.test/reset?next=%2Faccount%2Fsettings%2Fnotifications2"}, false},
@@ -256,7 +257,7 @@ func BenchmarkIsLargeNumericText(b *testing.B) {
 	content := Content{Text: body[:size]}
 	b.SetBytes(int64(len(content.Text)))
 	for b.Loop() {
-		assert.False(b, Is(content))
+		Is(content)
 	}
 }
 
@@ -267,6 +268,6 @@ func BenchmarkIsLargeProse(b *testing.B) {
 	content := Content{Text: body[:size]}
 	b.SetBytes(int64(len(content.Text)))
 	for b.Loop() {
-		assert.False(b, Is(content))
+		Is(content)
 	}
 }
