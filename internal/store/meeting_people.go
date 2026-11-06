@@ -85,7 +85,7 @@ func emailParticipantsContext(ctx context.Context, q chunkQuerier, addresses []s
 	// Bind the scope before the requested addresses for the shared chunk reader.
 	query := `WITH visible AS (SELECT p.id FROM participants p WHERE 1=1` + scope + `),
  requested(address) AS (VALUES %s), matches AS (SELECT r.address,p.id FROM requested r JOIN participants p ON LOWER(p.email_address)=LOWER(r.address)
- UNION SELECT r.address,p.participant_id FROM requested r JOIN participant_identifiers p ON LOWER(p.identifier_value)=LOWER(r.address))
+ UNION SELECT r.address,p.participant_id FROM requested r JOIN participant_identifiers p ON p.identifier_type='email' AND LOWER(p.identifier_value)=LOWER(r.address))
  SELECT a.address,p.id,COALESCE(pp.person_id,0) FROM matches a
  JOIN visible p ON p.id=a.id LEFT JOIN person_participants pp ON pp.participant_id=p.id`
 	ambiguous := map[string]bool{}
