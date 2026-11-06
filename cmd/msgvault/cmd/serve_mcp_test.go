@@ -314,7 +314,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 					checks.Contains(response.Body.String(), `"stage_deletion"`)
 				}
 				for _, tool := range families {
-					if path == "/mcp/writes" && mode == "families" {
+					if path == "/mcp/writes" && mode == "families" && tool != "approve_carddav_publication" && tool != "calendar_create" && tool != "create_kata_issue" {
 						checks.Contains(response.Body.String(), `"`+tool+`"`)
 					} else {
 						checks.NotContains(response.Body.String(), `"`+tool+`"`)

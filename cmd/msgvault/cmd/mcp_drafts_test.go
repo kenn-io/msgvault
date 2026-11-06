@@ -142,7 +142,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"}), t)
 		names := mcpDraftToolNames(t, session)
-		assert.Subset(names, []string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"})
+		assert.Subset(names, []string{"draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"})
 		// A draft-only grant cannot read the archive, so its read tools are not offered.
 		for _, readTool := range []string{"search_metadata", "search_message_bodies", "get_message"} {
 			assert.NotContains(names, readTool)
@@ -355,8 +355,8 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 					ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 				}
 				probing.Store(true)
-				if delegated && version != "3.0.0" {
-					// Delegated sessions offer nothing but draft tools, so they fail instead of serving an empty list.
+				if delegated {
+					// Delegated tool selection needs the grant source inventory.
 					served := false
 					previousServe := serveMCPStdioWithOptions
 					serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
@@ -368,7 +368,7 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 						require.ErrorContains(err, "check daemon compatibility")
 						require.ErrorContains(err, "probe unavailable")
 					} else {
-						require.ErrorContains(err, "MCP draft tools require daemon API schema 3.0.0 or newer")
+						require.ErrorContains(err, "delegated MCP requires daemon API schema")
 						require.ErrorContains(err, "upgrade the daemon")
 					}
 					assert.False(served)
@@ -377,10 +377,6 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 				}
 				session := mcpDraftTestSession(ctx, t)
 				names := mcpDraftToolNames(t, session)
-				if delegated && version == "3.0.0" {
-					assert.NotContains(names, "search_metadata")
-					assert.NotContains(names, "get_message")
-				}
 				var drafts []string
 				for _, name := range names {
 					if strings.HasPrefix(name, "draft_") {
@@ -390,9 +386,6 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 				want := 0
 				if version == "3.0.0" {
 					want = 8
-					if delegated {
-						want = 6
-					}
 				}
 				assert.Len(drafts, want)
 				require.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")

@@ -165,7 +165,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeRequiresSourceInventory(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -213,8 +213,8 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 
 	err := mcpCmd.RunE(cmd, nil)
 
-	requirements.ErrorContains(err, "stop after capture")
-	assertions.True(serveCalled)
+	requirements.ErrorContains(err, "delegated MCP requires daemon API schema")
+	assertions.False(serveCalled)
 	assertions.Equal(int32(2), healthRequests.Load())
 }
 
