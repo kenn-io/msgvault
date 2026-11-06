@@ -75,6 +75,78 @@ func TestRunCommandCancellationAfterLimitResponseRetainsRetryFloor(t *testing.T)
 	assert.EqualValues(1, limited.Load())
 }
 
+func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var limited atomic.Int32
+	addr, _ := startQresyncTestServer(t, qresyncServerConfig{
+		capabilities: []string{"IMAP4rev1"},
+		commandHook: func(conn net.Conn, _ int, line string) bool {
+			tag, command, _ := strings.Cut(line, " ")
+			if !strings.HasPrefix(command, "LIST") {
+				return false
+			}
+			limited.Add(1)
+			_, _ = fmt.Fprintf(conn, "%s NO [LIMIT] retry in 60 seconds\r\n", tag)
+			return true
+		},
+	})
+	client := newTestClient(t, addr)
+	require.NoError(connectRetryClient(t.Context(), t, client))
+	WithMaxCommandsPerMinute(1)(client)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	passCtx, capture := WithRetryFloorCapture(ctx)
+	firstResult := make(chan error, 1)
+	followupCalls := atomic.Int32{}
+	finished := make(chan error, 1)
+	go func() {
+		finished <- client.withConn(passCtx, func(conn *imapclient.Client) error {
+			_, err := runCommand(passCtx, client, func() ([]*imap.ListData, error) {
+				return conn.List("", "*", nil).Collect()
+			})
+			firstResult <- err
+			_, err = runCommand(passCtx, client, func() (struct{}, error) {
+				followupCalls.Add(1)
+				return struct{}{}, nil
+			})
+			return err
+		})
+	}()
+
+	var firstErr error
+	select {
+	case firstErr = <-firstResult:
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-finished
+		require.FailNow("the real IMAP LIMIT response did not produce an immediate captured deferral")
+	}
+	var response *imap.Error
+	require.ErrorAs(firstErr, &response, "the first command must observe the real typed LIMIT response")
+	assert.Equal(imap.ResponseCodeLimit, response.Code)
+	var firstFloor interface{ RetryNotBefore() time.Time }
+	require.ErrorAs(firstErr, &firstFloor)
+	assert.True(firstFloor.RetryNotBefore().After(time.Now()))
+	assert.True(capture.RetryNotBefore().After(time.Now()))
+	assert.EqualValues(1, limited.Load())
+
+	var followupErr error
+	select {
+	case followupErr = <-finished:
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-finished
+		require.FailNow("the follow-up waited for the local command limiter before checking the captured provider floor")
+	}
+	assert.Nil(ctx.Err(), "the follow-up must return while its context is still live")
+	var followupFloor interface{ RetryNotBefore() time.Time }
+	require.ErrorAs(followupErr, &followupFloor)
+	assert.True(followupFloor.RetryNotBefore().After(time.Now()))
+	assert.EqualValues(0, followupCalls.Load(), "a live provider floor blocks the next command before wire admission")
+	assert.EqualValues(1, limited.Load(), "the synthetic server observes only the first LIMIT command")
+}
+
 // The real IMAP parser must deliver typed errors to each production read path.
 func TestLimitedSyncCommands(t *testing.T) {
 	for _, command := range []string{"LIST", "STATUS", "SELECT", "UID SEARCH", "UID FETCH", "ENABLE"} {
