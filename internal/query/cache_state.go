@@ -44,9 +44,10 @@ import (
 // Version 33 flags unsent messages in the relationship activity dataset.
 // Version 34 carries hidden_text_present in message rows.
 // Version 35 excludes unlinked calendar rooms from derived people and domains.
+// Version 36 adds exact meeting keys for linked copies.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 35
+const CacheSchemaVersion = 36
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

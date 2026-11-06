@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,16 +20,33 @@ import (
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
 
-func calendarFixture(t *testing.T, st *Store, key, raw string) (*MessagePersistData, int64) {
+func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...string) (*MessagePersistData, int64) {
 	t.Helper()
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	calendar := "calendar@example.com"
+	if len(calendars) > 0 {
+		calendar = calendars[0]
+	}
+	source, err := st.GetOrCreateSource("gcal", calendar)
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, fmt.Sprintf(`{"calendar_id":%q,"time_zone":"UTC"}`, calendar)))
+	var event struct {
+		ICalUID string `json:"iCalUID"`
+	}
+	// Projection failure fixtures deliberately include malformed provider data.
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		event.ICalUID = ""
+	}
+	metadata := map[string]any{"calendar_id": calendar}
+	if event.ICalUID != "" {
+		metadata["ical_uid"] = event.ICalUID
+	}
+	metadataJSON, err := json.Marshal(metadata, json.Deterministic(true))
+	require.NoError(t, err)
 	data := &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: "Example event"},
 		RawMIME:      []byte(raw), RawFormat: "gcal_json",
-		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
+		Metadata: &sql.NullString{String: string(metadataJSON), Valid: true},
 	}
 	id, err := st.PersistMessage(data)
 	require.NoError(t, err)
@@ -45,7 +63,7 @@ func calendarRows(t *testing.T, st *Store, ids ...int64) []CalendarEventRow {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.meetingReader(), "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
 	require.NoError(t, err)
 	return rows
 }

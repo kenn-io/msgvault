@@ -314,6 +314,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+		opts.MeetingLinks = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

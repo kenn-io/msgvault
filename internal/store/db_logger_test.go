@@ -15,7 +15,57 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 )
+
+func TestCalendarAndMeetingReadsKeepSQLTrace(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "trace@example.org"))
+	_, note := projectionFixture(t, st, "note", "meeting_json", meetingProjectionRaw)
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	buf := captureSlog(t)
+	ctx := WithRequestID(t.Context(), "calendar-meeting-trace")
+	for _, tc := range []struct {
+		name, statement string
+		run             func(*testing.T) error
+	}{
+		{"calendar", "FROM calendar_events", func(t *testing.T) error {
+			t.Helper()
+			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+			assert.Len(t, page.Occurrences, 1)
+			return err
+		}},
+		{"record", "FROM meeting_link_decisions", func(t *testing.T) error {
+			t.Helper()
+			_, err := st.MeetingRecordContext(ctx, MeetingLinkRef{Kind: "msg", MessageID: note})
+			return err
+		}},
+		{"decision", "FROM meeting_link_decisions", func(t *testing.T) error {
+			t.Helper()
+			return st.LinkMeetingContext(ctx, note, OccurrenceRef{MessageID: event})
+		}},
+		{"participants", "FROM message_recipients mr JOIN participants p", func(t *testing.T) error {
+			t.Helper()
+			_, err := st.GetMeetingContextContext(ctx, MeetingQueryScope{MessageIDs: new([]int64{note})}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			require.NoError(t, tc.run(t))
+			var found bool
+			for _, record := range decodeAll(t, buf) {
+				statement, _ := record["stmt"].(string)
+				if record["kind"] == "query" && record["request_id"] == "calendar-meeting-trace" && strings.Contains(statement, tc.statement) {
+					found = true
+				}
+			}
+			assert.True(t, found, "missing SQL trace for %s", tc.statement)
+		})
+	}
+}
 
 // captureSlog installs a JSON handler over buf as the default slog logger at
 // debug level for the duration of a test. Returns a cleanup closure that

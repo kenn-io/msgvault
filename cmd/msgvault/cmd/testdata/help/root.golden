@@ -27,7 +27,7 @@ Search and read:
   list-senders  List top senders by message count
   loops         List conversations waiting on a reply
   media         Search transcripts and mirrored document text
-  meetings      Read archived meeting context, actions, and metrics
+  meetings      Read and link archived meetings
   query         Run a SQL query against the analytics cache
   search        Search messages using Gmail-like query syntax
   show-message  Show full message details

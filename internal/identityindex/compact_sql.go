@@ -12,17 +12,18 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
+func buildRelationshipPeopleSQL(effectiveAt time.Time, keys string) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
-	       canonical_id
-	FROM ` + logicalBuildRelation + `
+	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
+	       l.canonical_id, ` + MeetingKeysSQL("mk", "l.message_type", "l.anchor_message_id") + ` AS meeting_keys
+	FROM ` + logicalBuildRelation + ` l
+	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteSQLString(keys) + `') GROUP BY message_id) mk ON mk.message_id = l.anchor_message_id
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -31,7 +32,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -137,10 +138,10 @@ LEFT JOIN domain_people p USING (domain)
 ORDER BY t.domain`
 }
 
-func buildRelationshipDailySQL() string {
+func buildRelationshipDailySQL(meetingKeys string) string {
 	return fmt.Sprintf(`
 WITH logical_people AS (
-	SELECT entry_key, occurred_at, entry_kind, is_from_me, canonical_id,
+	SELECT entry_key, anchor_message_id, occurred_at, entry_kind, is_from_me, canonical_id,
 	       is_author, is_owner, with_owner
 	FROM `+logicalBuildRelation+`
 	WHERE relation_kind = 1
@@ -153,17 +154,16 @@ WITH logical_people AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind = 'meeting' AND p.with_owner
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
+	           WHEN p.entry_kind = 'meeting' AND p.with_owner THEN %d::UTINYINT
 	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
-	FROM logical_people p
+	FROM (`+DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE entry_kind <> 'event' AND (with_owner OR entry_kind <> 'meeting'))", meetingKeys, "anchor_message_id")+`) p
 	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 )
 SELECT canonical_id,
        occurred_at::DATE AS event_date,
@@ -370,4 +370,29 @@ ORDER BY m.canonical_id`,
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("owner_participants")),
 	)
+}
+
+// MeetingKeysSQL collects each occurrence without multiplying activity rows.
+func MeetingKeysSQL(keys, messageType, messageID string) string {
+	return "CASE WHEN " + messageType + " = 'meeting_transcript' THEN coalesce(" + keys + ".meeting_keys, ['msg:' || CAST(" + messageID + " AS VARCHAR)]) ELSE []::VARCHAR[] END"
+}
+
+// DeduplicateMeetingSQL keeps one meeting row per person and occurrence.
+func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
+	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (` + MeetingCopySelectionSQL(relation, meetingKeys, messageID) + `) WHERE meeting_selected`
+}
+
+// MeetingCopySelectionSQL marks each occurrence's representative while retaining
+// every activity row for readers that also count raw messages and files.
+func MeetingCopySelectionSQL(relation, meetingKeys, messageID string) string {
+	return `SELECT p.*, ` + meetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
+	(p.entry_kind <> 'meeting' OR row_number() OVER (
+	    PARTITION BY p.canonical_id, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
+	    ORDER BY p.occurred_at, p.` + messageID + `) = 1) AS meeting_selected
+	FROM ` + relation + ` p
+	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID
+}
+
+func meetingIdentityKeySQL(keys, messageID string) string {
+	return "coalesce(" + keys + ".meeting_key, 'msg:' || CAST(" + messageID + " AS VARCHAR))"
 }

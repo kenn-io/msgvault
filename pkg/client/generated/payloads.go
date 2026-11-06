@@ -144,6 +144,8 @@ type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
 
+type DecideMeetingLinkBody = MeetingLinkDecisionRequest
+
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
 type UpdateMessageTagsBody = MessageTagChange

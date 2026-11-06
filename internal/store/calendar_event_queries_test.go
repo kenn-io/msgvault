@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRo
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	return calendarEventRowsInWindow(ctx, st.db, st.dialect, start, end)
+	return calendarEventRowsInWindow(ctx, st.meetingReader(), start, end)
 }
 func bulkCalendarCandidates(t *testing.T, st *Store, sourceID, conversationID int64, kind string, count int) {
 	t.Helper()
@@ -110,7 +111,7 @@ func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
-	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	_, err = queryCalendarEventRowsWithinBudget(ctx, st.meetingReader(), "1 = 1", nil, 1)
 	assert.ErrorIs(t, err, ErrQueryTooBroad)
 }
 func TestCalendarEventSourceZoneRebuild(t *testing.T) {
@@ -179,6 +180,22 @@ func TestCalendarExceptionsPartialBounds(t *testing.T) {
 			assertions.Equal(tc.end, o.End.Format(time.RFC3339))
 		})
 	}
+}
+
+func TestCalendarListingWithNullLegacyMetadata(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
+	// Legacy events can predate calendar identity metadata.
+	_, err := st.db.Exec(`DROP INDEX idx_messages_calendar_ical_uid`)
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{}))
+	requirements.NoError(st.InitSchemaContext(t.Context()), "schema setup must accept missing legacy metadata")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(24*time.Hour))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(event, page.Occurrences[0].MessageID)
 }
 
 func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {

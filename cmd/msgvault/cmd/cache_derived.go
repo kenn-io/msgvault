@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +152,19 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	if !repairRelated {
+		var meetingChangePending bool
+		if err := sourceSnapshot.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM cache_related_change_journal
+			WHERE seq > ? AND dataset = 'meeting_links'
+			AND (message_id <= ? OR message_id IN (SELECT member_message_id FROM meeting_link_decisions))
+		)`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&meetingChangePending); err != nil {
+			return nil, fmt.Errorf("inspect pending meeting changes: %w", err)
+		}
+		if meetingChangePending {
+			return nil, fmt.Errorf("%w: meeting changes require related-row repair", ErrDerivedRefreshRequiresFullBuild)
+		}
+	}
 	datasets := []string{
 		"cache_unsent_messages",
 		tableMessages,
@@ -251,7 +266,7 @@ func refreshDerivedDatasetsOnly(
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
-	if repairRelated && !relatedKinds.recipients &&
+	if repairRelated && !relatedKinds.recipients && !relatedKinds.meetings &&
 		identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
@@ -292,6 +307,18 @@ func refreshDerivedDatasetsOnly(
 	if err := derivedCopy(tableOwnerParticipants, ownerParticipantsSelectSQL(
 		sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present"))); err != nil {
 		return nil, fmt.Errorf("export derived owner participants: %w", err)
+	}
+	if repairRelated {
+		meetingKeys, err := readMeetingCountKeys(ctx, dbPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := stageMeetingKeys(ctx, exportDB, meetingKeys, state.LastMessageID); err != nil {
+			return nil, err
+		}
+		if err := derivedCopy(tableMeetingKeys, meetingKeysSelectSQL); err != nil {
+			return nil, err
+		}
 	}
 	if err := stageParticipantClusters(ctx, exportDB, clusters); err != nil {
 		return nil, err
@@ -396,6 +423,7 @@ func refreshDerivedDatasetsOnly(
 		personDisplayNamesChanged || identityChanged,
 	)
 	if repairRelated {
+		plan.Replace[tableMeetingKeys] = true
 		for dataset := range relatedReplacements {
 			plan.Replace[dataset] = true
 		}
@@ -481,22 +509,32 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
 		return fmt.Errorf("create participant clusters temp table: %w", err)
 	}
-	if len(clusters) == 0 {
-		return nil
+	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_participant_clusters VALUES `, maps.All(clusters), func(id, canonicalID int64) string {
+		return fmt.Sprintf("(%d,%d)", id, canonicalID)
+	}); err != nil {
+		return fmt.Errorf("populate participant clusters temp table: %w", err)
 	}
+	return nil
+}
+
+func stageCacheMapping[V any](ctx context.Context, db sqlRunner, insert string, entries iter.Seq2[int64, V], format func(int64, V) string) error {
 	values := make([]string, 0, participantClusterMaxBatchRows)
 	flush := func() error {
 		if len(values) == 0 {
 			return nil
 		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO tmp_participant_clusters VALUES `+strings.Join(values, ",")); err != nil {
-			return fmt.Errorf("populate participant clusters temp table: %w", err)
+		if _, err := db.ExecContext(ctx, insert+strings.Join(values, ",")); err != nil {
+			return err
 		}
 		values = values[:0]
 		return nil
 	}
-	for participantID, canonicalID := range clusters {
-		values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
+	for id, value := range entries {
+		row := format(id, value)
+		if row == "" {
+			continue
+		}
+		values = append(values, row)
 		if len(values) >= participantClusterMaxBatchRows {
 			if err := flush(); err != nil {
 				return err

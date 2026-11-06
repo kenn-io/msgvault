@@ -74,6 +74,25 @@ msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
 
+### meetings link, unlink, links, and suggest
+
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.47.0 or newer.
+
+```bash
+msgvault meetings suggest msg:42
+msgvault meetings suggest evt:81@20270314T100000Z --json
+msgvault meetings link 42 --event evt:81@20270314T100000Z
+msgvault meetings links 42
+msgvault meetings links evt:81@20270314T100000Z
+msgvault meetings unlink 42 --event evt:81@20270314T100000Z
+```
+
+`link` and `unlink` take one meeting note's message ID and a required `--event` reference. Copy the event reference from `meetings suggest` or the `ref` field in `calendar events --json`. A series occurrence uses the series master's ID and its original occurrence key, even when an edited copy moved to another time.
+
+`suggest` accepts `msg:<id>` for a note or `evt:<id>[@occurrence key]` for an event. It returns up to ten overlapping candidates, ranked by overlap minutes, shared attendees, and shared title words. Plain output warns on stderr when calendar entries could not be fully expanded, while still listing readable candidates. `--json` includes those entries in an `unexpandable` array with their `message_id` and `reason`. Check this array before treating an empty or partial result as complete. Suggestions leave links unchanged.
+
+`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. `link` adds the chosen occurrence to automatic matches. `unlink` applies to all calendar copies of that occurrence.
+
 ### meetings context
 
 | Flag | Contract |
@@ -2009,7 +2028,7 @@ msgvault calendar events --from 2027-03-01 --to 2027-04-01
 msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link` and `meetings unlink`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar

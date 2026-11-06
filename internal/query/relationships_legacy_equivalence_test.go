@@ -64,7 +64,7 @@ func buildLegacyRelationshipsSQLForEquivalence(
     CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
     JOIN canon cn ON cn.participant_id = pid.participant_id
     WHERE cn.canonical_id NOT IN (SELECT canonical_id FROM owner_canon)
-      AND NOT (le.entry_kind IN ('event','meeting') AND NOT le.with_owner)
+      AND le.entry_kind <> 'event' AND (le.with_owner OR le.entry_kind <> 'meeting')
 ), aggregated AS (
     SELECT
         canonical_id,
@@ -73,13 +73,14 @@ func buildLegacyRelationshipsSQLForEquivalence(
         SUM(CASE WHEN NOT is_from_me
                   AND (entry_kind = 'conversation' OR (entry_kind IN ('email','item') AND is_author))
                  THEN decay ELSE 0 END) AS received_decayed,
-        SUM(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN decay ELSE 0 END) AS meetings_decayed,
-        COUNT(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN 1 END) AS meeting_count,
+        SUM(CASE WHEN entry_kind = 'meeting' AND with_owner THEN decay ELSE 0 END) AS meetings_decayed,
+        COUNT(CASE WHEN entry_kind = 'meeting' AND with_owner THEN 1 END) AS meeting_count,
         COUNT(DISTINCT CASE
-            WHEN entry_kind IN ('event','meeting') AND with_owner THEN 'meeting'
-            WHEN entry_kind IN ('event','meeting') THEN NULL
+            WHEN entry_kind = 'meeting' AND with_owner THEN 'meeting'
+            WHEN entry_kind = 'meeting' THEN NULL
             WHEN entry_kind = 'conversation' THEN 'chat'
-            ELSE 'email' END) AS modalities,
+            WHEN entry_kind IN ('email','item') THEN 'email'
+            ELSE NULL END) AS modalities,
         MAX(occurred_at) AS last_at
     FROM interactions
     GROUP BY canonical_id
@@ -330,7 +331,7 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 		Now: now, Limit: 25, ShowAll: true,
 	})
 	requirementsForTest.Len(allRows, 2)
-	assertionsForTest.Equal(3, allRows[0].Signals.Modalities)
+	assertionsForTest.Equal(2, allRows[0].Signals.Modalities)
 	assertionsForTest.Equal(futureIDTime(builder, futureID), allRows[0].LastAt)
 	page := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 1, Offset: 1, ShowAll: true,

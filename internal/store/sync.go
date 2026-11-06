@@ -1953,6 +1953,13 @@ func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error 
 		if calendarMailbox(current) == calendarMailbox(newConfig) {
 			return nil
 		}
+		if !s.IsPostgreSQL() {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id)
+				SELECT 'meeting_links', message_id FROM calendar_events
+				WHERE message_id IN (SELECT id FROM messages WHERE source_id = ?)`, sourceID); err != nil {
+				return fmt.Errorf("journal calendar mailbox change: %w", err)
+			}
+		}
 		return s.refreshCalendarAccountAttributionTx(ctx, tx, sourceID)
 	})
 }

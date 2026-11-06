@@ -27,7 +27,17 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sqliteutil"
+	"go.kenn.io/msgvault/internal/store"
 )
+
+func initCacheTestSchema(t *testing.T, path string) *store.Store {
+	t.Helper()
+	st, err := store.OpenForTest(path)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	return st
+}
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -79,162 +89,14 @@ func setupTestSQLite(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err, "open sqlite")
-	defer func() { _ = db.Close() }()
-
-	// Create schema
-	schema := `
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (
-			id INTEGER PRIMARY KEY,
-			source_type TEXT NOT NULL DEFAULT 'gmail',
-			identifier TEXT NOT NULL UNIQUE,
-			display_name TEXT
-		);
-
-		CREATE TABLE messages (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_message_id TEXT NOT NULL,
-			rfc822_message_id TEXT,
-			conversation_id INTEGER,
-			subject TEXT,
-			snippet TEXT,
-			sent_at TIMESTAMP,
-			received_at TIMESTAMP,
-			size_estimate INTEGER,
-			has_attachments BOOLEAN DEFAULT FALSE,
-			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
-			attachment_count INTEGER DEFAULT 0,
-			deleted_from_source_at TIMESTAMP,
-			list_id TEXT,
-			sender_id INTEGER,
-			message_type TEXT NOT NULL DEFAULT 'email',
-			is_from_me BOOLEAN DEFAULT FALSE,
-			is_sent BOOLEAN DEFAULT TRUE,
-			metadata TEXT,
-			deleted_at DATETIME,
-			UNIQUE(source_id, source_message_id)
-		);
-
-		CREATE TABLE participants (
-			id INTEGER PRIMARY KEY,
-			email_address TEXT NOT NULL UNIQUE,
-			domain TEXT,
-			display_name TEXT,
-			phone_number TEXT
-		);
-
-		CREATE TABLE participant_identifiers (
-			id INTEGER PRIMARY KEY,
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			identifier_type TEXT NOT NULL,
-			identifier_value TEXT NOT NULL,
-			display_value TEXT,
-			is_primary BOOLEAN DEFAULT FALSE,
-			UNIQUE(identifier_type, identifier_value)
-		);
-
-		CREATE TABLE message_recipients (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			recipient_type TEXT NOT NULL,
-			display_name TEXT,
-			email_address TEXT
-		);
-
-		CREATE TABLE labels (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_label_id TEXT,
-			name TEXT NOT NULL,
-			label_type TEXT,
-			system_role TEXT
-		);
-
-		CREATE TABLE message_labels (
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			label_id INTEGER NOT NULL REFERENCES labels(id),
-			PRIMARY KEY (message_id, label_id)
-		);
-
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-
-		CREATE TABLE attachments (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			filename TEXT,
-			mime_type TEXT,
-			size INTEGER,
-			content_hash TEXT
-		);
-
-		CREATE TABLE conversations (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_conversation_id TEXT,
-			title TEXT,
-			conversation_type TEXT NOT NULL DEFAULT 'email'
-		);
-
-		CREATE TABLE conversation_participants (
-			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			PRIMARY KEY (conversation_id, participant_id)
-		);
-
-		CREATE TABLE archive_metadata (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-
-		CREATE TABLE account_identities (
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			address TEXT NOT NULL,
-			source_signal TEXT NOT NULL DEFAULT '',
-			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (source_id, address)
-		);
-
-		CREATE TABLE participant_links (
-			participant_a INTEGER NOT NULL REFERENCES participants(id),
-			participant_b INTEGER NOT NULL REFERENCES participants(id),
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (participant_a, participant_b),
-			CHECK (participant_a < participant_b)
-		);
-
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`
-
-	if _, err := db.Exec(schema); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		require.NoError(t, err, "create schema")
-	}
+	st := initCacheTestSchema(t, dbPath)
+	defer func() { require.NoError(t, st.Close()) }()
+	db := st.DB()
 
 	// Insert test data
 	testData := `
 		-- Source
-		INSERT INTO sources (id, identifier, display_name) VALUES (1, 'test@gmail.com', 'Test Account');
+		INSERT INTO sources (id, source_type, identifier, display_name) VALUES (1, 'gmail', 'test@gmail.com', 'Test Account');
 
 		-- Participants
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES
@@ -254,13 +116,21 @@ func setupTestSQLite(t *testing.T) string {
 			(2, 1, 'Work'),
 			(3, 1, 'IMPORTANT');
 
+		-- Conversations
+		INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type) VALUES
+			(101, 1, 'thread101', 'Hello World Thread', 'email_thread'),
+			(102, 1, 'thread102', 'Follow up Thread', 'email_thread'),
+			(103, 1, 'thread103', 'Question Thread', 'email_thread'),
+			(104, 1, 'thread104', 'Final Thread', 'email_thread');
+
+
 		-- Messages (5 messages across 3 months)
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
-			(1, 1, 'msg1', 101, 'Hello World', 'Preview 1', '2024-01-15 10:00:00', 1000, 0),
-			(2, 1, 'msg2', 101, 'Re: Hello', 'Preview 2', '2024-01-16 11:00:00', 2000, 1),
-			(3, 1, 'msg3', 102, 'Follow up', 'Preview 3', '2024-02-01 09:00:00', 1500, 0),
-			(4, 1, 'msg4', 103, 'Question', 'Preview 4', '2024-02-15 14:00:00', 3000, 1),
-			(5, 1, 'msg5', 104, 'Final', 'Preview 5', '2024-03-01 16:00:00', 500, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
+			(1, 1, 'msg1', 101, 'Hello World', 'Preview 1', '2024-01-15 10:00:00', 1000, 0, 'email'),
+			(2, 1, 'msg2', 101, 'Re: Hello', 'Preview 2', '2024-01-16 11:00:00', 2000, 1, 'email'),
+			(3, 1, 'msg3', 102, 'Follow up', 'Preview 3', '2024-02-01 09:00:00', 1500, 0, 'email'),
+			(4, 1, 'msg4', 103, 'Question', 'Preview 4', '2024-02-15 14:00:00', 3000, 1, 'email'),
+			(5, 1, 'msg5', 104, 'Final', 'Preview 5', '2024-03-01 16:00:00', 500, 0, 'email');
 
 		-- Message recipients
 		-- msg1: from alice (with envelope snapshot), to bob+carol
@@ -295,24 +165,18 @@ func setupTestSQLite(t *testing.T) string {
 			(5, 1);          -- msg5: INBOX
 
 		-- Attachments
-		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES
-			(2, 'document.pdf', 'application/pdf', 10000),
-			(2, 'image.png', 'image/png', 5000),
-			(4, 'report.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 20000);
+		INSERT INTO attachments (message_id, filename, mime_type, size, storage_path) VALUES
+			(2, 'document.pdf', 'application/pdf', 10000, 'test/document'),
+			(2, 'image.png', 'image/png', 5000, 'test/image'),
+			(4, 'report.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 20000, 'test/report');
 
-		-- Conversations
-		INSERT INTO conversations (id, source_id, source_conversation_id, title) VALUES
-			(101, 1, 'thread101', 'Hello World Thread'),
-			(102, 1, 'thread102', 'Follow up Thread'),
-			(103, 1, 'thread103', 'Question Thread'),
-			(104, 1, 'thread104', 'Final Thread');
 
 		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES
 			(101, 1), (101, 2), (101, 3), (102, 1), (102, 2),
 			(103, 1), (103, 2), (104, 1), (104, 2);
 	`
 
-	_, err = db.Exec(testData)
+	_, err := db.Exec(testData)
 	require.NoError(t, err, "insert test data")
 
 	return tmpDir
@@ -320,7 +184,7 @@ func setupTestSQLite(t *testing.T) string {
 
 func enableSQLiteWAL(t *testing.T, dbPath string) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("PRAGMA journal_mode=WAL")
 	require.NoError(t, err)
@@ -449,7 +313,7 @@ func TestBuildCacheDefaultRetryRepairsFailedDeletionRebuild(t *testing.T) {
 	committedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read committed state")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	deletedAt := committedState.LastSyncAt.Add(time.Second).UTC().Format("2006-01-02 15:04:05")
 	_, err = db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = 5`, deletedAt)
@@ -524,7 +388,7 @@ func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
 
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
 		DELETE FROM attachments;
@@ -636,12 +500,12 @@ func countCachedMessages(t *testing.T, analyticsDir string, id int64) int {
 // the next non-full build stages and publishes an incremental shard.
 func insertSixthMessage(t *testing.T, dbPath string) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err, "open sqlite")
 	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
-			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type)
+			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0, 'email');
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 			VALUES (6, 1, 'from', 'Alice Smith');
 	`)
@@ -767,7 +631,7 @@ func TestBuildCacheEmptyArchiveKeepsMessagesGlobReadable(t *testing.T) {
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = db.Exec(`
 		DELETE FROM message_recipients;
@@ -856,12 +720,12 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	requirements.NoError(err)
 	_, err = db.Exec(`
 		INSERT INTO messages (
-			id, source_id, source_message_id, sent_at, subject, snippet
-		) VALUES (6, 1, 'msg6', ?, 'New subject', 'New snippet')
+			id, source_id, source_message_id, sent_at, subject, snippet, message_type, conversation_id
+		) VALUES (6, 1, 'msg6', ?, 'New subject', 'New snippet', 'email', 101)
 	`, state.PublishedAt.Add(time.Minute))
 	requirements.NoError(err)
 	requirements.NoError(db.Close())
@@ -1110,7 +974,7 @@ func TestBuildCache_ExportsListID(t *testing.T) {
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`UPDATE messages SET list_id = '<announce.example.test>' WHERE id = 1`)
 			require.NoError(err)
@@ -1212,23 +1076,23 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	incDir, fullDir := filepath.Join(tmp, "incremental"), filepath.Join(tmp, "full")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, 'alice@example.com');
-		INSERT INTO attachments (message_id, filename, size) VALUES (1, 'old.txt', 42)`)
+		INSERT INTO attachments (message_id, filename, size, storage_path) VALUES (1, 'old.txt', 42, 'test/fixture')`)
 	require.NoError(err)
 	_, err = buildCache(dbPath, incDir, true)
 	require.NoError(err)
 	_, err = db.Exec(`INSERT INTO messages
-		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at)
-		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', '2024-04-01 10:00:00.25', NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
-		(7, 1, 'delta-in', 101, 2, '2024-04-02 10:00:00', '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
+		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at, message_type)
+		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', '2024-04-01 10:00:00.25', NULL, 1200, 1, 1, '2024-04-02 10:00:00', 'email'),
+		(7, 1, 'delta-in', 101, 2, '2024-04-02 10:00:00', '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL, 'email');
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES
 		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
 		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
 		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
-		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123)`)
+		INSERT INTO attachments (message_id, filename, mime_type, size, storage_path) VALUES (6, 'delta.txt', 'text/plain', 123, 'test/fixture')`)
 	require.NoError(err)
 	// The messages export selects size_estimate, so the scanner must decode
 	// this old row unless SQLite bounds the read to the new slice.
@@ -1236,9 +1100,11 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 	require.NoError(err)
 	_, err = buildCache(dbPath, fullDir, true)
 	require.ErrorContains(err, "export messages:", "a full messages scan must trip over the old row")
+	// Simulate out-of-band corruption without scheduling a related-row repair.
 	_, err = db.Exec(`UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
 		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
-		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
+		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1;
+		DELETE FROM cache_related_change_journal WHERE message_id = 1`)
 	require.NoError(err)
 	_, err = buildCache(dbPath, incDir, false)
 	require.NoError(err, "incremental exports must read only the new slice")
@@ -1267,13 +1133,13 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	assert.Equal(int64(5), result1.ExportedCount, "first export message count")
 
 	// Add new messages to SQLite
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
-			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
-			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
+			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0, 'email'),
+			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0, 'email');
 
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(6, 1, 'from', 'Alice Smith'),
@@ -1285,8 +1151,8 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 			(6, 1),
 			(7, 1);
 
-		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES
-			(7, 'notes.txt', 'text/plain', 500);
+		INSERT INTO attachments (message_id, filename, mime_type, size, storage_path) VALUES
+			(7, 'notes.txt', 'text/plain', 500, 'test/fixture');
 	`)
 	_ = db.Close()
 	require.NoError(err, "insert new messages")
@@ -1482,7 +1348,7 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 	if dbPath == "" {
 		return
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	switch os.Getenv(cacheMutationOpEnv) {
@@ -1490,15 +1356,15 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 		_, err = db.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
 	case cacheMutationInsertMessage:
 		_, err = db.Exec(`
-			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
-			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1);
-			INSERT INTO conversations (id, source_id, source_conversation_id, title)
-			VALUES (105, 1, 'thread105', 'Racing Thread');
+			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type)
+			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1, 'email');
+			INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
+			VALUES (105, 1, 'thread105', 'Racing Thread', 'email');
 			INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 			VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
 			INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
-			INSERT INTO attachments (message_id, filename, mime_type, size)
-			VALUES (6, 'racing.txt', 'text/plain', 100);
+			INSERT INTO attachments (message_id, filename, mime_type, size, storage_path)
+			VALUES (6, 'racing.txt', 'text/plain', 100, 'test/fixture');
 		`)
 	case cacheMutationUpdateRelated:
 		_, err = db.Exec(`
@@ -1542,11 +1408,11 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			filesBefore := snapshotCacheParquet(t, analyticsDir)
 
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
-				INSERT INTO conversations (id, source_id, source_conversation_id, title)
-				VALUES (105, 1, 'thread105', 'Partial Meeting');
+				INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
+				VALUES (105, 1, 'thread105', 'Partial Meeting', 'email');
 				INSERT INTO messages (
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
@@ -1555,7 +1421,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					'Partial Meeting', 'Parent persisted first',
 					'2026-07-12 10:00:00', 500, 'meeting_transcript'
 				);
-				CREATE TABLE sync_runs (
+				CREATE TABLE IF NOT EXISTS sync_runs (
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -1575,15 +1441,15 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(db.Close())
 
 			buildCacheBeforeStateWriteHook = func() {
-				hookDB, hookErr := sql.Open("sqlite3", dbPath)
+				hookDB, hookErr := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(hookErr)
 				defer func() { require.NoError(hookDB.Close()) }()
 				_, hookErr = hookDB.Exec(`
 					INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 					VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
 					INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
-					INSERT INTO attachments (message_id, filename, mime_type, size)
-					VALUES (6, 'late.txt', 'text/plain', 100);
+					INSERT INTO attachments (message_id, filename, mime_type, size, storage_path)
+					VALUES (6, 'late.txt', 'text/plain', 100, 'test/fixture');
 					UPDATE sync_runs
 					SET status = ?, completed_at = datetime('now'), messages_added = 1
 					WHERE id = 1;
@@ -1602,10 +1468,10 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				"snapshot publication includes the parent message")
 			published, readErr := query.ReadCacheSyncState(analyticsDir)
 			require.NoError(readErr)
-			assert.True(published.FullRebuildRequired, "partial snapshot forces the next build to be full")
+			assert.False(published.FullRebuildRequired, "the journal permits a bounded repair")
 			stale := cacheNeedsBuild(dbPath, analyticsDir)
 			require.True(stale.NeedsBuild, "partial snapshot is stale: %+v", stale)
-			require.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+			require.True(stale.FullRebuild, "cached facts changed along with journaled children: %+v", stale)
 
 			// A sync that overlaps this build also queues another automatic
 			// refresh. It must wait even though the next build must be full.
@@ -1617,7 +1483,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 
 			// A newer message arriving first must not turn the repair into an
 			// incremental build above the parent, which would skip its children.
-			db, err = sql.Open("sqlite3", dbPath)
+			db, err = sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
 				INSERT INTO messages (
@@ -1667,10 +1533,10 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
-				CREATE TABLE sync_runs (
+				CREATE TABLE IF NOT EXISTS sync_runs (
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -1695,7 +1561,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			require.NoError(err)
 
 			buildCacheBeforeStateWriteHook = func() {
-				hookDB, hookErr := sql.Open("sqlite3", dbPath)
+				hookDB, hookErr := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(hookErr)
 				defer func() { require.NoError(hookDB.Close()) }()
 				_, hookErr = hookDB.Exec(`
@@ -1727,10 +1593,10 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -1754,7 +1620,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
 
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
 		UPDATE sync_runs
@@ -1777,10 +1643,10 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -1805,7 +1671,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	require.NoError(err)
 
 	buildCacheBeforeStateWriteHook = func() {
-		hookDB, hookErr := sql.Open("sqlite3", dbPath)
+		hookDB, hookErr := sql.Open(sqliteutil.DriverName(), dbPath)
 		require.NoError(hookErr)
 		defer func() { require.NoError(hookDB.Close()) }()
 		_, hookErr = hookDB.Exec(`
@@ -1840,11 +1706,11 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -1855,8 +1721,8 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 			messages_updated INTEGER,
 			errors_count INTEGER
 		);
-		INSERT INTO conversations (id, source_id, source_conversation_id, title)
-		VALUES (105, 1, 'thread105', 'New Thread');
+		INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
+		VALUES (105, 1, 'thread105', 'New Thread', 'email');
 		INSERT INTO messages (
 			id, source_id, source_message_id, conversation_id,
 			subject, snippet, sent_at, size_estimate, message_type
@@ -1967,12 +1833,12 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 
 	// Step 2: Add new messages to SQLite, then incremental export. Publication
 	// adds build-ID-prefixed shards alongside the original full-build files.
-	sqliteDB, err := sql.Open("sqlite3", dbPath)
+	sqliteDB, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = sqliteDB.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
-			(6, 1, 'msg6', 101, 'Incremental 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
-			(7, 1, 'msg7', 102, 'Incremental 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
+			(6, 1, 'msg6', 101, 'Incremental 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0, 'email'),
+			(7, 1, 'msg7', 102, 'Incremental 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0, 'email');
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(6, 1, 'from', 'Alice Smith'),
 			(6, 2, 'to', 'Bob Jones'),
@@ -2043,11 +1909,11 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	require.NoError(os.RemoveAll(recipientsDir), "remove message_recipients dir")
 
 	// Step 3: Add new messages to SQLite (so maxID > lastMessageID).
-	sqliteDB, err := sql.Open("sqlite3", dbPath)
+	sqliteDB, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = sqliteDB.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
-			(6, 1, 'msg6', 101, 'New msg', 'Preview 6', '2024-03-15 10:00:00', 1200, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
+			(6, 1, 'msg6', 101, 'New msg', 'Preview 6', '2024-03-15 10:00:00', 1200, 0, 'email');
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(6, 1, 'from', 'Alice Smith'),
 			(6, 2, 'to', 'Bob Jones');
@@ -2161,7 +2027,7 @@ func TestBuildCache_DeletedMessagesIncluded(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Mark one message as deleted
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = db.Exec("UPDATE messages SET deleted_from_source_at = '2024-06-01 12:00:00' WHERE id = 3")
 	_ = db.Close()
@@ -2194,11 +2060,11 @@ func TestBuildCache_MessagesWithoutSentAt(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Add a message without sent_at
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, subject, snippet, size_estimate)
-		VALUES (6, 1, 'msg6', 'No Date', 'Preview', 100)
+		INSERT INTO messages (id, source_id, source_message_id, subject, snippet, size_estimate, message_type, conversation_id)
+		VALUES (6, 1, 'msg6', 'No Date', 'Preview', 100, 'email', 101)
 	`)
 	_ = db.Close()
 	require.NoError(err, "insert")
@@ -2314,12 +2180,12 @@ func TestBuildCache_YearPartitioning(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Add messages from different years
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, subject, sent_at, size_estimate) VALUES
-			(6, 1, 'msg6', 'Old Message', '2020-06-15 10:00:00', 100),
-			(7, 1, 'msg7', 'Recent Message', '2025-01-15 10:00:00', 100);
+		INSERT INTO messages (id, source_id, source_message_id, subject, sent_at, size_estimate, message_type, conversation_id) VALUES
+			(6, 1, 'msg6', 'Old Message', '2020-06-15 10:00:00', 100, 'email', 101),
+			(7, 1, 'msg7', 'Recent Message', '2025-01-15 10:00:00', 100, 'email', 101);
 	`)
 	_ = db.Close()
 	require.NoError(err, "insert")
@@ -2346,7 +2212,7 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Insert data with potentially problematic characters
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open sqlite")
 	// Note: SQLite3 driver may sanitize, but we test the flow
 	_, err = db.Exec(`
@@ -2376,9 +2242,9 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 func TestBuildCacheCSVInvalidUTF8IsRepairedWithWarning(t *testing.T) {
 	for _, tc := range []struct{ name, setup, check string }{
 		{"attachment filename", `UPDATE attachments SET filename = CAST(X'80' AS TEXT) WHERE id = 1`, "SELECT filename FROM read_parquet('%s/attachments/*.parquet') WHERE attachment_id = 1"},
-		{"row past CSV sample", `INSERT INTO messages (source_id, source_message_id, sent_at)
+		{"row past CSV sample", `INSERT INTO messages (source_id, source_message_id, sent_at, conversation_id, message_type)
    WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < 30000)
-   SELECT 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
+   SELECT 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes'), 101, 'email' FROM seq;
    UPDATE messages SET subject = CAST(X'80' AS TEXT) WHERE id = (SELECT MAX(id) FROM messages)`,
 			"SELECT subject FROM read_parquet('%s/messages/**/*.parquet', hive_partitioning=true) ORDER BY id DESC LIMIT 1"},
 	} {
@@ -2388,7 +2254,7 @@ func TestBuildCacheCSVInvalidUTF8IsRepairedWithWarning(t *testing.T) {
 			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
 			tmpDir := setupTestSQLite(t)
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(tc.setup)
 			require.NoError(err)
@@ -2420,7 +2286,7 @@ func TestBuildCacheSQLiteScannerInvalidUTF8KeepsFastSearchWorking(t *testing.T) 
 	require.NoError(probe.Close())
 	tmpDir := setupTestSQLite(t)
 	dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`UPDATE messages SET snippet = CAST(X'43616c656e6461723a206c756e636820f09f' AS TEXT) WHERE id = 1`)
 	require.NoError(err)
@@ -2471,7 +2337,7 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 
 			tmpDir := setupTestSQLite(t)
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 
 			// Byte-identical invalid keys plus distinct invalid bytes that a
@@ -2528,16 +2394,16 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
 			VALUES (4, 'email', 'owner@example.com')`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
-			VALUES (6, 1, 'msg6', 101, 'Damaged envelope', 'Preview 6', '2024-03-05 09:00:00', 400, 6)`)
+			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id, message_type)
+			VALUES (6, 1, 'msg6', 101, 'Damaged envelope', 'Preview 6', '2024-03-05 09:00:00', 400, 6, 'email')`)
 			require.NoError(err)
 			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES
 			(6, 6, 'from', 'Owner Account', CAST(? AS TEXT))`, []byte("owner-damaged\x80@example.com"))
 			require.NoError(err)
 			// Control: the same sender without any recorded envelope still
 			// attributes through the participant fallback with valid keys.
-			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
-			VALUES (7, 1, 'msg7', 101, 'No envelope', 'Preview 7', '2024-03-06 09:00:00', 400, 6)`)
+			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id, message_type)
+			VALUES (7, 1, 'msg7', 101, 'No envelope', 'Preview 7', '2024-03-06 09:00:00', 400, 6, 'email')`)
 			require.NoError(err)
 			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(7, 6, 'from', 'Owner Account')`)
@@ -2645,7 +2511,7 @@ func TestBuildCacheInvalidIdentifiersDoNotMatchValidKeys(t *testing.T) {
 			}
 			tmpDir := setupTestSQLite(t)
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
 				UPDATE messages SET source_message_id = CAST(X'80' AS TEXT) WHERE id = 1;
@@ -2658,7 +2524,7 @@ func TestBuildCacheInvalidIdentifiersDoNotMatchValidKeys(t *testing.T) {
 				UPDATE conversations SET source_conversation_id = CAST(X'81' AS TEXT) WHERE id = 102;
 				UPDATE conversations SET source_conversation_id = '�' WHERE id = 103;
 				UPDATE sources SET identifier = CAST(X'80' AS TEXT) WHERE id = 1;
-				INSERT INTO sources (id, identifier) VALUES (2, CAST(X'81' AS TEXT)), (3, '�');
+				INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gmail', CAST(X'81' AS TEXT)), (3, 'gmail', '�');
 			`)
 			require.NoError(err)
 			require.NoError(db.Close())
@@ -2724,7 +2590,7 @@ func TestBuildCacheCountsOnlyRepairedExportValues(t *testing.T) {
 
 			tmpDir := setupTestSQLite(t)
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain, display_name)
 				VALUES (6, CAST(? AS TEXT), 'example.com', CAST(? AS TEXT))`,
@@ -2773,7 +2639,7 @@ func TestBuildCacheCountsOnlyRepairedExportValues(t *testing.T) {
 
 func corruptEveryExportedTextColumn(t *testing.T, dbPath string) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	bad := func(col string) string {
@@ -2914,12 +2780,12 @@ func TestBuildCacheCSVQuotedFieldPastSniffSampleRoundTrips(t *testing.T) {
 	const bulkRows = 30000
 	quotedName := "Example \"Co\", LLC\nAttn: Sales"
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, sent_at)
+		INSERT INTO messages (id, source_id, source_message_id, sent_at, conversation_id, message_type)
 		WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?)
-		SELECT 1000 + i, 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
+		SELECT 1000 + i, 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes'), 101, 'email' FROM seq;
 	`, bulkRows)
 	require.NoError(err)
 	_, err = db.Exec(`
@@ -2929,8 +2795,8 @@ func TestBuildCacheCSVQuotedFieldPastSniffSampleRoundTrips(t *testing.T) {
 	`, bulkRows)
 	require.NoError(err)
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, sent_at)
-		VALUES (?, 1, 'quoted', '2024-05-01 12:00:00')
+		INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id)
+		VALUES (?, 1, 'quoted', '2024-05-01 12:00:00', 'email', 101)
 	`, 1000+bulkRows+1)
 	require.NoError(err)
 	_, err = db.Exec(`
@@ -2982,10 +2848,8 @@ func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
 			tmpDir := setupTestSQLite(t)
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err, "open SQLite fixture")
-			_, err = db.Exec(`ALTER TABLE attachments ADD COLUMN attachment_metadata JSON`)
-			require.NoError(err, "add attachment metadata column")
 			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"shared_url":"https://example.com/post"}' WHERE id = 1`)
 			require.NoError(err, "set link-preview metadata")
 			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"source_transcript":{"provider":"beeper","text":"voice note"}}' WHERE id = 2`)
@@ -3030,43 +2894,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	// Create empty database with schema
-	db, _ := sql.Open("sqlite3", dbPath)
-	_, _ = db.Exec(`
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
-		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
-		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
-		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
-		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
-		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
-		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
-		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
-		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`)
-	_ = db.Close()
+	require.NoError(initCacheTestSchema(t, dbPath).Close())
 
 	result, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
@@ -3100,7 +2928,7 @@ func TestCSVFallbackPath(t *testing.T) {
 	require.NoError(os.MkdirAll(csvDir, 0755), "create csv dir")
 
 	// 1. Export tables to CSV (same as setupSQLiteSource Windows path)
-	sqliteDB, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	sqliteDB, err := sql.Open(sqliteutil.DriverName(), dbPath+"?mode=ro")
 	require.NoError(err, "open sqlite")
 
 	tables := []struct {
@@ -3233,7 +3061,7 @@ func BenchmarkBuildCache(b *testing.B) {
 	dbPath := filepath.Join(tmpDir, "bench.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, _ := sql.Open("sqlite3", dbPath)
+	db, _ := sql.Open(sqliteutil.DriverName(), dbPath)
 
 	// Create schema
 	_, _ = db.Exec(`
@@ -3301,146 +3129,17 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err, "open sqlite")
-	defer func() { _ = db.Close() }()
-
-	schema := `
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (
-			id INTEGER PRIMARY KEY,
-			source_type TEXT NOT NULL DEFAULT 'gmail',
-			identifier TEXT NOT NULL UNIQUE,
-			display_name TEXT
-		);
-		CREATE TABLE messages (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_message_id TEXT NOT NULL,
-			rfc822_message_id TEXT,
-			conversation_id INTEGER,
-			subject TEXT,
-			snippet TEXT,
-			sent_at TIMESTAMP,
-			received_at TIMESTAMP,
-			size_estimate INTEGER,
-			has_attachments BOOLEAN DEFAULT FALSE,
-			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
-			attachment_count INTEGER DEFAULT 0,
-			deleted_from_source_at TIMESTAMP,
-			list_id TEXT,
-			sender_id INTEGER,
-			message_type TEXT NOT NULL DEFAULT 'email',
-			is_from_me BOOLEAN DEFAULT FALSE,
-			is_sent BOOLEAN DEFAULT TRUE,
-			metadata TEXT,
-			deleted_at DATETIME,
-			UNIQUE(source_id, source_message_id)
-		);
-		CREATE TABLE participants (
-			id INTEGER PRIMARY KEY,
-			email_address TEXT NOT NULL UNIQUE,
-			domain TEXT,
-			display_name TEXT,
-			phone_number TEXT
-		);
-		CREATE TABLE participant_identifiers (
-			participant_id INTEGER, identifier_type TEXT, identifier_value TEXT,
-			display_value TEXT, is_primary BOOLEAN
-		);
-		CREATE TABLE message_recipients (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			recipient_type TEXT NOT NULL,
-			display_name TEXT,
-			email_address TEXT
-		);
-		CREATE TABLE labels (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_label_id TEXT,
-			name TEXT NOT NULL,
-			label_type TEXT,
-			system_role TEXT
-		);
-		CREATE TABLE message_labels (
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			label_id INTEGER NOT NULL REFERENCES labels(id),
-			PRIMARY KEY (message_id, label_id)
-		);
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-		CREATE TABLE attachments (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			filename TEXT,
-			mime_type TEXT,
-			size INTEGER,
-			content_hash TEXT
-		);
-		CREATE TABLE conversations (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_conversation_id TEXT,
-			title TEXT,
-			conversation_type TEXT NOT NULL DEFAULT 'email'
-		);
-		CREATE TABLE conversation_participants (
-			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			PRIMARY KEY (conversation_id, participant_id)
-		);
-
-		CREATE TABLE archive_metadata (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-
-		CREATE TABLE account_identities (
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			address TEXT NOT NULL,
-			source_signal TEXT NOT NULL DEFAULT '',
-			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (source_id, address)
-		);
-
-		CREATE TABLE participant_links (
-			participant_a INTEGER NOT NULL REFERENCES participants(id),
-			participant_b INTEGER NOT NULL REFERENCES participants(id),
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (participant_a, participant_b),
-			CHECK (participant_a < participant_b)
-		);
-
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`
-	_, err = db.Exec(schema)
-	require.NoError(t, err, "create schema")
+	st := initCacheTestSchema(t, dbPath)
+	defer func() { require.NoError(t, st.Close()) }()
+	db := st.DB()
 
 	// Insert metadata but NO messages
 	metadata := `
-		INSERT INTO sources (id, identifier, display_name) VALUES (1, 'test@gmail.com', 'Test Account');
+		INSERT INTO sources (id, source_type, identifier, display_name) VALUES (1, 'gmail', 'test@gmail.com', 'Test Account');
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES (1, 'alice@example.com', 'example.com', 'Alice');
 		INSERT INTO labels (id, source_id, name) VALUES (1, 1, 'INBOX');
 	`
-	_, err = db.Exec(metadata)
+	_, err := db.Exec(metadata)
 	require.NoError(t, err, "insert metadata")
 
 	return tmpDir
@@ -3495,10 +3194,9 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test.db")
 		analyticsDir := filepath.Join(tmpDir, "analytics")
 
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 		require.NoError(err)
 		_, err = db.Exec(`
-			ALTER TABLE messages ADD COLUMN source_is_from_me BOOLEAN DEFAULT FALSE;
 			UPDATE messages
 			SET is_from_me = FALSE, source_is_from_me = TRUE
 			WHERE id = 1;
@@ -3712,7 +3410,7 @@ func TestBuildCacheDerivesAttributionFromEnvelopeAliasSnapshot(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test.db")
 		analyticsDir := filepath.Join(tmpDir, "analytics")
 
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 		require.NoError(err)
 		_, err = db.Exec(`
 			INSERT INTO account_identities (source_id, address)
@@ -3758,7 +3456,7 @@ func TestBuildCacheDoesNotFallbackFromEnvelopeToCurrentParticipant(t *testing.T)
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
 		INSERT INTO account_identities (source_id, address)
@@ -3818,9 +3516,10 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	t.Helper()
 	require.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
-		LastMessageID: lastMessageID,
-		LastSyncAt:    syncAt,
-		SchemaVersion: cacheSchemaVersion,
+		LastMessageID:        lastMessageID,
+		LastSyncAt:           syncAt,
+		SchemaVersion:        cacheSchemaVersion,
+		LastRelatedChangeSeq: fixtureJournalSequence(t, filepath.Join(filepath.Dir(analyticsDir), "test.db")),
 		// These fingerprints hash zero rows in these fixtures, so they are
 		// the empty-input sha256 digest.
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -3830,6 +3529,22 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
 	require.NoError(t, os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644), "write sync state")
+}
+
+func fixtureJournalSequence(t *testing.T, path string) int64 {
+	t.Helper()
+	require := require.New(t)
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) || (err == nil && !info.Mode().IsRegular()) {
+		return 0
+	}
+	require.NoError(err)
+	db, err := sql.Open(sqliteutil.DriverName(), path+"?mode=ro")
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	var seq int64
+	require.NoError(db.QueryRow(`SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='cache_related_change_journal'), 0)`).Scan(&seq))
+	return seq
 }
 
 // createFakeParquet creates fake parquet files for all required directories
@@ -3907,10 +3622,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
 				// DB has messages beyond what state recorded
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id) VALUES (10, 1, 'msg10', datetime('now'), 'email', 101)`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				createFakeParquet(t, analyticsDir)
@@ -3924,10 +3639,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
 				// DB maxID matches state — cache is current
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id) VALUES (10, 1, 'msg10', datetime('now'), 'email', 101)`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 10)
 				createFakeParquet(t, analyticsDir)
@@ -3940,10 +3655,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
 				// State file exists, DB has messages, but parquet dir is empty
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id) VALUES (5, 1, 'msg5', datetime('now'), 'email', 101)`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				// No Parquet files created, so readiness reports an absent cache.
@@ -3956,10 +3671,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
 				// All messages are soft-deleted — maxID should be 0
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at) VALUES (10, 1, 'msg10', datetime('now'), datetime('now', '-1 hour'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at, message_type, conversation_id) VALUES (10, 1, 'msg10', datetime('now'), datetime('now', '-1 hour'), 'email', 101)`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 0)
 				createFakeParquet(t, analyticsDir)
@@ -3971,12 +3686,12 @@ func TestCacheNeedsBuild(t *testing.T) {
 			name: "CalendarOnly_NoMessagesParquet_NoRebuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
 				_, err = db.Exec(`
-					INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type)
-					VALUES (10, 1, 'calendar-10', datetime('now'), 'calendar_event')
+					INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id)
+					VALUES (10, 1, 'calendar-10', datetime('now'), 'calendar_event', 101)
 				`)
 				require.NoError(t, err, "insert calendar event")
 				writeSyncState(t, analyticsDir, 10)
@@ -3990,15 +3705,15 @@ func TestCacheNeedsBuild(t *testing.T) {
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
 				stateTime := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
 				_, err = db.Exec(`
 					INSERT INTO messages (
 						id, source_id, source_message_id, sent_at,
-						deleted_from_source_at, deleted_at
+						deleted_from_source_at, deleted_at, message_type, conversation_id
 					)
-					VALUES (?, 1, 'msg5', ?, ?, ?)
+					VALUES (?, 1, 'msg5', ?, ?, ?, 'email', 101)
 				`, 5, stateTime.Add(-time.Hour), stateTime.Add(time.Minute), stateTime.Add(time.Minute))
 				require.NoError(t, err, "insert deleted hidden message")
 				writeSyncStateAt(t, analyticsDir, 5, stateTime)
@@ -4040,10 +3755,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 				requirementsForTest := require.New(t)
 
 				// Only messages parquet exists, missing other required tables
-				db, err := sql.Open("sqlite3", dbPath)
+				db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 				requirementsForTest.NoError(err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id) VALUES (5, 1, 'msg5', datetime('now'), 'email', 101)`)
 				requirementsForTest.NoError(err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				// Only create messages parquet — other required dirs missing
@@ -4119,9 +3834,9 @@ func TestCacheNeedsBuild_IdentityRevisionChangeRequiresIncrementalBuild(t *testi
 	writeSyncState(t, analyticsDir, 0)
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1')`)
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
 	require.NoError(err, "bump identity revision")
 	require.NoError(db.Close())
 
@@ -4148,9 +3863,9 @@ func TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild(t *testi
 	writeSyncState(t, analyticsDir, 0)
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1')`)
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
 	require.NoError(err, "bump account identity revision")
 	require.NoError(db.Close())
 
@@ -4197,12 +3912,12 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	writeSyncStateAt(t, analyticsDir, 5, stateTime)
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4244,12 +3959,12 @@ func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T
 	writeSyncState(t, analyticsDir, 0)
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4313,11 +4028,11 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 			require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644))
 			createFakeParquet(t, analyticsDir)
 
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			defer func() { _ = db.Close() }()
 			_, err = db.Exec(`
-				CREATE TABLE sync_runs (
+				CREATE TABLE IF NOT EXISTS sync_runs (
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
 					started_at DATETIME,
@@ -4361,11 +4076,11 @@ func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644))
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4399,6 +4114,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require.NoError(os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
 		LastMessageID:                       5,
+		LastRelatedChangeSeq:                fixtureJournalSequence(t, dbPath),
 		LastSyncAt:                          stateTime,
 		LastCompletedSyncRunID:              7,
 		LastCacheUpdateCount:                2,
@@ -4412,12 +4128,12 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644), "write sync state")
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4461,9 +4177,9 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type, conversation_id) VALUES (10, 1, 'msg10', datetime('now'), 'email', 101)`)
 	require.NoError(err, "insert message")
 	require.NoError(db.Close(), "close db")
 
@@ -4473,7 +4189,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	state := syncState{
 		LastMessageID: 10,
 		LastSyncAt:    time.Now(),
-		SchemaVersion: 11,
+		SchemaVersion: 35,
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")
@@ -4486,13 +4202,13 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.Contains(got.Reason, "schema", "cacheNeedsBuild() reason should mention schema")
 
 	result, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err, "upgrade v11 cache through normal build")
+	require.NoError(err, "upgrade v35 cache through normal build")
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read upgraded cache state")
 	require.Equal(cacheSchemaVersion, upgraded.SchemaVersion)
 	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
-		"full rebuild must replace rather than extend the v11 identifier dataset")
+		"full rebuild must replace rather than extend the v35 identifier dataset")
 	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")
 	require.FileExists(identifierParquet)
 	duckdb, err := sql.Open("duckdb", "")
@@ -4520,23 +4236,23 @@ func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
 	writeSyncStateAt(t, analyticsDir, 5, stateTime)
 	createFakeParquet(t, analyticsDir)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
 	// Insert one live row and one row dedup-hidden after LastSyncAt.
 	_, err = db.Exec(
 		`INSERT INTO messages
-			(id, source_id, source_message_id, sent_at, deleted_at)
-		 VALUES (1, 1, 'msg1', datetime('now'), NULL)`,
+			(id, source_id, source_message_id, sent_at, deleted_at, message_type, conversation_id)
+		 VALUES (1, 1, 'msg1', datetime('now'), NULL, 'email', 101)`,
 	)
 	require.NoError(err, "insert live row")
 	hiddenAt := stateTime.Add(1 * time.Hour).
 		Format("2006-01-02 15:04:05")
 	_, err = db.Exec(
 		`INSERT INTO messages
-			(id, source_id, source_message_id, sent_at, deleted_at)
-		 VALUES (2, 1, 'msg2', datetime('now'), ?)`,
+			(id, source_id, source_message_id, sent_at, deleted_at, message_type, conversation_id)
+		 VALUES (2, 1, 'msg2', datetime('now'), ?, 'email', 101)`,
 		hiddenAt,
 	)
 	require.NoError(err, "insert dedup-hidden row")
@@ -4553,12 +4269,12 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
+		CREATE TABLE IF NOT EXISTS sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
 			started_at DATETIME,
@@ -4622,7 +4338,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 	dbPath := filepath.Join(tmpDir, "bench.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, _ := sql.Open("sqlite3", dbPath)
+	db, _ := sql.Open(sqliteutil.DriverName(), dbPath)
 
 	// Create schema and initial data (10000 messages)
 	_, _ = db.Exec(`
@@ -4776,9 +4492,10 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				dir := setupTestSQLite(t)
 				dbPath := filepath.Join(dir, "test.db")
 				cache := filepath.Join(dir, "analytics")
-				db, err := sql.Open("sqlite3", dbPath)
+				st, err := store.OpenForTest(dbPath)
 				require.NoError(err)
-				defer func() { _ = db.Close() }()
+				defer func() { require.NoError(st.Close()) }()
+				db := st.DB()
 				statement := `UPDATE messages SET subject=CAST(X'80' AS TEXT), rfc822_message_id=CAST(X'80' AS TEXT) WHERE id=1`
 				if mode == "identity" {
 					statement = `UPDATE messages SET rfc822_message_id=CAST(X'80' AS TEXT) WHERE id=1`
@@ -4805,7 +4522,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				original, err := os.ReadFile(shards[0])
 				require.NoError(err)
 				if mode == "incremental" {
-					_, err = db.Exec(`INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at) VALUES(6,1,'probe-clean',101,'clean','2025-01-01')`)
+					_, err = db.Exec(`INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at,message_type) VALUES(6,1,'probe-clean',101,'clean','2025-01-01','email')`)
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() { result, err = buildCache(dbPath, cache, false) })
 					require.NoError(err)
