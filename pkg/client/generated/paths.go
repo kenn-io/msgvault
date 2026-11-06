@@ -694,6 +694,11 @@ type ListPersonFactClaimsPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListPersonFactContestsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type ListPersonFactDecisionsPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
