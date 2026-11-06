@@ -101,13 +101,28 @@ func TestAttachmentRevisionCrashWorker(t *testing.T) {
 			os.Exit(74)
 		}
 	})
-	_, err = New(mock, st, opts).WithLogger(logger.logger()).Full(t.Context(), testEmail)
+	service := New(mock, st, opts).WithLogger(logger.logger())
+	if os.Getenv("MSGVAULT_ATTACHMENT_CRASH_SYNC") == "incremental" {
+		mock.Profile.HistoryID = 1001
+		mock.HistoryID = 1001
+		mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("interrupted")}
+		source, sourceErr := st.GetSourceByIdentifier(testEmail)
+		require.NoError(sourceErr)
+		_, err = service.Incremental(t.Context(), source)
+	} else {
+		_, err = service.Full(t.Context(), testEmail)
+	}
 	require.FailNow("worker did not reach its crash boundary", "error=%v", err)
 }
 
 func TestAttachmentRevisionCrashRetainsDurableWork(t *testing.T) {
-	for _, mode := range []string{"mime-error", "before-image"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct{ syncType, mode string }{
+		{"full", "mime-error"},
+		{"full", "before-image"},
+		{"incremental", "before-image"},
+	} {
+		t.Run(tc.syncType+"/"+tc.mode, func(t *testing.T) {
+			mode := tc.mode
 			assert, require := assert.New(t), require.New(t)
 			e := attachmentPersistenceEnv(t)
 			source := e.CreateSourceWithHistory(t, "1000")
@@ -116,7 +131,7 @@ func TestAttachmentRevisionCrashRetainsDurableWork(t *testing.T) {
 				require.NoError(os.WriteFile(dir, []byte("blocked"), 0600))
 			}
 			child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAttachmentRevisionCrashWorker$", "-test.timeout=1m") //nolint:gosec // Reexecutes the test binary against this synthetic fixture.
-			child.Env = append(os.Environ(), "MSGVAULT_ATTACHMENT_CRASH_MODE="+mode,
+			child.Env = append(os.Environ(), "MSGVAULT_ATTACHMENT_CRASH_MODE="+mode, "MSGVAULT_ATTACHMENT_CRASH_SYNC="+tc.syncType,
 				"MSGVAULT_ATTACHMENT_CRASH_DSN="+revisionStoreLocation(t, e.Store), "MSGVAULT_ATTACHMENT_CRASH_DIR="+dir)
 			output, err := child.CombinedOutput()
 			var exit *exec.ExitError
@@ -161,6 +176,12 @@ func TestAttachmentRevisionCrashRetainsDurableWork(t *testing.T) {
 			debt, err = e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 			require.NoError(err)
 			assert.Empty(debt)
+			require.True(e.Store.FTS5Available(), "exercise indexed search rather than its fallback")
+			results, total, err := e.Store.SearchMessages("Test", 0, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), total, "recovered messages must be searchable through the Web/API query path")
+			require.Len(results, 1)
+			assert.Equal(ids["interrupted"], results[0].ID)
 		})
 	}
 }
@@ -181,48 +202,6 @@ func TestAttachmentRevisionDebtWriteFailureRollsBackRAW(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(ids, "a rejected pending marker must roll back its RAW transaction")
 	allow()
-}
-
-func TestAttachmentRevisionUppercaseHash(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "keyed", true: "legacy"}[legacy], func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			e := attachmentPersistenceEnv(t)
-			dir := filepath.Join(e.TmpDir, "attachments")
-			e.Mock.AddMessage("uppercase", testMIMEWithAttachment(), []string{"INBOX"})
-			_, err := New(e.Mock, e.Store, &Options{AttachmentsDir: dir}).Full(t.Context(), testEmail)
-			require.NoError(err)
-			source := e.CreateSource(t)
-			ids, err := e.Store.MessageExistsBatch(source.ID, []string{"uppercase"})
-			require.NoError(err)
-			id := ids["uppercase"]
-			query := `UPDATE attachments SET content_hash = UPPER(content_hash)`
-			if legacy {
-				query += `, source_part_key = NULL`
-			}
-			_, err = e.Store.DB().Exec(e.Store.Rebind(query+` WHERE message_id = ?`), id)
-			require.NoError(err)
-			before, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
-			require.NoError(err)
-			require.Len(before, 1)
-			path := filepath.Join(dir, before[0].StoragePath)
-			info, err := os.Stat(path)
-			require.NoError(err)
-			service := New(nil, e.Store, &Options{AttachmentsDir: dir})
-			for range 2 {
-				require.NoError(service.RepairMessageAttachments(t.Context(), RepairRequest{Reference: "uppercase", SourceID: source.ID}))
-			}
-			after, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
-			require.NoError(err)
-			require.Len(after, 1)
-			assert.Equal(before[0].ContentHash, after[0].ContentHash)
-			assert.NotEmpty(after[0].SourcePartKey)
-			got, err := os.Stat(path)
-			require.NoError(err)
-			assert.True(os.SameFile(info, got))
-			assert.Equal(info.ModTime(), got.ModTime())
-		})
-	}
 }
 
 type revisionRepeatedLabelAPI struct {

@@ -1988,6 +1988,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		resolution = &store.SyncRunItem{SyncRunID: s.acquisitionSyncID, SourceMessageID: data.message.SourceMessageID,
 			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: store.SyncRunItemFilesPendingMessage}
 	}
+	// Publish the search document with RAW before interruptible file I/O.
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
@@ -1997,6 +1998,13 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		Recipients:  recipientSets,
 		LabelIDs:    labelIDs,
 		SyncRunItem: resolution,
+		FTS: &store.FTSDoc{
+			Subject:  data.message.Subject.String,
+			Body:     data.bodyText,
+			FromAddr: joinEmails(data.from),
+			ToAddrs:  joinEmails(data.to),
+			CcAddrs:  joinEmails(data.cc),
+		},
 	})
 	if err != nil {
 		return 0, err
@@ -2049,20 +2057,6 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		imageErr := s.archiveMessageRemoteImages(ctx, messageID, data.bodyHTML, attachmentErr != nil)
 		if gmailMaterialization {
 			attachmentErr = errors.Join(attachmentErr, imageErr)
-		}
-	}
-
-	// Populate FTS index (best-effort outside transaction)
-	if s.store.FTS5Available() {
-		subject := ""
-		if data.message.Subject.Valid {
-			subject = data.message.Subject.String
-		}
-		fromAddr := joinEmails(data.from)
-		toAddrs := joinEmails(data.to)
-		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTS(messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
-			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
 		}
 	}
 

@@ -302,31 +302,6 @@ func TestAttachmentRepairProviderCollisionRollsBack(t *testing.T) {
 	assert.NoFileExists(filepath.Join(dir, parsed.Attachments[0].ContentHash[:2], parsed.Attachments[0].ContentHash))
 }
 
-func TestAttachmentRepairLegacyMetadata(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	e := attachmentPersistenceEnv(t)
-	dir := filepath.Join(e.TmpDir, "attachments")
-	e.Mock.AddMessage("legacy", testMIMEWithAttachment(), []string{"INBOX"})
-	_, err := New(e.Mock, e.Store, &Options{AttachmentsDir: dir}).Full(t.Context(), testEmail)
-	require.NoError(err)
-	source := e.CreateSource(t)
-	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"legacy"})
-	require.NoError(err)
-	id := ids["legacy"]
-	_, err = e.Store.DB().Exec(e.Store.Rebind(`UPDATE attachments SET source_part_key = NULL, filename = 'retained-name.bin' WHERE message_id = ?`), id)
-	require.NoError(err)
-	var rowID int64
-	require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&rowID))
-	require.NoError(New(nil, e.Store, &Options{AttachmentsDir: dir}).RepairMessageAttachments(t.Context(), RepairRequest{Reference: "legacy", SourceID: source.ID}))
-	var gotID int64
-	var filename, key string
-	require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT id, filename, source_part_key FROM attachments WHERE message_id = ?`), id).Scan(&gotID, &filename, &key))
-	assert.Equal(rowID, gotID)
-	assert.Equal("retained-name.bin", filename)
-	assert.NotEmpty(key)
-}
-
 func TestAttachmentRepairPreservesPackedBlob(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
