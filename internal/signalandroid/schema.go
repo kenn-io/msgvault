@@ -130,7 +130,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	s.recipientName = recipientNameExpr(recipient)
 	s.recipientPNI = firstColumn(recipient, "pni")
 
-	if s.threadRecipient = firstColumn(thread, "recipient_id", "thread_recipient_id"); s.threadRecipient == "" {
+	if s.threadRecipient = firstColumn(thread, "recipient_id"); s.threadRecipient == "" {
 		return nil, fmt.Errorf("%w: chat contacts are missing", ErrUnsupportedDatabase)
 	}
 
@@ -203,10 +203,10 @@ func recipientNameExpr(columns map[string]bool) string {
 			parts = append(parts, "NULLIF(TRIM(r."+column+"), '')")
 		}
 	}
-	if len(parts) == 0 {
-		return "''"
+	if columns["shared_given_name"] && columns["shared_family_name"] {
+		parts = append(parts, "NULLIF(TRIM(COALESCE(r.shared_given_name, '') || ' ' || COALESCE(r.shared_family_name, '')), '')")
 	}
-	return "COALESCE(" + strings.Join(parts, ", ") + ", '')"
+	return "COALESCE(" + strings.Join(append(parts, "''"), ", ") + ", '')"
 }
 
 func firstColumn(columns map[string]bool, names ...string) string {

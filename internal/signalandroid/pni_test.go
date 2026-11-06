@@ -210,3 +210,33 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 		})
 	}
 }
+
+func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
+	changeFixture(t, dir, `UPDATE recipient SET pni = NULL WHERE _id = 7`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		 VALUES (601, 1700000410000, 1700000410001, 14, 7, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	summary := runImport(t, st, dir, attachments)
+	assert.Zero(summary.ChatsSkipped)
+	assert.Zero(summary.MessagesSkipped)
+	chatID := "signal:tel:" + signalfixture.DanaPhone
+	before := importedMessages(t, st)
+	assert.Equal(map[string]importedMessage{
+		chatID + ":self:1700000400000": {conversation: chatID, body: "hello Dana", fromMe: true},
+		chatID + ":peer:1700000410000": {conversation: chatID, body: "hello owner"},
+	}, before)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), chatID+":peer:1700000410000").Scan(&messageID))
+
+	changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
+	summary = runImport(t, st, dir, attachments)
+
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(2), summary.MessagesUpdated)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+}

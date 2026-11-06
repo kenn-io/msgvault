@@ -135,6 +135,18 @@ func messageIDs(chatID string, authorTokens []string, dateSent int64) []string {
 	return ids
 }
 
+// recipientIDs returns r's ACI, PNI and phone number, each with its prefix,
+// skipping those Signal has not recorded.
+func recipientIDs(r sigRecipient, aciPrefix, pniPrefix, phonePrefix string) []string {
+	var ids []string
+	for _, id := range [][2]string{{aciPrefix, r.ACI}, {pniPrefix, r.PNI}, {phonePrefix, r.E164}} {
+		if id[1] != "" {
+			ids = append(ids, id[0]+id[1])
+		}
+	}
+	return ids
+}
+
 // conversationIdentity maps a chat recipient to its source conversation ID
 // and type. ok is false for chats the importer does not read: MMS groups,
 // story distribution lists and call links.
@@ -142,17 +154,14 @@ func conversationIdentity(r sigRecipient, archived map[string]bool) (sourceConvI
 	if r.GroupID != "" {
 		return groupIdentity(r.GroupID)
 	}
-	if r.ACI != "" && archived[directACIPrefix+r.ACI] {
-		return directACIPrefix + r.ACI, "direct_chat", true
+	ids := recipientIDs(r, directACIPrefix, directPNIPrefix, directPhonePrefix)
+	for _, id := range ids {
+		if archived[id] {
+			return id, "direct_chat", true
+		}
 	}
-	if r.PNI != "" && archived[directPNIPrefix+r.PNI] {
-		return directPNIPrefix + r.PNI, "direct_chat", true
-	}
-	if r.ACI != "" {
-		return directACIPrefix + r.ACI, "direct_chat", true
-	}
-	if r.PNI != "" {
-		return directPNIPrefix + r.PNI, "direct_chat", true
+	if len(ids) > 0 {
+		return ids[0], "direct_chat", true
 	}
 	return "", "", false
 }

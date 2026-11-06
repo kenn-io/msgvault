@@ -29,9 +29,10 @@ const (
 	// rawFormat names the JSON stored in message_raw.
 	rawFormat = "signal_android_json"
 
-	directACIPrefix = "signal:aci:"
-	directPNIPrefix = "signal:pni:"
-	groupPrefix     = "signal:group:"
+	directACIPrefix   = "signal:aci:"
+	directPNIPrefix   = "signal:pni:"
+	directPhonePrefix = "signal:tel:"
+	groupPrefix       = "signal:group:"
 )
 
 // ImportOptions configures a Signal import.

@@ -329,14 +329,7 @@ func (r *run) tokens(recipientID int64, direct bool) []string {
 	if direct {
 		return []string{"peer"}
 	}
-	recipient := r.recipients[recipientID]
-	var tokens []string
-	for _, id := range [][2]string{{"", recipient.ACI}, {"pni:", recipient.PNI}, {"tel:", recipient.E164}} {
-		if id[1] != "" {
-			tokens = append(tokens, id[0]+id[1])
-		}
-	}
-	return tokens
+	return recipientIDs(r.recipients[recipientID], "", "pni:", "tel:")
 }
 
 func (r *run) displayName(recipientID int64) string {
