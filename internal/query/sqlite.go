@@ -2214,11 +2214,10 @@ func appendSQLiteAddressCondition(
 }
 
 func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
-	conditions, args, ftsJoin := e.buildSearchCriteria(ctx, q, false)
+	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, q)
 	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
 		return page, err
 	}
-	conditions = append([]string{searchMessageVisibilityWhere("m", q)}, conditions...)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2236,8 +2235,8 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 	if _, ok := e.dialect.(SQLiteQueryDialect); !ok || len(q.TextTerms) == 0 || q.HasOR() || q.DeletionScope == search.DeletionScopeDeleted || limit+offset <= 0 || limit+offset > searchWalkMaxResults || ftsJoin == "" {
 		return nil, false, nil
 	}
-	// Text-only means buildSearchCriteria returned just the FTS condition.
-	if len(conditions) != 1 {
+	// Text-only means buildSearchQueryParts returned visibility plus one FTS condition.
+	if len(conditions) != 2 {
 		return nil, false, nil
 	}
 	var hits int
@@ -2250,9 +2249,9 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 	// A full page from this date prefix is also the full archive's page.
 	// Include cutoff ties to preserve the existing id ordering within a date.
 	conditions = []string{
-		searchMessageVisibilityWhere("m", q),
+		conditions[0],
 		"m.sent_at >= (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
-		store.SQLiteFTSRowIDCondition(conditions[0]),
+		store.SQLiteFTSRowIDCondition(conditions[1]),
 	}
 	args = append([]any{searchWalkWindow*(limit+offset) - 1}, args...)
 	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
