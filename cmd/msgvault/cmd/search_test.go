@@ -707,6 +707,10 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
+	youtubeSource, err := s.GetOrCreateSource("youtube", "youtube:UCfixture")
+	require.NoError(err, "create YouTube source")
+	youtubeConv, err := s.EnsureConversationWithType(youtubeSource.ID, "video-fixture", "group_chat", "Fixture video")
+	require.NoError(err, "create YouTube conversation")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: emailConv,
 		SourceMessageID: "email-1", MessageType: "email",
@@ -721,6 +725,13 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert calendar event")
+	_, err = s.UpsertMessage(&store.Message{
+		SourceID: youtubeSource.ID, ConversationID: youtubeConv,
+		SourceMessageID: "comment-fixture", MessageType: "youtube",
+		Subject: sql.NullString{String: "YouTube comment fixture", Valid: true},
+		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err, "insert YouTube comment")
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
@@ -752,6 +763,19 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	out := done()
 	require.NoError(err, "message-type search failed")
 	assert.Contains(out, "Calendar planning", "expected calendar event in output")
+	assert.NotContains(out, "Email hello", "email message must be filtered out")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--message-type", "youtube", "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "YouTube message-type search failed")
+	assert.Contains(out, "YouTube comment fixture", "expected YouTube comment in output")
+	assert.NotContains(out, "Calendar planning", "calendar event must be filtered out")
 	assert.NotContains(out, "Email hello", "email message must be filtered out")
 }
 

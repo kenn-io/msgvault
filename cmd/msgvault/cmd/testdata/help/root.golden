@@ -76,6 +76,7 @@ Add and sync sources:
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
   add-twenty             Register and validate a Twenty Call Recorder source
   add-twilio             Register and validate a Twilio call source
+  add-youtube            Register an explicitly configured owned YouTube channel
   archive-remote-images  Download remote images in archived email (needs consent)
   backfill-beeper-media  Retry pending Beeper attachment downloads
   backfill-discord-media Retry pending Discord attachment downloads
@@ -107,6 +108,7 @@ Add and sync sources:
   sync-teams             Sync Microsoft Teams chats and channels
   sync-twenty            Sync Twenty Call Recorder meetings
   sync-twilio            Sync Twilio calls and recordings
+  sync-youtube           Poll registered YouTube videos, comments and replies
   update-account         Update account settings
   verify                 Verify archive integrity against Gmail
 
