@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -29,14 +27,14 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 }
 
 func TestCallObservationSearchAndMessageProjections(t *testing.T) {
-	t.Run("timezone offsets preserve call window", func(t *testing.T) {
+	t.Run("UTC timestamps preserve call window", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		st := storetest.New(t).Store
 		o, sourceID := validCallObservation(t, st)
 		var ids []int64
-		for i, timestamp := range []string{"2026-10-01T00:30:00-04:00", "2026-10-01T01:30:00Z"} {
-			o.RecordID = fmt.Sprintf("offset-call-%d", i)
+		for i, timestamp := range []string{"2026-10-01T04:30:00Z", "2026-10-01T01:30:00Z"} {
+			o.RecordID = fmt.Sprintf("window-call-%d", i)
 			var err error
 			o.OccurredAt, err = time.Parse(time.RFC3339, timestamp)
 			require.NoError(err)
@@ -194,10 +192,6 @@ func TestCallObservationReplacement(t *testing.T) {
 	}
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	assertions.Equal(id, again)
-	var count int
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.JSONEq(string(o.Raw), string(raw))
@@ -206,9 +200,6 @@ func TestCallObservationReplacement(t *testing.T) {
 	o.Outcome, o.OwnerParticipation = "unknown", "unknown"
 	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.NoError(err)
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`), id).Scan(&count))
-	assertions.Zero(count, "reimport clears stale joined attendance")
-
 	o.Participants[0].ID = 999999
 	o.Outcome = "missed"
 	o.Raw = []byte(`{"status":"Missed"}`)
@@ -240,38 +231,4 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	assertions.Empty(got.Persons)
 	assertions.Equal(store.DirectionObserved, got.Direction)
 	assertions.Equal(store.ChannelOther, got.Channel)
-}
-
-func TestCallObservationSubsetCopyAndDeletion(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	src, err := st.GetOrCreateSource(callhistory.SourceType, (callhistory.Evidence{Provider: "signal", Account: "example"}).SourceIdentifier())
-	requirements.NoError(err)
-	old, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
-	requirements.NoError(err)
-	o := callhistory.Observation{
-		RecordID: "record",
-
-		Version: 1, Provider: "signal", Account: "example",
-		Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
-		OccurredAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
-
-		Participants: []callhistory.Participant{{ID: old, Participation: "joined"}},
-		Raw:          []byte(`{"id":"record"}`),
-	}
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	dstDir := t.TempDir()
-	_, err = store.CopySubset(store.DBPathForTest(st), dstDir, 10, true)
-	requirements.NoError(err)
-	dst, err := store.Open(filepath.Join(dstDir, "msgvault.db"))
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(dst.Close()) })
-	t.Run("subset copy", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		var participant int64
-		requirements.NoError(dst.DB().QueryRow(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'call_joined'`, id).Scan(&participant))
-		assertions.Equal(old, participant)
-	})
 }

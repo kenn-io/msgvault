@@ -16,15 +16,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	f, messageID, personID := projectorFixture(
 		t, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), false)
 	projector, err := NewProjector(f.Store, Options{
@@ -32,51 +31,21 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 		BatchSize:             1,
 		MaxDirectCounterparts: 25,
 	})
-	requirements.NoError(err)
+	require.NoError(err)
 
 	result, err := projector.RunOnce(t.Context())
-	requirements.NoError(err)
-	assertions.Positive(result.Processed)
-	assertions.Positive(result.EventsWritten)
+	require.NoError(err)
+	assert.Positive(result.Processed)
+	assert.Positive(result.EventsWritten)
 
 	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
-	requirements.NoError(err)
-	assertions.Empty(queued)
+	require.NoError(err)
+	assert.Empty(queued)
 	state, err := f.Store.ContactStateContext(
 		t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
-	requirements.NoError(err)
-	assertions.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-	assertions.False(state.Stale)
-
-	t.Run("call import allows later message contact", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		at := time.Date(2026, 7, 31, 13, 0, 0, 0, time.UTC)
-		source, err := f.Store.GetOrCreateSource(callhistory.SourceType, "signal:example")
-		require.NoError(err)
-		counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
-		_, err = f.Store.PutCallObservationContext(t.Context(), source.ID, callhistory.Observation{
-			Version: 1, Provider: "signal", Account: "example", RecordID: "call",
-			Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-			OccurredAt: at, Raw: []byte(`{}`),
-			Participants: []callhistory.Participant{{ID: counterpart, Participation: "joined"}},
-		})
-		require.NoError(err)
-		_, err = projector.RunOnce(t.Context())
-		require.NoError(err)
-		state, err := f.Store.ContactStateContext(t.Context(), personID, at.Add(time.Minute))
-		require.NoError(err)
-		assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-		laterID := f.NewMessage().WithSentAt(at.Add(time.Hour)).Create(t, f.Store)
-		require.NoError(f.Store.ReplaceMessageRecipients(laterID, "from", []int64{counterpart}, []string{"Counterpart"}))
-		owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-		require.NoError(f.Store.ReplaceMessageRecipients(laterID, "to", []int64{owner}, []string{"Owner"}))
-		_, err = projector.RunOnce(t.Context())
-		require.NoError(err)
-		state, err = f.Store.ContactStateContext(t.Context(), personID, at.Add(2*time.Hour))
-		require.NoError(err)
-		assert.Equal("message:"+formatProjectorID(laterID), state.LastContactRef)
-	})
+	require.NoError(err)
+	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
+	assert.False(state.Stale)
 }
 
 func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {

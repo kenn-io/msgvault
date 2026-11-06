@@ -32,7 +32,7 @@ func DecodeImport(r io.Reader) (Observation, error) {
 	}
 	var req ImportRequest
 	if err := json.Unmarshal(data, &req, json.RejectUnknownMembers(true)); err != nil {
-		return Observation{}, fmt.Errorf("%w: %w", ErrInvalid, ErrMalformedImport)
+		return Observation{}, fmt.Errorf("%w: %w: %w", ErrInvalid, ErrMalformedImport, err)
 	}
 	return req.Observation()
 }

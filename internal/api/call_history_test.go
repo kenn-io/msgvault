@@ -117,11 +117,15 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		path, body string
 		status     int
 	}{
-		{"/api/v1/import/calls", "{", 400},
+		{"/api/v1/import/calls", `{"unexpected_field":true}`, 400},
 		{"/api/v1/import/calls", `{}`, 422},
 		{"/api/v1/import/calls", strings.Repeat(" ", callhistory.MaxRequestBytes+1), 413},
 	} {
-		assertions.Equal(tc.status, do("POST", tc.path, tc.body).Code)
+		out := do("POST", tc.path, tc.body)
+		assertions.Equal(tc.status, out.Code)
+		if tc.status == 400 {
+			assertions.Contains(out.Body.String(), "unexpected_field")
+		}
 	}
 	for _, mediaType := range []string{"", "text/plain", "application/json; invalid"} {
 		t.Run("unsupported media type "+mediaType, func(t *testing.T) {
@@ -153,7 +157,7 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 		releaseOnce := sync.OnceFunc(release)
 		defer releaseOnce()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(
-			`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":0}}`))
+			`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":1790841600000}}`))
 		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		out := httptest.NewRecorder()
