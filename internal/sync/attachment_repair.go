@@ -28,10 +28,10 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		return err
 	}
 	if len(targets) == 0 {
-		return errors.New("No matching message") //nolint:staticcheck // ST1005: Preserve the command diagnostic.
+		return fmt.Errorf("attachment repair: message %q not found", request.Reference)
 	}
 	if len(targets) > 1 {
-		return errors.New("Multiple messages match; specify --source-id") //nolint:staticcheck // ST1005: Preserve the command diagnostic.
+		return fmt.Errorf("attachment repair: message %q matches %d archive rows; specify --source-id", request.Reference, len(targets))
 	}
 	target := targets[0]
 	if target.SourceType != sourceTypeGmail {
@@ -45,7 +45,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		return fmt.Errorf("read saved message: %w", err)
 	}
 	if len(raw) == 0 {
-		return errors.New("Saved message is empty") //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
+		return errors.New("saved message is empty")
 	}
 	parsed, err := mime.Parse(raw)
 	if err != nil {
@@ -53,7 +53,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 	}
 	// Partial parses cannot certify that every expected occurrence was restored.
 	if parsed.Incomplete {
-		return errors.New("Saved message is incomplete; attachment repair is inconclusive.") //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
+		return errors.New("saved message is incomplete; attachment repair is inconclusive")
 	}
 	parsed.OmitNULIdentities()
 	existing, err := s.store.MessageMIMEAttachmentsContext(ctx, target.ID)
@@ -73,13 +73,14 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 			}
 		}
 		if !matched {
-			return fmt.Errorf("Saved message conflicts with attachment %q", ref.Filename) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
+			return fmt.Errorf("saved message conflicts with attachment %q", ref.Filename)
 		}
 		if ref.State == "skipped" || ref.State == "unavailable" {
 			return fmt.Errorf("attachment %q was deliberately omitted (%s)", ref.Filename, ref.State)
 		}
 	}
-	blobs, err := attachmentstore.New(store.NewPackCatalog(s.store), s.opts.AttachmentsDir)
+	catalog := store.NewPackCatalog(s.store)
+	blobs, err := attachmentstore.New(catalog, s.opts.AttachmentsDir)
 	if err != nil {
 		return err
 	}
@@ -115,12 +116,12 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 				return fmt.Errorf("verify attachment %q: %w", att.Filename, readErr)
 			}
 		}
-		location, err := store.NewPackCatalog(s.store).Resolve(ctx, packstore.Hash(att.ContentHash))
+		location, err := catalog.Resolve(ctx, packstore.Hash(att.ContentHash))
 		if err != nil {
 			return err
 		}
 		if location.Pack != nil && readErr != nil {
-			return fmt.Errorf("Restore the missing attachment storage file for %q: %w", att.Filename, readErr) //nolint:staticcheck // ST1005: Preserve the user-facing diagnostic.
+			return fmt.Errorf("attachment %q is in a pack whose storage file is missing; restore that file: %w", att.Filename, readErr)
 		}
 		if location.Pack == nil {
 			// A readable loose file can be residue from a failed directory sync.
@@ -134,12 +135,9 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 			}
 			storagePath = receipt.StoragePath
 		}
-		role, roleSource := store.AttachmentRoleFromMIME(att.Disposition, att.IsInline, att.ContentID)
-		writes = append(writes, store.AttachmentWrite{
-			Filename: textutil.EnsureUTF8(att.Filename), MIMEType: textutil.EnsureUTF8(att.ContentType),
-			StoragePath: storagePath, ContentHash: att.ContentHash, Size: int64(len(att.Content)),
-			Role: role, RoleSource: roleSource, SourcePartKey: att.PartKey, ContentID: att.ContentID,
-		})
+		write := mimeAttachmentWrite(&att, storagePath)
+		write.Filename, write.MIMEType = textutil.EnsureUTF8(write.Filename), textutil.EnsureUTF8(write.MIMEType)
+		writes = append(writes, write)
 	}
 	return s.store.RestoreMIMEAttachmentRecordsContext(ctx, target.MessageIdentityGuard, writes)
 }

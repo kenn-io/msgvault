@@ -252,14 +252,14 @@ func TestAttachmentRevisionReferenceDiagnostics(t *testing.T) {
 	e := attachmentPersistenceEnv(t)
 	service := New(nil, e.Store, &Options{AttachmentsDir: t.TempDir()})
 	err := service.RepairMessageAttachments(t.Context(), RepairRequest{Reference: "unknown"})
-	require.EqualError(err, "No matching message")
+	require.EqualError(err, `attachment repair: message "unknown" not found`)
 	for _, email := range []string{"first@example.com", "second@example.com"} {
 		source, err := e.Store.GetOrCreateSource("gmail", email)
 		require.NoError(err)
 		seedRepairRow(t, e.Store, source.ID, "ambiguous", "thread", "subject")
 	}
 	err = service.RepairMessageAttachments(t.Context(), RepairRequest{Reference: "ambiguous"})
-	require.EqualError(err, "Multiple messages match; specify --source-id")
+	require.EqualError(err, `attachment repair: message "ambiguous" matches 2 archive rows; specify --source-id`)
 }
 
 func TestAttachmentRevisionStaleOwnerCannotSettleDebt(t *testing.T) {

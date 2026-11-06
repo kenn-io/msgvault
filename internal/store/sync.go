@@ -1032,11 +1032,11 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 		args = append(args, status)
 	}
 	if status == SyncRunItemStatusError {
-		// Recognize the current and historical synthetic marker texts without
-		// hiding genuine failures, even if a later attempt repaired the files.
+		// Recognize the synthetic marker text without hiding genuine
+		// failures, even if a later attempt repaired the files.
 		query += ` AND NOT (
 			COALESCE(error_kind, '') IN ('attachment_error', 'remote_image_error', 'attachment_remote_image_error')
-			AND COALESCE(error_message, '') IN (?, ?, ?, ?)
+			AND COALESCE(error_message, '') = ?
 			AND EXISTS (
 				SELECT 1 FROM sync_run_items settled
 				JOIN sync_runs settled_run ON settled_run.id = settled.sync_run_id
@@ -1048,7 +1048,7 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 				  )
 			)
 		)`
-		args = append(args, SyncRunItemFilesPendingMessage, "message files still need saving", "pending materialization", "pending image archival during attachment recovery")
+		args = append(args, SyncRunItemFilesPendingMessage)
 	}
 	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)

@@ -100,7 +100,7 @@ func (s *Syncer) repairPendingAttachments(ctx context.Context, sourceID int64, m
 	if work&archiveRemoteImages == 0 && s.opts.RemoteImages != nil {
 		work |= archiveRemoteImages
 		if err := s.writeSyncItem(s.acquisitionSyncID, messageID, syncItemPhaseIngest,
-			store.SyncRunItemStatusError, materializationKind(work), errors.New("message files still need saving")); err != nil {
+			store.SyncRunItemStatusError, materializationKind(work), errors.New(store.SyncRunItemFilesPendingMessage)); err != nil {
 			return fmt.Errorf("%w: extend pending image work: %w", errAcquisitionFailureRecord, err)
 		}
 	}

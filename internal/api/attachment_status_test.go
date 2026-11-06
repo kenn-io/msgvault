@@ -21,17 +21,16 @@ func TestHydrateSyncRunStatusSettledFileObligations(t *testing.T) {
 		require.NoError(st.RecordSyncRunItem(store.SyncRunItem{SyncRunID: run, SourceMessageID: id, Phase: phase, Status: status, ErrorKind: kind, ErrorMessage: message}))
 	}
 	record(runID, "real-fetch", "fetch", store.SyncRunItemStatusError, "fetch_error", "provider unavailable")
-	record(runID, "restored", "ingest", store.SyncRunItemStatusError, "attachment_error", "Message files still need saving")
+	record(runID, "restored", "ingest", store.SyncRunItemStatusError, "attachment_error", store.SyncRunItemFilesPendingMessage)
 	record(runID, "restored", "ingest", store.SyncRunItemStatusError, "attachment_error", "save attachments: storage unavailable")
 	record(runID, "restored", "fetch", store.SyncRunItemStatusResolved, "acquired", "acquired")
 	kinds := []string{"attachment_error", "remote_image_error", "attachment_remote_image_error"}
-	messages := []string{"Message files still need saving", "pending materialization", "pending image archival during attachment recovery"}
 	for i := range sourceStatusItemErrorLimit + 2 {
 		id := fmt.Sprintf("saved-%d", i)
-		record(runID, id, "ingest", store.SyncRunItemStatusError, kinds[i%len(kinds)], messages[i%len(messages)])
+		record(runID, id, "ingest", store.SyncRunItemStatusError, kinds[i%len(kinds)], store.SyncRunItemFilesPendingMessage)
 		record(runID, id, "fetch", store.SyncRunItemStatusResolved, "acquired", "acquired")
 	}
-	record(runID, "active", "ingest", store.SyncRunItemStatusError, "attachment_remote_image_error", "Message files still need saving")
+	record(runID, "active", "ingest", store.SyncRunItemStatusError, "attachment_remote_image_error", store.SyncRunItemFilesPendingMessage)
 	// A matching provider ID in another source must not acknowledge this work.
 	other, err := st.GetOrCreateSource("gmail", "other-status@example.org")
 	require.NoError(err)

@@ -2026,10 +2026,10 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	// count on failure; IMAP keeps its existing best-effort subset statistics.
 	var attachmentErr error
 	if gmailMaterialization && work&materializeMIME != 0 && data.mimeIncomplete {
-		attachmentErr = errors.New("Saved message is incomplete and needs repair.") //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
+		attachmentErr = errors.New("saved message is incomplete and needs repair")
 	}
 	if work&materializeMIME != 0 && s.opts.AttachmentsDir == "" {
-		attachmentErr = errors.Join(attachmentErr, errors.New("Set an attachments directory to finish saving files.")) //nolint:revive,staticcheck // Preserve the exact user-facing diagnostic.
+		attachmentErr = errors.Join(attachmentErr, errors.New("set an attachments directory to finish saving files"))
 	}
 	if materialize {
 		for _, att := range data.attachments {
