@@ -66,7 +66,8 @@ for (const width of [1280, 390]) {
         const error = element.querySelector('.row__error')!.getBoundingClientRect();
         return { firstGap: coverage.y - (line ?? name).bottom, errorGap: error.y - coverage.bottom };
       });
-      expect(spacing.firstGap).toBeLessThanOrEqual(6);
+      expect(spacing.firstGap).toBeGreaterThanOrEqual(12);
+      expect(spacing.firstGap).toBeLessThanOrEqual(16);
       expect(spacing.errorGap).toBeGreaterThanOrEqual(0);
       expect(spacing.errorGap).toBeLessThanOrEqual(3);
       if (width === 1280 && provider === 'ollama') {

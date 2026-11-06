@@ -127,9 +127,8 @@
   .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
   .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { text-wrap: balance; }
   .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
-  .row:has(.row__recovery) .row__local :global(.kit-search-by-meaning--no-action) { grid-template-rows: auto; min-height: 0; }
   .row__recovery-copy { display: grid; grid-column: 1 / 3; gap: calc(var(--control-gap) / 2); }
-  .row__recovery { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; gap: var(--control-gap) var(--section-gap); }
+  .row__recovery { margin-top: var(--control-gap); display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; gap: var(--control-gap) var(--section-gap); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; margin-top: calc((var(--font-size-xs) * 1.45 - 24px) / 2); }
   .row__recovery :global(.build-index-action > .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border-color: var(--border-default); }
