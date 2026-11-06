@@ -129,6 +129,7 @@
   .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
   .row__recovery-copy { display: grid; grid-column: 1 / 3; gap: calc(var(--control-gap) / 2); }
   .row__recovery { margin-top: var(--control-gap); display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; gap: var(--control-gap) var(--section-gap); }
+  .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: calc((var(--font-size-md) * 1.45 - 24px) / 2); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; margin-top: calc((var(--font-size-xs) * 1.45 - 24px) / 2); }
   .row__recovery :global(.build-index-action > .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border-color: var(--border-default); }
@@ -177,6 +178,7 @@
     .row__chip { justify-content: flex-end; }
     .row__local :global(.kit-search-by-meaning) { min-height: 0; grid-template-rows: none; }
     .row__local :global(.kit-chip) { justify-self: end; }
+    .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: 0; }
     .row__recovery-copy { grid-column: 1 / -1; }
     .row__recovery .row__action { grid-column: 1 / -1; margin-top: 0; }
     .row__local :global(.kit-search-by-meaning__action) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
