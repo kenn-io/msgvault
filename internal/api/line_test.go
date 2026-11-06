@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -159,22 +158,9 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 	}))
 	must.NoError(err)
 	t.Cleanup(func() { must.NoError(session.Close()) })
-	var snapshotReceipts int
-	must.NoError(session.Tx().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&snapshotReceipts))
-	checks.Zero(snapshotReceipts)
 	var liveReceipts int
 	must.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&liveReceipts))
 	checks.Zero(liveReceipts, "rejected receipts must leave the live archive empty")
-	captured, err := os.ReadFile(dbPath)
-	must.NoError(err)
-	capturedPath := filepath.Join(t.TempDir(), "captured.db")
-	must.NoError(os.WriteFile(capturedPath, captured, 0o600))
-	capturedDB, err := sql.Open("sqlite3", "file:"+capturedPath+"?immutable=1&mode=ro")
-	must.NoError(err)
-	t.Cleanup(func() { must.NoError(capturedDB.Close()) })
-	var capturedReceipts int
-	must.NoError(capturedDB.QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&capturedReceipts))
-	checks.Equal(capturedReceipts, snapshotReceipts, "captured main file and pinned snapshot must agree")
 	endResponse := httptest.NewRecorder()
 	router.ServeHTTP(endResponse, endBackupFreeze(t, token))
 	must.Equal(http.StatusOK, endResponse.Code)

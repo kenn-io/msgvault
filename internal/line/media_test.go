@@ -38,23 +38,18 @@ func (f *inboxFixture) fileEvent() Event {
 
 func TestMediaSizeSearch(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		kind  string
-		retry bool
-		size  int64
+		name string
+		kind string
+		size int64
 	}{
-		{"image", "image", false, 15},
-		{"file", "file", false, 28},
-		{"retry", "file", true, 28},
+		{"image", "image", 15},
+		{"file", "file", 28},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newInboxFixture(t)
 			path := "/v2/bot/message/1/content"
-			if tc.retry {
-				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
-			}
 			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
 			e := f.fileEvent()
 			e.Message.Type = tc.kind
@@ -63,13 +58,6 @@ func TestMediaSizeSearch(t *testing.T) {
 			}
 			f.enqueue(t, e, time.Time{})
 			f.run(t)
-			if tc.retry {
-				_, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
-				must.NoError(err)
-				checks.Zero(total)
-				f.now = f.now.Add(time.Minute)
-				f.run(t)
-			}
 			messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
 			must.NoError(err)
 			checks.Equal(int64(1), total)
@@ -84,22 +72,45 @@ func TestMediaSizeSearch(t *testing.T) {
 }
 
 func TestMediaTranscodingRetry(t *testing.T) {
-	checks := assert.New(t)
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restart=%t", restart), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
 
-	f := newInboxFixture(t)
-	path := "/v2/bot/message/1/content"
-	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 202}, lineapi.Response{Status: 200, Header: http.Header{"Content-Type": []string{"application/octet-stream"}}, Body: "synthetic bytes"})
-	f.enqueue(t, f.fileEvent(), time.Time{})
-	f.run(t)
-	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
-	f.now = f.now.Add(time.Minute)
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	f.run(t)
-	stored := f.media(t)
-	checks.Equal(attachmentpolicy.StateStored, stored.State)
-	checks.Len(stored.ContentHash, 64)
-	checks.NotEmpty(stored.StoragePath)
-	checks.Equal(2, f.api.Count(http.MethodGet, path))
+			f := newInboxFixture(t)
+			path := "/v2/bot/message/1/content"
+			content := lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"}
+			if restart {
+				content.Header = http.Header{"Content-Type": []string{"application/octet-stream"}}
+			}
+			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted}, content)
+			f.enqueue(t, f.fileEvent(), time.Time{})
+			f.run(t)
+			checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+			_, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
+			must.NoError(err)
+			checks.Zero(total)
+			f.now = f.now.Add(time.Minute)
+			if restart {
+				f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+			}
+			f.run(t)
+			stored := f.media(t)
+			checks.Equal(attachmentpolicy.StateStored, stored.State)
+			checks.Len(stored.ContentHash, 64)
+			checks.NotEmpty(stored.StoragePath)
+			checks.Equal(2, f.api.Count(http.MethodGet, path))
+			messages, total, err := f.st.SearchMessagesQuery(search.Parse("larger:13"), 0, 10)
+			must.NoError(err)
+			checks.Equal(int64(1), total)
+			must.Len(messages, 1)
+			checks.Equal(f.archived(t, "1").id, messages[0].ID)
+			checks.Equal(int64(28), messages[0].SizeEstimate)
+			_, total, err = f.st.SearchMessagesQuery(search.Parse("larger:28"), 0, 10)
+			must.NoError(err)
+			checks.Zero(total)
+		})
+	}
 }
 
 func TestMediaFailureAtRetryHorizon(t *testing.T) {
