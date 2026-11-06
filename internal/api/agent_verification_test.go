@@ -411,3 +411,51 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-1", "Ordinary", "Ordinary body")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	counter := &attachmentBodyLoadCounter{Store: st}
+	srv.store = counter
+	body := "Ordinary shared note"
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirements.NoError(err)
+	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
+	requirements.NoError(st.UpsertAttachment(id, "note.txt", "text/plain", "", hash, len(body)))
+
+	// More parents than one SQLite statement can bind; only the last one is withheld.
+	const total = 32767
+	for _, statement := range []string{
+		`WITH RECURSIVE copies(n) AS (VALUES(2) UNION ALL SELECT n + 1 FROM copies WHERE n < ?)
+		INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, snippet)
+		SELECT m.source_id, m.conversation_id, 'shared-' || copies.n, m.message_type, m.subject, m.snippet FROM copies CROSS JOIN messages m WHERE m.id = ?`,
+		`INSERT INTO attachments (message_id, filename, mime_type, content_hash, size, storage_path)
+		SELECT m.id, a.filename, a.mime_type, a.content_hash, a.size, a.storage_path FROM messages m CROSS JOIN attachments a WHERE a.message_id = ? AND m.id <> ?`,
+	} {
+		args := []any{id, id}
+		if strings.HasPrefix(statement, "WITH") {
+			args[0] = total
+		}
+		_, err = st.DB().Exec(statement, args...)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().Exec(`UPDATE messages SET subject = 'Your verification code is 482913' WHERE id = (SELECT MAX(id) FROM messages)`)
+	requirements.NoError(err)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
+	assertions.Equal((total+maxPageSize-1)/maxPageSize, counter.calls, "bodies load one page of parents at a time")
+}
