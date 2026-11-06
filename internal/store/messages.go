@@ -2174,7 +2174,7 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 				}
 			}
 			if data.Reactions != nil {
-				added, err := s.replaceReactionsWith(q, id, *data.Reactions)
+				added, err := s.replaceReactionsWith(ctx, tx, id, *data.Reactions)
 				if err != nil {
 					return err
 				}
@@ -6221,18 +6221,37 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, err := s.replaceReactionsWith(boundQuerier{ctx: ctx, q: tx}, messageID, reactions)
+		_, err := s.replaceReactionsWith(ctx, tx, messageID, reactions)
 		return err
 	})
 }
 
-func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []ReactionRef) (int64, error) {
+func (s *Store) replaceReactionsWith(ctx context.Context, tx *loggedTx, messageID int64, reactions []ReactionRef) (int64, error) {
+	q := boundQuerier{ctx: ctx, q: tx}
 	type identity struct {
 		participant int64
 		kind, value string
 	}
+	rows, err := tx.QueryContext(ctx, `SELECT participant_id, reaction_type, reaction_value FROM reactions WHERE message_id = ?`, messageID)
+	if err != nil {
+		return 0, err
+	}
+	existing := make(map[identity]bool)
+	for rows.Next() {
+		var key identity
+		if err := rows.Scan(&key.participant, &key.kind, &key.value); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		existing[key] = true
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	seen := make(map[identity]bool)
-	keep, args := []string{}, []any{messageID}
 	var added int64
 	for _, r := range reactions {
 		key := identity{r.ParticipantID, r.Type, r.Value}
@@ -6240,27 +6259,22 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 			continue
 		}
 		seen[key] = true
-		keep = append(keep, `(CAST(? AS BIGINT), CAST(? AS TEXT), CAST(? AS TEXT))`)
-		args = append(args, r.ParticipantID, r.Type, r.Value)
-		var exists bool
-		if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_type = ? AND reaction_value = ?)`, messageID, r.ParticipantID, r.Type, r.Value).Scan(&exists); err != nil {
-			return 0, err
-		}
 		if _, err := q.Exec(`INSERT INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (message_id, participant_id, reaction_type, reaction_value)
 			DO UPDATE SET created_at = excluded.created_at, removed_at = NULL
 			WHERE reactions.created_at IS DISTINCT FROM excluded.created_at OR reactions.removed_at IS NOT NULL`, messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
 			return 0, err
 		}
-		if !exists {
+		if !existing[key] {
 			added++
 		}
 	}
-	query := `DELETE FROM reactions WHERE message_id = ?`
-	if len(keep) > 0 {
-		query += ` AND (participant_id, reaction_type, reaction_value) NOT IN (VALUES ` + strings.Join(keep, ", ") + `)`
-	}
-	if _, err := q.Exec(query, args...); err != nil {
-		return 0, err
+	for key := range existing {
+		if seen[key] {
+			continue
+		}
+		if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_type = ? AND reaction_value = ?`, messageID, key.participant, key.kind, key.value); err != nil {
+			return 0, err
+		}
 	}
 	return added, nil
 }

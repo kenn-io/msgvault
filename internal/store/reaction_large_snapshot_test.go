@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,36 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestReactionLargeSnapshot(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("signal", "large-reaction-snapshot")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Example group")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "message")
+	participantID, err := st.EnsureParticipantByIdentifier("signal", "reactor", "Example participant")
+	require.NoError(err)
+	reactions := make([]store.ReactionRef, 11001)
+	for i := range reactions {
+		reactions[i] = store.ReactionRef{ParticipantID: participantID, Type: "emoji", Value: fmt.Sprintf("reaction-%d", i)}
+	}
+	require.NoError(st.ReplaceReactions(messageID, reactions))
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
+	assert.Equal(11001, count)
+	require.NoError(st.ReplaceReactions(messageID, reactions))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
+	assert.Equal(11001, count)
+
+	require.NoError(st.ReplaceReactions(messageID, reactions[:1]))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`, messageID).Scan(&count))
+	assert.Equal(1, count)
+	var value string
+	require.NoError(st.DB().QueryRow(`SELECT reaction_value FROM reactions WHERE message_id = ?`, messageID).Scan(&value))
+	assert.Equal("reaction-0", value)
+}
 
 func TestReactionSnapshotUpdates(t *testing.T) {
 	t.Run("replace reactions writes only changes", func(t *testing.T) {
