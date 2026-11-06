@@ -14,6 +14,9 @@ func TestIs(t *testing.T) {
 		want    bool
 	}
 	cases := []testCase{
+		{"encoded base64 reset token", Content{Text: "Reset your password: https://example.test/reset?token=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
+		{"encoded base64 reset code", Content{Text: "Reset your password: https://example.test/reset?code=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
+		{"encoded next path", Content{Text: "Sign in: https://example.test/reset?next=%2Faccount%2Fsettings%2Fnotifications2"}, false},
 		{"alphabetic magic link", Content{Text: "Sign in: https://example.test/api/auth/magic-link/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf&callbackURL=%2Fdashboard"}, true},
 		{"alphabetic code key", Content{Text: "https://example.test/verify?code=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf"}, true},
 		{"short alphabetic token", Content{Text: "Sign in: https://example.test/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdE"}, false},
