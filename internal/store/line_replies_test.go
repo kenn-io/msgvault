@@ -282,103 +282,144 @@ func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 }
 
 func TestLineReplyCompletionProjectsDirectChatRoster(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002", "Example Peer")
-	require.NoError(err)
-	require.NoError(st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
-	accepted := acceptedReply(t, st, draft)
-	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	policies, err := st.ListConversationPolicies(t.Context())
-	require.NoError(err)
-	require.Len(policies, 1)
-	assert.Equal(2, policies[0].Participants)
-	var joined time.Time
-	var left sql.NullTime
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cp.joined_at,cp.left_at FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+replyBotID).Scan(&joined, &left))
-	assert.True(accepted.AdmittedAt.Equal(joined))
-	assert.False(left.Valid)
-}
-
-func TestLineReplyDraftDeletionExpiresPastDeadline(t *testing.T) {
-	for _, accepted := range []bool{false, true} {
-		name := "unknown"
-		if accepted {
-			name = "accepted without ID"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, kind := range []string{"user", "group", "room"} {
+		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Microsecond)
-			admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-			require.NoError(err)
-			if accepted {
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
+			st, draft, parent := replyStoreFixture(t)
+			if kind != "user" {
+				native := "group:C00000000000000000000000000000003"
+				if kind == "room" {
+					native = "room:R00000000000000000000000000000004"
+				}
+				chat, err := st.EnsureConversationWithType(draft.SourceID, native, "group_chat", "Example")
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET conversation_id=? WHERE id=?`), chat, parent)
+				require.NoError(err)
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
+				draft, err = st.CreateChatDraftContext(t.Context(), chat, parent, "Thanks!", func(string, string) error { return nil })
 				require.NoError(err)
 			}
-			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2, now.Add(24*time.Hour)), store.ErrChatDraftRevisionConflict)
-			unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002", "Example Peer")
 			require.NoError(err)
-			assert.Equal("Thanks!", unchanged.Body)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now.Add(24*time.Hour)))
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
+			require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
+			assert.Equal(1, count)
+			accepted := acceptedReply(t, st, draft)
+			_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 			require.NoError(err)
-			assert.Equal(store.LineReplyExpired, receipt.State)
-			assert.Empty(receipt.Body)
-			assert.Empty(receipt.QuoteToken)
-			assert.Empty(receipt.RemoteQuoteToken)
-			assert.Empty(receipt.SourceConversationID)
-			assert.Equal(admitted.RetryKey, receipt.RetryKey)
-			if accepted {
-				assert.Equal("accepted-request", receipt.RequestID)
-				assert.Equal(200, receipt.StatusCode)
+			if kind == "user" {
+				policies, err := st.ListConversationPolicies(t.Context())
+				require.NoError(err)
+				require.Len(policies, 1)
+				assert.Equal(2, policies[0].Participants)
 			}
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
+			assert.Equal(2, count)
+			var joined time.Time
+			var left sql.NullTime
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cp.joined_at,cp.left_at FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+replyBotID).Scan(&joined, &left))
+			assert.True(accepted.AdmittedAt.Equal(joined))
+			assert.False(left.Valid)
 		})
+	}
+}
+
+func TestLineReplyExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
+	for _, acceptance := range []string{"unknown", "accepted without ID"} {
+		for _, order := range []string{"expire by Start", "delete past deadline", "expire then delete", "delete then expire"} {
+			t.Run(acceptance+"/"+order, func(t *testing.T) {
+				must := require.New(t)
+				checks := assert.New(t)
+				st, draft, _ := replyStoreFixture(t)
+				now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+				admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				must.NoError(err)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				must.NoError(err)
+				if acceptance == "accepted without ID" {
+					accepted, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
+					must.NoError(err)
+					must.Equal(store.LineReplyRemoteUnknown, accepted.State)
+					must.Equal("Thanks!", accepted.Body)
+					must.Equal("synthetic-parent-quote", accepted.QuoteToken)
+					must.Equal("remote-quote", accepted.RemoteQuoteToken)
+				}
+				if acceptance == "unknown" && order == "delete past deadline" {
+					must.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2, now.Add(24*time.Hour)), store.ErrChatDraftRevisionConflict)
+					unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+					must.NoError(err)
+					checks.Equal("Thanks!", unchanged.Body)
+				}
+				switch order {
+				case "delete past deadline":
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now.Add(24*time.Hour)))
+				case "delete then expire":
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+				}
+				if order != "delete past deadline" {
+					expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
+					must.ErrorIs(err, store.ErrLineReplyExpired)
+					checks.Equal(store.LineReplyExpired, expired.State)
+					checks.Empty(expired.Body)
+					checks.Empty(expired.QuoteToken)
+					checks.Empty(expired.RemoteQuoteToken)
+					checks.Empty(expired.SourceConversationID)
+				}
+				if order == "expire then delete" {
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+				}
+				if order != "expire by Start" {
+					_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+					must.ErrorIs(err, store.ErrChatDraftNotFound)
+				}
+				receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				must.NoError(err)
+				checks.Equal(store.LineReplyExpired, receipt.State)
+				checks.False(store.LineReplyHasAcceptance(receipt.State))
+				checks.Equal(admitted.RetryKey, receipt.RetryKey)
+				if acceptance == "accepted without ID" {
+					checks.Equal("accepted-request", receipt.RequestID)
+					checks.Equal(200, receipt.StatusCode)
+				}
+				checks.Equal(draft.SourceID, receipt.SourceID)
+				checks.Equal(draft.ConversationID, receipt.ConversationID)
+				checks.Equal(admitted.ReplyToMessageID, receipt.ReplyToMessageID)
+				checks.Empty(receipt.Body)
+				checks.Empty(receipt.QuoteToken)
+				checks.Empty(receipt.RemoteQuoteToken)
+				checks.Empty(receipt.SourceConversationID)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+				must.ErrorIs(err, store.ErrLineReplyExpired)
+			})
+		}
 	}
 }
 
 func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
-	for _, phase := range []string{"delayed first push", "accepted"} {
-		t.Run(phase, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-			original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			firstPush := now
-			if phase == "delayed first push" {
-				firstPush = now.Add(2 * time.Hour)
-			}
-			nextRetry := firstPush.Add(time.Minute)
-			if phase == "accepted" {
-				nextRetry = firstPush.Add(30 * time.Second)
-			}
-			started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, nextRetry)
-			require.NoError(err)
-			assert.Equal(firstPush, started.AdmittedAt)
-			assert.Equal(original.RetryUntil, started.RetryUntil)
-			assert.Equal(now.Add(23*time.Hour), started.RetryUntil)
-			if phase == "accepted" {
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "original-request"})
-				require.NoError(err)
-			}
-			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
-			require.ErrorIs(err, store.ErrLineReplyExpired)
-			assert.Equal(store.LineReplyExpired, expired.State)
-			if phase == "accepted" {
-				assert.Equal("original-request", expired.RequestID)
-			}
-			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-			require.ErrorIs(err, store.ErrLineReplyExpired)
-			assert.Equal(original.RetryKey, repeated.RetryKey)
-		})
-	}
+	t.Run("delayed first push", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+		original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+		require.NoError(err)
+		firstPush := now.Add(2 * time.Hour)
+		nextRetry := firstPush.Add(time.Minute)
+		started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, nextRetry)
+		require.NoError(err)
+		assert.Equal(firstPush, started.AdmittedAt)
+		assert.Equal(original.RetryUntil, started.RetryUntil)
+		assert.Equal(now.Add(23*time.Hour), started.RetryUntil)
+		expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
+		require.ErrorIs(err, store.ErrLineReplyExpired)
+		assert.Equal(store.LineReplyExpired, expired.State)
+		repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+		require.ErrorIs(err, store.ErrLineReplyExpired)
+		assert.Equal(original.RetryKey, repeated.RetryKey)
+	})
 }
 
 func TestLineReplyBindingChangesFailClosed(t *testing.T) {
@@ -501,75 +542,6 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 	}
 }
 
-func TestLineReplyAcceptedExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
-	for _, order := range []string{"expire then delete", "delete then expire"} {
-		t.Run(order, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-			admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			must.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-			must.NoError(err)
-			accepted, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
-			must.NoError(err)
-			must.Equal(store.LineReplyRemoteUnknown, accepted.State)
-			must.Equal("Thanks!", accepted.Body)
-			must.Equal("synthetic-parent-quote", accepted.QuoteToken)
-			must.Equal("remote-quote", accepted.RemoteQuoteToken)
-			if order == "delete then expire" {
-				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
-			}
-			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
-			must.ErrorIs(err, store.ErrLineReplyExpired)
-			checks.Empty(expired.Body)
-			checks.Empty(expired.QuoteToken)
-			checks.Empty(expired.RemoteQuoteToken)
-			checks.Empty(expired.SourceConversationID)
-			if order == "expire then delete" {
-				must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
-			}
-			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-			must.ErrorIs(err, store.ErrChatDraftNotFound)
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			must.NoError(err)
-			checks.Equal(store.LineReplyExpired, receipt.State)
-			checks.False(store.LineReplyHasAcceptance(receipt.State))
-			checks.Equal(admitted.RetryKey, receipt.RetryKey)
-			checks.Equal("accepted-request", receipt.RequestID)
-			checks.Equal(200, receipt.StatusCode)
-			checks.Equal(draft.SourceID, receipt.SourceID)
-			checks.Equal(draft.ConversationID, receipt.ConversationID)
-			checks.Equal(admitted.ReplyToMessageID, receipt.ReplyToMessageID)
-			checks.Empty(receipt.Body)
-			checks.Empty(receipt.QuoteToken)
-			checks.Empty(receipt.RemoteQuoteToken)
-			checks.Empty(receipt.SourceConversationID)
-		})
-	}
-	t.Run("delete then expire without acceptance", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		st, draft, _ := replyStoreFixture(t)
-		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-		admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-		must.NoError(err)
-		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-		must.NoError(err)
-		must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
-		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
-		must.ErrorIs(err, store.ErrLineReplyExpired)
-		receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-		must.NoError(err)
-		must.Equal(store.LineReplyExpired, receipt.State)
-		checks.Equal(admitted.RetryKey, receipt.RetryKey)
-		checks.Empty(receipt.Body)
-		checks.Empty(receipt.QuoteToken)
-		checks.Empty(receipt.SourceConversationID)
-	})
-}
-
 func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 	for _, tc := range []struct {
 		state        string
@@ -582,7 +554,6 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 		{store.LineReplyRemoteUnknown, false, true},
 		{store.LineReplyRemoteAccepted, false, false},
 		{store.LineReplyProviderRejected, false, false},
-		{store.LineReplyExpired, false, false},
 		{store.LineReplySent, false, false},
 	} {
 		name := tc.state
@@ -621,17 +592,11 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 				case store.LineReplyProviderRejected:
 					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
 				}
-				if state != store.LineReplyExpired {
-					attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
-					require.NoError(err)
-				}
+				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+				require.NoError(err)
 				if state == store.LineReplySent {
 					attempt, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 					require.NoError(err)
-				}
-				if state == store.LineReplyExpired {
-					attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
-					require.ErrorIs(err, store.ErrLineReplyExpired)
 				}
 			}
 			assert.Equal(state, attempt.State)
@@ -652,14 +617,14 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 			if state == store.LineReplyAdmitted {
 				wantReceipt.State = store.LineReplyExpired
 			}
-			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected || state == store.LineReplyExpired {
+			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected {
 				wantReceipt.Body = ""
 				wantReceipt.QuoteToken = ""
 				wantReceipt.SourceConversationID = ""
 			}
 			assert.Equal(wantReceipt, receipt)
 			switch state {
-			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyExpired, store.LineReplySent:
+			case store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplySent:
 				target, err := st.GetOrCreateSource("line", "2000000002")
 				require.NoError(err)
 				if state == store.LineReplyAdmitted {

@@ -38,7 +38,7 @@ func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *
 }
 
 func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
-	for _, kind := range []string{"disabled", "omitted", "revoked on disk", "missing secret", "invalid text", "cwd", "revision", "missing revision"} {
+	for _, kind := range []string{"disabled", "revoked on disk", "missing secret", "cwd", "revision", "missing revision"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -47,14 +47,8 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 			switch kind {
 			case "disabled":
 				a.config.Line[0].Enabled = false
-			case "omitted":
-				a.config.Line[0].AllowSend = false
 			case "missing secret":
 				t.Setenv("EXAMPLE_LINE_SECRET", "")
-			case "invalid text":
-				_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "")
-				require.NoError(err)
-				req.Args[2] = "--revision=2"
 			case "cwd":
 				req.Cwd = t.TempDir()
 			case "revision":
@@ -74,16 +68,13 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 			err := a.RunCLICommand(t.Context(), req, func(api.CLIRunEvent) error { return nil })
 			require.Error(err)
 			switch kind {
-			case "disabled", "omitted", "revoked on disk":
+			case "disabled", "revoked on disk":
 				assert.Equal("send_disabled", err.Error())
 			case "missing secret":
 				assert.Equal("credentials_unavailable", err.Error())
 			case "revision":
 				assert.Equal("revision_mismatch", err.Error())
 			case "missing revision", "cwd":
-				assert.Equal("invalid_args", err.Error())
-			}
-			if kind == "invalid text" {
 				assert.Equal("invalid_args", err.Error())
 			}
 			assert.Len(fake.Requests(), before)

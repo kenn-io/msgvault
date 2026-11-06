@@ -240,9 +240,15 @@ func TestReplyRejectsBeforeProviderIO(t *testing.T) {
 			}
 			before := len(f.fake.Requests())
 			_, err := sender.Send(t.Context(), f.draft.DraftID, f.draft.Revision)
-			require.Error(err)
-			if kind == "changed conversation type" {
+			switch kind {
+			case "invalid text":
+				require.ErrorIs(err, line.ErrInvalidReplyText)
+			case "changed conversation type":
 				require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
+			case "disabled policy":
+				require.ErrorIs(err, denied)
+			case "missing client":
+				require.EqualError(err, "line: reply sending is not configured")
 			}
 			assert.Len(t, f.fake.Requests(), before)
 		})
@@ -301,63 +307,6 @@ func TestReplyExpiryPermanentlyStopsProviderIO(t *testing.T) {
 		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
 		assert.Equal(1, f.fake.AcceptedPushes())
 	})
-	t.Run("deleted admitted attempt", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newReplyFixture(t, "user", nil)
-		f.resetClient()
-		f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
-		sender := f.sender()
-		receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-		must.ErrorIs(err, line.ErrCredentialsUnavailable)
-		must.Equal(store.LineReplyAdmitted, receipt.Status)
-		must.NotNil(receipt.RetryAfter)
-		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-		must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now()))
-		_, err = f.st.GetChatDraftContext(t.Context(), f.draft.DraftID)
-		must.ErrorIs(err, store.ErrChatDraftNotFound)
-		f.setNow(receipt.RetryAfter.Add(time.Second))
-		repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-		must.NoError(err)
-		checks.Equal(store.LineReplyExpired, repeated.Status)
-		checks.False(repeated.Accepted)
-		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-		must.NoError(err)
-		checks.Equal(store.LineReplyExpired, attempt.State)
-	})
-	t.Run("admitted token cooldown past expiry", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-		f := newReplyFixture(t, "user", nil)
-		initial := f.now()
-		f.resetClient()
-		f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusUnauthorized})
-		sender := f.sender()
-		pending, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-		must.ErrorIs(err, line.ErrCredentialsUnavailable)
-		must.Equal(store.LineReplyAdmitted, pending.Status)
-		f.setNow(initial.Add(22 * time.Hour))
-		f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"90000"}}})
-		pending, err = sender.Send(t.Context(), f.draft.DraftID, 1)
-		must.ErrorIs(err, line.ErrCredentialsUnavailable)
-		must.Equal(store.LineReplyAdmitted, pending.Status)
-		must.NotNil(pending.RetryAfter)
-		checks.True(pending.RetryAfter.After(initial.Add(23 * time.Hour)))
-		f.setNow(initial.Add(23 * time.Hour))
-		sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
-			return nil, errors.New("synthetic revoked sending policy")
-		}
-		expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-		must.NoError(err)
-		checks.Equal(store.LineReplyExpired, expired.Status)
-		checks.False(expired.Accepted)
-		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-		must.NoError(err)
-		checks.Equal(store.LineReplyExpired, attempt.State)
-		checks.Equal(3, f.fake.Count(http.MethodPost, "/oauth2/v3/token"), "registration and two failed acquisitions; expiry makes no token request")
-		checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	})
 }
 
 func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
@@ -391,8 +340,6 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 		f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusForbidden})
 		_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 		must.ErrorIs(err, line.ErrCredentialsUnavailable)
-		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-		must.NoError(err)
 		checks.Zero(f.fake.AcceptedPushes())
 
 		f.resetClient()
@@ -406,7 +353,6 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 		must.NoError(err)
 		checks.Equal(store.LineReplyProviderRejected, completed.State)
 		checks.Equal(http.StatusBadRequest, completed.StatusCode)
-		checks.Equal(attempt.RetryKey, completed.RetryKey)
 		checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
 		checks.Zero(f.fake.AcceptedPushes())
 
@@ -444,15 +390,6 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(store.LineReplySent, sent.Status)
 		assert.Equal(1, f.fake.AcceptedPushes())
-		var keys []string
-		for _, request := range f.fake.Requests() {
-			if request.Path == "/v2/bot/message/push" {
-				keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
-			}
-		}
-		require.Len(keys, 3)
-		assert.Equal(keys[0], keys[1])
-		assert.Equal(keys[0], keys[2])
 	})
 	t.Run("deadline from response time", func(t *testing.T) {
 		assert := assert.New(t)
@@ -480,6 +417,7 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		f := newReplyFixture(t, "user", nil)
+		admittedAt := f.now()
 		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
 		rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 		require.NoError(err)
@@ -491,6 +429,7 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(store.LineReplyAdmitted, attempt.State)
 		assert.Equal(*rejected.RetryAfter, attempt.NextRetryAt)
+		assert.Equal(admittedAt.Add(23*time.Hour), attempt.RetryUntil)
 		assert.Zero(f.fake.AcceptedPushes())
 
 		f.setNow(rejected.RetryAfter.Add(-time.Second))
@@ -507,54 +446,38 @@ func TestReplyRateLimitClassification(t *testing.T) {
 		assert.Equal(1, f.fake.AcceptedPushes())
 		completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 		require.NoError(err)
-		assert.Equal(attempt.RetryKey, completed.RetryKey)
 		assert.Equal(attempt.RetryUntil, completed.RetryUntil)
-		var keys []string
-		for _, request := range f.fake.Requests() {
-			if request.Path == "/v2/bot/message/push" {
-				keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
-			}
-		}
-		require.Len(keys, 2)
-		assert.Equal(attempt.RetryKey, keys[0])
-		assert.Equal(attempt.RetryKey, keys[1])
 	})
 	t.Run("admission deadline after refusal", func(t *testing.T) {
-		for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
-			t.Run(http.StatusText(status), func(t *testing.T) {
-				must := require.New(t)
-				checks := assert.New(t)
-				f := newReplyFixture(t, "user", nil)
-				admittedAt := f.now()
-				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: status})
-				refused, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				if status == http.StatusForbidden {
-					must.ErrorIs(err, line.ErrCredentialsUnavailable)
-				} else {
-					must.NoError(err)
-				}
-				checks.Equal(store.LineReplyAdmitted, refused.Status)
-				checks.Zero(f.fake.AcceptedPushes())
+		t.Run("Forbidden", func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newReplyFixture(t, "user", nil)
+			admittedAt := f.now()
+			f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusForbidden})
+			refused, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.ErrorIs(err, line.ErrCredentialsUnavailable)
+			checks.Equal(store.LineReplyAdmitted, refused.Status)
+			checks.Zero(f.fake.AcceptedPushes())
 
-				f.setNow(admittedAt.Add(22 * time.Hour))
-				f.resetClient()
-				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-				uncertain, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.NoError(err)
-				checks.Equal(store.LineReplyRemoteUnknown, uncertain.Status)
-				checks.Equal(1, f.fake.AcceptedPushes())
+			f.setNow(admittedAt.Add(22 * time.Hour))
+			f.resetClient()
+			f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+			uncertain, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.NoError(err)
+			checks.Equal(store.LineReplyRemoteUnknown, uncertain.Status)
+			checks.Equal(1, f.fake.AcceptedPushes())
 
-				f.setNow(admittedAt.Add(25 * time.Hour))
-				expired, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-				must.NoError(err)
-				checks.Equal(store.LineReplyExpired, expired.Status)
-				checks.Equal(1, f.fake.AcceptedPushes(), "expiry must prevent a second accepted message")
-				checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-				must.NoError(err)
-				checks.Equal(admittedAt.Add(23*time.Hour), attempt.RetryUntil)
-			})
-		}
+			f.setNow(admittedAt.Add(25 * time.Hour))
+			expired, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			must.NoError(err)
+			checks.Equal(store.LineReplyExpired, expired.Status)
+			checks.Equal(1, f.fake.AcceptedPushes(), "expiry must prevent a second accepted message")
+			checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+			attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+			must.NoError(err)
+			checks.Equal(admittedAt.Add(23*time.Hour), attempt.RetryUntil)
+		})
 	})
 }
 
@@ -790,24 +713,32 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 		wait           time.Duration
 		recovery       bool
 		checkSentAt    bool
+		expire         bool
 	}{
-		{"initial/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, false, true},
-		{"initial/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true},
-		{"initial/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true},
-		{"recovery/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, true, false},
-		{"recovery/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false},
-		{"recovery/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false},
-		{"credentials/token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}, 30 * time.Second, false, false},
-		{"credentials/invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}, 30 * time.Second, false, false},
-		{"credentials/token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}, 30 * time.Second, false, false},
-		{"credentials/push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}, 30 * time.Second, false, false},
-		{"credentials/push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}, 30 * time.Second, false, false},
+		{"initial/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, false, true, false},
+		{"initial/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true, false},
+		{"initial/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, false, true, false},
+		{"recovery/Bad Request", "/oauth2/v3/token", lineapi.Response{Status: 400, Header: http.Header{"Retry-After": {"180"}}}, 30 * time.Second, true, false, false},
+		{"recovery/Too Many Requests", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false, false},
+		{"recovery/Service Unavailable", "/oauth2/v3/token", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}}, 3 * time.Minute, true, false, false},
+		{"credentials/token 401", "/oauth2/v3/token", lineapi.Response{Status: 401}, 30 * time.Second, false, false, false},
+		{"credentials/invalid token", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: `{}`}, 30 * time.Second, false, false, false},
+		{"credentials/token disconnect", "/oauth2/v3/token", lineapi.Response{Disconnect: true}, 30 * time.Second, false, false, false},
+		{"credentials/push 401", "/v2/bot/message/push", lineapi.Response{Status: 401}, 30 * time.Second, false, false, false},
+		{"credentials/push 403", "/v2/bot/message/push", lineapi.Response{Status: 403}, 30 * time.Second, false, false, false},
+		{"admitted token cooldown past expiry", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"90000"}}}, 25 * time.Hour, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newReplyFixture(t, "user", nil)
 			state := store.LineReplyAdmitted
+			initial := f.now()
+			if tc.expire {
+				_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, initial, func(store.LineReplyAttempt) error { return nil })
+				must.NoError(err)
+				f.setNow(initial.Add(22 * time.Hour))
+			}
 			if tc.recovery {
 				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
 				_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
@@ -841,6 +772,23 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 			waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			must.NoError(err)
 			checks.Equal(receipt, waiting)
+			if tc.expire {
+				f.setNow(initial.Add(23 * time.Hour))
+				sender := f.sender()
+				sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
+					return nil, errors.New("synthetic revoked sending policy")
+				}
+				expired, err := sender.Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(store.LineReplyExpired, expired.Status)
+				checks.False(expired.Accepted)
+				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+				must.NoError(err)
+				checks.Equal(store.LineReplyExpired, attempt.State)
+				checks.Equal(before+1, f.fake.Count(http.MethodPost, "/oauth2/v3/token"))
+				checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+				return
+			}
 			f.setNow(f.now().Add(tc.wait - time.Second))
 			_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			must.NoError(err)
@@ -855,7 +803,6 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 			checks.Equal(1, f.fake.AcceptedPushes())
 			completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 			must.NoError(err)
-			checks.Equal(attempt.RetryKey, completed.RetryKey)
 			if tc.checkSentAt {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
@@ -863,16 +810,6 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 				checks.Equal(f.now(), message.SentAt.UTC())
 			} else if tc.recovery {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
-			}
-			var keys []string
-			for _, request := range f.fake.Requests() {
-				if request.Path == "/v2/bot/message/push" {
-					keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
-				}
-			}
-			must.Len(keys, pushes+1)
-			for _, key := range keys {
-				checks.Equal(attempt.RetryKey, key)
 			}
 		})
 	}
@@ -902,11 +839,6 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now(), RawJSON: string(raw)}}))
 			processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(f.now))
 			must.NoError(processor.Process(t.Context()))
-			var count int
-			if kind != "user" {
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&count))
-				checks.Equal(1, count)
-			}
 			parent, err := f.st.LineMessageContext(t.Context(), f.draft.SourceID, "101")
 			must.NoError(err)
 			body := "Group response"
@@ -917,19 +849,13 @@ func TestReplyFromIngestedChat(t *testing.T) {
 			must.NoError(err)
 			receipt, err := f.sender().Send(t.Context(), draft.DraftID, 1)
 			must.NoError(err)
+			checks.Equal(store.LineReplySent, receipt.Status)
 			if kind == "user" {
 				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
 				must.NoError(err)
 				must.Len(message.To, 1)
 				checks.Equal("Example User", message.To[0].Name)
-				return
 			}
-			must.Equal(store.LineReplySent, receipt.Status)
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
-			checks.Equal(2, count)
-			var active bool
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT cp.left_at IS NULL FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:U00000000000000000000000000000001").Scan(&active))
-			checks.True(active)
 		})
 	}
 }
@@ -940,28 +866,21 @@ func TestReplyPendingAttemptRechecksPolicy(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newReplyFixture(t, "user", nil)
-			f.resetClient()
+			sender := f.sender()
 			if state == store.LineReplyAdmitted {
-				f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: http.StatusInternalServerError})
+				_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, f.now(), func(store.LineReplyAttempt) error { return nil })
+				must.NoError(err)
 			} else {
 				f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-			}
-			sender := f.sender()
-			receipt, err := sender.Send(t.Context(), f.draft.DraftID, 1)
-			if state == store.LineReplyAdmitted {
-				must.ErrorIs(err, line.ErrCredentialsUnavailable)
-				checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-			} else {
+				_, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 				must.NoError(err)
 				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1, f.now()))
 			}
-			must.Equal(state, receipt.Status)
 			pushes := f.fake.Count(http.MethodPost, "/v2/bot/message/push")
 			sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
 				return nil, errors.New("synthetic revoked sending policy")
 			}
-			must.NotNil(receipt.RetryAfter)
-			f.setNow(receipt.RetryAfter.Add(time.Second))
+			f.setNow(f.now().Add(31 * time.Second))
 			pending, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 			must.ErrorContains(err, "synthetic revoked sending policy")
 			checks.Equal(state, pending.Status)

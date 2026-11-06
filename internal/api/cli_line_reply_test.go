@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/clirun"
 )
 
 func TestCLIRunLineReplyOwnerAdmission(t *testing.T) {
@@ -31,7 +32,7 @@ func TestCLIRunLineReplyOwnerAdmission(t *testing.T) {
 	var result ErrorResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	assert.Equal("not_permitted", result.Error)
-	payload, err = json.Marshal(CLIRunRequest{Args: []string{"send-line-reply", "missing-draft", "--revision=1"}, Env: map[string]string{"EXAMPLE_LINE_SECRET": "spoofed"}})
+	payload, err = json.Marshal(CLIRunRequest{Args: []string{"send-line-reply", "missing-draft", "--revision=1"}, Env: map[string]string{clirun.EnvIMAPPassword: "spoofed"}})
 	require.NoError(err)
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")

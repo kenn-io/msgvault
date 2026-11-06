@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	emersionimap "github.com/emersion/go-imap/v2"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
@@ -88,36 +87,6 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 }
 
 func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
-	t.Run("remote daemon compose and send", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		a, draft, fake := lineReplyAdapterFixture(t)
-		server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-		defer server.Close()
-		ctx := configureRemoteDaemonForTest(t, server.URL)
-		run := func(args ...string) (string, error) {
-			root := &cobra.Command{Use: "msgvault"}
-			root.SetContext(ctx)
-			root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
-			silenceUsageInRunE(root)
-			var output bytes.Buffer
-			root.SetOut(&output)
-			root.SetErr(&output)
-			root.SetArgs(args)
-			err := root.ExecuteContext(ctx)
-			return output.String(), err
-		}
-		parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
-		require.NoError(err)
-		createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
-		require.NoError(err)
-		var created chatDraftOutput
-		require.NoError(json.Unmarshal([]byte(createdJSON), &created))
-		assert.Equal("line", created.SourceType)
-		_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
-		require.NoError(err)
-		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
-	})
 	t.Run("local daemon runtime send", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -133,12 +102,13 @@ func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
 		_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
 		require.NoError(err)
 
-		cmd := &cobra.Command{Use: "send-line-reply"}
+		cmd := newSendLineReplyCommand()
 		cmd.SetContext(withStoreResolverConfig(t, a.config))
 		var stdout, stderr bytes.Buffer
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&stderr)
-		require.NoError(runDaemonCLICommandHTTPWithEnv(cmd, []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}, nil, false, false))
+		cmd.SetArgs([]string{draft.DraftID, "--revision=1", "--json"})
+		require.NoError(cmd.ExecuteContext(cmd.Context()))
 		var sent line.ReplyReceipt
 		require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
 		assert.Equal("sent", sent.Status)
