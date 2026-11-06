@@ -31,22 +31,23 @@ func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
 }
 
 func TestMeetingRecordIncludesOrphanDecisionThroughSeriesCopy(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, exception := calendarFixture(t, st, "orphan", `{"id":"series_20270314T100000Z","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
 	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
 
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(t, err)
-	require.Len(t, record.Links, 1)
-	assert.Equal(t, fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
-	assert.Equal(t, []int64{note}, record.MessageIDs)
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
+	assert.Equal([]int64{note}, record.MessageIDs)
 
 	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{note}, record.MessageIDs)
+	require.NoError(err)
+	assert.Equal([]int64{note}, record.MessageIDs)
 }
 
 func TestMeetingRecordAllDayCopiesShareNotesAcrossCalendarZones(t *testing.T) {
