@@ -882,6 +882,16 @@ The tool returns the batch ID, message count, and next steps:
 }
 ```
 
+## Server identity (unreleased)
+
+On `main`, the MCP server declares msgvault's website and icon. The icon is
+included as a PNG data URI, so stdio and HTTP clients can load it without an
+external request. Whether it appears depends on the client.
+
+The MCP HTTP listener also serves the same PNG at `/icon.png` and `/favicon.ico`.
+These public image routes accept GET and HEAD without a bearer key. They expose
+no archive data; `/mcp` keeps its configured authentication.
+
 ## CLI Flags
 
 ```bash
