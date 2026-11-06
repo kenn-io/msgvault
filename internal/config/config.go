@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -40,6 +41,8 @@ import (
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+var warnedRemovedDocuments atomic.Bool
 
 const (
 	AnalyticsEngineAuto   = "auto"
@@ -1158,7 +1161,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
-	if metadata.IsDefined("attachments", "documents") {
+	if metadata.IsDefined("attachments", "documents") && !warnedRemovedDocuments.Swap(true) {
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
