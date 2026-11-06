@@ -1,13 +1,13 @@
-package store_test
+package store
 
 import (
+	"context"
+	"database/sql/driver"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // concurrentlyBuiltIndexes are the indexes Store.buildLargeIndexesConcurrently
@@ -39,7 +39,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 // from "present but unusable" — the failure this package's concurrent-build
 // recovery path exists to catch.
 
-func probeValidIndex(t *testing.T, st *store.Store, index, table string) bool {
+func probeValidIndex(t *testing.T, st *Store, index, table string) bool {
 	t.Helper()
 	var valid bool
 	require.NoError(t, st.DB().QueryRow(`
@@ -64,7 +64,7 @@ func TestInitSchema_PGCreatesIdentityDiscoveryIndexForFreshAndUpgradedStores(t *
 		t.Skip("PG-only: identity discovery index maintenance build requires PostgreSQL")
 	}
 
-	st := testutil.NewTestStore(t)
+	st := newRFC822IDBackfillBackendStore(t)
 	for _, target := range concurrentlyBuiltIndexes {
 		require.True(probeValidIndex(t, st, target.index, target.table),
 			"fresh schema must concurrently build %s", target.index)
@@ -73,7 +73,28 @@ func TestInitSchema_PGCreatesIdentityDiscoveryIndexForFreshAndUpgradedStores(t *
 		require.False(probeValidIndex(t, st, target.index, target.table))
 	}
 
-	require.NoError(st.InitSchema(), "concurrent index build must restore the dropped indexes")
+	var builds []string
+	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+		for statement := range strings.SplitSeq(query, ";") {
+			if strings.Contains(statement, "CREATE INDEX") && (strings.Contains(statement, "idx_messages_calendar_ical_uid") || strings.Contains(statement, "idx_messages_meeting_start")) {
+				builds = append(builds, statement)
+			}
+		}
+		return nil
+	}})
+	require.NoError(observed.InitSchemaContext(t.Context()), "concurrent index build must restore the dropped indexes")
+	for _, index := range []string{"idx_messages_calendar_ical_uid", "idx_messages_meeting_start"} {
+		var matching []string
+		for _, statement := range builds {
+			if strings.Contains(statement, index) {
+				matching = append(matching, statement)
+			}
+		}
+		require.NotEmpty(matching, "observe the statement rebuilding %s", index)
+		for _, statement := range matching {
+			require.Contains(statement, "CREATE INDEX CONCURRENTLY IF NOT EXISTS "+index, "archive index builds must allow concurrent writers")
+		}
+	}
 	for _, target := range concurrentlyBuiltIndexes {
 		require.True(probeValidIndex(t, st, target.index, target.table),
 			"upgraded schema must restore a valid %s", target.index)
@@ -98,7 +119,7 @@ func TestInitSchema_PGConcurrentIndexBuildIsIdempotent(t *testing.T) {
 		t.Skip("PG-only: identity discovery index maintenance build requires PostgreSQL")
 	}
 
-	st := testutil.NewTestStore(t)
+	st := newRFC822IDBackfillBackendStore(t)
 	for range 3 {
 		for _, target := range concurrentlyBuiltIndexes {
 			require.True(probeValidIndex(t, st, target.index, target.table),

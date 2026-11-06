@@ -608,7 +608,7 @@ func TestTwentyArchiveBoundsUnicodeSnippet(t *testing.T) {
 	}
 }
 
-func TestImportTwentyLinksArchivedCalendarUID(t *testing.T) {
+func TestImportTwentyPersistsCalendarEvidence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, source, options := newImportFixture(t)

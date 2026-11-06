@@ -30,23 +30,41 @@ func repeatedMeetingSeriesFixture(t *testing.T, noteCount int) (*Store, int64, [
 }
 
 func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st, event, notes := repeatedMeetingSeriesFixture(t, 7)
-	r := st.meetingReader().withMeetingCache()
-	budget := calrecur.RequestReadBudget
-	target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
-	require.NoError(err)
-	members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
-	// Five copies expanded and resolved once need fewer than 100,000 steps.
-	assert.Less(calrecur.RequestReadBudget-budget, 100_000)
-	require.NoError(err)
-	assert.Equal(notes, members)
-	for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, {Kind: "msg", MessageID: notes[0]}} {
-		record, err := st.MeetingRecordContext(t.Context(), ref)
-		require.NoError(err, "record %s:%d", ref.Kind, ref.MessageID)
-		assert.Equal(notes, record.MessageIDs)
-		require.Len(record.Links, 1)
-		assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), record.Links[0].Ref)
+	for _, tc := range []struct {
+		name  string
+		notes int
+	}{
+		{"record", 7},
+		{"manual link", 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st, event, notes := repeatedMeetingSeriesFixture(t, tc.notes)
+			r := st.meetingReader().withMeetingCache()
+			budget := calrecur.RequestReadBudget
+			target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
+			require.NoError(err)
+			members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
+			// Five copies expanded and resolved once need fewer than 100,000 steps.
+			assert.Less(calrecur.RequestReadBudget-budget, 100_000)
+			require.NoError(err)
+			assert.Equal(notes, members)
+			if tc.name == "manual link" {
+				_, note := projectionFixture(t, st, "manual", "plaud_json", `{}`)
+				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}))
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+				require.NoError(err)
+				assert.Equal(append(notes, note), record.MessageIDs)
+				return
+			}
+			for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, {Kind: "msg", MessageID: notes[0]}} {
+				record, err := st.MeetingRecordContext(t.Context(), ref)
+				require.NoError(err, "record %s:%d", ref.Kind, ref.MessageID)
+				assert.Equal(notes, record.MessageIDs)
+				require.Len(record.Links, 1)
+				assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), record.Links[0].Ref)
+			}
+		})
 	}
 }
 
@@ -66,24 +84,6 @@ func TestMeetingSuggestionsReuseSeriesWork(t *testing.T) {
 	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event, Key: "20270314T100000Z"}, 100)
 	require.NoError(err)
 	assert.Empty(page.Suggestions)
-}
-
-func TestMeetingManualLinkRepeatedSeriesWork(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st, event, notes := repeatedMeetingSeriesFixture(t, 10)
-	_, note := projectionFixture(t, st, "manual", "plaud_json", `{}`)
-	r := st.meetingReader().withMeetingCache()
-	budget := calrecur.RequestReadBudget
-	target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
-	require.NoError(err)
-	members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
-	assert.Less(calrecur.RequestReadBudget-budget, 100_000)
-	require.NoError(err)
-	assert.Equal(notes, members)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}))
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(err)
-	assert.Equal(append(notes, note), record.MessageIDs)
 }
 
 func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
@@ -108,23 +108,31 @@ func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
 }
 
 func TestMeetingRecordIncludesOrphanDecisionThroughSeriesCopy(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, exception := calendarFixture(t, st, "orphan", `{"id":"series_20270314T100000Z","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
 	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
 
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(err)
-	require.Len(record.Links, 1)
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
-	assert.Equal([]int64{note}, record.MessageIDs)
+	for _, phase := range []string{"before removal", "after removal"} {
+		t.Run(phase, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			if phase == "after removal" {
+				require.NoError(st.UpsertMessageRawWithFormat(master, []byte(singleLinkRaw("series", "weekly@example.org")), "gcal_json"))
+			}
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			require.NoError(err)
+			require.Len(record.Links, 1)
+			assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
+			assert.Equal([]int64{note}, record.MessageIDs)
 
-	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
-	require.NoError(err)
-	assert.Equal([]int64{note}, record.MessageIDs)
+			record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
+			require.NoError(err)
+			assert.Equal([]int64{note}, record.MessageIDs)
+		})
+	}
 }
 
 func TestMeetingRecordAllDayCopiesShareNotesAcrossCalendarZones(t *testing.T) {

@@ -2,9 +2,7 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -224,7 +222,7 @@ func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[s
 
 func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 	assertions := assert.New(t)
-	backend := meetingBackendFixture{}
+	backend := &meetingBackendFixture{}
 	first := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, &handlers{})
 	second := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, &handlers{})
 	byName := make(map[string]toolDefinition, len(first))
@@ -252,81 +250,83 @@ func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 	}
 }
 
-type meetingBackendFixture struct{}
+type meetingBackendCall struct {
+	tool, ref, decision string
+	messageID           int64
+}
 
-func (meetingBackendFixture) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
+type meetingBackendFixture struct {
+	calls []meetingBackendCall
+	err   error
+}
+
+func (*meetingBackendFixture) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
 	return &meetingcontent.PacketResult{}, nil
 }
 
-func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error) {
+func (*meetingBackendFixture) ListMeetingActionItems(context.Context, generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error) {
 	return &meetingcontent.ActionsPage{}, nil
 }
 
-func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
+func (*meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
 }
 
-func (meetingBackendFixture) MeetingRecord(context.Context, string) (store.MeetingRecord, error) {
-	return store.MeetingRecord{}, nil
+func (f *meetingBackendFixture) MeetingRecord(_ context.Context, ref string) (store.MeetingRecord, error) {
+	f.calls = append(f.calls, meetingBackendCall{tool: ToolGetMeetingRecord, ref: ref})
+	return store.MeetingRecord{Links: []store.MeetingLink{}, MessageIDs: []int64{301}}, f.err
 }
-func (meetingBackendFixture) SuggestMeetingLinks(context.Context, string) (store.MeetingSuggestionPage, error) {
-	return store.MeetingSuggestionPage{}, nil
+func (f *meetingBackendFixture) SuggestMeetingLinks(_ context.Context, ref string) (store.MeetingSuggestionPage, error) {
+	f.calls = append(f.calls, meetingBackendCall{tool: ToolSuggestMeetingLinks, ref: ref})
+	return store.MeetingSuggestionPage{Suggestions: []store.MeetingSuggestion{{Ref: "evt:302", MemberMessageID: 301, OverlapMinutes: 17, SharedAttendees: 2, TitleTokens: 1, Reasons: []string{"fixture reason"}}}, Unexpandable: []store.CalendarUnexpandable{}}, f.err
 }
-func (meetingBackendFixture) DecideMeetingLink(context.Context, int64, string, string) error {
-	return nil
+func (f *meetingBackendFixture) DecideMeetingLink(_ context.Context, id int64, ref, decision string) error {
+	tool := ToolLinkMeeting
+	if decision == "unlink" {
+		tool = ToolUnlinkMeeting
+	}
+	f.calls = append(f.calls, meetingBackendCall{tool: tool, ref: ref, decision: decision, messageID: id})
+	return f.err
 }
 
 func TestMeetingLinkToolsRoundTrip(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	backend, imported, st := newMeetingMCPBackend(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
-	require.NoError(err)
-	event, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "MCP planning", Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar", Title: "MCP planning"},
-		RawMIME:      []byte(`{"id":"event","start":{"dateTime":"2026-05-01T10:00:00Z"},"end":{"dateTime":"2026-05-01T10:20:00Z"}}`), RawFormat: "gcal_json",
-	})
-	require.NoError(err)
+	requirements, assertions := require.New(t), assert.New(t)
+	backend := &meetingBackendFixture{}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingLinks: true}, true).Connect(ctx, serverTransport, nil)
-	require.NoError(err)
-	t.Cleanup(func() { assert.NoError(serverSession.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(serverSession.Close()) })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-links-test", Version: "1.0.0"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(err)
-	t.Cleanup(func() { assert.NoError(session.Close()) })
-	eventRef := fmt.Sprintf("evt:%d", event)
-	noteRef := fmt.Sprintf("msg:%d", imported[0].MessageID)
-	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolSuggestMeetingLinks, Arguments: map[string]any{"ref": noteRef}})
-	require.NoError(err)
-	require.False(result.IsError)
-	suggestions, ok := meetingStructuredContent(t, result)["suggestions"].([]any)
-	require.True(ok)
-	require.NotEmpty(suggestions)
-	suggestion, ok := suggestions[0].(map[string]any)
-	require.True(ok)
-	assert.Equal(eventRef, suggestion["ref"])
-	for _, tool := range []string{ToolLinkMeeting, ToolUnlinkMeeting} {
-		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tool, Arguments: map[string]any{"message_id": float64(imported[0].MessageID), "event": eventRef}})
-		require.NoError(err)
-		require.False(result.IsError)
-		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": eventRef}})
-		require.NoError(err)
-		require.False(result.IsError)
-		ids, ok := meetingStructuredContent(t, result)["message_ids"].([]any)
-		require.True(ok)
-		if tool == ToolLinkMeeting {
-			assert.Equal([]any{float64(imported[0].MessageID)}, ids)
-		} else {
-			assert.Empty(ids)
-		}
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(session.Close()) })
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		call meetingBackendCall
+		want map[string]any
+	}{
+		{ToolSuggestMeetingLinks, map[string]any{"ref": "msg:73"}, meetingBackendCall{tool: ToolSuggestMeetingLinks, ref: "msg:73"}, map[string]any{"suggestions": []any{map[string]any{"ref": "evt:302", "member_message_id": float64(301), "overlap_minutes": float64(17), "shared_attendees": float64(2), "title_tokens": float64(1), "reasons": []any{"fixture reason"}}}, "unexpandable": []any{}}},
+		{ToolGetMeetingRecord, map[string]any{"ref": "evt:91@20270314T100000Z"}, meetingBackendCall{tool: ToolGetMeetingRecord, ref: "evt:91@20270314T100000Z"}, map[string]any{"links": []any{}, "message_ids": []any{float64(301)}}},
+		{ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolLinkMeeting, ref: "evt:91", decision: "link", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "link"}},
+		{ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, meetingBackendCall{tool: ToolUnlinkMeeting, ref: "evt:91", decision: "unlink", messageID: 73}, map[string]any{"message_id": float64(73), "event": "evt:91", "decision": "unlink"}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			backend.calls = nil
+			result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			require.NoError(err)
+			require.False(result.IsError)
+			assert.Equal([]meetingBackendCall{tc.call}, backend.calls)
+			assert.Equal(tc.want, meetingStructuredContent(t, result))
+		})
 	}
 }
 
 func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
-	backend, imported, _ := newMeetingMCPBackend(t)
+	backend := &meetingBackendFixture{}
 	ctx := t.Context()
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingLinks: true}, true).Connect(ctx, serverTransport, nil)
@@ -344,11 +344,16 @@ func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
 		{"invalid ref", ToolGetMeetingRecord, map[string]any{"ref": "wrong"}, "invalid_argument"},
 		{"missing", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
 		{"suggest", ToolSuggestMeetingLinks, map[string]any{"ref": "wrong"}, "invalid_argument"},
-		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(imported[0].MessageID), "event": "wrong"}, "invalid_argument"},
-		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(imported[0].MessageID), "event": "evt:1@bad"}, "invalid_argument"},
+		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "wrong"}, "invalid_argument"},
+		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:1@bad"}, "invalid_argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
+			status := 400
+			if tc.code == "meeting_not_found" {
+				status = 404
+			}
+			backend.err = &daemonclient.APIError{Status: status, Code: tc.code, Message: "fixture daemon refusal"}
 			result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
 			require.NoError(err)
 			require.True(result.IsError)

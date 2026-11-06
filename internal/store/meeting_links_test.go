@@ -346,7 +346,7 @@ func TestMeetingLinksProjectionEnvelopeAndRepair(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "valid@example.org"))
 	data, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":2,"recording":{},"calendar_event":{"iCalUid":"valid@example.org"}}`)
-	requirements.NoError(st.SetMessageMetadata(note, sql.NullString{String: `{"platform":"twenty","calendar_ical_uid":"valid@example.org"}`, Valid: true}))
+	requirements.NoError(st.SetMessageMetadata(note, sql.NullString{String: `{"provider":"twenty","calendar_ical_uid":"valid@example.org"}`, Valid: true}))
 	assertions.Empty(linkedMeetingRefs(t, st, note)[note])
 	valid := `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"valid@example.org"}}`
 	requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(valid), "twenty_json"))

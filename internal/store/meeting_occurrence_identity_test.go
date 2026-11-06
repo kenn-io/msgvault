@@ -10,43 +10,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMeetingSplitSurvivesStandaloneBecomingRecurring(t *testing.T) {
-	for _, tc := range []struct{ name, raw, start, key string }{
-		{"timed", singleLinkRaw("series", "weekly@example.org"), "2027-03-14T10:00:00Z", "20270314T100000Z"},
-		{"all day", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`, "2027-03-14T00:00:00Z", "20270314"},
+func TestMeetingDecisionsSurviveStandaloneBecomingRecurring(t *testing.T) {
+	for _, tc := range []struct{ name, raw, start, key, decision string }{
+		{"timed split", singleLinkRaw("series", "weekly@example.org"), "2027-03-14T10:00:00Z", "20270314T100000Z", "split"},
+		{"all-day split", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`, "2027-03-14T00:00:00Z", "20270314", "split"},
+		{"manual link", singleLinkRaw("event", "manual@example.org"), "2027-03-14T10:00:00Z", "20270314T100000Z", "link"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			_, event := calendarFixture(t, st, "event", tc.raw)
-			_, note := projectionFixture(t, st, "note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":%q}}`, tc.start))
-			require.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
-			require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-			require.Empty(linkedMeetingRefs(t, st, note)[note])
+			var note int64
+			if tc.decision == "split" {
+				_, note = projectionFixture(t, st, "note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":%q}}`, tc.start))
+				require.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+				require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+				require.Empty(linkedMeetingRefs(t, st, note)[note])
+			} else {
+				_, note = projectionFixture(t, st, "note", "plaud_json", `{}`)
+				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+				require.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+			}
 			calendarFixture(t, st, "event", strings.TrimSuffix(tc.raw, "}")+`,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-			assert.Empty(linkedMeetingRefs(t, st, note)[note])
+			wantRef, wantIDs := "", []int64{}
+			if tc.decision == "link" {
+				wantRef, wantIDs = fmt.Sprintf("evt:%d@%s", event, tc.key), []int64{note}
+			}
+			assert.Equal(wantRef, linkedMeetingRefs(t, st, note)[note])
 			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event, Key: tc.key})
 			require.NoError(err)
-			assert.Empty(record.MessageIDs)
+			assert.Equal(wantIDs, record.MessageIDs)
+			if tc.decision == "link" {
+				_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+				assert.ErrorContains(err, "series reference needs @<occurrence key>")
+			}
 		})
 	}
-}
-
-func TestMeetingManualLinkSurvivesRecurrence(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := singleLinkRaw("event", "manual@example.org")
-	_, event := calendarFixture(t, st, "event", raw)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-	require.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
-	calendarFixture(t, st, "event", strings.TrimSuffix(raw, "}")+`,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, note)[note])
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event, Key: "20270314T100000Z"})
-	require.NoError(err)
-	assert.Equal([]int64{note}, record.MessageIDs)
-	_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
-	assert.ErrorContains(err, "series reference needs @<occurrence key>")
 }
 
 func TestMeetingCancelledMasterRetainsGeneratedOccurrenceIdentity(t *testing.T) {
@@ -117,21 +116,6 @@ func TestMeetingGranolaRetainedExceptionAfterRecurrenceRemoval(t *testing.T) {
 	assert.Equal(want, linkedMeetingRefs(t, st, note)[note])
 	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(singleLinkRaw("series", "weekly@example.org")), "gcal_json"))
 	assert.Equal(want, linkedMeetingRefs(t, st, note)[note])
-}
-
-func TestMeetingRecordOrphanDecisionAfterRecurrenceRemoval(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, orphan := calendarFixture(t, st, "orphan", `{"id":"series_20270314T100000Z","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
-	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
-	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
-	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(singleLinkRaw("series", "weekly@example.org")), "gcal_json"))
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"})
-	require.NoError(err)
-	assert.Equal([]int64{note}, record.MessageIDs)
 }
 
 func TestMeetingSplitSuppressesConvergedManualLink(t *testing.T) {

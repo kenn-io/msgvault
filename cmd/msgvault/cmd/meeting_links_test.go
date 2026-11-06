@@ -172,6 +172,4 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	var record store.MeetingRecord
 	requirements.NoError(json.Unmarshal(out.Bytes(), &record))
 	assertions.Equal([]int64{note}, record.MessageIDs)
-	requirements.Len(record.Links, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
 }

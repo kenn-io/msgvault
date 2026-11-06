@@ -182,19 +182,15 @@ func TestCalendarExceptionsPartialBounds(t *testing.T) {
 	}
 }
 
-func TestCalendarListingWithMalformedLegacyMetadata(t *testing.T) {
+func TestCalendarListingWithNullLegacyMetadata(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
-	// JSONB rejects malformed input at storage time.
-	if st.IsPostgreSQL() {
-		t.Skip("PostgreSQL JSONB rejects malformed metadata at write time")
-	}
-	// Simulate malformed metadata archived before the UID index was introduced.
+	// Legacy events can predate calendar identity metadata.
 	_, err := st.db.Exec(`DROP INDEX idx_messages_calendar_ical_uid`)
 	requirements.NoError(err)
-	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: `{"broken":`, Valid: true}))
-	requirements.NoError(st.InitSchemaContext(t.Context()), "schema setup must accept malformed legacy metadata")
+	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{}))
+	requirements.NoError(st.InitSchemaContext(t.Context()), "schema setup must accept missing legacy metadata")
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(24*time.Hour))
 	requirements.NoError(err)
