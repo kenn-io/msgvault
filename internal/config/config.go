@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/keepintouch"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -705,6 +706,7 @@ type DeletionConfig struct {
 // PeopleConfig keeps the existing archive sweep and external enrichment as
 // sibling, independently disabled subsystems.
 type PeopleConfig struct {
+	KeepInTouch     keepintouch.Config      `toml:"keep_in_touch"`
 	Sweep           peoplesweep.Config      `toml:"sweep"`
 	Enrichment      personenrichment.Config `toml:"enrichment"`
 	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
@@ -991,6 +993,7 @@ func NewDefaultConfig() *Config {
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
 	cfg.People.Tiers = persontiers.DefaultConfig()
+	cfg.People.KeepInTouch = keepintouch.DefaultConfig()
 	return cfg
 }
 
@@ -1282,6 +1285,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if err := cfg.People.Sweep.Validate(); err != nil {
 		return nil, err
+	}
+	if err := cfg.People.KeepInTouch.Validate(); err != nil {
+		return nil, fmt.Errorf("people.keep_in_touch: %w", err)
 	}
 	cfg.People.Enrichment.ApplyDefaults()
 	if err := cfg.People.Enrichment.Validate(); err != nil {

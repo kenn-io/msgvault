@@ -181,6 +181,21 @@ its timezone, and the large-audience cut uses its direct limit. After you change
 values and the commands warn until `msgvault activity build` rebuilds it. See
 [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
+## Keep-in-touch reminders
+
+`[people.keep_in_touch]` is disabled by default. It reuses the configured Kata
+integration and selected people inference provider. See [recurring reminders](usage/people-automation.md#recurring-keep-in-touch-reminders)
+for setup, supported evidence, cycle behavior and retry recovery.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Explicitly register the recurring daemon job. Manual checks also work while this is off. |
+| `schedule` | `0 9 * * *` | Daily five-field cron schedule, using the existing daemon scheduler. |
+| `owner` | empty | Required Kata inbox recipient for actual checks. |
+| `approach_days` | `7` | Include people due within this many days, from 0 to 3660; short intervals retain at least one day after contact. |
+| `limit` | `20` | Maximum preview rows or actionable deliveries per invocation, from 1 to 100. |
+| `max_drafts_per_run` | `20` | Maximum draft attempts per invocation, including failures, from 1 to 100. This is not a daily token or cost budget. |
+
 ## People sweep inference
 
 People sweeps use one named protocol profile at a time. A profile records the

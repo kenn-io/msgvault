@@ -306,3 +306,106 @@ it. A deleted, edited, or reassigned source can invalidate earlier support.
 The ledger keeps that history while the resolver updates eligible automatic
 values. Corrections belong in the current profile field; the history explains
 how it reached that state.
+
+## Recurring keep-in-touch reminders
+
+Available on `main`. An opt-in daily check puts a short outreach draft in a
+person-linked Kata issue and the configured owner's Kata inbox. Nothing sends
+the draft. The owner or an agent reviews the issue before contacting the person.
+
+Set each person's desired interval with the existing `contact_frequency`
+attribute. The check reads that interval; it does not assign contact lists or
+turn signal tiers into contact-list intervals. For example:
+
+```bash
+msgvault person attributes set 7 contact_frequency --value 21
+msgvault person keep-in-touch check --dry-run --json
+```
+
+Preview reads the archive only. It reports due people, their last qualifying
+contact, and stale or unknown-cadence skips. It calls neither Kata nor an AI
+provider and changes nothing. A stale activity projection must catch up before
+a person can be eligible. Counted contact follows the configured people-tier
+rules, including mailing-list exclusions, the direct-audience limit, unsent
+messages and minimum connected-call duration. Importing an older message does
+not make it a newer contact.
+
+For actual reminders, configure the existing [Kata integration](kata-issues.md)
+with a credential that can read issues across the service, including closed
+issues and issues moved to other projects. A project-scoped credential is
+refused for automated deduplication. New issues go into its configured project
+and appear in the person's `keep-in-touch` agenda list.
+
+Select a checked, consented [people inference provider](#configure-a-provider),
+then configure the reminder owner without enabling the schedule yet:
+
+```toml
+[people.keep_in_touch]
+enabled = false
+owner = "operator"
+schedule = "0 9 * * *"
+approach_days = 7
+limit = 20
+max_drafts_per_run = 20
+```
+
+Restart the daemon after configuration changes, then run a manual check:
+
+```bash
+msgvault person keep-in-touch check --json
+```
+
+`owner` is the Kata inbox recipient. Change the example to your own actor.
+The check includes overdue people and people due within `approach_days`.
+A short cadence keeps at least one whole day after contact before approaching
+its next due date. Set `approach_days = 0` to check only due or overdue people.
+
+Drafting uses at most six messages and 12 KiB of the existing brief evidence
+window, within the selected provider's allowed lanes and dates. Current brief
+support admits authenticated text authored by the person; email-only contacts
+can have no eligible drafting evidence. In that case the issue explicitly
+labels a neutral check-in, with no model call. Retrieval, consent and provider
+failures return errors. They never switch providers or produce a fallback draft.
+The issue cites its person and message coordinates, last qualifying contact,
+saved interval, due date and supported last-contact channel. Bounded current
+profile attributes are included for the reviewer, outside inference; verify
+them before using them. Kata itself can be remote. The check revalidates the
+selected message versions and person scope before publication. A bounded proof
+is retained with the issue and checked again before retrying notification. Changed
+or deleted evidence defers delivery and leaves the existing issue intact.
+
+`limit` bounds preview rows or actionable deliveries per invocation. Already
+handled cycles and open reminders do not fill it. `max_drafts_per_run` bounds
+draft attempts, including failures; each model call allows at most 800 output
+tokens with no repair call. These limits are separate from the people sweep's
+daily token and cost budgets. Manual, restarted and concurrent checks each have
+their own per-run cap. A checkpoint in existing archive metadata resumes after
+attempted people on the next actual run, wrapping once through the saved people.
+A persistently failing prefix cannot monopolize every daily draft budget.
+Pending delivery retries remain eligible after the draft budget is exhausted;
+preview reads but never advances the checkpoint.
+
+To install recurring operation, explicitly change `enabled` to `true` and
+restart the daemon. The existing daemon scheduler runs the five-field cron
+schedule in its timezone. Scheduled failures report bounded person IDs and
+operational causes; a manual JSON check provides full owner diagnostics. Leave it disabled until preview and manual operation
+match your intended people and destination.
+
+### Cycles and recovery
+
+One last qualifying-contact instant identifies one outreach cycle. Repeated
+checks recover the same issue, including after closure or a person merge.
+Closing a reminder suppresses that gap; it does not create another reminder
+the following day. A real new contact starts a new cycle when its next due date
+approaches. An older open reminder suppresses newer cycles until reviewed and
+closed. New contact or a stale projection stops pending delivery; existing
+issues remain for the owner to review, with no automatic deletion or closure.
+
+The native Kata inbox request and its delivery receipt are saved together.
+If a response is lost, the next eligible check reads the receipt; clearing the
+inbox does not cause another notification. An unrelated existing attention
+request is preserved and reported as pending. Clear that request when handled,
+then rerun the check. Existing issues retain their original recipient even if
+configuration changes. A failed creation or delivery is safe to retry with the
+same check. Keep the original Kata service and its complete issue visibility;
+deleting issues or switching services removes that deduplication authority.

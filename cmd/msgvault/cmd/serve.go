@@ -563,6 +563,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
+	if err := addKeepInTouchJob(sched, cfg.People.KeepInTouch, newKeepInTouchScheduledRun(cfg, s)); err != nil {
+		return fmt.Errorf("schedule keep-in-touch reminders: %w", err)
+	}
 	if err := registerPersonEnrichmentJob(
 		ctx, sched, s, cfg.People.Enrichment, personEnrichmentRuntimeCredentials{
 			Suppression: personEnrichmentEnvironmentLookup(cfg),

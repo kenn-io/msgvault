@@ -3318,6 +3318,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider remove <name>` | Remove a configured profile and its stored key. For a profile no longer in the config, delete its leftover stored key and revoke consent for the policies that used it |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
+| `person keep-in-touch check [--dry-run] [--json]` | Check saved cadence and prepare person-linked Kata inbox drafts; `--dry-run` previews without provider calls or writes. See [recurring reminders](usage/people-automation.md#recurring-keep-in-touch-reminders) |
 | `person sweep status` | Read redacted progress and usage |
 | `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts |
 | `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
