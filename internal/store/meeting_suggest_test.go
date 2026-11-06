@@ -107,7 +107,7 @@ func TestMeetingLinksSuggestionsTimeWindow(t *testing.T) {
 		{name: "internal", internal: "2027-03-14T10:00:00Z", raw: `{}`, include: true},
 		{name: "past", sent: "2020-01-01T00:00:00Z", raw: `{}`},
 		{name: "future", sent: "2030-01-01T00:00:00Z", raw: `{}`},
-		{name: "scheduled overrides sent", sent: "2027-03-14T10:00:00Z", raw: `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"window@example.org","startsAt":"2030-01-01T00:00:00Z"}}`},
+		{name: "scheduled overrides sent", sent: "2027-03-14T10:00:00Z", raw: `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2030-01-01T00:00:00Z"}}`},
 		{name: "ends at start", sent: "2027-03-14T09:30:00Z", raw: `{}`},
 		{name: "starts at end", sent: "2027-03-14T11:00:00Z", raw: `{}`},
 	} {
