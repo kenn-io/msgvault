@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -232,4 +233,33 @@ func TestMeetingGranolaSupersededExceptionKeepsOwnerCalendar(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, links, 1)
 	assert.Equal(t, fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
+}
+
+func TestMeetingTwentyLinkSurvivesReschedule(t *testing.T) {
+	for _, tc := range []struct{ name, master, exception, start, key, zone, moved string }{
+		{"timed", linkSeriesRaw, `{"id":"moved","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`, "2027-03-14T10:00:00Z", "20270314T100000Z", "UTC", "2027-03-15T12:00:00Z"},
+		{"all day", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, `{"id":"moved","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-15"},"end":{"date":"2027-03-16"}}`, "2027-03-13T15:00:00Z", "20270314", "Asia/Tokyo", "2027-03-14T15:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, master := calendarFixture(t, st, "master", tc.master)
+			require.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, fmt.Sprintf(`{"calendar_id":"calendar@example.com","time_zone":%q}`, tc.zone)))
+			_, note := projectionFixture(t, st, "note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":%q}}`, tc.start))
+			want := fmt.Sprintf("evt:%d@%s", master, tc.key)
+			require.Equal(want, linkedMeetingRefs(t, st, note)[note])
+			calendarFixture(t, st, "exception", tc.exception)
+			require.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, fmt.Sprintf(`{"calendar_id":"calendar@example.com","time_zone":%q}`, tc.zone)))
+			links, err := meetingLinksForTest(t, st, note)
+			require.NoError(err)
+			require.Len(links, 1)
+			assert.Equal(want, links[0].Ref)
+			assert.Equal(tc.moved, links[0].Start.UTC().Format(time.RFC3339))
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: tc.key})
+			require.NoError(err)
+			assert.Equal([]int64{note}, record.MessageIDs)
+			require.Len(record.Links, 1)
+			assert.Equal(tc.moved, record.Links[0].Start.UTC().Format(time.RFC3339))
+		})
+	}
 }

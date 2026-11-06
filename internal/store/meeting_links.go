@@ -382,6 +382,21 @@ candidatesLoop:
 			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				return nil, err
 			}
+			original := calrecur.Identity{Instant: *key.ScheduledAt}
+			if row.Event.AllDay {
+				zone, err := calendarEventZone(row.Event)
+				if err != nil {
+					return nil, err
+				}
+				original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
+			}
+			o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID, Key: original.Key()}, budget)
+			if err == nil {
+				candidates = slices.DeleteFunc(candidates, func(candidate linkOccurrence) bool { return candidate.Ref == o.Ref })
+				candidates = append(candidates, o)
+			} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				return nil, err
+			}
 		} else {
 			o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
@@ -397,7 +412,14 @@ candidatesLoop:
 				return nil, nil
 			}
 			if key.Kind == "ical_uid" && row.Event.Kind != "single" {
-				if key.ScheduledAt == nil || !o.Start.Equal(*key.ScheduledAt) {
+				starts, _, err := meetingCopyStarts(ctx, r, o, nil, budget)
+				if err != nil {
+					return nil, err
+				}
+				if key.ScheduledAt == nil || !slices.ContainsFunc(starts, func(at any) bool {
+					instant, ok := at.(time.Time)
+					return ok && instant.Equal(*key.ScheduledAt)
+				}) {
 					continue
 				}
 			}
