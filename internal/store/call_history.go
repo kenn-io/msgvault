@@ -63,13 +63,12 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				Message: &Message{
 					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType, IsFromMe: o.Direction == "outgoing",
 					SentAt:  sql.NullTime{Time: o.OccurredAt, Valid: true},
-					Snippet: sql.NullString{String: text, Valid: true},
+					Subject: sql.NullString{String: text, Valid: true},
 				},
 				Conversation: &ConversationPersistData{
 					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: text,
 				},
-				BodyText: sql.NullString{String: text, Valid: true},
-				FTS:      &FTSDoc{Subject: text, Body: text},
+				FTS:      &FTSDoc{Subject: text},
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 				PreserveLabels: true,
