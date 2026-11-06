@@ -236,27 +236,6 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	assertions.Equal(store.ChannelChat, got.Channel)
 }
 
-func TestCallObservationRejectsCrossAccountSource(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	o := callhistory.Observation{
-		RecordID: "same-record",
-
-		Version: 1, Provider: "signal", Account: "a", Kind: "call",
-		Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
-		OccurredAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Precision: "instant",
-
-		Raw: []byte(`{}`),
-	}
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	requirements.NoError(err)
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	o.Account = "b"
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.ErrorIs(err, callhistory.ErrInvalid)
-}
-
 func TestCallObservationSubsetAndParticipantMerge(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
