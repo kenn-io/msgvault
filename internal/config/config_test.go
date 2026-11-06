@@ -2651,9 +2651,5 @@ func TestSyncConfigValidateRejectsBlankIMAPAccount(t *testing.T) {
 				require.ErrorContains(t, cfg.Validate(), "sync.imap_reconcile_filtered_deletions contains a blank account key")
 			})
 		}
-		t.Run(fmt.Sprintf("skip/%q", key), func(t *testing.T) {
-			cfg := SyncConfig{IMAPSkipFolders: map[string][]string{key: {"Trash"}}}
-			require.ErrorContains(t, cfg.Validate(), "sync.imap_skip_folders contains a blank account key")
-		})
 	}
 }

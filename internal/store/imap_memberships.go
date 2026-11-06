@@ -862,8 +862,17 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		observation.Mailbox, observation.UIDValidity = mailbox, delta.uidValidity
 		observations[observation.UID] = observation
 	}
-	predicate, keyArgs := r.sourceKeyPrefix(mailbox)
-	args := append([]any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID}, keyArgs...)
+	// Validate the final UID separator below to exclude nested mailboxes.
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
+	predicate := `source_message_id LIKE ? ESCAPE '\'`
+	args := []any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID, pattern}
+	if r.sqlite {
+		// SQLite's default LIKE cannot use the binary source-key index. The
+		// byte after '|' is '}', so these bounds cover exactly this prefix.
+		predicate = `source_message_id >= ? AND source_message_id < ?`
+		args[len(args)-1] = mailbox + "|"
+		args = append(args, mailbox+"}")
+	}
 	rows, err := r.tx.Query(`
 		SELECT messages.id, messages.source_message_id, messages.deleted_from_source_at IS NOT NULL,
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id),
@@ -889,10 +898,15 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			_ = rows.Close()
 			return err
 		}
-		var valid bool
-		if c.uid, valid = imapSourceKeyUID(c.key, mailbox); !valid {
+		separator := strings.LastIndexByte(c.key, '|')
+		if separator < 0 || c.key[:separator] != mailbox {
 			continue
 		}
+		uid, err := strconv.ParseUint(c.key[separator+1:], 10, 32)
+		if err != nil || uid == 0 || c.key[separator+1:] != strconv.FormatUint(uid, 10) {
+			continue
+		}
+		c.uid = uint32(uid)
 		_, observed := observations[c.uid]
 		if protected {
 			continue
@@ -933,31 +947,6 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 	return nil
 }
 
-// sourceKeyPrefix matches source keys starting with mailbox and '|'. Callers
-// validate matches with imapSourceKeyUID to exclude nested mailboxes.
-func (r *imapMembershipResolver) sourceKeyPrefix(mailbox string) (string, []any) {
-	if r.sqlite {
-		// SQLite's default LIKE cannot use the binary source-key index. The
-		// byte after '|' is '}', so these bounds cover exactly this prefix.
-		return `source_message_id >= ? AND source_message_id < ?`, []any{mailbox + "|", mailbox + "}"}
-	}
-	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
-	return `source_message_id LIKE ? ESCAPE '\'`, []any{pattern}
-}
-
-// imapSourceKeyUID returns the UID of a mailbox|uid source key in mailbox.
-func imapSourceKeyUID(key, mailbox string) (uint32, bool) {
-	separator := strings.LastIndexByte(key, '|')
-	if separator < 0 || key[:separator] != mailbox {
-		return 0, false
-	}
-	uid, err := strconv.ParseUint(key[separator+1:], 10, 32)
-	if err != nil || uid == 0 || key[separator+1:] != strconv.FormatUint(uid, 10) {
-		return 0, false
-	}
-	return uint32(uid), true
-}
-
 // captureScannedUntracked marks live rows without memberships whose source key
 // names a scanned mailbox at a UID missing from its complete resulting UID set,
 // or at any UID when the mailbox has a new generation.
@@ -993,10 +982,12 @@ func (r *imapMembershipResolver) captureScannedUntracked(
 			continue
 		}
 		newGeneration := previous[mailbox] != 0 && previous[mailbox] != delta.uidValidity
-		if uid, valid := imapSourceKeyUID(key, mailbox); valid {
-			if _, ok := present[mailbox][uid]; newGeneration || !ok {
-				affected[id] = struct{}{}
-			}
+		uid, err := strconv.ParseUint(key[separator+1:], 10, 32)
+		if err != nil || uid == 0 || key[separator+1:] != strconv.FormatUint(uid, 10) {
+			continue
+		}
+		if _, ok := present[mailbox][uint32(uid)]; newGeneration || !ok {
+			affected[id] = struct{}{}
 		}
 	}
 	return rows.Err()

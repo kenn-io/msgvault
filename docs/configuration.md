@@ -1016,11 +1016,13 @@ To reconcile deletions within scanned folders, enable the setting for the exact
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
-Restart the daemon after editing the file. This opt-in reconciles deletions in
+Blank account keys in `imap_reconcile_filtered_deletions` are rejected when the
+config loads. Restart the daemon after editing the file. This opt-in reconciles deletions in
 scanned folders only when every mailbox skipped by the saved exclusions is one of the
 account's Trash or Junk mailboxes and no `folders` allow list is set. Msgvault
-identifies Trash and Junk from LIST special-use roles, falling back to common
-folder names. If any other mailbox is skipped or an allow list is set, the sync
+counts every mailbox the server advertises with a Trash or Junk LIST special-use
+role. It falls back to common folder names only when no role is advertised.
+If any other mailbox is skipped or an allow list is set, the sync
 preserves memberships and deletion markers as it does by default.
 
 This applies to scheduled and manual syncs without `--folder` or `--skip-folder`
@@ -1028,6 +1030,8 @@ overrides. After a clean, complete run,
 msgvault advances cursors and replaces memberships only for scanned folders.
 Date-filtered, limited, resumed, failed, or interrupted runs do not commit this
 reconciliation.
+
+Opted-in syncs skip QRESYNC and list every scanned folder in full on each run.
 
 A message moved into skipped Trash or Junk becomes eligible for `gc` only when
 no stored folder membership remains. Stored memberships in skipped folders
