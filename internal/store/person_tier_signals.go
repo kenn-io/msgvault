@@ -92,14 +92,16 @@ func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs [
 
 // tierSignalRow is one direct activity link the tier rules can count.
 type tierSignalRow struct {
-	PersonID  int64
-	MessageID int64
-	LocalDate string
-	Channel   string
-	Inbound   bool
-	Meeting   bool
-	List      bool
-	Call      bool
+	OccurredAt time.Time
+	SourceID   int64
+	PersonID   int64
+	MessageID  int64
+	LocalDate  string
+	Channel    string
+	Inbound    bool
+	Meeting    bool
+	List       bool
+	Call       bool
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,
@@ -110,14 +112,18 @@ type tierSignalRow struct {
 // the projector's own predicate, so a sent copy that kept draft evidence after
 // dedup still counts.
 func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
+	return s.personTierRowsBetween(ctx, tx, personIDs, asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly), asOf.Format(time.DateOnly), cfg, after)
+}
+
+// personTierRowsBetween shares the counted-contact predicate with the tier
+// window reader while allowing cadence to find an older qualifying contact.
+func (s *Store) personTierRowsBetween(ctx context.Context, tx *loggedTx, personIDs []int64, from, through string, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
-	args = append(args,
-		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
-		asOf.Format(time.DateOnly),
+	args = append(args, from, through,
 		after.PersonID, after.LocalDate, after.MessageID,
 		cfg.MinCallSeconds, cfg.MinCallSeconds, personTierRowPage)
 	callTypes := `'` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `'`
-	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,
+	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,ae.occurred_at,m.source_id,
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
  CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END,
@@ -146,7 +152,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 	for rows.Next() {
 		var r tierSignalRow
 		var inbound, meeting, list, call int
-		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call); err != nil {
+		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &r.OccurredAt, &r.SourceID, &inbound, &meeting, &list, &call); err != nil {
 			return nil, fmt.Errorf("scan person tier signals: %w", err)
 		}
 		r.Inbound, r.Meeting, r.List, r.Call = inbound != 0, meeting != 0, list != 0, call != 0
@@ -216,11 +222,11 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 	for _, r := range rows {
 		s := t.result[r.PersonID]
 		switch {
-		case r.List && t.cfg.ExcludeListMessages:
+		case personTierExcludedReason(r, t.cfg, broadcast) == "list":
 			s.ExcludedListEvents++
 			t.result[r.PersonID] = s
 			continue
-		case r.Inbound && broadcast[r.MessageID]:
+		case personTierExcludedReason(r, t.cfg, broadcast) == "broadcast":
 			s.LargeAudienceInboundEvents++
 			t.result[r.PersonID] = s
 			continue
@@ -265,6 +271,18 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 		s.MeetingDaysLong, s.ChannelsLong = len(d.meeting), len(d.channel)
 		t.result[r.PersonID] = s
 	}
+}
+
+// personTierExcludedReason is shared by signal tallies and cadence. Keep the
+// precedence: a list message that is also a broadcast is a list exclusion.
+func personTierExcludedReason(r tierSignalRow, cfg persontiers.Config, broadcast map[int64]bool) string {
+	if r.List && cfg.ExcludeListMessages {
+		return "list"
+	}
+	if r.Inbound && broadcast[r.MessageID] {
+		return "broadcast"
+	}
+	return ""
 }
 
 // personTierBindings reads each person's addresses and identifiers for

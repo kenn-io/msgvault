@@ -1458,7 +1458,11 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
 		providerCall := args[1] == "provider" && args[2] == "check"
 		sweepCall := args[1] == "sweep" && args[2] == "run"
-		if sweepCall {
+		outreachCall := args[1] == "keep-in-touch" && args[2] == "check"
+		if outreachCall && cliRunOutreachPreview(args) {
+			return false
+		}
+		if sweepCall || outreachCall {
 			keyEnv := s.configuredPeopleProviderKeyEnv()
 			return keyEnv != "" && keyEnv == name
 		}
@@ -1479,6 +1483,30 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 		return false
 	}
 	return s.cliRunEnvAllowed(name)
+}
+
+// cliRunOutreachPreview follows pflag bool semantics: a bare flag is true,
+// explicit values use strconv.ParseBool, and the last occurrence wins. Invalid
+// values fail closed here and are rejected by Cobra on the daemon.
+func cliRunOutreachPreview(args []string) bool {
+	preview := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--dry-run" {
+			preview = true
+			continue
+		}
+		if value, found := strings.CutPrefix(arg, "--dry-run="); found {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return true
+			}
+			preview = parsed
+		}
+	}
+	return preview
 }
 
 // Local onboarding may supply the selected profile's key for one synthetic
@@ -1746,6 +1774,8 @@ func cliRunCommandAllowed(args []string) bool {
 		switch args[1] {
 		case "provider":
 			return cliRunPersonProviderArgsAllowed(args[2], args[3:])
+		case "keep-in-touch":
+			return args[2] == "check"
 		case "sweep":
 			switch args[2] {
 			case "run", "status", "history":

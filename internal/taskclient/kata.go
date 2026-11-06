@@ -48,6 +48,7 @@ type KataTask struct {
 
 type KataCreate struct {
 	Title, Body   string
+	Owner         string
 	PriorityValue *int64
 	Labels        []string
 	Metadata      map[string]any
@@ -199,7 +200,7 @@ func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyK
 	}
 	// Different people can need identical todos. The retry key still prevents
 	// duplicate creation when the same request is sent again.
-	request := kata.CreateIssueRequestBody{Actor: new(writeActor), Title: create.Title, Body: &create.Body, Labels: create.Labels, Metadata: create.Metadata, Priority: create.PriorityValue, ForceNew: new(true)}
+	request := kata.CreateIssueRequestBody{Actor: new(writeActor), Title: create.Title, Body: &create.Body, Labels: create.Labels, Metadata: create.Metadata, Priority: create.PriorityValue, Owner: optionalString(create.Owner), ForceNew: new(true)}
 	var response kata.MutationResponseBody
 	if err := c.transport.doJSON(ctx, http.MethodPost, path, request, http.Header{"Idempotency-Key": {idempotencyKey}}, &response, http.StatusOK); err != nil {
 		return KataTask{}, false, err
