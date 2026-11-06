@@ -3,6 +3,7 @@ package line
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -57,8 +58,20 @@ func Register(ctx context.Context, st *store.Store, client *Client, channelID st
 	if _, err = st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", UserIdentifier(channelID, bot.UserID), bot.DisplayName); err != nil {
 		return nil, err
 	}
-	if err = st.AddAccountIdentityContext(ctx, source.ID, UserIdentifier(channelID, bot.UserID), "line-bot"); err != nil {
+	var config map[string]jsontext.Value
+	if source.SyncConfig.Valid && source.SyncConfig.String != "" {
+		if err = json.Unmarshal([]byte(source.SyncConfig.String), &config); err != nil {
+			return nil, fmt.Errorf("decode sync_config: %w", err)
+		}
+	}
+	optedOut, err := store.DefaultIdentityOptedOut(config)
+	if err != nil {
 		return nil, err
+	}
+	if !optedOut {
+		if err = st.AddAccountIdentityContext(ctx, source.ID, UserIdentifier(channelID, bot.UserID), "line-bot"); err != nil {
+			return nil, err
+		}
 	}
 	return st.GetSourceByIDContext(ctx, source.ID)
 }
