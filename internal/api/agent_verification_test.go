@@ -116,6 +116,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", "", ""},
 		{"filename", "Ordinary", "", "", "code-482913.png", ""},
 		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "image.png", "https://example.test/image.png"},
+		// Owner and reveal reads must preserve bodies beyond the classification limit.
 		{"uncapped detail", "Account", strings.Repeat("x", verification.MaxFieldBytes+1), "", "", ""},
 		{"attachment URL", "Account", "Your code is 482913", "", "image.png", "https://example.test/reset?token=abcDEF1234567890"},
 	} {
