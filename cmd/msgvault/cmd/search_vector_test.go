@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -246,33 +248,98 @@ func TestSearchCmd_VectorModeUnknownAccountUsesDaemonError(t *testing.T) {
 	assert.ErrorContains(t, err, "no account found")
 }
 
-func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	requests := &atomic.Int32{}
-	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		assert.Equal("hybrid", r.URL.Query().Get("mode"), "mode")
-		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
-	})
-
-	testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
-	defer restore()
-
-	done := captureStdout(t)
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(searchCmd)
-	root.SetArgs([]string{"search", "--mode", "hybrid", "--explain", "--json", "lunch"})
-
-	err := root.Execute()
-	out := done()
-	require.NoError(err, "hybrid remote search command")
-
-	assert.Equal(1, int(requests.Load()), "search endpoint calls")
-	assert.Contains(out, `"bm25_score": 1.25`, "bm25_score")
-	assert.Contains(out, `"vector_score": 0.9`, "vector_score")
-	assert.Contains(out, `"accelerator": "vec1_ivf_opq"`, "accelerator path")
+func TestSearchCmd_HintsUseConfiguredRemoteHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode      string
+		hasMore, pool   bool
+		cap, offset     int
+		codes, messages []string
+	}{
+		{name: "complete", mode: "vector"},
+		{name: "more", mode: "vector", hasMore: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
+		{name: "saturated_more", mode: "hybrid", hasMore: true, pool: true, codes: []string{"more_available"}, messages: []string{"more messages match; raise --limit"}},
+		{name: "ranking_cap", mode: "vector", hasMore: true, cap: 50, codes: []string{"ranking_limit_reached"}, messages: []string{"vector.search.max_page_size_hybrid above 50"}},
+		{name: "pool_only", mode: "hybrid", pool: true, codes: []string{"candidate_pool_saturated"}, messages: []string{"vector.search.k_per_signal"}},
+		{name: "dual_cap_extra_hit", mode: "hybrid", hasMore: true, pool: true, cap: 50, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 50", "vector.search.k_per_signal"}},
+		{name: "dual_cap_pool", mode: "hybrid", pool: true, cap: 100, codes: []string{"ranking_limit_reached", "candidate_pool_saturated"}, messages: []string{"vector.search.max_page_size_hybrid above 100", "vector.search.k_per_signal"}},
+		{name: "fts_complete", mode: "fts"},
+		{name: "fts_first_page", mode: "fts", hasMore: true, messages: []string{"--offset 50"}},
+		{name: "fts_later_page", mode: "fts", hasMore: true, offset: 50, messages: []string{"--offset 100"}},
+	} {
+		for _, asJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, asJSON), func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				requests := &atomic.Int32{}
+				srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					assert.Equal("lunch", r.URL.Query().Get("q"))
+					if tc.mode == "fts" {
+						assert.Equal("/api/v1/cli/search", r.URL.Path)
+						assert.Equal("50", r.URL.Query().Get("limit"))
+						if tc.offset > 0 {
+							assert.Equal("50", r.URL.Query().Get("offset"))
+						}
+						rows := make([]map[string]any, 50)
+						for i := range rows {
+							rows[i] = map[string]any{"id": i + 1, "subject": "Lunch"}
+						}
+						assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": rows, "has_more": tc.hasMore}))
+						return
+					}
+					assert.Equal(tc.mode, r.URL.Query().Get("mode"))
+					assert.Equal(strconv.Itoa(max(50, tc.cap)), r.URL.Query().Get("page_size"))
+					writeVectorSearchResponse(t, w, "alice@example.com", "", 0, map[string]any{"mode": tc.mode, "has_more": tc.hasMore, "pool_saturated": tc.pool, "ranking_limit_reached": tc.cap})
+				})
+				ctx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
+				defer restore()
+				root := newTestRootCmd()
+				root.SetContext(ctx)
+				root.AddCommand(searchCmd)
+				args := []string{"search", "--mode", tc.mode, "--explain", "--limit", strconv.Itoa(max(50, tc.cap)), "lunch"}
+				if tc.mode == "fts" {
+					args = append(args, "--offset", strconv.Itoa(tc.offset))
+				}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				root.SetArgs(args)
+				var stderr bytes.Buffer
+				root.SetErr(&stderr)
+				done := captureStdout(t)
+				err := root.Execute()
+				out := done()
+				require.NoError(err)
+				assert.Equal(int32(1), requests.Load())
+				if asJSON && tc.mode != "fts" {
+					var page struct {
+						Hints []struct{ Code, Message string } `json:"hints"`
+					}
+					require.NoError(json.Unmarshal([]byte(out), &page))
+					require.Len(page.Hints, len(tc.codes))
+					for i, code := range tc.codes {
+						assert.Equal(code, page.Hints[i].Code)
+						assert.Contains(page.Hints[i].Message, tc.messages[i])
+					}
+					assert.Empty(stderr.String())
+					if tc.mode == "hybrid" {
+						assert.Contains(out, `"bm25_score": 1.25`)
+						assert.Contains(out, `"vector_score": 0.9`)
+						assert.Contains(out, `"accelerator": "vec1_ivf_opq"`)
+					}
+				} else {
+					assert.Equal(len(tc.messages), strings.Count(stderr.String(), "Hint:"))
+					for _, message := range tc.messages {
+						assert.Contains(stderr.String(), message)
+					}
+					if asJSON {
+						var rows []map[string]any
+						require.NoError(json.Unmarshal([]byte(out), &rows))
+						assert.Len(rows, 50)
+					}
+				}
+			})
+		}
+	}
 }
 
 func vectorSearchHTTPDaemon(
@@ -286,6 +353,7 @@ func vectorSearchHTTPDaemon(
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/search", searchHandler)
+	mux.HandleFunc("/api/v1/cli/search", searchHandler)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -325,10 +393,11 @@ func writeVectorSearchResponse(
 	from string,
 	scopeLabel string,
 	scopeSourceCount int,
+	metadata ...map[string]any,
 ) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(map[string]any{
+	response := map[string]any{
 		"returned":       1,
 		"pool_saturated": false,
 		"accelerator":    "vec1_ivf_opq",
@@ -359,6 +428,10 @@ func writeVectorSearchResponse(
 				"subject_boosted": true,
 			},
 		}},
-	})
+	}
+	for _, values := range metadata {
+		maps.Copy(response, values)
+	}
+	err := json.NewEncoder(w).Encode(response)
 	require.NoError(t, err, "write vector search response")
 }

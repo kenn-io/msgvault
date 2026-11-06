@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -14,63 +16,55 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	cfg := testConfigValue()
-	useLocal := false
-
-	require := require.New(t)
-	assert := assert.New(t)
-	dataDir := t.TempDir()
-	server, aggregateRequests := aggregateHTTPDaemon(t, "senders")
-	writeStatsHTTPDaemonRuntime(t, dataDir, server)
-
-	savedCfg := cfg
-	savedUseLocal := useLocal
-	savedLimit := aggLimit
-	savedAfter := aggAfter
-	savedBefore := aggBefore
-	savedJSON := aggJSON
-	defer func() {
-		cfg = savedCfg
-		useLocal = savedUseLocal
-		aggLimit = savedLimit
-		aggAfter = savedAfter
-		aggBefore = savedBefore
-		aggJSON = savedJSON
-	}()
-
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
-		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+func TestAggregateListsUseDaemonHTTPAndPreserveOutput(t *testing.T) {
+	savedLimit, savedAfter, savedBefore, savedJSON := aggLimit, aggAfter, aggBefore, aggJSON
+	t.Cleanup(func() { aggLimit, aggAfter, aggBefore, aggJSON = savedLimit, savedAfter, savedBefore, savedJSON })
+	for _, view := range []struct {
+		command      *cobra.Command
+		name, header string
+	}{
+		{listSendersCmd, "senders", "SENDER"}, {listDomainsCmd, "domains", "DOMAIN"}, {listLabelsCmd, "labels", "LABEL"},
+	} {
+		for _, total := range []int{50, 51} {
+			for _, asJSON := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%d/json=%t", view.name, total, asJSON), func(t *testing.T) {
+					assert, require := assert.New(t), require.New(t)
+					dataDir := t.TempDir()
+					server, requests := aggregateHTTPDaemon(t, view.name, total)
+					writeStatsHTTPDaemonRuntime(t, dataDir, server)
+					cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}, Remote: config.RemoteConfig{URL: "http://configured-daemonclient.invalid"}}
+					cmd := &cobra.Command{Use: view.command.Use, RunE: view.command.RunE}
+					cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true}))
+					aggLimit, aggAfter, aggBefore, aggJSON = 50, "", "", asJSON
+					var stderr bytes.Buffer
+					cmd.SetErr(&stderr)
+					done := captureStdout(t)
+					err := cmd.Execute()
+					out := done()
+					require.NoError(err)
+					assert.Equal(int32(1), requests.Load())
+					if asJSON {
+						var rows []map[string]any
+						require.NoError(json.Unmarshal([]byte(out), &rows))
+						assert.Len(rows, 50)
+					} else {
+						assert.Contains(out, view.header)
+						assert.Contains(out, "alice@example.com")
+						assert.Contains(out, "2.0K")
+						assert.Contains(out, "Showing 50 results")
+					}
+					if total == 51 {
+						assert.Equal("Hint: more "+view.name+" exist; raise -n\n", stderr.String())
+					} else {
+						assert.Empty(stderr.String())
+					}
+				})
+			}
+		}
 	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	useLocal = true
-	invocationFromContext(testCtx).options.useLocal = true
-	aggLimit = 1
-	aggAfter = ""
-	aggBefore = ""
-	aggJSON = false
-
-	done := captureStdout(t)
-	cmd := &cobra.Command{Use: "list-senders", RunE: listSendersCmd.RunE}
-	cmd.SetContext(testCtx)
-	var stderr bytes.Buffer
-	cmd.SetErr(&stderr)
-
-	err := cmd.Execute()
-	out := done()
-	require.NoError(err, "list-senders")
-
-	assert.Equal(1, int(aggregateRequests.Load()), "aggregate endpoint calls")
-	assert.Contains(out, "SENDER", "table header")
-	assert.Contains(out, "alice@example.com", "sender row")
-	assert.Contains(out, "2.0K", "size formatting")
-	assert.Equal("Hint: more senders exist; raise -n\n", stderr.String())
 }
 
-func aggregateHTTPDaemon(t *testing.T, viewType string) (*httptest.Server, *atomic.Int32) {
+func aggregateHTTPDaemon(t *testing.T, viewType string, totalUnique int) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	requests := &atomic.Int32{}
 	mux := http.NewServeMux()
@@ -89,17 +83,16 @@ func aggregateHTTPDaemon(t *testing.T, viewType string) (*httptest.Server, *atom
 		}
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"view_type": "senders",
-			"rows": [{
-				"key": "alice@example.com",
-				"count": 3,
-				"total_size": 2048,
-				"attachment_size": 1024,
-				"attachment_count": 1,
-				"total_unique": 2
-			}]
-		}`))
+		assert.Equal(t, "50", r.URL.Query().Get("limit"))
+		rows := make([]map[string]any, 50)
+		for i := range rows {
+			key := fmt.Sprintf("sender-%d@example.com", i)
+			if i == 0 {
+				key = "alice@example.com"
+			}
+			rows[i] = map[string]any{"key": key, "count": 3, "total_size": 2048, "attachment_size": 1024, "attachment_count": 1, "total_unique": totalUnique}
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"view_type": viewType, "rows": rows}))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)

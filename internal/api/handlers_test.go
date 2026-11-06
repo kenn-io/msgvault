@@ -2295,25 +2295,39 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	})
 }
 
-func TestHandleCLISearchDeletionScope(t *testing.T) {
+func TestHandleCLISearchScopeAndPagination(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		rawScope  string
-		wantScope search.DeletionScope
+		name                            string
+		rawScope                        string
+		wantScope                       search.DeletionScope
+		limit, matches, wantRows, probe int
+		wantMore                        bool
 	}{
 		{name: "default_active", wantScope: search.DeletionScopeActive},
 		{name: "explicit_active", rawScope: "active", wantScope: search.DeletionScopeActive},
 		{name: "deleted", rawScope: "deleted", wantScope: search.DeletionScopeDeleted},
 		{name: "any", rawScope: "any", wantScope: search.DeletionScopeAny},
+		{name: "exact_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 50, wantRows: 50, probe: 51},
+		{name: "overflow_50", wantScope: search.DeletionScopeActive, limit: 50, matches: 51, wantRows: 50, probe: 51, wantMore: true},
+		{name: "exact_500", wantScope: search.DeletionScopeActive, limit: 500, matches: 500, wantRows: 500, probe: 501},
+		{name: "overflow_500", wantScope: search.DeletionScopeActive, limit: 500, matches: 501, wantRows: 500, probe: 501, wantMore: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var gotScope search.DeletionScope
 			engine := &querytest.MockEngine{
-				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+				SearchFunc: func(_ context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
 					gotScope = q.DeletionScope
-					return nil, nil
+					if tt.probe > 0 {
+						assert.Equal(t, 0, offset)
+						assert.Equal(t, tt.probe, limit)
+					}
+					rows := make([]query.MessageSummary, tt.matches)
+					for i := range rows {
+						rows[i].ID = int64(i + 1)
+					}
+					return rows, nil
 				},
 			}
 			srv := NewServerWithOptions(ServerOptions{
@@ -2325,10 +2339,17 @@ func TestHandleCLISearchDeletionScope(t *testing.T) {
 			if tt.rawScope != "" {
 				target += "&deletion_scope=" + tt.rawScope
 			}
+			if tt.limit > 0 {
+				target += "&limit=" + strconv.Itoa(tt.limit)
+			}
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
 			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 			assert.Equal(t, tt.wantScope, gotScope)
+			var page cliSearchResponse
+			require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &page))
+			assert.Len(t, page.Results, tt.wantRows)
+			assert.Equal(t, tt.wantMore, page.HasMore)
 		})
 	}
 }
@@ -7947,9 +7968,10 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 	t.Parallel()
 	srv, store := newTestServerWithMockStore(t)
-	backend := &fakeVectorBackend{active: &vector.Generation{
+	base := &fakeVectorBackend{active: &vector.Generation{
 		ID: 1, Model: "fake", Dimension: 4, Fingerprint: "fake:4", State: vector.GenerationActive,
 	}}
+	backend := &fakeFusingBackend{fakeVectorBackend: base}
 	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
 		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
 	})
@@ -7963,14 +7985,19 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 		hits     []vector.Hit
 		wantCap  int
 		wantMore bool
+		pool     bool
+		mode     string
 	}{
-		{name: "complete", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
-		{name: "overflow", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2, wantMore: true},
+		{name: "complete", mode: "vector", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}}, wantCap: 0},
+		{name: "overflow", mode: "vector", hits: []vector.Hit{{MessageID: 1}, {MessageID: 2}, {MessageID: 3}}, wantCap: 2, wantMore: true},
+		{name: "hybrid_pool_at_cap", mode: "hybrid", pool: true, wantCap: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			backend.searchHits = tc.hits
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector&offset=1&page_size=1", nil)
+			backend.fusedHits = []vector.FusedHit{{MessageID: 1}, {MessageID: 2}}
+			backend.fusedMetadata = vector.SearchMetadata{PoolSaturated: tc.pool}
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode="+tc.mode+"&offset=1&page_size=1", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
@@ -7979,7 +8006,14 @@ func TestHandleSearch_HybridRankingLimitReached(t *testing.T) {
 			assert.Equal(tc.wantMore, page.HasMore, "report the measured extra hit even at the configured cap")
 			require.Len(page.Results, 1)
 			assert.Equal(int64(2), page.Results[0].ID)
-			assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
+			if tc.mode == "vector" {
+				assert.Equal(3, backend.searchLimit, "probe beyond the returned page")
+			}
+			if tc.mode == "hybrid" {
+				assert.True(page.PoolSaturated)
+				require.NotNil(backend.fusedLast)
+				assert.Equal(3, backend.fusedLast.Limit)
+			}
 			assert.Equal(tc.wantCap, page.RankingLimitReached)
 		})
 	}

@@ -159,97 +159,32 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.Len(semantic.Results, 1)
 		assert.Equal(json.Number(strconv.FormatInt(ids[1], 10)), semantic.Results[0]["id"])
 	}
-	// A final semantic page gives no more-results hint.
-	var page struct {
-		Results       []map[string]any    `json:"results"`
-		PoolSaturated bool                `json:"pool_saturated"`
-		Hints         []map[string]string `json:"hints"`
-	}
-	decode(run("search", "project plan filename:plan.pdf", "--mode", "vector", "--limit", "2", "--json"), &page)
-	assert.Len(page.Results, 2)
-	assert.Empty(page.Hints)
-	// Exactly full pages and truncated pages differ by one measured row.
-	for i := range 101 {
-		subject := "paginationneedle"
-		if i < 51 {
-			subject += " overflowboundary"
-		}
-		if i < 50 {
-			subject += " exactboundary"
-		}
-		year := 2026
-		if i >= 50 {
-			year = 2027
-		}
-		message := storetest.NewMessage(source.ID, conv).WithSubject(subject).WithSentAt(time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)).Build()
-		domain := fmt.Sprintf("sender-%02d.example.com", i%51)
-		address := "sender@" + domain
-		sender, err := st.EnsureParticipant(address, "", domain)
+	// The built command must put continuation advice after its results.
+	for i := range 51 {
+		address := fmt.Sprintf("sender-%02d@example.com", i)
+		sender, err := st.EnsureParticipant(address, "", "example.com")
 		require.NoError(err)
+		message := storetest.NewMessage(source.ID, conv).WithSubject("overflowboundary").Build()
 		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := st.UpsertMessage(message)
 		require.NoError(err)
 		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-		label := fmt.Sprintf("label-%02d", i%51)
-		labelID, err := st.EnsureLabel(source.ID, label, label, "user")
-		require.NoError(err)
-		require.NoError(st.ReplaceMessageLabels(id, []int64{labelID}))
-		require.NoError(st.UpsertFTS(id, subject, "", address, "", ""))
-		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
+		require.NoError(st.UpsertFTS(id, "overflowboundary", "", address, "", ""))
 	}
-	for _, tc := range []struct{ query, offset, hint string }{
-		{"overflowboundary", "0", "--offset 50"},
-		{"exactboundary", "0", ""},
-		{"paginationneedle", "50", "--offset 100"},
+	for _, tc := range []struct {
+		args []string
+		hint string
+	}{
+		{[]string{"search", "overflowboundary"}, "Hint: more messages match; use --offset 50 for the next page or raise --limit"},
+		{[]string{"list-senders"}, "Hint: more senders exist; raise -n"},
 	} {
-		out, stderr := runWithStderr("search", tc.query, "--offset", tc.offset, "--json")
-		var rows []map[string]any
-		decode(out, &rows)
-		assert.Len(rows, 50)
-		if tc.hint == "" {
-			assert.NotContains(stderr, "Hint:")
-		} else {
-			assert.Contains(stderr, "Hint: more messages match; use "+tc.hint+" for the next page or raise --limit")
-		}
-	}
-	for _, list := range []string{"senders", "domains", "labels"} {
-		for _, exact := range []bool{false, true} {
-			args := []string{"list-" + list, "--json"}
-			if exact {
-				args = append(args, "--before", "2027-01-01")
-			}
-			out, stderr := runWithStderr(args...)
-			var rows []map[string]any
-			decode(out, &rows)
-			assert.Len(rows, 50)
-			if exact {
-				assert.NotContains(stderr, "Hint:")
-			} else {
-				assert.Contains(stderr, "Hint: more "+list+" exist; raise -n")
-			}
-		}
-	}
-	for _, args := range [][]string{{"search", "overflowboundary"}, {"list-senders"}, {"list-domains"}, {"list-labels"}} {
-		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
+		command := exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, tc.args...)...) //nolint:gosec // The opt-in test operator supplies the built CLI.
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 		combined, err := command.CombinedOutput()
 		require.NoError(err, string(combined))
 		footer := bytes.Index(combined, []byte("Showing 50 results"))
-		hint := bytes.Index(combined, []byte("Hint:"))
 		require.GreaterOrEqual(footer, 0)
-		assert.Greater(hint, footer, "the hint follows the results footer")
-	}
-	// Default semantic cap still reports a measured match beyond the returned page.
-	for _, mode := range []string{"vector", "hybrid"} {
-		for _, boundary := range []string{"overflowboundary", "exactboundary"} {
-			out, stderr := runWithStderr("search", boundary+" subject:"+boundary, "--mode", mode)
-			assert.Contains(out, "Showing 50 results")
-			if boundary == "overflowboundary" {
-				assert.Contains(stderr, "raise vector.search.max_page_size_hybrid above 50 on the server and restart it, then raise --limit")
-			} else {
-				assert.NotContains(stderr, "Hint:")
-			}
-		}
+		assert.Greater(bytes.Index(combined, []byte(tc.hint)), footer, "the hint follows the results footer")
 	}
 	// Hybrid fusion can exhaust its candidate pool before the requested page fills.
 	for i := range 312 {
@@ -257,38 +192,19 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(st.UpsertFTS(id, "poolfixture", "", "sender@example.com", "", ""))
 		require.NoError(backend.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
 	}
-	// A capped page with an extra ranked hit still names both server limits.
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "50", "--json"), &page)
-	require.Len(page.Hints, 2)
-	assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
-	assert.Equal("candidate_pool_saturated", page.Hints[1]["code"])
+	// Both settings must be raised before the real engine can return a larger page.
 	raised := vectorCfg
 	raised.Search.MaxPageSizeHybrid = new(100)
 	server.SetVectorFeatures(engine, nil, backend, raised)
-	// An extra ranked row can be returned by raising --limit alone.
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "10", "--json"), &page)
-	assert.True(page.PoolSaturated)
-	require.Len(page.Hints, 1)
-	assert.Equal("more_available", page.Hints[0]["code"])
-	assert.Equal("more messages match; raise --limit", page.Hints[0]["message"])
-	// At both caps, widening the pool and the page is needed to return more.
 	_, stderr := runWithStderr("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100")
-	assert.Equal(2, strings.Count(stderr, "Hint:"))
-	assert.Contains(stderr, "Hint: semantic result limit reached; raise vector.search.max_page_size_hybrid above 100")
-	assert.Contains(stderr, "\nHint: hybrid candidate pool may omit matches; raise vector.search.k_per_signal")
+	assert.Contains(stderr, "vector.search.max_page_size_hybrid above 100")
+	assert.Contains(stderr, "vector.search.k_per_signal")
+	var page struct {
+		Results []map[string]any `json:"results"`
+	}
 	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "100", "--json"), &page)
 	assert.Len(page.Results, 100)
-	require.Len(page.Hints, 2)
-	assert.Equal("ranking_limit_reached", page.Hints[0]["code"])
-	assert.Contains(page.Hints[0]["message"], "vector.search.max_page_size_hybrid above 100")
-	assert.Equal("candidate_pool_saturated", page.Hints[1]["code"])
-	assert.Contains(page.Hints[1]["message"], "vector.search.k_per_signal")
-	// A wider page alone exposes the pool limit.
 	raised.Search.MaxPageSizeHybrid = new(200)
-	server.SetVectorFeatures(engine, nil, backend, raised)
-	decode(run("search", "differentword subject:poolfixture", "--mode", "hybrid", "--limit", "200", "--json"), &page)
-	require.Len(page.Hints, 1)
-	assert.Equal("candidate_pool_saturated", page.Hints[0]["code"])
 	raised.Search.KPerSignal = 200
 	engine = hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{ExpectedFingerprint: fingerprint, RRFK: 60, KPerSignal: raised.Search.KPerSignal, SubjectBoost: 1})
 	server.SetVectorFeatures(engine, nil, backend, raised)
