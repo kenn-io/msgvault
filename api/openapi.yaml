@@ -1347,6 +1347,22 @@ components:
         - start
         - end
       type: object
+    CalendarCoverage:
+      additionalProperties: true
+      properties:
+        complete:
+          type: boolean
+        notice:
+          type: string
+        sources:
+          items:
+            $ref: "#/components/schemas/CalendarSourceCoverage"
+          type: array
+      required:
+        - complete
+        - notice
+        - sources
+      type: object
     CalendarEventTarget:
       additionalProperties: true
       properties:
@@ -1376,6 +1392,8 @@ components:
         message_id:
           format: int64
           type: integer
+        ref:
+          type: string
         series_message_id:
           format: int64
           type: integer
@@ -1392,6 +1410,64 @@ components:
         subject:
           type: string
       required:
+        - ref
+        - message_id
+        - series_message_id
+        - source_id
+        - subject
+        - start
+        - end
+        - all_day
+        - start_date
+        - end_date
+        - status
+        - deleted_from_source
+        - attendees
+      type: object
+    CalendarOccurrenceDetail:
+      additionalProperties: true
+      properties:
+        all_day:
+          type: boolean
+        attendees:
+          items:
+            $ref: "#/components/schemas/Attendee"
+          type: array
+        deleted_from_source:
+          type: boolean
+        description:
+          type: string
+        end:
+          format: date-time
+          type: string
+        end_date:
+          type: string
+        join_url:
+          type: string
+        location:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        ref:
+          type: string
+        series_message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        start:
+          format: date-time
+          type: string
+        start_date:
+          type: string
+        status:
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
         - message_id
         - series_message_id
         - source_id
@@ -1408,6 +1484,10 @@ components:
     CalendarOccurrencePage:
       additionalProperties: true
       properties:
+        coverage:
+          $ref: "#/components/schemas/CalendarCoverage"
+        next_cursor:
+          type: string
         occurrences:
           items:
             $ref: "#/components/schemas/CalendarOccurrence"
@@ -1417,6 +1497,7 @@ components:
             $ref: "#/components/schemas/CalendarUnexpandable"
           type: array
       required:
+        - coverage
         - occurrences
         - unexpandable
       type: object
@@ -1612,6 +1693,35 @@ components:
         - dry_run
         - plan
         - writes
+      type: object
+    CalendarSourceCoverage:
+      additionalProperties: true
+      properties:
+        as_of:
+          format: date-time
+          type:
+            - string
+            - "null"
+        name:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+        status:
+          enum:
+            - complete
+            - stale
+            - sync_failed
+            - no_baseline
+          type: string
+      required:
+        - source_id
+        - source_type
+        - name
+        - status
+        - as_of
       type: object
     CalendarUnexpandable:
       additionalProperties: true
@@ -17226,7 +17336,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.45.0
+  version: 3.46.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -18270,6 +18380,17 @@ paths:
           schema:
             format: date-time
             type: string
+        - description: Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.
+          in: query
+          name: limit
+          schema:
+            maximum: 500
+            minimum: 1
+            type: integer
+        - in: query
+          name: cursor
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -18316,6 +18437,75 @@ paths:
       security:
         - apiKey: []
       summary: List archived calendar occurrences
+      tags:
+        - Calendar
+  /api/v1/calendar/events/{ref}:
+    get:
+      operationId: getCalendarEvent
+      parameters:
+        - in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarOccurrenceDetail"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read an archived calendar occurrence
       tags:
         - Calendar
   /api/v1/carddav/account:

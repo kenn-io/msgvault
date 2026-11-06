@@ -171,6 +171,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `find_similar_messages` | read | — | owner-only |
 | `get_attachment` | read | — | attachment.read |
 | `get_cache_build_status` | read | — | owner-only |
+| `get_calendar_event` | read | — | calendar.event.read or message.read |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
@@ -194,6 +195,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_calendar_events` | read | — | calendar.event.read or message.read |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
