@@ -34,7 +34,7 @@ const savedViewRunFixtureJSON = `{
 		"occurred_at":"2026-08-18T07:00:00Z","match":{"semantic_score":0.91},
 		"source_id":3,"source_type":"gmail","source_identifier":"archive@example.com",
 		"message_type":"email","conversation_type":"thread","title":"Quarterly invoice",
-		"preview":"Invoice details","matched_sender_identities":["archive@example.com"],
+		"preview":"Invoice details","sender_label":"Invoice Sender","matched_sender_identities":["archive@example.com"],
 		"matched_recipient_identities":["billing@example.com"],"message_count":1,
 		"has_attachments":true,"attachment_count":1,"attachment_size":2048,
 		"deleted_from_source":false
@@ -82,6 +82,7 @@ func TestRunSavedViewDelegatesExecutionToTheDaemon(t *testing.T) {
 	assertions.Equal(savedview.ResultEntries, page.ResultKind)
 	requirements.Len(page.Rows, 1)
 	assertions.Equal("Quarterly invoice", page.Rows[0].Title)
+	assertions.Equal("Invoice Sender", page.Rows[0].SenderLabel)
 	assertions.Equal(1, page.Returned())
 	requirements.NotNil(page.TotalCount)
 	assertions.Equal(int64(1), *page.TotalCount)

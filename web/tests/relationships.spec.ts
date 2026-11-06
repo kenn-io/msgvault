@@ -347,6 +347,17 @@ for (const facet of ['person', 'domain'] as const) {
   });
 }
 
+test('person messages keep their kind icon on hover at phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await prepare(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+  const row = page.getByRole('grid', { name: 'Messages results' }).getByRole('row').filter({ hasText: 'Subject line' });
+  const kind = row.locator('.cell--kind');
+  await expect(kind).toBeVisible();
+  await row.hover();
+  await expect(kind).toBeVisible();
+});
+
 for (const facet of ['person', 'domain'] as const) {
   for (const [width, height] of [[1280, 720], [420, 900]]) {
     test(`${facet} Messages stay filled while scrolling and paging at ${width}px`, async ({ page }) => {

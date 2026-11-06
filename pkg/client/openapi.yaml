@@ -5233,6 +5233,8 @@ components:
           type: array
         preview:
           type: string
+        sender_label:
+          type: string
         source_id:
           format: int64
           type: integer
@@ -6149,6 +6151,8 @@ components:
           type: array
         search_explain:
           $ref: "#/components/schemas/FileSearchExplain"
+        sender_label:
+          type: string
         size_bytes:
           format: int64
           type: integer
@@ -12296,6 +12300,8 @@ components:
           $ref: "#/components/schemas/PersonFileProvenance"
         search_explain:
           $ref: "#/components/schemas/FileSearchExplain"
+        sender_label:
+          type: string
         size_bytes:
           format: int64
           type: integer
@@ -16988,7 +16994,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.44.0
+  version: 3.45.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
