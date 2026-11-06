@@ -2,6 +2,7 @@ package timeline
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -232,6 +233,34 @@ func TestTimelineRelationshipOnlyCreditsSubjectMeetings(t *testing.T) {
 	assertions.Equal(1, got.Person.Monthly[11])
 	requirements.Len(got.History, 1)
 	assertions.Equal(fmt.Sprintf("evt:%d", first), got.History[0].Ref)
+}
+
+func TestTimelineRelationshipCountsLinkedCalendarCopiesOnce(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	first := f.calendar("first", singleDayEvent)
+	source, err := f.Store.GetOrCreateSource("gcal", "second-calendar@example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"second-calendar@example.com","time_zone":"UTC"}`))
+	second, err := f.Store.PersistMessage(&store.MessagePersistData{
+		Metadata:     &sql.NullString{String: `{"ical_uid":"planning@example.com","calendar_id":"second-calendar@example.com"}`, Valid: true},
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "second", MessageType: "calendar_event", Subject: sql.NullString{String: "Planning", Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "second", ConversationType: "calendar", Title: "Planning"},
+		RawMIME:      []byte(singleDayEvent), RawFormat: "gcal_json",
+	})
+	requirements.NoError(err)
+	for i, event := range []int64{first, second} {
+		note := f.transcript(fmt.Sprintf("note-%d", i), "", f.now.Add(-time.Hour))
+		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+	}
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	assertions.Equal(1, got.Person.InteractionCount)
+	assertions.Equal(1, got.Person.Monthly[11])
+	requirements.Len(got.History, 1)
+	assertions.Len(got.History[0].Meeting.LinkedTranscriptIDs, 2)
 }
 
 func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {

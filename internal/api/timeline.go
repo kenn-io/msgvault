@@ -213,7 +213,7 @@ func (s *Server) timelineFreshness(ctx context.Context, now time.Time) (timeline
 		return result, err
 	}
 	for _, source := range sources {
-		status, err := s.sourceStatus(ctx, statusStore, source)
+		status, err := s.sourceStatus(ctx, statusStore, source, sources)
 		if err != nil {
 			return result, err
 		}
