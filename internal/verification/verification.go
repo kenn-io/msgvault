@@ -228,10 +228,15 @@ func asciiAlnum(b byte) bool {
 
 func tokenValue(value string) bool {
 	letters, digits := 0, 0
+	lower, upper := false, false
 	for _, r := range value {
 		switch {
-		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
 			letters++
+			lower = true
+		case r >= 'A' && r <= 'Z':
+			letters++
+			upper = true
 		case r >= '0' && r <= '9':
 			digits++
 		case r == '-' || r == '_' || r == '.':
@@ -239,7 +244,8 @@ func tokenValue(value string) bool {
 			return false
 		}
 	}
-	return len(value) >= 16 && letters > 0 && digits > 0
+	return len(value) >= 16 && letters > 0 && digits > 0 ||
+		len(value) >= 32 && letters == len(value) && lower && upper
 }
 
 func credentialLink(raw string, cue bool) bool {
