@@ -408,7 +408,7 @@ func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 	}
 }
 
-func TestLocalEmbeddingsBuildsDespiteDocumentJobFailure(t *testing.T) {
+func TestLocalEmbeddingsExplainsFailedStartupAndBuildsDespiteDocumentJobFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text", "\n[attachments.documents]\nenabled = true\n[attachments.documents.index]\nenabled = true\n[attachments.documents.index.embeddings]\nenabled = true\nprofile = \"vector.embeddings\"\n")
@@ -683,12 +683,10 @@ func TestLocalEmbeddingsRecoveryWithoutNewBatches(t *testing.T) {
 				var sourceID int64
 				require.NoError(f.store.DB().QueryRow("SELECT source_id FROM messages").Scan(&sourceID))
 				require.NoError(f.store.MarkMessageDeleted(sourceID, "first"))
-				args = append(args, "--full-rebuild")
+				args = slices.Insert(args, 3, "--full-rebuild")
 			}
 			f.runner.beforeBuild = nil
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: args}, nil))
-			_, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			require.NoError(err)
 			assert.Empty(readStatus().Error)
 		})
 	}

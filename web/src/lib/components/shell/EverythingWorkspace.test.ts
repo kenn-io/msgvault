@@ -2789,7 +2789,7 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it.each(['success', 'http', 'network'] as const)('turns on semantic search from an empty full-text result after %s', async outcome => {
+it.each(['success', 'http', 'network'] as const)('checks local availability once and turns on semantic search from an empty full-text result after %s', async outcome => {
   window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
   const posts: unknown[] = [];
   let availabilityRequests = 0;
