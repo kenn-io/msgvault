@@ -173,16 +173,7 @@ func prepare(ctx context.Context, plan carddav.MemberPlan, inventory map[string]
 		member, events := resource.member, resource.events
 		duplicate := false
 		for _, event := range events {
-			if _, exists := b.live[event.Event.ProviderEventID]; exists || func() bool {
-				for key, meta := range metadata {
-					if _, live := b.live[key]; live && meta.Href != member.Href && meta.ICalUID == event.ICalUID {
-						return true
-					}
-				}
-				return slices.ContainsFunc(b.items, func(item prepared) bool {
-					return item.member.Href != member.Href && item.event.ICalUID == event.ICalUID
-				})
-			}() {
+			if _, exists := b.live[event.Event.ProviderEventID]; exists {
 				duplicate = true
 				break
 			}
