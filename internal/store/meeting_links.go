@@ -508,6 +508,11 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			if identity, err := storedMeetingIdentity(ctx, r, d.Ref, budget); err == nil {
+				out = append(out, linkOccurrence{Ref: d.Ref, Identity: identity})
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
 			continue
 		}
 		if err != nil {

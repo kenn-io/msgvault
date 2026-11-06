@@ -122,6 +122,26 @@ func TestMeetingCountsCancelledSeriesKeepsLinkedCopiesTogether(t *testing.T) {
 	assert.Equal(t, int64(1), people.Rows[0].MeetingCount)
 }
 
+func TestMeetingCountsRemovedOccurrenceKeepsLinkedCopiesTogether(t *testing.T) {
+	requirements := require.New(t)
+	f := newMeetingCountSeriesFixture(t, 2)
+	for _, note := range f.notes {
+		requirements.NoError(f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: f.event, Key: "20260321T100000Z"}))
+	}
+	_, err := buildCache(f.path, f.cache, true)
+	requirements.NoError(err)
+	requirements.NoError(f.st.UpsertMessageRawWithFormat(f.event, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`), "gcal_json"))
+	_, err = buildCache(f.path, f.cache, false)
+	requirements.NoError(err)
+	engine, err := query.NewDuckDBEngine(f.cache, "", nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "person@example.org"})
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assert.Equal(t, int64(1), people.Rows[0].MeetingCount)
+}
+
 func TestDerivedRefreshWithPendingMailRequiresMeetingRepair(t *testing.T) {
 	for _, decision := range []string{"link", "unlink", "unchanged"} {
 		t.Run(decision, func(t *testing.T) {

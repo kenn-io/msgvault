@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +89,30 @@ func TestReviewMeetingMetricsCountsLinkedCopiesOnce(t *testing.T) {
 		metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &single})
 		requirements.NoError(err)
 		assertions.Equal(int64(1), metrics.Totals.MeetingCount)
+	}
+}
+
+func TestMeetingMetricsUnavailableOccurrenceKeepsLinkedCopiesTogether(t *testing.T) {
+	for _, recurrence := range []string{"FREQ=WEEKLY;COUNT=1", "FREQ=HOURLY;COUNT=6"} {
+		t.Run(recurrence, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newMeetingQueryFixture(t)
+			_, event := calendarFixture(t, f.store, "series", linkSeriesRaw)
+			ids := f.meetingIDs[:2]
+			for _, id := range ids {
+				requirements.NoError(f.store.LinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}))
+			}
+			requirements.NoError(f.store.UpsertMessageRawWithFormat(event, []byte(strings.Replace(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", recurrence, 1)), "gcal_json"))
+			metrics, err := f.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
+			requirements.NoError(err)
+			assertions.Equal(int64(1), metrics.Totals.MeetingCount)
+			for _, id := range ids {
+				record, err := f.store.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: id})
+				requirements.NoError(err)
+				assertions.Empty(record.Links, "an unavailable occurrence stays hidden")
+				assertions.Equal([]int64{id}, record.MessageIDs)
+			}
+		})
 	}
 }
 

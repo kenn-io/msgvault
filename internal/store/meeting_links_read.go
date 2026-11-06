@@ -77,6 +77,9 @@ func (s *Store) meetingNoteRecord(ctx context.Context, r reboundReader, memberID
 		return record, err
 	}
 	for _, occurrence := range occurrences {
+		if occurrence.Row.MessageID == 0 {
+			continue
+		}
 		record.Links = append(record.Links, MeetingLink{Ref: formatMeetingOccurrence(occurrence.Ref), Subject: occurrence.Row.Subject, Start: occurrence.Start, End: occurrence.End})
 		members, err := s.meetingOccurrenceMembers(ctx, r, occurrence, budget)
 		if err != nil {
