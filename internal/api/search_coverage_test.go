@@ -179,14 +179,19 @@ func getSearchCoverage(t *testing.T, srv *Server, body string) SearchCoverageRes
 
 func TestSearchCoverageReportsEveryNamedStateInFilteredContext(t *testing.T) {
 	t.Parallel()
+	vectorCfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{Model: "test", Dimension: 2}}
 	generation := vector.Generation{
-		ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive,
+		ID: 7, Model: "test", Dimension: 2, Fingerprint: vectorCfg.GenerationFingerprint(), State: vector.GenerationActive,
 	}
+	staleGeneration := generation
+	staleGeneration.Fingerprint = "previous-model:2"
 	tests := []struct {
 		name           string
 		status         VectorStatus
 		backend        *filteredCoverageBackend
 		stale          bool
+		buildAvailable bool
+		building       bool
 		wantStatus     SearchCoverageStatus
 		wantEligible   int64
 		wantEmbedded   int64
@@ -199,14 +204,21 @@ func TestSearchCoverageReportsEveryNamedStateInFilteredContext(t *testing.T) {
 		{name: "initializing", status: VectorStatusInitializing, wantStatus: SearchCoverageInitializing},
 		{
 			name: "stale generation", status: VectorStatusReady, stale: true,
-			backend:      &filteredCoverageBackend{active: generation, embeddedIDs: map[int64]struct{}{1: {}, 2: {}}},
+			backend:      &filteredCoverageBackend{active: staleGeneration, embeddedIDs: map[int64]struct{}{1: {}, 2: {}}},
 			wantStatus:   SearchCoverageStale,
 			wantEligible: 2, wantEmbedded: 2, wantPercentage: 100,
 			wantGeneration: new(int64(7)), wantRevision: true,
 		},
 		{
-			name: "incomplete", status: VectorStatusReady,
+			name: "incomplete idle", status: VectorStatusReady, buildAvailable: true,
 			wantActions:  []SearchCoverageAction{SearchCoverageActionBuildIndex},
+			backend:      &filteredCoverageBackend{active: generation, embeddedIDs: map[int64]struct{}{2: {}}},
+			wantStatus:   SearchCoverageIncomplete,
+			wantEligible: 2, wantEmbedded: 1, wantPercentage: 50,
+			wantGeneration: new(int64(7)), wantRevision: true,
+		},
+		{
+			name: "incomplete running", status: VectorStatusReady, buildAvailable: true, building: true,
 			backend:      &filteredCoverageBackend{active: generation, embeddedIDs: map[int64]struct{}{2: {}}},
 			wantStatus:   SearchCoverageIncomplete,
 			wantEligible: 2, wantEmbedded: 1, wantPercentage: 50,
@@ -233,18 +245,16 @@ func TestSearchCoverageReportsEveryNamedStateInFilteredContext(t *testing.T) {
 			if tt.backend != nil {
 				backend = tt.backend
 			}
+			cfg := vectorCfg
+			cfg.Enabled = tt.buildAvailable
 			engine := newExploreDuckDBFixture(t)
 			srv := NewServerWithOptions(ServerOptions{
 				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 				Store:  &mockStore{stats: &StoreStats{}}, Engine: engine, Backend: backend,
-				VectorStatus: tt.status, Logger: testLogger(),
+				VectorStatus: tt.status, VectorCfg: cfg, Logger: testLogger(),
 			})
-			if tt.wantStatus == SearchCoverageIncomplete {
-				srv.vectorCfg.Enabled = true
-				tt.backend.active.Fingerprint = srv.vectorCfg.GenerationFingerprint()
+			if tt.building {
 				srv.scheduler = &embeddingStatusScheduler{mockScheduler: newMockScheduler(), status: vector.EmbeddingStatus{Job: vector.EmbeddingJobState{State: "running"}}}
-				assert.Empty(getSearchCoverage(t, srv, `{}`).Actions, "a running build owns recovery")
-				srv.scheduler = nil
 			}
 			if tt.stale {
 				srv.SetVectorStale("configured generation changed")

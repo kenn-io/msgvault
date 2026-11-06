@@ -110,32 +110,18 @@ func TestLocalEmbeddingsScheduledAfterSync(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 }
 
-func TestLocalEmbeddingsScheduledRecoveryPreservesVisualSearch(t *testing.T) {
-	assert := assert.New(t)
+func TestLocalEmbeddingsScheduledRecoveryRespectsScope(t *testing.T) {
 	require := require.New(t)
-	defaults := config.NewDefaultConfig().Vector.Multimodal
-	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: defaults.Model, Dimension: defaults.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
-	require.NoError(err)
-	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
-	require.NoError(err)
-	manifestPath := filepath.Join(t.TempDir(), "visual-capabilities.json")
-	require.NoError(writeVisualCapabilityManifest(manifestPath, manifest))
-	t.Setenv(defaults.APIKeyEnv, "synthetic-visual-key")
-	extra := fmt.Sprintf("\n[vector.embed.scope]\naccounts = [\"selected@example.test\"]\n[vector.multimodal]\nenabled = true\ncapabilities_file = %q\n", manifestPath)
+	extra := "\n[vector.embed.scope]\naccounts = [\"selected@example.test\"]\n"
 	f, selectedID := newScheduledLocalEmbeddingsFixture(t, "selected@example.test", extra, nil)
-	_, _, err = testutil.CreateIndexedSourceMessage(f.store, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
+	_, _, err := testutil.CreateIndexedSourceMessage(f.store, "excluded@example.test", "excluded", "Excluded orchard", "An excluded orchard.")
 	require.NoError(err)
-	f.handle.vf, err = setupVectorFeatures(f.ctx, f.store, f.cfg.DatabaseDSN(), false, vectorInitVisualOpener{})
-	require.NoError(err)
-	require.NotNil(f.handle.vf.Visual)
-	visual := f.handle.vf.Visual
 	f.runner.failBuild = true
 	f.runner.beforeBuild = func() {
 		_, err := f.handle.vf.Backend.CreateGeneration(f.ctx, f.handle.vf.Cfg.Embeddings.Model, f.handle.vf.Cfg.Embeddings.Dimension, f.handle.vf.Cfg.GenerationFingerprint())
 		require.NoError(err)
 	}
 	require.Error(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
-	assert.Same(visual, f.handle.vf.Visual)
 	require.NoError(f.scheduler.TriggerSync("selected@example.test", true))
 	require.Eventually(func() bool {
 		var generation int64

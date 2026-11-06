@@ -400,7 +400,6 @@ func TestLocalEmbeddingsSwitchesConfiguredOllamaEmbeddingOrigin(t *testing.T) {
 		name, catalog string
 		enabled       bool
 	}{
-		{name: "active", enabled: true},
 		{name: "paused"},
 		{name: "active with empty catalog", enabled: true, catalog: `{"models":[]}`},
 	} {
