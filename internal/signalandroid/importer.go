@@ -47,7 +47,6 @@ type run struct {
 	files      map[int64]string
 
 	selfRecipientID int64
-	selfToken       string
 
 	participants    map[int64]int64
 	participantErrs map[int64]error
@@ -219,8 +218,7 @@ func (r *run) resolveSelf(ctx context.Context) error {
 	if self.E164 != r.opts.Phone {
 		return errors.New("--phone does not match the number of the account that made this Signal backup")
 	}
-	r.selfToken = self.ACI
-	if r.selfToken == "" {
+	if self.ACI == "" {
 		return fmt.Errorf("%w: the account owner has no Signal account ID", ErrUnsupportedDatabase)
 	}
 	return nil
@@ -296,9 +294,6 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 
 // token returns the identity token of a recipient for message IDs.
 func (r *run) token(recipientID int64) string {
-	if recipientID == r.selfRecipientID {
-		return r.selfToken
-	}
 	return r.recipients[recipientID].ACI
 }
 
@@ -492,7 +487,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		roots[i] = p.rootID
 		visible[i] = p.row.RowID
 	}
-	reactions, err := fetchReactions(ctx, r.db, r.schema, roots)
+	reactions, err := fetchReactions(ctx, r.db, roots)
 	reactionsRead := err == nil
 	if err != nil {
 		// Keep the archived reactions rather than replacing them with an
@@ -500,7 +495,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		r.summary.Errors++
 		r.imp.progress.OnError(err)
 	}
-	mentions, err := fetchMentions(ctx, r.db, r.schema, visible)
+	mentions, err := fetchMentions(ctx, r.db, visible)
 	if err != nil {
 		return 0, fmt.Errorf("read Signal mentions: %w", err)
 	}

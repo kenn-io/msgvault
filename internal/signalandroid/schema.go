@@ -50,8 +50,6 @@ type schema struct {
 
 	hasGroups          bool
 	hasGroupMembership bool
-	hasReactions       bool
-	hasMentions        bool
 
 	messageColumns map[string]bool
 }
@@ -167,12 +165,16 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 	if err != nil {
 		return nil, err
 	}
-	s.hasReactions = reaction["message_id"] && reaction["author_id"] && reaction["emoji"]
+	if !reaction["message_id"] || !reaction["author_id"] || !reaction["emoji"] {
+		return nil, fmt.Errorf("%w: reaction details are missing", ErrUnsupportedDatabase)
+	}
 	mention, err := sqliteutil.TableColumns(ctx, db, "mention")
 	if err != nil {
 		return nil, err
 	}
-	s.hasMentions = mention["message_id"] && mention["recipient_id"] && mention["range_start"]
+	if !mention["message_id"] || !mention["recipient_id"] || !mention["range_start"] {
+		return nil, fmt.Errorf("%w: mention details are missing", ErrUnsupportedDatabase)
+	}
 	return s, nil
 }
 

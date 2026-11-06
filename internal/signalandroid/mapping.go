@@ -87,17 +87,18 @@ func isSent(messageType int64) bool {
 func normalizeACI(raw string) string {
 	value := strings.TrimSpace(raw)
 	value = strings.TrimPrefix(strings.TrimPrefix(value, "ACI:"), "aci:")
-	value = strings.ToLower(value)
-	if len(value) != 36 || uuid.Validate(value) != nil || value == "00000000-0000-0000-0000-000000000000" {
-		return ""
-	}
-	return value
+	return normalizeUUID(value)
 }
 
 // normalizePNI accepts both the bare UUID and the PNI-prefixed format.
 func normalizePNI(raw string) string {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	value = strings.TrimPrefix(value, "pni:")
+	return normalizeUUID(value)
+}
+
+func normalizeUUID(value string) string {
+	value = strings.ToLower(value)
 	if len(value) != 36 || uuid.Validate(value) != nil || value == "00000000-0000-0000-0000-000000000000" {
 		return ""
 	}

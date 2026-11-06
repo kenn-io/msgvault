@@ -268,16 +268,35 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 	for _, tc := range []struct{ name, change, want string }{
 		{"contacts", `ALTER TABLE recipient DROP COLUMN group_id`, "contact details are missing"},
 		{"attachments", `ALTER TABLE attachment DROP COLUMN content_type`, "attachment details are missing"},
+		{"reaction table", `DROP TABLE reaction`, "reaction details are missing"},
+		{"reaction message", `ALTER TABLE reaction DROP COLUMN message_id`, "reaction details are missing"},
+		{"reaction author", `ALTER TABLE reaction DROP COLUMN author_id`, "reaction details are missing"},
+		{"reaction emoji", `ALTER TABLE reaction DROP COLUMN emoji`, "reaction details are missing"},
+		{"mention table", `DROP TABLE mention`, "mention details are missing"},
+		{"mention message", `ALTER TABLE mention DROP COLUMN message_id`, "mention details are missing"},
+		{"mention recipient", `ALTER TABLE mention DROP COLUMN recipient_id`, "mention details are missing"},
+		{"mention range", `ALTER TABLE mention DROP COLUMN range_start`, "mention details are missing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			st, storage := testutil.NewSQLiteTestStore(t), t.TempDir()
+			runImport(t, st, dir, storage)
+			before := importedMessages(t, st)
+			reactions := countRows(t, st, `SELECT COUNT(*) FROM reactions`)
 			changeFixture(t, dir, tc.change)
 			opts := DefaultOptions()
-			opts.Phone = signalfixture.OwnPhone
-			_, err := NewImporter(testutil.NewSQLiteTestStore(t), nil).Import(t.Context(), path, opts)
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			require.ErrorIs(t, err, ErrUnsupportedDatabase)
 			assert.Contains(t, err.Error(), tc.want)
+			assert.Equal(t, before, importedMessages(t, st))
+			assert.Equal(t, reactions, countRows(t, st, `SELECT COUNT(*) FROM reactions`))
+
+			fresh := testutil.NewSQLiteTestStore(t)
+			_, err = NewImporter(fresh, nil).Import(t.Context(), path, opts)
+			require.ErrorIs(t, err, ErrUnsupportedDatabase)
+			assert.Zero(t, countRows(t, fresh, `SELECT COUNT(*) FROM sources`))
 		})
 	}
 }
@@ -338,6 +357,11 @@ func TestIdentifiers(t *testing.T) {
 	assert.Equal(signalfixture.AliceACI, normalizeACI("ACI:"+"0F0F0F0F-0000-4000-8000-000000000002"))
 	assert.Empty(normalizeACI("PNI:" + signalfixture.AliceACI))
 	assert.Empty(normalizeACI("00000000-0000-0000-0000-000000000000"))
+	assert.Equal(signalfixture.AliceACI, normalizePNI(" PNI:0F0F0F0F-0000-4000-8000-000000000002 "))
+	assert.Equal(signalfixture.AliceACI, normalizePNI(signalfixture.AliceACI))
+	assert.Empty(normalizePNI("ACI:" + signalfixture.AliceACI))
+	assert.Empty(normalizePNI("00000000-0000-0000-0000-000000000000"))
+	assert.Empty(normalizePNI("invalid"))
 
 	_, _, ok = conversationIdentity(sigRecipient{}, nil)
 	assert.False(ok, "a distribution list or call link has no identity")

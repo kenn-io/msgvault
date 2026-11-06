@@ -216,9 +216,9 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 
 // fetchReactions returns reactions keyed by the original message row, so a
 // reaction recorded against any revision of an edited message is found.
-func fetchReactions(ctx context.Context, db *sql.DB, s *schema, rootIDs []int64) (map[int64][]sigReaction, error) {
+func fetchReactions(ctx context.Context, db *sql.DB, rootIDs []int64) (map[int64][]sigReaction, error) {
 	out := make(map[int64][]sigReaction)
-	if !s.hasReactions || len(rootIDs) == 0 {
+	if len(rootIDs) == 0 {
 		return out, nil
 	}
 	in := placeholders(len(rootIDs))
@@ -248,9 +248,9 @@ func fetchReactions(ctx context.Context, db *sql.DB, s *schema, rootIDs []int64)
 }
 
 // fetchMentions returns mentions keyed by message row.
-func fetchMentions(ctx context.Context, db *sql.DB, s *schema, messageIDs []int64) (map[int64][]sigMention, error) {
+func fetchMentions(ctx context.Context, db *sql.DB, messageIDs []int64) (map[int64][]sigMention, error) {
 	out := make(map[int64][]sigMention)
-	if !s.hasMentions || len(messageIDs) == 0 {
+	if len(messageIDs) == 0 {
 		return out, nil
 	}
 	query := fmt.Sprintf(`
