@@ -542,7 +542,7 @@ func (s *Scheduler) Start() {
 	var catchups []catchup
 	for email, r := range s.accounts {
 		if r.interval > 0 && !s.running[email] {
-			s.reserveAccountLocked(email, r, true)
+			s.reserveAccountLocked(email, r, !s.pending[email])
 			catchups = append(catchups, catchup{email, r})
 		}
 	}
@@ -629,7 +629,11 @@ func (s *Scheduler) runSync(email string, r *accountRegistration) {
 		s.startedAt[email] = now
 		if r.interval > 0 {
 			r.lastAttempted = now
-			r.nextEligible = now.Add(r.interval)
+			// Ordinary admission bypasses polling backoff without resetting it.
+			// Only recordAccountPollLocked's complete outcome may shorten it.
+			if next := now.Add(r.interval); next.After(r.nextEligible) {
+				r.nextEligible = next
+			}
 		}
 	}
 	s.mu.Unlock()

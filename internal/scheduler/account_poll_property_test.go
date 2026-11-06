@@ -114,3 +114,54 @@ func TestAccountPollingMixedBurstFailureRetainsOrdinaryIntent(t *testing.T) {
 		assert.Equal(ht, want, calls, "only accepted ordinary intent bypasses adaptive poll backoff")
 	})
 }
+
+func TestAccountPollingOrdinaryDeferralConservesGeneratedBackoff(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		seconds := hegel.Draw(ht, hegel.Integers(15, 120))
+		failures := int(min(hegel.Draw(ht, hegel.Integers[uint64](2, math.MaxUint64)), 10))
+		cancelled := hegel.Draw(ht, hegel.Booleans())
+		calls := 0
+		s := New(func(context.Context, string) error {
+			calls++
+			if calls <= failures {
+				return errors.New("synthetic acquisition failure")
+			}
+			if cancelled {
+				return &AcquisitionError{Outcome: AcquisitionCancelled}
+			}
+			return ErrDeferUntilNextTrigger
+		})
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(ht, s.AddAccount("sample@example.test", "0 0 1 1 *"))
+		require.NoError(ht, s.SetAccountPollInterval("sample@example.test", time.Duration(seconds)*time.Second))
+		for range failures {
+			require.NoError(ht, s.TriggerSync("sample@example.test", false))
+			s.wg.Wait()
+		}
+		deadline := s.Status()[0].NextEligiblePoll
+		require.NoError(ht, s.TriggerSync("sample@example.test", false))
+		s.wg.Wait()
+		assert.False(ht, s.Status()[0].NextEligiblePoll.Before(deadline), "only complete acquisition resets adaptive delay")
+	})
+}
+
+func TestAccountPollingStartupConservesGeneratedManualOwnership(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		seconds := hegel.Draw(ht, hegel.Integers(15, 120))
+		minutes := hegel.Draw(ht, hegel.Integers(16, 120))
+		floor := time.Now().Add(time.Duration(minutes) * time.Minute)
+		s := New(func(context.Context, string) error {
+			return &AcquisitionError{Outcome: AcquisitionDeferred, NotBefore: floor}
+		})
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(ht, s.AddAccount("sample@example.test", "0 0 1 1 *"))
+		require.NoError(ht, s.SetAccountPollInterval("sample@example.test", time.Duration(seconds)*time.Second))
+		require.NoError(ht, s.TriggerSync("sample@example.test", false))
+		s.wg.Wait()
+		require.NoError(ht, s.TriggerSync("sample@example.test", true))
+		s.wg.Wait()
+		s.Start()
+		s.wg.Wait()
+		assert.Error(ht, s.TriggerSync("sample@example.test", true), "the earlier accepted manual request still owns its completion")
+	})
+}
