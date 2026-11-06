@@ -310,6 +310,7 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", strings.NewReader(`{"use_builtin":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer owner")
+	request.RemoteAddr = "127.0.0.1:1234"
 	response := httptest.NewRecorder()
 	f.server.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusAccepted, response.Code)
@@ -317,6 +318,7 @@ func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
 		request.Header.Set("Authorization", "Bearer owner")
+		request.RemoteAddr = "127.0.0.1:1234"
 		response := httptest.NewRecorder()
 		f.server.Router().ServeHTTP(response, request)
 		require.Equal(http.StatusOK, response.Code)
