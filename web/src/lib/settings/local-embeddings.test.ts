@@ -11,6 +11,7 @@ describe('local search row', () => {
     { name: 'off on another machine', status: off, state: { kind: 'off', downloadBytes: 290000000, host: 'archive.example.test' } },
     { name: 'off on this machine', status: { ...off, host: '' }, state: { kind: 'off', downloadBytes: 290000000 } },
     { name: 'downloaded', status: { ...off, download_bytes: 0 }, state: { kind: 'downloaded' } },
+    { name: 'Ollama not set up', labels: { downloaded: 'Uses Ollama on this computer' }, status: { ...off, provider: 'ollama' }, state: { kind: 'downloaded' } },
     { name: 'Ollama', labels: { keepsIndex: '' }, status: { ...off, enabled: true, provider: 'ollama' }, state: { kind: 'ollama' } },
     { name: 'on', status: { ...off, enabled: true, provider: 'builtin', download_bytes: 0 }, state: { kind: 'on' } },
     { name: 'waiting for setup', labels: { downloading: 'Preparing…' }, status: { ...off, running: true }, state: { kind: 'downloading', doneBytes: 0, totalBytes: 290000000 } },
@@ -27,6 +28,7 @@ it.each([
   { name: 'a download to another machine', status: off, disclosure: 'Downloads 290 MB once to archive.example.test' },
   { name: 'a download to this machine', status: { ...off, host: '' }, disclosure: 'Downloads 290 MB once' },
   { name: 'an installed server', status: { ...off, download_bytes: 0 }, disclosure: 'Already on this computer' },
+  { name: 'a running Ollama', status: { ...off, provider: 'ollama' }, disclosure: 'Uses Ollama on this computer' },
 ])('discloses $name before hint activation', ({ status, disclosure }) => {
   expect(localSearchHintLabels(status).hint).toBe(`Search by meaning is off · ${disclosure}`);
 });

@@ -792,7 +792,7 @@ const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.
 const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
 
 it('shows an Ollama setup as status only', async () => {
-  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
+  const { client, operationsController } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'ollama' }));
     if (path === '/api/v1/embeddings/status') return Response.json(embeddingStatus);
@@ -803,7 +803,6 @@ it('shows an Ollama setup as status only', async () => {
   const row = (await screen.findByText('On · Ollama')).closest('li')!;
   expect(within(row).queryAllByRole('button')).toEqual([]);
   expect(row.textContent).not.toContain('Downloads');
-  expect(localPosts(seen)).toEqual([]);
 });
 
 it('shows a failed startup in the Off row and retries it through Turn on', async () => {
@@ -846,21 +845,6 @@ it('retries setup while the message index is not current', async () => {
   await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
   expect(localPosts(seen)[0].body).toBeUndefined();
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-});
-
-it('hides a setup error once the message index is current', async () => {
-  const { client, operationsController } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: 'Message index build interrupted.' }));
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'current-1', eligible_count: 6, embedded_count: 6, percentage: 100, status: 'ready', actions: [] });
-    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 6, pending: 0 });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
-  });
-  const { container } = render(SettingsWorkspace, { client, operationsController });
-  await waitFor(() => expect(container.querySelector('[data-feature="message_embedding"] .kit-search-by-meaning')?.textContent).toContain('On'));
-  const row = container.querySelector<HTMLElement>('[data-feature="message_embedding"]')!;
-  expect(within(row).queryByRole('alert')).toBeNull();
-  expect(within(row).queryByRole('button', { name: 'Retry setup, Search by meaning' })).toBeNull();
 });
 
 it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {

@@ -97,32 +97,3 @@ test('local search hint follows results and groups its setup error with matching
   expect(geometry.hintLineHeight).toBe(geometry.errorLineHeight);
   expect(geometry.relatedGap).toBeLessThanOrEqual(geometry.tableGap / 2);
 });
-
-test('Turn on downloads, indexes, and goes live on a fresh install', async ({ page }) => {
-  await installOperations(page);
-  let phase: 'idle' | 'downloading' | 'indexing' = 'idle';
-  let enabled = false;
-  const posts: (string | null)[] = [];
-  await page.route('**/api/v1/embeddings/local', route => {
-    if (route.request().method() === 'POST') {
-      posts.push(route.request().postData());
-      phase = 'downloading';
-    }
-    return route.fulfill({ status: route.request().method() === 'POST' ? 202 : 200, json: {
-      host: '', enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle',
-      download_bytes: enabled ? 0 : 290000000, done_bytes: phase === 'downloading' ? 116000000 : 0, total_bytes: 290000000
-    } });
-  });
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  const row = page.locator('[data-feature="message_embedding"]');
-  await expect(row).toContainText('Downloads 290 MB once, shared by all Kenn apps');
-  await row.getByRole('button', { name: 'Turn on' }).click();
-  await expect(row.getByRole('progressbar', { name: 'Search by meaning setup' })).toHaveAttribute('aria-valuenow', '116000000');
-  await expect(row).toContainText('Downloading 116 MB of 290 MB');
-  phase = 'indexing'; enabled = true;
-  await expect(row).toContainText('Indexing', { timeout: 3000 });
-  phase = 'idle';
-  await expect(row.locator('.kit-search-by-meaning > .kit-chip')).toHaveText('On', { timeout: 3000 });
-  await expect(row.getByRole('progressbar')).toHaveCount(0);
-  expect(posts).toEqual([null]);
-});

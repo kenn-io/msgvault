@@ -13,19 +13,20 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
     ...(embedding?.eta_seconds ? { etaMs: Number(embedding.eta_seconds) * 1000 } : {}),
   };
   if (status.enabled) return { kind: status.provider === 'ollama' ? 'ollama' : 'on' };
-  if (status.download_bytes === 0) return { kind: 'downloaded' };
+  if (status.provider === 'ollama' || status.download_bytes === 0) return { kind: 'downloaded' };
   return { kind: 'off', downloadBytes: status.download_bytes, ...(status.host ? { host: status.host } : {}) };
 }
 
 export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
   return {
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing…' } : {}),
+    ...(!status.enabled && status.provider === 'ollama' ? { downloaded: 'Uses Ollama on this computer' } : {}),
     keepsIndex: '',
   };
 }
 
 export function localSearchHintLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
-  const disclosure = status.download_bytes
+  const disclosure = status.provider === 'ollama' ? 'Uses Ollama on this computer' : status.download_bytes
     ? `Downloads ${megabytes(status.download_bytes)} once${status.host ? ` to ${status.host}` : ''}`
     : 'Already on this computer';
   return { ...localSearchLabels(status), hint: `Search by meaning is off · ${disclosure}` };
