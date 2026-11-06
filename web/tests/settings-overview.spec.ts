@@ -57,7 +57,8 @@ for (const width of [1280, 390]) {
       const action = await row.getByRole('button', { name: 'Build index, Message search' }).boundingBox();
       expect(coverage).not.toBeNull();
       expect(action).not.toBeNull();
-      expect(coverage!.y + coverage!.height / 2).toBeLessThanOrEqual(action!.y + action!.height / 2 + 1);
+      if (width === 1280) expect(Math.abs(coverage!.y + coverage!.height / 2 - action!.y - action!.height / 2)).toBeLessThanOrEqual(1);
+      else expect(coverage!.y + coverage!.height).toBeLessThanOrEqual(action!.y);
       const spacing = await row.evaluate(element => {
         const name = element.querySelector('.kit-search-by-meaning__name')!.getBoundingClientRect();
         const line = element.querySelector('.kit-search-by-meaning__line')?.getBoundingClientRect();
