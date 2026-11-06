@@ -16,7 +16,6 @@ import (
 )
 
 func TestTimelineBackupFreezeDoesNotWriteEvidence(t *testing.T) {
-	t.Skip("Sol P2: route timeline loops through gatedLoopEvidence during backup freezes")
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

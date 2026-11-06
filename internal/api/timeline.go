@@ -145,8 +145,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "timeline_unavailable", "Timeline readers are unavailable")
 		return
 	}
-	src.Clock = s.clockNow
-	src.Agenda = s.personAgendaOperations
+	src.Clock, src.Agenda, src.Loops = s.clockNow, s.personAgendaOperations, s.timelineLoops(src.Loops)
 	result, err := timeline.Build(ctx, src, req)
 	if err != nil {
 		s.writeTimelineError(w, err)

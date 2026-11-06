@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/timeline"
 )
 
 // LoopCounterparty is who a loop waits on or is owed to.
@@ -139,8 +140,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "person_id and limit must be valid")
 		return
 	}
-	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
-	result, err := loops.List(r.Context(), evidence, opts, s.clockNow().UTC())
+	result, err := gatedLoops{Store: loopStore, gate: s.operationGate}.List(r.Context(), opts, s.clockNow().UTC())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list open loops")
 		return
@@ -266,6 +266,26 @@ func loopQuestionIDs(l loops.Loop) []int64 {
 // loopEvidenceGateWait bounds how long one evidence write waits for the
 // operation gate before the request stops saving evidence.
 const loopEvidenceGateWait = 50 * time.Millisecond
+
+// gatedLoops lists loops through fresh per-request gated evidence; timeline
+// reads share it so a backup freeze stops their evidence writes too.
+type gatedLoops struct {
+	loops.Store
+
+	gate OperationGate
+}
+
+func (g gatedLoops) List(ctx context.Context, opts loops.Options, now time.Time) (loops.Result, error) {
+	return loops.List(ctx, &gatedLoopEvidence{Store: g.Store, gate: g.gate}, opts, now)
+}
+
+// timelineLoops gates timeline loop reads whenever the archive can list loops.
+func (s *Server) timelineLoops(fallback timeline.LoopsSource) timeline.LoopsSource {
+	if loopStore, ok := s.store.(loops.Store); ok {
+		return gatedLoops{Store: loopStore, gate: s.operationGate}
+	}
+	return fallback
+}
 
 // gatedLoopEvidence lets a list read the archive without holding the operation
 // gate for the whole scan. Evidence is a rebuildable cache, so each write takes
