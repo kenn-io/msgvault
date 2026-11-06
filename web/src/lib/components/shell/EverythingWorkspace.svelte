@@ -935,8 +935,9 @@
 
 <style>
   .local-search-hint { margin: 0; }
+  .local-search-hint :global(.kit-search-by-meaning-hint) { font-size: var(--font-size-xs); }
   .local-search-hint :global(button) { text-decoration: underline; }
-  .local-search-hint p { margin: var(--control-gap) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
+  .local-search-hint p { margin: calc(var(--control-gap) / 2) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
   .search-notes { display: grid; gap: var(--control-gap); }
   .search-notes :global(.coverage) { min-height: 0; }
   .everything-workspace {
