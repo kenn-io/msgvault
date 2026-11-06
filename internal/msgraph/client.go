@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
@@ -86,8 +85,7 @@ type Client struct {
 	token              TokenFunc
 	http               *http.Client
 	limiter            *rate.Limiter
-	quotaMu            sync.Mutex
-	notBefore          time.Time
+	quota              *providerQuota
 	deferProviderRetry bool
 
 	// Headers are extra request headers, for example the mail connector's
@@ -106,6 +104,7 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 		token:   token,
 		http:    &http.Client{Timeout: 60 * time.Second},
 		limiter: rate.NewLimiter(rate.Limit(qps), 1),
+		quota:   &providerQuota{},
 	}
 }
 
@@ -144,7 +143,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 	for attempt := range maxRetries {
 		delay := max(time.Duration(0), time.Until(c.RetryNotBefore()))
 		if delay > 0 && c.deferProviderRetry {
-			return nil, &ThrottledError{RetryAfter: delay, NotBefore: c.RetryNotBefore()}
+			return nil, notSent(&ThrottledError{RetryAfter: delay, NotBefore: c.RetryNotBefore()}, attempt, mode)
 		}
 		if attempt > 0 {
 			delay = max(delay, httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter))
@@ -188,6 +187,15 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		}
 		if ifMatch != "" {
 			req.Header.Set("If-Match", ifMatch)
+		}
+		// Local rate admission and token acquisition can block while another
+		// MIME worker learns a provider prohibition. Recheck at the final
+		// unsent boundary; timeout clones share this quota evidence.
+		if c.deferProviderRetry {
+			floor := c.RetryNotBefore()
+			if delay := time.Until(floor); delay > 0 {
+				return nil, notSent(&ThrottledError{RetryAfter: delay, NotBefore: floor}, attempt, mode)
+			}
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {
