@@ -12,11 +12,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/store"
+	"hegel.dev/go/hegel"
 )
 
 func remoteTestRequest() RemoteRequest {
@@ -28,6 +31,233 @@ func remoteTestRequest() RemoteRequest {
 			Participants: []Participant{{Name: "Test Attendee", Email: "attendee@example.com", Identifier: "email:attendee@example.com"}},
 		}),
 	}
+}
+
+func TestRemoteMeetingPlatformPreservesLocalSnapshot(t *testing.T) {
+	// This is the complete accepted remote domain, including future identifiers,
+	// whitespace and line separators. Controls are covered in the reject direction.
+	hegel.Test(t, func(ht *hegel.T) {
+		platform := hegel.Draw(ht, hegel.Text().MaxSize(128).ExcludeCategories([]string{"Cc", "Cs"}))
+		meeting := sampleMeeting()
+		meeting.ContactsState = ContactsOff
+		meeting.Participants = meeting.Participants[:2] // already-normalized remote identities
+		meeting.MeetingPlatform = platform
+		local, err := meeting.ArchiveSnapshot(7, "mac", "you@example.com")
+		require.NoError(ht, err)
+		request := RemoteRequest{Action: "upsert", Source: meetingimport.Source{Identifier: "mac", AccountEmail: "you@example.com"}, Meeting: NewRemoteMeeting(meeting)}
+		assert.Equal(ht, platform, request.Meeting.Record.MeetingPlatform)
+		encoded, err := json.Marshal(request)
+		require.NoError(ht, err)
+		decoded, err := DecodeRemoteRequest(bytes.NewReader(encoded), MaxRemoteRequestBytes)
+		require.NoError(ht, err)
+		assert.Equal(ht, platform, decoded.Meeting.toMeeting().MeetingPlatform)
+		remote, err := decoded.Meeting.toMeeting().ArchiveSnapshot(7, "mac", "you@example.com")
+		require.NoError(ht, err)
+		assert.Equal(ht, "meeting:42:20260901T140003Z", remote.SourceMessageID)
+		assert.Equal(ht, local.Raw, remote.Raw)
+		assert.Equal(ht, local.Metadata, remote.Metadata)
+		assert.Equal(ht, local.Body, remote.Body)
+	})
+}
+
+func TestRemoteMeetingPlatformValidationDomain(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		platform := hegel.Draw(ht, hegel.Text().ExcludeCategories([]string{"Cs"}))
+		r := remoteTestRequest()
+		r.Meeting.Record.MeetingPlatform = platform
+		normal, err := r.Normalize()
+		if utf8.RuneCountInString(platform) > 128 || strings.IndexFunc(platform, unicode.IsControl) >= 0 {
+			assert.ErrorIs(ht, err, ErrRemoteValidation)
+		} else {
+			require.NoError(ht, err)
+			assert.Equal(ht, platform, normal.Meeting.Record.MeetingPlatform)
+		}
+	})
+}
+
+func TestRemoteMeetingPlatformBoundaries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, value := range []string{"", "unknown", " FutureCall.v2 ", "  ", "Future\u2028Call\u2029", "Future\u200dCall"} {
+		r := remoteTestRequest()
+		r.Meeting.Record.MeetingPlatform = value
+		encoded, err := json.Marshal(r)
+		require.NoError(err)
+		decoded, err := DecodeRemoteRequest(bytes.NewReader(encoded), MaxRemoteRequestBytes)
+		require.NoError(err)
+		assert.Equal(value, decoded.Meeting.Record.MeetingPlatform)
+		if value == "" {
+			assert.NotContains(string(encoded), "meeting_platform", "old recorder payload remains valid")
+		}
+	}
+	invalid := remoteTestRequest()
+	invalid.Meeting.Record.MeetingPlatform = string([]byte{0xff})
+	_, err := invalid.Normalize()
+	require.ErrorIs(err, ErrRemoteValidation)
+	assert.NotContains(err.Error(), invalid.Meeting.Record.MeetingPlatform)
+	for _, value := range []string{`123`, `true`, `[]`, `{}`} {
+		r := remoteTestRequest()
+		data, err := json.Marshal(r)
+		require.NoError(err)
+		data = bytes.Replace(data, []byte(`"record":{`), []byte(`"record":{"meeting_platform":`+value+`,`), 1)
+		_, err = DecodeRemoteRequest(bytes.NewReader(data), MaxRemoteRequestBytes)
+		require.ErrorIs(err, ErrRemoteMalformed)
+	}
+}
+
+func TestRemoteMeetingPlatformCountsCodePoints(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, count := range []int{127, 128, 129} {
+		for _, value := range []string{
+			strings.Repeat("会", count),
+			strings.Repeat("😀", count),
+			strings.Repeat("e\u0301", count/2) + strings.Repeat("e", count%2),
+		} {
+			r := remoteTestRequest()
+			r.Meeting.Record.MeetingPlatform = value
+			_, normalizeErr := r.Normalize()
+			encoded, err := json.Marshal(r)
+			require.NoError(err)
+			decoded, decodeErr := DecodeRemoteRequest(bytes.NewReader(encoded), MaxRemoteRequestBytes)
+			if count > 128 {
+				require.ErrorIs(normalizeErr, ErrRemoteValidation)
+				require.ErrorIs(decodeErr, ErrRemoteValidation)
+			} else {
+				require.NoError(normalizeErr)
+				require.NoError(decodeErr)
+				assert.Equal(value, decoded.Meeting.toMeeting().MeetingPlatform)
+			}
+		}
+	}
+}
+
+func TestRemoteMeetingPlatformRejectsEveryC0AndC1Control(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	// Exhaust the C0/C1 ranges at every position; a broad text generator alone
+	// cannot guarantee hitting NUL, DEL, NEL or each end of both ranges.
+	for control := rune(0); control <= '\u009f'; control++ {
+		if control >= '\u0020' && control < '\u007f' {
+			continue
+		}
+		for _, value := range []string{string(control) + "Future", "Fu" + string(control) + "ture", "Future" + string(control)} {
+			r := remoteTestRequest()
+			r.Meeting.Record.MeetingPlatform = value
+			_, err := r.Normalize()
+			require.ErrorIs(err, ErrRemoteValidation, "control %U", control)
+			assert.NotContains(err.Error(), value)
+			encoded, err := json.Marshal(r)
+			require.NoError(err)
+			_, err = DecodeRemoteRequest(bytes.NewReader(encoded), MaxRemoteRequestBytes)
+			require.ErrorIs(err, ErrRemoteValidation, "escaped control %U", control)
+			assert.NotContains(err.Error(), value)
+		}
+	}
+}
+
+func TestRemoteMeetingPlatformRejectedEditPreservesArchive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	r := remoteTestRequest()
+	r.Meeting.Record.Source = "meeting"
+	r.Meeting.Record.MeetingPlatform = "facetime"
+	first, err := f.imp.ImportRemote(t.Context(), r)
+	require.NoError(err)
+	runs := remotePushRuns(t, f)
+	for _, value := range []string{"Future\x1fCall", "Future\u009fCall", strings.Repeat("会", 129)} {
+		r.Meeting.Record.MeetingPlatform = value
+		_, err := f.imp.ImportRemote(t.Context(), r)
+		require.ErrorIs(err, ErrRemoteValidation)
+		assertStoredMeetingPlatform(t, f, first.MessageID, "facetime")
+		assert.Equal(1, f.messageCount(t))
+		assert.Equal(runs, remotePushRuns(t, f), "rejection must not open a write run")
+	}
+}
+
+func TestRemoteScanMeetingPlatformEditRefreshesArchive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	_, err := f.muesli.ExecContext(t.Context(), `ALTER TABLE meetings ADD COLUMN meeting_platform TEXT`)
+	require.NoError(err)
+	id := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
+	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir()}
+	var results []RemoteResult
+	var digests []string
+	send := func(ctx context.Context, r RemoteRequest) (RemoteResult, error) {
+		digest, err := meetingDigest(r.Meeting)
+		require.NoError(err)
+		digests = append(digests, digest)
+		result, err := f.imp.ImportRemote(ctx, r)
+		results = append(results, result)
+		return result, err
+	}
+	_, err = ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+	require.Len(results, 1)
+	messageID := results[0].MessageID
+	for i, value := range []string{"unknown", " FutureCall.会議 ", ""} {
+		_, err := f.muesli.ExecContext(t.Context(), `UPDATE meetings SET meeting_platform = ? WHERE id = ?`, value, id)
+		require.NoError(err)
+		_, err = ScanRemote(t.Context(), opts, send)
+		require.NoError(err)
+		require.Len(results, i+2)
+		assert.Equal("updated", results[i+1].Status)
+		assert.Equal(messageID, results[i+1].MessageID)
+		assert.NotEqual(digests[i], digests[i+1])
+		assertStoredMeetingPlatform(t, f, messageID, value)
+		_, err = ScanRemote(t.Context(), opts, send)
+		require.NoError(err)
+		assert.Len(results, i+2, "acknowledged unchanged evidence is not resent")
+	}
+	assert.Equal(1, f.messageCount(t))
+}
+
+func TestRemoteScanSkipsInvalidPlatformAndSyncsMeetingChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	_, err := f.muesli.ExecContext(t.Context(), `ALTER TABLE meetings ADD COLUMN meeting_platform TEXT`)
+	require.NoError(err)
+	id := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"meeting_platform": "facetime"}))
+	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir()}
+	var requests []RemoteRequest
+	var results []RemoteResult
+	send := func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
+		requests = append(requests, request)
+		result, err := f.imp.ImportRemote(ctx, request)
+		if err == nil {
+			results = append(results, result)
+		}
+		return result, err
+	}
+	_, err = ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+	require.Len(requests, 1)
+	require.Len(results, 1)
+	messageID := results[0].MessageID
+
+	controlValue := "\x00FutureCall"
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET meeting_platform = ?, title = ? WHERE id = ?`, controlValue, "Updated synthetic meeting", id)
+	require.NoError(err)
+	_, err = ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+	require.Len(requests, 2)
+	require.Len(results, 2)
+	assert.Empty(requests[1].Meeting.Record.MeetingPlatform)
+	assert.Equal("Updated synthetic meeting", requests[1].Meeting.Record.Title)
+	assert.Equal("updated", results[1].Status)
+	assert.Equal(messageID, results[1].MessageID)
+	assertStoredMeetingPlatform(t, f, messageID, "")
+
+	var stored string
+	require.NoError(f.muesli.QueryRowContext(t.Context(), `SELECT meeting_platform FROM meetings WHERE id = ?`, id).Scan(&stored))
+	assert.Equal(controlValue, stored)
 }
 
 func registerRemoteFixture(t *testing.T, f *importerFixture) {
