@@ -1340,7 +1340,7 @@ func TestProcessorCooperativeStopAfterEnrichment(t *testing.T) {
 	must.Len(before, 2)
 	ctx, request := jobctx.WithPreemption(t.Context())
 	request()
-	checks.ErrorIs(f.processor.Process(ctx), jobctx.ErrYieldedToWaiter)
+	must.ErrorIs(f.processor.Process(ctx), jobctx.ErrYieldedToWaiter)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/2/content"))
 	after, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
