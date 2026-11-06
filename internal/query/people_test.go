@@ -55,6 +55,51 @@ func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
 	}
 }
 
+func TestSearchPeopleRanksPhoneDigitsAndAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.test", "gmail")
+	// Vary recency so equal text matches have a visible order.
+	for index, person := range []struct {
+		email    string
+		phone    string
+		username string
+	}{
+		{email: "exact@example.test", phone: "+12025550123", username: "alice"},
+		{email: "prefix@example.test", phone: "+120255501234", username: "alice.example"},
+		{email: "substring@example.test", phone: "+4412025550123", username: "malice"},
+	} {
+		participant := b.AddParticipant(person.email, "example.test", "")
+		b.AddParticipantIdentifier(participant, "phone", person.phone, person.phone, true)
+		b.AddParticipantIdentifier(participant, "slack", person.username, "@"+person.username, false)
+		message := b.AddMessage(MessageOpt{
+			SourceID: source, SentAt: time.Date(2026, 8, 22, 9, index, 0, 0, time.UTC),
+		})
+		b.AddFrom(message, participant, "")
+	}
+	engine := b.BuildEngine()
+	for _, test := range []struct {
+		query string
+		want  []int64
+	}{
+		{query: "12025550123", want: []int64{3, 2, 1}},
+		{query: "@alice", want: []int64{1, 2}},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+				Query: test.query, Page: PageSpec{Limit: 25},
+			})
+			require.NoError(t, err)
+			got := make([]int64, 0, len(response.Rows))
+			for _, row := range response.Rows {
+				got = append(got, row.ID)
+			}
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, int64(len(test.want)), response.TotalCount)
+		})
+	}
+}
+
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

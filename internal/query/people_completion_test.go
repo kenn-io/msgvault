@@ -36,6 +36,41 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 	assert.NotEmpty(response.CacheRevision)
 }
 
+func TestPeopleCompletionPreservesCaseAcrossLinkedAliases(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		primary string
+		alias   string
+		want    string
+	}{
+		{name: "mixed case first", primary: "Alice", alias: "ALICE", want: "ALICE"},
+		{name: "uppercase first", primary: "ALICE", alias: "Alice", want: "Alice"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("archive@example.test", "gmail")
+			primary := b.AddParticipant("primary@example.test", "example.test", test.primary)
+			alias := b.AddParticipant("alias@example.test", "example.test", test.alias)
+			b.LinkCluster(primary, alias)
+			message := b.AddMessage(MessageOpt{
+				SourceID: source, SentAt: time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC),
+			})
+			b.AddFrom(message, primary, test.primary)
+			b.AddTo(message, alias, test.alias)
+			engine := b.BuildEngine()
+
+			response, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "alice", Limit: 8})
+			require.NoError(t, err)
+			require.Len(t, response.Rows, 1)
+			assert.Equal(t, primary, response.Rows[0].ParticipantID)
+			assert.Equal(t, PeopleCompletionName, response.Rows[0].Kind)
+			assert.Equal(t, "observed", response.Rows[0].Source)
+			assert.Equal(t, test.want, response.Rows[0].Value)
+		})
+	}
+}
+
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
