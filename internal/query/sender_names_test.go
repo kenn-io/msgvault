@@ -32,8 +32,8 @@ func TestSenderNameHints(t *testing.T) {
 		p := env.AddParticipant(dbtest.ParticipantOpts{Email: new(fmt.Sprintf("sender%d@example.com", i))})
 		for j := 0; j <= i; j++ {
 			id := env.AddMessage(dbtest.MessageOpts{FromID: p, Subject: "hintfixture"})
-			// The participant was first seen without a name; the message supplies it.
-			if j == 0 {
+			// Only the final message supplies a matching name; count every message.
+			if j == i {
 				env.SetFromName(id, "Alex Kim")
 			}
 		}
@@ -131,6 +131,22 @@ func TestSenderNameHintSpecialFragments(t *testing.T) {
 		assertions.Equal(tc.message, hints[0].Message)
 		assertions.Equal("from:mary.jones@example.org subject:hintfixture", hints[0].RetryWith.Query)
 	}
+}
+
+func TestSenderNameHintKnownAddress(t *testing.T) {
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("sal@example.com"), DisplayName: new("Sal Example")})
+	env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture"})
+	known := env.AddParticipant(dbtest.ParticipantOpts{Email: new("Al@Example.com"), DisplayName: new("Al Example")})
+	env.AddMessage(dbtest.MessageOpts{FromID: known, Subject: "other"})
+	q := search.Parse("from:AL@example.com subject:hintfixture")
+	results, err := env.Engine.Search(env.Ctx, q, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+	assert.Empty(t, env.Engine.MatchSenderName(env.Ctx, q))
+	hints := env.Engine.MatchSenderName(env.Ctx, search.Parse("from:al@example.co subject:hintfixture"))
+	require.Len(t, hints, 1)
+	assert.Equal(t, "from:sal@example.com subject:hintfixture", hints[0].RetryWith.Query)
 }
 
 func TestSenderNameHintLiteralAndDeletionScope(t *testing.T) {

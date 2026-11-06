@@ -27,6 +27,13 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 	if !ok {
 		return nil
 	}
+	var known bool
+	if err := e.queryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE LOWER(email_address) = LOWER(?))`, sender).Scan(&known); err != nil {
+		return senderHintFailure(err)
+	}
+	if known {
+		return nil
+	}
 	conditions, args, join := buildParts(ctx, scoped)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	senderText := strings.TrimPrefix(sender, "@")
@@ -63,12 +70,19 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
  AND mr_hint.participant_id = p_hint.id AND mr_hint.recipient_type = 'from'
  AND m.id = mr_hint.message_id AND %s
  GROUP BY c.address
- HAVING MAX(CASE WHEN %s OR %s THEN 1 ELSE 0 END) = 1
+ HAVING EXISTS (
+ SELECT 1 FROM participants p_hint
+ CROSS JOIN message_recipients mr_hint
+ CROSS JOIN messages m %s
+ WHERE LOWER(p_hint.email_address) = c.address
+ AND mr_hint.participant_id = p_hint.id AND mr_hint.recipient_type = 'from'
+ AND m.id = mr_hint.message_id AND %s
+ AND (%s OR %s))
  ORDER BY COUNT(DISTINCT m.id) DESC, c.address LIMIT 3`,
 		metadataContainsExpression(e.dialect, "p.display_name"), metadataContainsExpression(e.dialect, "p.email_address"),
-		participantIndex, metadataContainsExpression(e.dialect, "mr.display_name"), recipientIndex, join, strings.Join(conditions, " AND "),
+		participantIndex, metadataContainsExpression(e.dialect, "mr.display_name"), recipientIndex, join, strings.Join(conditions, " AND "), join, strings.Join(conditions, " AND "),
 		metadataContainsExpression(e.dialect, recipientNameExpr("mr_hint", "p_hint")), metadataContainsExpression(e.dialect, "p_hint.email_address"))
-	args = append(candidateArgs, args...)
+	args = append(append(candidateArgs, args...), args...)
 	args = append(args, pattern, pattern)
 	rows, err := e.queryContext(ctx, sql, args...)
 	if err != nil {
