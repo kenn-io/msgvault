@@ -153,7 +153,6 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 			row.Event.Status = meetingCancelledStatus
 		}
 		if row.Event.Original != nil && len(masters) == 1 {
-			masters[0].ICalUID = cmp.Or(masters[0].ICalUID, row.ICalUID)
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else if row.Event.Original != nil {
 			if row.Event.Start == nil || row.Event.End == nil {
@@ -200,24 +199,25 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	if len(moved) > 0 {
-		x := moved[len(moved)-1]
+	// Every copy supplies the UID; the latest copy supplies the bounds.
+	var x CalendarEventRow
+	for _, x = range moved {
 		row.ICalUID = cmp.Or(row.ICalUID, x.ICalUID)
-		if x.Event.Start != nil && x.Event.End != nil {
-			o := occurrenceFromRow(row, ref.Key)
-			o.Start, o.End, err = seriesExceptionBounds(row, x)
-			if err != nil {
-				return linkOccurrence{}, err
-			}
-			o.Row = x
-			if row.Event.Status == meetingCancelledStatus {
-				o.Row.Event.Status = meetingCancelledStatus
-			}
-			return o, nil
+	}
+	if x.Event.Start != nil && x.Event.End != nil {
+		o := occurrenceFromRow(row, ref.Key)
+		o.Start, o.End, err = seriesExceptionBounds(row, x)
+		if err != nil {
+			return linkOccurrence{}, err
 		}
-		if x.Event.Start != nil {
-			at = *x.Event.Start
+		o.Row = x
+		if row.Event.Status == meetingCancelledStatus {
+			o.Row.Event.Status = meetingCancelledStatus
 		}
+		return o, nil
+	}
+	if x.Event.Start != nil {
+		at = *x.Event.Start
 	}
 	occurrences, err := expandMeetingSeries(ctx, r, row, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin), budget)
 	if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
