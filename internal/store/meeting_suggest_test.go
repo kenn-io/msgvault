@@ -15,6 +15,21 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+func TestMeetingGranolaAllDaySuggestionUsesScheduledDuration(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", `{"id":"event","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	data, note := projectionFixture(t, st, "note", "granola_json", `{"calendar_event":{"scheduled_start_time":"2027-03-14","scheduled_end_time":"2027-03-15"}}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	require.NoError(err)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	require.NoError(err)
+	require.Len(page.Suggestions, 1)
+	assert.Equal(fmt.Sprintf("evt:%d", event), page.Suggestions[0].Ref)
+	assert.Equal(60, page.Suggestions[0].OverlapMinutes)
+}
+
 func TestMeetingSuggestionsDeduplicateCopiesBeforeLimit(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
