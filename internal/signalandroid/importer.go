@@ -437,7 +437,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 	return nil
 }
 
-// renumberedChat retains an archived PNI chat after its contact changes number.
+// renumberedChat retains an archived PNI or phone chat after its contact changes number.
 func (r *run) renumberedChat(ctx context.Context, chat sigRecipient, archived map[string]bool) (sigRecipient, error) {
 	if chat.GroupID != "" || chat.ACI == "" || archived[directACIPrefix+chat.ACI] || archived[directPNIPrefix+chat.PNI] {
 		return chat, nil
@@ -448,8 +448,14 @@ func (r *run) renumberedChat(ctx context.Context, chat sigRecipient, archived ma
 	}
 	shared, err := r.imp.store.SharedConversationsContext(ctx, r.participants[r.selfRecipientID], pid)
 	for _, conversation := range shared {
-		if pni, ok := strings.CutPrefix(conversation.SourceConversationID, directPNIPrefix); ok && conversation.SourceID == r.sourceID && archived[conversation.SourceConversationID] {
-			chat.PNI = pni
+		pni, isPNI := strings.CutPrefix(conversation.SourceConversationID, directPNIPrefix)
+		phone, isPhone := strings.CutPrefix(conversation.SourceConversationID, directPhonePrefix)
+		if (isPNI || isPhone) && conversation.SourceID == r.sourceID && archived[conversation.SourceConversationID] {
+			if isPNI {
+				chat.PNI = pni
+			} else {
+				chat.E164 = phone
+			}
 			break
 		}
 	}

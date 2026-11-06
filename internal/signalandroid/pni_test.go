@@ -239,4 +239,13 @@ func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
 	assert.Equal(before, importedMessages(t, st))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`)
+	summary = runImport(t, st, dir, attachments)
+
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(2), summary.MessagesUpdated)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
 }
