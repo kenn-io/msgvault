@@ -101,7 +101,15 @@ func storedMeetingIdentity(ctx context.Context, r reboundReader, ref OccurrenceR
 	if len(rows) != 1 {
 		return meetingIdentity{}, sql.ErrNoRows
 	}
-	return occurrenceFromRow(rows[0], ref.Key).Identity, nil
+	return occurrenceFromRow(rows[0], storedOccurrenceKey(rows[0], ref.Key)).Identity, nil
+}
+
+// A bare reference saved before a standalone event became a series names its first occurrence.
+func storedOccurrenceKey(row CalendarEventRow, key string) string {
+	if key != "" || row.Event.Kind != meetingSeriesKind || row.Event.Start == nil {
+		return key
+	}
+	return calrecur.Identity{Instant: *row.Event.Start, Date: row.Event.StartDate, AllDay: row.Event.AllDay}.Key()
 }
 
 // Retain the original decisions for undo; purge removes only that hidden copy.

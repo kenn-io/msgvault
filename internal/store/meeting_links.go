@@ -470,12 +470,10 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				return nil, err
 			}
-			rows, err := meetingEventRowsByID(ctx, r, d.Ref.MessageID, budget)
-			if err != nil {
+			if identity, err := storedMeetingIdentity(ctx, r, d.Ref, budget); err == nil {
+				splits[identity] = true
+			} else if !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
-			}
-			if len(rows) == 1 {
-				splits[occurrenceFromRow(rows[0], d.Ref.Key).Identity] = true
 			}
 			continue
 		}
