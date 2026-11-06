@@ -28,7 +28,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 ### Send a reviewed LINE reply {#line-reply}
 
-Available on unreleased `main` with API schema 3.45.0: the owner can invoke
+Available on unreleased `main` with API schema 3.46.0: the owner can invoke
 `send-line-reply` through `POST /api/v1/cli/run` with ordinary owner API
 authentication:
 
@@ -231,7 +231,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.46.0**.
+it is separate from the binary release version. The current schema is **3.47.0**.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
@@ -261,7 +261,7 @@ Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb`
 
 Schema 3.46.0 adds optional LINE webhook delivery status to source status.
 
-Schema 3.45.0 adds owner-only `send-line-reply` with durable LINE reply receipts.
+Schema 3.47.0 adds owner-only `send-line-reply` with durable LINE reply receipts.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,

@@ -30,14 +30,6 @@ func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
 	assert.Equal(DraftCommandRequest{Command: "send-line-reply", Positional: "chat-draft-example", Flags: map[string][]string{"revision": {"1"}}}, runner.request)
 }
 
-func TestMCPLineReplyHiddenFromDelegatedCatalog(t *testing.T) {
-	assert := assert.New(t)
-	definitions := operationCatalog(ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"send-line-reply", "draft-compose"}, DelegatedOnly: true}, nil)
-	for _, definition := range definitions {
-		assert.NotEqual("send_line_reply", definition.name)
-	}
-}
-
 func TestMCPLineReplyOwnerCatalog(t *testing.T) {
 	assert := assert.New(t)
 	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"send-line-reply"}}

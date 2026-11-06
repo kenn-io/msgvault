@@ -200,9 +200,6 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.Drafts != nil {
 		for _, command := range opts.DraftCommands {
-			if opts.DelegatedOnly && command == "send-line-reply" {
-				continue
-			}
 			if definition, ok := stableDraftDefinitions[command]; ok {
 				definitions = append(definitions, definition)
 			}

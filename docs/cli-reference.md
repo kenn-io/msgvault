@@ -706,7 +706,7 @@ conversation deletes its local drafts. An admitted LINE send makes edits return
 ## send-line-reply
 
 Send a reviewed local LINE text draft as the owner. Available on unreleased
-`main` with API schema 3.45.0 or newer:
+`main` with API schema 3.46.0 or newer:
 
 ```bash
 msgvault send-line-reply <chat-draft-id> --revision <n> [--json]
@@ -4616,7 +4616,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The eight preparation and lifecycle tools require API schema 3.0.0 or newer. On unreleased `main`, the owner also has `send_line_reply` (API schema 3.45.0), with per-channel opt-in and confirmation of the exact draft ID and revision. See [draft and reply tools](usage/chat.md#draft-tools).
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The eight preparation and lifecycle tools require API schema 3.0.0 or newer. On unreleased `main`, the owner also has `send_line_reply` (API schema 3.46.0), with per-channel opt-in and confirmation of the exact draft ID and revision. See [draft and reply tools](usage/chat.md#draft-tools).
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
