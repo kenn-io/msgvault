@@ -666,17 +666,9 @@ func (s *Store) meetingIdentityPredicate(identity meetingIdentity) (string, []an
 	return predicate, args
 }
 
-func (s *Store) meetingIdentityRows(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]CalendarEventRow, error) {
+func (s *Store) resolveMeetingIdentity(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]linkOccurrence, error) {
 	predicate, args := s.meetingIdentityPredicate(identity)
 	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-func (s *Store) resolveMeetingIdentity(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]linkOccurrence, error) {
-	rows, err := s.meetingIdentityRows(ctx, r, identity, budget)
 	if err != nil {
 		return nil, err
 	}

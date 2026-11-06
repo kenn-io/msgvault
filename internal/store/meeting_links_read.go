@@ -145,7 +145,8 @@ func meetingIdentityAliasPredicate(o linkOccurrence, copies []CalendarEventRow) 
 // Discover only keys or decisions that could resolve to this occurrence. The
 // forward resolver applies splits, ambiguity and provider ordering afterwards.
 func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader, o linkOccurrence, budget *int) (string, []any, error) {
-	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, budget)
+	predicate, args := s.meetingIdentityPredicate(o.Identity)
+	copies, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return "", nil, err
 	}
@@ -158,7 +159,7 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 		copies = uniqueMeetingIdentityRows(copies, aliases)
 	}
 	clauses := []string{"1=0"}
-	args := []any{}
+	args = nil
 	keyClauses, keyArgs, err := meetingIdentityUIDMemberClauses(ctx, r, o, copies, budget)
 	if err != nil {
 		return "", nil, err
