@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
-
 	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/timeline"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -32,25 +30,16 @@ func (c *Client) Timeline(ctx context.Context, req timeline.Request) (*timeline.
 	}
 	query := timelineQuery(req)
 	resp, err := apiResponseWithErrorDecoder(c, func(client *apiclient.Client) (*timelineHTTPResponse, error) {
-		// Preserve the raw encoding: the generated JSON response decoder also runs
-		// for Markdown, and generic opener numbers need lossless decoding below.
-		api := client.APIClient()
-		request, err := api.CreateRequest(ctx, runtime.RequestOptionsParameters{
-			RequestURL: api.GetBaseURL() + "/api/v1/timeline",
-			Method:     http.MethodGet,
-			Options:    &generated.GetTimelineRequestOptions{},
+		response, err := client.GetTimelineWithResponse(ctx, &generated.GetTimelineRequestOptions{
+			Query: &generated.GetTimelineQuery{Format: new(req.Format)},
 		}, func(_ context.Context, r *http.Request) error {
 			r.URL.RawQuery = query.Encode()
 			return nil
 		})
-		if err != nil {
-			return nil, err
-		}
-		response, err := api.ExecuteRequest(ctx, request, "/api/v1/timeline")
 		if response == nil {
 			return nil, err
 		}
-		return &timelineHTTPResponse{StatusCode: response.StatusCode, Body: response.Content}, err
+		return &timelineHTTPResponse{StatusCode: response.StatusCode, Body: response.Body}, err
 	}, timelineErrorBody)
 	if err != nil {
 		return nil, "", err

@@ -591,9 +591,8 @@ request and response fields.
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
 returning `200` while created manifests return `201`.
-For [timeline](#timeline-unreleased) reads, `GetTimelineWithResponse` decodes
-JSON. To request Markdown, use `APIClient().CreateRequest` and
-`APIClient().ExecuteRequest` and read the raw response bytes. Typed timeline
+For [timeline](#timeline-unreleased) reads, `GetTimelineWithResponse` returns
+Markdown in `Body` when `format=markdown` and decodes JSON otherwise. Typed timeline
 openers use generic JSON values; callers that need exact numeric IDs above
 9007199254740991 should also decode the raw JSON with `json.Decoder.UseNumber`.
 The daemon-backed CLI handles both formats and exact IDs automatically.
