@@ -107,6 +107,23 @@ func TestFitRelationshipBoundsAgendaAtMinimumBudget(t *testing.T) {
 	assertions.NotEmpty(out.History)
 }
 
+func TestTimelineFitRelationshipOptionalTextAtMinimumBudget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := sampleTimeline(ModeRelationship)
+	v.Person.Brief.Text = strings.Repeat("界", 600)
+	v.Person.Agenda = []UntrustedText{
+		{Text: strings.Repeat("界", 80)}, {Text: strings.Repeat("界", 80)},
+		{Text: strings.Repeat("界", 80)}, {Text: strings.Repeat("界", 80)},
+		{Text: strings.Repeat("界", 80)},
+	}
+	SetContinuation(v, Continuation{Binding: cursorBinding()})
+	out, err := Fit(v, "json", 4096)
+	requirements.NoError(err)
+	assertions.LessOrEqual(encodedSize(t, out, "json"), 4096)
+	assertions.NotEmpty(out.Omitted.Budget)
+	assertions.Equal("person:7", out.Person.Ref)
+}
+
 func TestFitBudgetsFreshness(t *testing.T) {
 	for _, format := range []string{"json", "markdown"} {
 		t.Run(format, func(t *testing.T) {
