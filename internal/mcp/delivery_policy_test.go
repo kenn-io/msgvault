@@ -80,7 +80,19 @@ func TestDeliveryPolicyMCPWriteNeedsConfirmation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := require.New(t)
-			backend := &policyMCPBackend{receipt: &store.DeliveryPolicyReceipt{}}
+			state := store.DeliveryPolicyState{
+				PersonUID: test.write.PersonUID, Endpoint: test.write.Endpoint, Revision: test.write.ExpectedRevision,
+				EffectivePolicy: store.DeliveryDraftOnly, InheritanceSource: "system_default", Reason: "draft_required",
+			}
+			if test.tool == ToolSetDeliveryPolicy {
+				state.StoredPolicy = new(store.DeliverySendAllowed)
+				state.EffectivePolicy = store.DeliverySendAllowed
+				state.InheritanceSource, state.Reason = "person_default", "explicit_person_default"
+				if state.Endpoint != "" {
+					state.InheritanceSource, state.Reason = "contact_method", "explicit_approval"
+				}
+			}
+			backend := &policyMCPBackend{receipt: &store.DeliveryPolicyReceipt{Before: state, After: state}}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
 			args := map[string]any{"person_uid": "synthetic-uid", "expected_revision": test.write.ExpectedRevision, "reason": test.write.Reason}
 			if test.tool == ToolSetDeliveryPolicy {

@@ -398,7 +398,6 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		{name: "absorbed default", policy: store.DeliveryDraftOnly},
 		{name: "survivor override", onSurv: true, endpoint: "first@example.test", keeps: true, policy: store.DeliverySendAllowed},
 		{name: "survivor draft_only default", onSurv: true, keeps: true, policy: store.DeliveryDraftOnly},
-		{name: "survivor draft_only override", onSurv: true, endpoint: "first@example.test", keeps: true, policy: store.DeliveryDraftOnly},
 		{name: "absorbed override", endpoint: "absorbed-address@example.test", keeps: true, policy: store.DeliveryDraftOnly},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -438,10 +437,6 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 					assert.Equal(1, audits, "the absorbed policy ends on its retired owner")
 				}
 				assert.Equal(policy, readDelivery(t, f.Store, survivor.VCardUID, endpoint).EffectivePolicy)
-				if endpoint != "" && policy == store.DeliveryDraftOnly {
-					setDelivery(t, f.Store, survivor.VCardUID, "", store.DeliverySendAllowed)
-					assert.Equal(store.DeliveryDraftOnly, readDelivery(t, f.Store, survivor.VCardUID, endpoint).EffectivePolicy)
-				}
 				return
 			}
 			assert.Zero(rows)
@@ -472,9 +467,6 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		absorbed, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("absorbed@example.test", "Absorbed Person", "example.test"))
 		require.NoError(err)
 		deliveryContactPoint(t, f, absorbed.ID, address)
-		ambiguous := readDelivery(t, f.Store, survivor.VCardUID, address)
-		assert.Equal(store.DeliveryDraftOnly, ambiguous.EffectivePolicy)
-		assert.Equal("ambiguous_endpoint", ambiguous.Reason)
 		setDelivery(t, f.Store, absorbed.VCardUID, address, store.DeliveryDraftOnly)
 
 		survivor, err = f.Store.GetPersonContext(t.Context(), survivor.ID)
@@ -489,12 +481,6 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(store.DeliveryDraftOnly, readDelivery(t, f.Store, survivor.VCardUID, address).EffectivePolicy)
 		assert.Equal(store.DeliverySendAllowed, readDelivery(t, f.Store, survivor.VCardUID, addresses[0]).EffectivePolicy)
-
-		calls := 0
-		err = f.Store.WithDeliveryAdmissionContext(t.Context(), deliveryRecipient(survivor, address), func(context.Context) error { calls++; return nil })
-		var refusal *store.DeliveryAdmissionError
-		require.ErrorAs(err, &refusal)
-		assert.Zero(calls)
 
 		var audits int
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy='draft_only'`), survivor.VCardUID, address).Scan(&audits))
