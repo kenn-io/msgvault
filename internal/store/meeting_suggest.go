@@ -310,11 +310,6 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		}
 		return 0
 	})
-	type pair struct {
-		memberID int64
-		identity meetingIdentity
-	}
-	seen := map[pair]bool{}
 	filtered := suggestions[:0]
 	for _, suggestion := range suggestions {
 		if decided[suggestion.MemberMessageID][suggestion.Ref] {
@@ -326,15 +321,19 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 			continue
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+		if err == nil {
+			// Offer only targets whose record read fits the bounds the link writer enforces.
+			_, err = s.meetingOccurrenceMembers(ctx, r, o, budget)
+		}
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, ErrQueryTooBroad) || errors.Is(err, calrecur.ErrBudgetExceeded) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		candidate := pair{suggestion.MemberMessageID, o.Identity}
-		if !identities[suggestion.MemberMessageID][o.Identity] && !seen[candidate] {
-			seen[candidate] = true
+		// Each member's matched identities also mark the pairs already offered.
+		if !identities[suggestion.MemberMessageID][o.Identity] {
+			identities[suggestion.MemberMessageID][o.Identity] = true
 			filtered = append(filtered, suggestion)
 		}
 	}
