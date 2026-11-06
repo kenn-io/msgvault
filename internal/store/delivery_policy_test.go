@@ -269,7 +269,7 @@ func TestDeliveryPolicyRemovingAndReaddingTheAddress(t *testing.T) {
 }
 
 func TestDeliveryPolicyAddressRule(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	p, _ := deliveryPerson(t, f)
 	deliveryContactPoint(t, f, p.ID, "PEER@localhost")
@@ -286,7 +286,7 @@ func TestDeliveryPolicyAddressRule(t *testing.T) {
 	// Only a plain single address is accepted: no display names, quotes or lists.
 	for _, endpoint := range []string{"Peer <peer@localhost>", `"peer"@localhost`, "list-a@example.test,list-b@example.test"} {
 		_, err := f.Store.GetDeliveryPolicyContext(t.Context(), store.DeliveryPolicyQuery{PersonUID: p.VCardUID, Endpoint: endpoint})
-		require.ErrorIs(err, store.ErrDeliveryPolicyInvalid, endpoint)
+		assert.ErrorIs(err, store.ErrDeliveryPolicyInvalid, endpoint)
 	}
 }
 
@@ -369,19 +369,21 @@ func TestDeliveryPolicyApprovalLapsesWhenTheAddressIsSplit(t *testing.T) {
 	})
 	require.NoError(err)
 	state := readDelivery(t, f.Store, survivor.VCardUID, address)
+	require.NotNil(state.StoredPolicy)
+	assert.Equal(store.DeliverySendAllowed, *state.StoredPolicy, "splitting preserves the approval record while detaching its address")
 	assert.Equal(store.DeliveryDraftOnly, state.EffectivePolicy)
 	assert.Equal("detached_endpoint", state.Reason)
 }
 
 func TestDeliveryPolicyReadRejectsUnknownOrMalformedPersonUID(t *testing.T) {
-	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	p, _ := deliveryPerson(t, f)
 
 	_, err := f.Store.GetDeliveryPolicyContext(t.Context(), store.DeliveryPolicyQuery{PersonUID: "unknown-synthetic-uid"})
-	require.ErrorIs(err, store.ErrDeliveryPersonUnknown)
+	assert.ErrorIs(err, store.ErrDeliveryPersonUnknown)
 	_, err = f.Store.GetDeliveryPolicyContext(t.Context(), store.DeliveryPolicyQuery{PersonUID: p.VCardUID + "\x00"})
-	require.ErrorIs(err, store.ErrDeliveryPolicyInvalid)
+	assert.ErrorIs(err, store.ErrDeliveryPolicyInvalid)
 }
 
 func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
@@ -713,9 +715,7 @@ func TestDeliveryPolicyBindsTheLowestDuplicateContactPoint(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
 	p, addresses := deliveryPerson(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO person_contact_points(person_id, address_kind, original_value, normalized_value, normalization, source)
-		SELECT person_id, address_kind, original_value, normalized_value, normalization, source FROM person_contact_points WHERE person_id=? AND normalized_value=?`), p.ID, addresses[0])
-	require.NoError(err)
+	deliveryContactPoint(t, f, p.ID, addresses[0])
 	var lowest, count int64
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT MIN(id), COUNT(*) FROM person_contact_points WHERE person_id=? AND normalized_value=?`), p.ID, addresses[0]).Scan(&lowest, &count))
 	require.EqualValues(2, count)

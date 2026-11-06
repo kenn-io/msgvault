@@ -1729,6 +1729,19 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 	require.NoError(err)
 	person, _, err := source.CreatePersonFromParticipantContext(ctx, 2)
 	require.NoError(err)
+	_, err = source.AddPersonContactPointContext(ctx, person.ID, PersonContactPointInput{
+		AddressKind: ContactAddressEmail, OriginalValue: "approved@example.test",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	state, err := source.GetDeliveryPolicyContext(ctx, DeliveryPolicyQuery{PersonUID: person.VCardUID})
+	require.NoError(err)
+	_, err = source.SetDeliveryPolicyContext(ctx, DeliveryPolicyWrite{
+		PersonUID: person.VCardUID, ExpectedRevision: state.Revision,
+		Policy: DeliverySendAllowed, ScopeAcknowledgement: DeliveryPersonAllRoutes,
+		Actor: "subset-test", Reason: "synthetic approval",
+	})
+	require.NoError(err)
 
 	fingerprint := strings.Repeat("a", 64)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
@@ -1809,11 +1822,6 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 		{`INSERT INTO person_enrichment_profile_accounting
 			(profile_fingerprint, starts_disabled, safe_error)
 		 VALUES (?, 1, 'synthetic accounting stop')`, []any{fingerprint}},
-		{`INSERT INTO delivery_policies (person_id, mailbox, policy)
-		 VALUES (?, '', 'send_allowed')`, []any{person.ID}},
-		{`INSERT INTO delivery_policy_audit
-			(person_uid, revision, scope, after_policy, actor, reason)
-		 VALUES (?, 1, 'person', 'send_allowed', 'subset-test', 'synthetic approval')`, []any{person.VCardUID}},
 	}
 	for _, statement := range statements {
 		_, err = tx.ExecContext(ctx, statement.query, statement.args...)
