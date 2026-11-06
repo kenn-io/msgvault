@@ -152,6 +152,18 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	if !repairRelated {
+		var meetingChangePending bool
+		if err := sourceSnapshot.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM cache_related_change_journal
+			WHERE seq > ? AND message_id <= ? AND dataset = 'meeting_links'
+		)`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&meetingChangePending); err != nil {
+			return nil, fmt.Errorf("inspect pending meeting changes: %w", err)
+		}
+		if meetingChangePending {
+			return nil, fmt.Errorf("%w: meeting changes require related-row repair", ErrDerivedRefreshRequiresFullBuild)
+		}
+	}
 	datasets := []string{
 		"cache_unsent_messages",
 		tableMessages,

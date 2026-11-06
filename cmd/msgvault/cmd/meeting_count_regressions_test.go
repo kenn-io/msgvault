@@ -100,6 +100,45 @@ func TestIndependentMeetingHTTPDecisionsRefreshPeople(t *testing.T) {
 	}
 }
 
+func TestDerivedRefreshWithPendingMailRequiresMeetingRepair(t *testing.T) {
+	for _, decision := range []string{"link", "unlink", "unchanged"} {
+		t.Run(decision, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newMeetingCountSeriesFixture(t, 2)
+			ref := store.OccurrenceRef{MessageID: f.event, Key: "20260314T100000Z"}
+			requirements.NoError(f.st.LinkMeetingContext(t.Context(), f.notes[0], ref))
+			if decision == "unlink" {
+				requirements.NoError(f.st.LinkMeetingContext(t.Context(), f.notes[1], ref))
+			}
+			_, err := buildCache(f.path, f.cache, true)
+			requirements.NoError(err)
+			before, err := query.ReadCacheSyncState(f.cache)
+			requirements.NoError(err)
+			_, err = f.st.PersistMessage(&store.MessagePersistData{
+				Message:      &store.Message{SourceID: f.source, SourceMessageID: "pending-mail", MessageType: "email", SentAt: sql.NullTime{Time: time.Date(2026, 3, 29, 10, 0, 0, 0, time.UTC), Valid: true}},
+				Conversation: &store.ConversationPersistData{SourceConversationID: "pending-mail", ConversationType: "email"},
+			})
+			requirements.NoError(err)
+			switch decision {
+			case "link":
+				requirements.NoError(f.st.LinkMeetingContext(t.Context(), f.notes[1], ref))
+			case "unlink":
+				requirements.NoError(f.st.UnlinkMeetingContext(t.Context(), f.notes[1], ref))
+			}
+			result, err := buildCacheDerivedOnly(f.path, f.cache)
+			if decision == "unchanged" {
+				requirements.NoError(err)
+				assertions.True(result.Skipped)
+			} else {
+				requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
+			}
+			after, err := query.ReadCacheSyncState(f.cache)
+			requirements.NoError(err)
+			assertions.Equal(before, after, "leave pending facts and meeting changes unacknowledged")
+		})
+	}
+}
+
 func TestIndependentSeparateOccurrencesKeepTheirDays(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newMeetingCountSeriesFixture(t, 1)
