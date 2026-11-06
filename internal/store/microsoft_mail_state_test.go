@@ -33,11 +33,16 @@ func TestMicrosoftMailStateSurvivesMovesCategoriesAndNameCollisions(t *testing.T
 		"inbox": {Name: "Provider: Unread", Type: "system"}, "archive": {Name: "Provider: Flagged", Type: "user"},
 	})
 	require.NoError(err)
+	beforeRevision, err := st.DerivedDataRevision()
+	require.NoError(err)
 	read, flag := false, "flagged"
 	inbox, archive := folders["inbox"], folders["archive"]
 	categories := []string{"Provider: Unread", "Next"}
 	_, err = st.ReconcileMicrosoftMailStateContext(t.Context(), id, &inbox, &categories, store.MicrosoftMailState{IsRead: &read, FlagStatus: &flag})
 	require.NoError(err)
+	afterRevision, err := st.DerivedDataRevision()
+	require.NoError(err)
+	assert.Equal(beforeRevision+1, afterRevision, "one combined folder, category, and state reconciliation advances one derived-data revision")
 	assert.ElementsMatch([]string{"inbox", "msmail-category:Provider: Unread", "msmail-category:Next", "msmail-state:unread", "msmail-state:flagged"}, microsoftStateIDs(t, st, id))
 	changed, err := st.ReconcileMicrosoftMailLabelsContext(t.Context(), id, &archive, nil)
 	require.NoError(err)

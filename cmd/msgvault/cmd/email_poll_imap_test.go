@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -151,21 +153,32 @@ func pollingIMAPReadCommand(command string) bool {
 	}
 }
 
-type cancelIMAPRetryHandler struct {
+type observeIMAPLimitHandler struct {
 	cancel   context.CancelFunc
 	observed *atomic.Int32
+	signal   chan struct{}
 }
 
-func (h cancelIMAPRetryHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h cancelIMAPRetryHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message == "IMAP command limited; waiting to retry" {
-		h.observed.Add(1)
-		h.cancel()
+func (h observeIMAPLimitHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h observeIMAPLimitHandler) Handle(_ context.Context, record slog.Record) error {
+	if strings.HasPrefix(record.Message, "IMAP command limited;") {
+		if h.observed != nil {
+			h.observed.Add(1)
+		}
+		if h.signal != nil {
+			select {
+			case h.signal <- struct{}{}:
+			default:
+			}
+		}
+		if h.cancel != nil {
+			h.cancel()
+		}
 	}
 	return nil
 }
-func (h cancelIMAPRetryHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h cancelIMAPRetryHandler) WithGroup(string) slog.Handler     { return h }
+func (h observeIMAPLimitHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h observeIMAPLimitHandler) WithGroup(string) slog.Handler     { return h }
 
 func pollingIMAPConfig(t *testing.T, address string, rapid bool) (*config.Config, *imaplib.Config) {
 	t.Helper()
@@ -284,7 +297,7 @@ func TestRapidEmailIMAPRejectsEffectiveFilterBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
+func TestRapidEmailIMAPRetryFloorDefersFollowupAfterObservedLimitCancellation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -296,7 +309,7 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	st := storetest.New(t)
 	src := pollingIMAPSource(t, st.Store, ic)
 	state := testInvocationWithConfig(cfg)
-	var callbacks, retryWaits atomic.Int32
+	var callbacks, observedLimits atomic.Int32
 	var firstErr error
 	firstDone := make(chan struct{})
 	s := scheduler.New(func(ctx context.Context, identifier string) error {
@@ -306,7 +319,7 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 		defer close(firstDone)
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		state.logger = slog.New(cancelIMAPRetryHandler{cancel: cancel, observed: &retryWaits})
+		state.logger = slog.New(observeIMAPLimitHandler{cancel: cancel, observed: &observedLimits})
 		firstErr = runRapidEmailSync(withInvocation(ctx, state), identifier, st.Store, nil, state)
 		return firstErr
 	})
@@ -326,7 +339,7 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	var acquisition *scheduler.AcquisitionError
 	require.ErrorAs(firstErr, &acquisition)
 	assert.Equal(scheduler.AcquisitionCancelled, acquisition.Outcome)
-	assert.EqualValues(1, retryWaits.Load(), "the server-directed retry wait was interrupted")
+	assert.EqualValues(1, observedLimits.Load(), "the server-directed limit was observed before cancellation")
 	assert.EqualValues(1, counted.limited.Load(), "the real IMAP response carried the provider limit")
 	require.True(acquisition.NotBefore.After(time.Now()), "the cancelled pass retains the server retry deadline")
 	assert.False(s.Status()[0].NextEligiblePoll.Before(acquisition.NotBefore), "the account lane preserves the provider floor")
@@ -339,6 +352,115 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterCanceledWait(t *testing.T) {
 	assert.EqualValues(1, callbacks.Load(), "another manual acquisition waits for the provider floor")
 	assert.EqualValues(1, counted.accepted.Load(), "the deferred acquisition opens no second IMAP connection")
 	assert.True(s.Status()[0].Pending, "the accepted manual retry remains pending")
+}
+
+func TestRapidEmailIMAPPositiveLimitReleasesArchiveGateBeforeRetryFloor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(err)
+	counted := &pollingIMAPListener{Listener: ln, limitCommand: "LIST", limitDelay: "60"}
+	counted.limitNext.Store(true)
+	testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 0}, nil)
+	cfg, ic := pollingIMAPConfig(t, ln.Addr().String(), true)
+	cfg.Analytics.AutoBuildCache = false
+	st := storetest.New(t)
+	src := pollingIMAPSource(t, st.Store, ic)
+	state := testInvocationWithConfig(cfg)
+	var observedLimits atomic.Int32
+	limitObserved := make(chan struct{}, 1)
+	state.logger = slog.New(observeIMAPLimitHandler{observed: &observedLimits, signal: limitObserved})
+
+	type syncResult struct {
+		err         error
+		contextLive bool
+	}
+	gate := api.NewSerialOperationGate()
+	callbackStarted := make(chan struct{}, 1)
+	startRapidSync := make(chan struct{})
+	var startOnce sync.Once
+	start := func() { startOnce.Do(func() { close(startRapidSync) }) }
+	firstResult := make(chan syncResult, 1)
+	archiveAccount := "archive@example.test"
+	archiveStarted := make(chan time.Time, 1)
+	var imapCallbacks, archiveCallbacks atomic.Int32
+	s := scheduler.New(func(ctx context.Context, identifier string) error {
+		if identifier == src.Identifier {
+			imapCallbacks.Add(1)
+			callbackStarted <- struct{}{}
+			<-startRapidSync
+			err := runRapidEmailSync(withInvocation(ctx, state), identifier, st.Store, nil, state)
+			firstResult <- syncResult{err: err, contextLive: ctx.Err() == nil}
+			return err
+		}
+		archiveCallbacks.Add(1)
+		archiveStarted <- time.Now()
+		return nil
+	}).WithWorkTracker(labelWorkTracker(gate, "a scheduled sync")).WithAccountPreemptionPolicy(func(identifier string) bool {
+		return scheduledSyncPreemptible(st.Store, identifier, state.logger)
+	})
+	defer func() {
+		start()
+		<-s.Stop().Done()
+	}()
+	require.NoError(s.AddAccount(src.Identifier, "0 0 1 1 *"))
+	require.NoError(s.AddAccount(archiveAccount, "0 0 1 1 *"))
+	require.NoError(s.SetAccountPollInterval(src.Identifier, 30*time.Second))
+	require.NoError(s.TriggerSync(src.Identifier, false))
+	select {
+	case <-callbackStarted:
+	case <-time.After(5 * time.Second):
+		require.FailNow("the scheduler did not start the rapid acquisition")
+	}
+
+	require.NoError(s.TriggerSync(archiveAccount, false))
+	require.Eventually(func() bool {
+		for _, status := range s.Status() {
+			if status.Email == archiveAccount {
+				return status.Queued && !status.Running && status.StartedAt.IsZero()
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "the unrelated scheduled archive pass is visibly queued behind this gate holder")
+	_, _, held := gate.Holder()
+	require.True(held, "the IMAP pass continues to own the shared scheduled-work gate")
+	select {
+	case <-archiveStarted:
+		require.FailNow("the second scheduled pass started before the first released the gate")
+	default:
+	}
+
+	start()
+	select {
+	case <-limitObserved:
+	case <-time.After(5 * time.Second):
+		require.FailNow("the real IMAP LIMIT response was not observed")
+	}
+	assert.EqualValues(1, observedLimits.Load(), "the non-canceling logger observes the provider deferral")
+	assert.EqualValues(1, counted.limited.Load(), "the synthetic server sent one positive LIMIT response")
+
+	var result syncResult
+	select {
+	case result = <-firstResult:
+	case <-time.After(5 * time.Second):
+		require.FailNow("rapid IMAP acquisition held the shared archive gate through the provider retry delay")
+	}
+	assert.True(result.contextLive, "the rapid callback returns before cleanup cancels its context")
+	var acquisition *scheduler.AcquisitionError
+	require.ErrorAs(result.err, &acquisition)
+	require.True(acquisition.NotBefore.After(time.Now()), "the response retains its live provider deadline")
+	assert.EqualValues(1, counted.accepted.Load(), "the first acquisition uses one provider connection")
+
+	var archiveAdmissionAt time.Time
+	select {
+	case archiveAdmissionAt = <-archiveStarted:
+	case <-time.After(5 * time.Second):
+		require.FailNow("the unrelated scheduled archive pass did not acquire the gate after rapid deferral")
+	}
+	assert.True(archiveAdmissionAt.Before(acquisition.NotBefore), "the second scheduled pass acquires the shared gate before the provider deadline")
+	assert.EqualValues(1, imapCallbacks.Load(), "the queued pass does not start another provider acquisition")
+	assert.EqualValues(1, archiveCallbacks.Load(), "the unrelated scheduled pass enters after gate release")
+	assert.EqualValues(1, counted.accepted.Load(), "the queued pass opens no second provider connection")
 }
 
 func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
