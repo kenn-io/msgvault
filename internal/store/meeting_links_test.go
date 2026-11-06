@@ -188,6 +188,16 @@ func TestMeetingLinksIdentityHasSeparateFields(t *testing.T) {
 	assertions.Empty(linkedMeetingRefs(t, st, note)[note])
 }
 
+func TestMeetingLinksBareGranolaSeriesStaysUnlinked(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "series", linkSeriesRaw)
+	note := granolaLinkFixture(t, st, "series")
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{note}, record.MessageIDs)
+	assert.Empty(t, record.Links)
+}
+
 func TestMeetingLinksGranolaOccurrences(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, exception, key string

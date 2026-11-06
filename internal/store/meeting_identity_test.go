@@ -45,6 +45,19 @@ func TestMeetingIdentityLinkedTranscriptSharesKey(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityBareGranolaSeriesStaysUnlinked(t *testing.T) {
+	assert := assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "series", linkSeriesRaw)
+	note := granolaLinkFixture(t, st, "series")
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	require.NoError(t, err)
+	assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
+	assert.Empty(got.ByTranscript[note].OccurrenceRef)
+	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
+	assert.Empty(got.ByOccurrence)
+}
+
 func TestMeetingIdentityUnlinkedItemsStaySeparate(t *testing.T) {
 	assert := assert.New(t)
 
