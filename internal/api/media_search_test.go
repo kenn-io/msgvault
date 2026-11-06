@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -978,12 +977,10 @@ func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
 func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
-		boundedLookup     bool
 		newestFirst       bool
 		laterBatchFailure bool
 	}{
-		{name: "bounded occurrence lookup=false"},
-		{name: "bounded occurrence lookup=true", boundedLookup: true},
+		{name: "all batches"},
 		{name: "later batch failure", laterBatchFailure: true},
 		{name: "newest batch wins", newestFirst: true},
 	} {
@@ -991,9 +988,6 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
-			if tc.boundedLookup && f.f.Store.IsPostgreSQL() {
-				t.Skip("SQLite variable limit")
-			}
 			f.match(t, "audio")
 			server := f.server(false)
 			first, second := f.document(t, server)
@@ -1060,20 +1054,6 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 					f.documentReport.Results[i].Evidence = template.Evidence
 				}
 			}
-			if tc.boundedLookup && !f.f.Store.IsPostgreSQL() {
-				// The API bounds the occurrence lookup to limit+1 hit IDs.
-				// Four hit IDs plus destination and occurrence limit fit; all six hits don't.
-				f.f.Store.DB().SetMaxOpenConns(1)
-				conn, err := f.f.Store.DB().Conn(t.Context())
-				require.NoError(err)
-				require.NoError(conn.Raw(func(driverConn any) error {
-					sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-					require.True(ok)
-					sqliteConn.SetLimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 6)
-					return nil
-				}))
-				require.NoError(conn.Close())
-			}
 			status, response, raw := searchMediaFor(t, server, "q=quartz&limit=3")
 			require.Equal(http.StatusOK, status, raw)
 			require.NotNil(response.Attachments)
@@ -1098,9 +1078,6 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 			assert.Equal("second batch, first hit", response.Attachments.Results[1].Excerpt)
 			assert.Equal("first batch, second hit", response.Attachments.Results[2].Excerpt)
 			assert.True(response.Attachments.Truncated)
-			if tc.boundedLookup {
-				return
-			}
 			require.Len(f.documentRequests, 2)
 			var versions []string
 			for _, request := range f.documentRequests {
@@ -1113,6 +1090,51 @@ func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMediaSearchDocumentsHiddenBetweenBatches(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	server := f.server(false)
+	first, _ := f.document(t, server)
+	var documents []storetest.DocumentAttachment
+	for i := 2; i <= 4098; i++ {
+		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+	}
+	f.f.SeedDocumentAttachments(first, documents)
+	survivor := f.message(t, "visible-document")
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET message_id = ? WHERE LOWER(content_hash) = (SELECT content_hash FROM docbank_attachment_deliveries WHERE version_id = ?)`), survivor, "00000000-0000-4000-8000-000000001002")
+	require.NoError(err)
+	template := f.documentReport.Results[0]
+	f.documentReport.Results = nil
+	for _, version := range []int{1, 2, 4097, 4098} {
+		hit := template
+		hit.ContentVersionID = fmt.Sprintf("00000000-0000-4000-8000-%012x", version)
+		hit.Rank = 1
+		if version == 2 || version == 4098 {
+			hit.Rank = 2
+		}
+		hit.Excerpt = fmt.Sprintf("quartz %d", version)
+		f.documentReport.Results = append(f.documentReport.Results, hit)
+	}
+	f.duringDocumentSearch = func() {
+		if len(f.documentRequests) == 2 {
+			assert.NoError(f.f.Store.MarkMessagesDeletedBatch(f.f.Source.ID, []string{"first-document", "second-document"}))
+		}
+	}
+
+	status, response, raw := searchMediaFor(t, server, "q=quartz&limit=2")
+	require.Equal(http.StatusOK, status, raw)
+	require.Len(f.documentRequests, 2)
+	assert.Len(f.documentRequests[0].Fence.ContentVersionIDs, 4096)
+	assert.Equal([]string{"00000000-0000-4000-8000-000000001001", "00000000-0000-4000-8000-000000001002"}, f.documentRequests[1].Fence.ContentVersionIDs)
+	require.NotNil(response.Attachments)
+	require.Nil(response.Attachments.Error)
+	require.Len(response.Attachments.Results, 1)
+	assert.Equal(survivor, response.Attachments.Results[0].MessageID)
+	assert.Equal("quartz 4098", response.Attachments.Results[0].Excerpt)
+	assert.False(response.Attachments.Truncated)
 }
 
 func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
