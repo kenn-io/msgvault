@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -94,4 +96,32 @@ func TestRapidEmailResolverSelectsCurrentSourceAfterReplacement(t *testing.T) {
 	current, err := rapidEmailSource(f.Store, old.Identifier)
 	require.NoError(t, err)
 	assert.Equal(t, replacement.ID, current.ID, "each valid pass resolves current Store state")
+}
+
+func TestRapidEmailRecordsSelectedSourceFailureTelemetry(t *testing.T) {
+	f := storetest.New(t)
+	src, err := f.Store.GetOrCreateSource("gmail", "sample@example.test")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}, Accounts: []config.AccountSchedule{{Email: src.Identifier, Schedule: "0 * * * *", Enabled: true, PollInterval: 30 * time.Second}}}
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	state := invocationFromContext(ctx)
+	var events []map[string]any
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal(t, telemetry.EventSyncFailed, event)
+		events = append(events, props)
+		return nil
+	}}
+	credentials := 0
+	for range 2 {
+		err := runScheduledSync(ctx, src.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
+			credentials++
+			return nil, errors.New("synthetic-private-diagnostic")
+		}, state)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "synthetic-private-diagnostic")
+	}
+	assert.Equal(t, 2, credentials)
+	require.Len(t, events, 1, "consecutive selected-source failures keep existing telemetry deduplication")
+	assert.Equal(t, map[string]any{"sync_source": "gmail", "reason": "other"}, events[0], "only existing sanitized fields are recorded")
 }
