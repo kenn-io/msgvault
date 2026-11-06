@@ -127,6 +127,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 		}
 		if a.State == LineReplyAdmitted {
 			a.State = LineReplyRemoteUnknown
+			a.AdmittedAt = now
 		}
 		minimum := now.Add(30 * time.Second)
 		if nextRetry.Before(minimum) {

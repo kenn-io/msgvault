@@ -904,7 +904,7 @@ func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), sent.MessageID)
 				must.NoError(err)
-				checks.Equal(attempt.AdmittedAt, message.SentAt.UTC())
+				checks.Equal(f.now, message.SentAt.UTC())
 			} else if tc.recovery {
 				checks.Equal(attempt.RetryUntil, completed.RetryUntil)
 			}
