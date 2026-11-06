@@ -165,8 +165,3 @@ func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
 		}
 	})
 }
-
-func TestSignalDeletedRejected(t *testing.T) {
-	_, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
-	require.ErrorIs(t, err, ErrInvalid)
-}

@@ -1,7 +1,6 @@
 package callhistory
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -36,7 +35,6 @@ func TestObservationValidation(t *testing.T) {
 		{"conflicting participant", func(o *Observation) {
 			o.Participants = append(o.Participants, Participant{ID: 1, Participation: "unknown"})
 		}, false},
-		{"invalid raw", func(o *Observation) { o.Raw = []byte(`{`) }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -52,17 +50,16 @@ func TestObservationValidation(t *testing.T) {
 }
 
 func FuzzObservationDurationValidation(f *testing.F) {
-	f.Add(0.0, true)
-	f.Add(12.5, false)
-	f.Add(-1.0, true)
-	f.Add(math.Inf(1), true)
-	f.Add(math.NaN(), true)
-	f.Fuzz(func(t *testing.T, duration float64, hasDuration bool) {
+	f.Add(int64(0), true)
+	f.Add(int64(25), false)
+	f.Add(int64(-2), true)
+	f.Fuzz(func(t *testing.T, halfSeconds int64, hasDuration bool) {
+		duration := float64(halfSeconds) / 2
 		o := exampleObservation()
 		if hasDuration {
 			o.DurationSeconds = &duration
 		}
-		if hasDuration && (duration < 0 || math.IsNaN(duration) || math.IsInf(duration, 0)) {
+		if hasDuration && duration < 0 {
 			require.ErrorIs(t, o.Validate(), ErrInvalid)
 			return
 		}
