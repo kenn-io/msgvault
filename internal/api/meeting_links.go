@@ -57,15 +57,15 @@ func (s *Server) registerMeetingLinkRoutes(api huma.API) {
 }
 
 func parseMeetingLinkRef(value string, eventOnly bool) (store.MeetingLinkRef, error) {
-	kind, value, ok := strings.Cut(value, ":")
+	kind, idText, ok := strings.Cut(value, ":")
 	if !ok || kind != "evt" && (eventOnly || kind != "msg") {
 		return store.MeetingLinkRef{}, errors.New("use msg:<id> or evt:<id>[@occurrence key]; decisions require an event reference")
 	}
 	if kind == "evt" {
-		ref, err := store.ParseMeetingIdentityRef("evt:" + value)
+		ref, err := store.ParseMeetingIdentityRef(value)
 		return store.MeetingLinkRef{Kind: kind, OccurrenceRef: ref}, meetingLinkParseError(value, err)
 	}
-	id, err := strconv.ParseInt(value, 10, 64)
+	id, err := strconv.ParseInt(idText, 10, 64)
 	if err != nil || id <= 0 || id > 9007199254740991 {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
