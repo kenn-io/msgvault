@@ -474,11 +474,9 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range matches {
-		if !splits[o.Identity] {
-			out = append(out, o)
-		}
-	}
+	out = slices.DeleteFunc(append(out, matches...), func(o linkOccurrence) bool {
+		return splits[o.Identity]
+	})
 	return uniqueMeetingOccurrences(out), nil
 }
 
