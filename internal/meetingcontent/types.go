@@ -49,6 +49,8 @@ type Format string
 const (
 	FormatJSON     Format = "json"
 	FormatMarkdown Format = "markdown"
+	FormatSRT      Format = "srt"
+	FormatVTT      Format = "vtt"
 )
 
 type Section struct {
@@ -220,3 +222,6 @@ type Metrics struct {
 }
 
 var ErrBudgetTooSmall = errors.New("meeting context budget too small")
+
+// ErrInvalidSubtitles marks unavailable or unrepresentable subtitle input.
+var ErrInvalidSubtitles = errors.New("invalid meeting subtitles")

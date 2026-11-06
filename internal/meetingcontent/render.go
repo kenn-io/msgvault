@@ -13,6 +13,19 @@ import (
 const packetSchemaVersion = 1
 
 func Render(archiveUID string, entries []Entry, options PacketOptions) (*PacketResult, error) {
+	if options.Format == FormatSRT || options.Format == FormatVTT {
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("%w: exactly one meeting is required", ErrInvalidSubtitles)
+		}
+		content, err := RenderSubtitles(entries[0], string(options.Format))
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidSubtitles, err)
+		}
+		if len(content) > options.MaxBytes {
+			return nil, ErrBudgetTooSmall
+		}
+		return &PacketResult{SchemaVersion: packetSchemaVersion, Format: options.Format, Content: content, ContentBytes: len(content), OmittedMessageIDs: []int64{}}, nil
+	}
 	if options.Format != FormatJSON && options.Format != FormatMarkdown {
 		return nil, fmt.Errorf("unsupported meeting context format %q", options.Format)
 	}

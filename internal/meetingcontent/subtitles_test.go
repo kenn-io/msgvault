@@ -95,12 +95,6 @@ func TestSubtitleRefusals(t *testing.T) {
 			s := &e.Content.Transcript.Segments[0]
 			s.EndedAt = new(s.StartedAt.Add(time.Microsecond))
 		},
-		"inconsistent origin": func(e *Entry) {
-			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
-			s := e.Content.Transcript.Segments[0]
-			s.OffsetSeconds = new(1.0)
-			e.Content.Transcript.Segments = append(e.Content.Transcript.Segments, s)
-		},
 	}
 	for name, modify := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -184,4 +178,27 @@ func TestSubtitleFormatRefusals(t *testing.T) {
 			assert.NotContains(t, got, "<")
 		}
 	}
+}
+
+func TestSubtitleContextOutputBudget(t *testing.T) {
+	entry := subtitleEntry()
+	entry.Content.Summary = Section{State: StateAvailable, Text: strings.Repeat("summary", 150000)}
+	want, err := RenderSubtitles(entry, "srt")
+	require.NoError(t, err)
+	result, err := Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: len(want)})
+	require.NoError(t, err)
+	assert.Equal(t, want, result.Content)
+	assert.Equal(t, len([]byte(want)), result.ContentBytes)
+	assert.False(t, result.Truncated)
+	_, err = Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: len(want) - 1})
+	require.ErrorIs(t, err, ErrBudgetTooSmall)
+}
+
+func TestSubtitleTwentyExplicitOffsets(t *testing.T) {
+	content := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1.25,"absolute":"2026-01-01T00:00:00.100Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:01.600Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:00.103Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:00.603Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:01.100Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:01.600Z"}}]}]}}`), nil)
+	got, err := RenderSubtitles(Entry{Content: content}, "srt")
+	require.NoError(t, err)
+	assert.Contains(t, got, "00:00:01,250 --> 00:00:02,750")
+	assert.Contains(t, got, "00:00:04,000 --> 00:00:04,500")
+	assert.Contains(t, got, "00:00:02,250 --> 00:00:02,750")
 }

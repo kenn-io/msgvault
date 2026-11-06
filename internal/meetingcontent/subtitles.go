@@ -28,8 +28,7 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 	}
 	// An absolute start plus explicit offset fixes the common recording origin.
 	origin := 0.0
-	anchored := false
-	for i, s := range transcript.Segments {
+	for _, s := range transcript.Segments {
 		if strings.TrimSpace(s.Text) == "" || s.StartedAt == nil || s.OffsetSeconds == nil {
 			continue
 		}
@@ -37,11 +36,8 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		candidate := delta - *s.OffsetSeconds
-		if anchored && math.Abs(candidate-origin) > 0.000001 {
-			return "", fmt.Errorf("subtitle timing insufficient at segment %d: inconsistent offset origin", i+1)
-		}
-		origin, anchored = candidate, true
+		origin = delta - *s.OffsetSeconds
+		break
 	}
 	type cue struct {
 		start, end int64
@@ -69,7 +65,11 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 			if err == nil {
 				var duration float64
 				duration, err = subtitleSeconds(*s.StartedAt, *s.EndedAt)
-				start -= origin
+				if s.OffsetSeconds != nil {
+					start = *s.OffsetSeconds
+				} else {
+					start -= origin
+				}
 				end = start + duration
 			}
 		case s.StartedAt == nil && s.OffsetSeconds != nil && s.EndedAt != nil && entry.Meeting.SourceType == "hex" && entry.Meeting.OccurredAt != nil:

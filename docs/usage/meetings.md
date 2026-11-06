@@ -53,11 +53,12 @@ aggregates remain email-only unless you choose another message type.
 Export one archived meeting as SRT or WebVTT through the daemon:
 
 ```bash
-msgvault meetings subtitles --id 42 --format srt
-msgvault meetings subtitles --id 42 --format vtt -o meeting.vtt
+msgvault meetings context --id 42 --format srt
+msgvault meetings context --id 42 --format vtt -o meeting.vtt
 ```
 
-`--format` defaults to `srt`. Output goes to stdout unless `-o FILE` is
+Subtitle formats require daemon API schema 3.47.0 or newer; the default context
+format remains Markdown. Output goes to stdout unless `-o FILE` is
 specified; `-o -` also uses stdout. Both formats show available speakers as
 `Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
 SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
@@ -74,8 +75,10 @@ transcription service. Complete start/end intervals are required. Absolute-only
 transcripts start at their earliest cue; explicit offsets preserve recording
 coordinates. Overlaps survive. Plain text, start-only offsets, incomplete
 transcripts, and ambiguous timing fail instead of acquiring estimated cue ends.
-The full JSON meeting context must fit within 1 MiB, including notes and summary;
-any truncation or omission fails before subtitle output.
+Subtitle exports automatically load transcript evidence and require exactly one
+distinct meeting ID. `--max-bytes` limits subtitle output only (4096–1048576,
+default 131072); large notes or summaries do not consume that budget. An export
+that exceeds the limit fails without partial cues or file replacement.
 
 Hex ingestion requires the separate Hex integration. Once imported, its retained
 start offsets and recording-relative ends support export without calling Hex or

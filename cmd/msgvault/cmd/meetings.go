@@ -52,7 +52,6 @@ Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
 	}
 	command.AddCommand(
 		newMeetingContextCommand(deps),
-		newMeetingSubtitlesCommand(deps),
 		newMeetingActionsCommand(deps),
 		newMeetingMetricsCommand(deps),
 	)
@@ -98,10 +97,12 @@ func newMeetingContextCommand(deps meetingCommandDeps) *cobra.Command {
 		Use:   "context",
 		Short: "Export deterministic context for selected meetings",
 		Long: `Write a deterministic context packet for up to 100 meetings to stdout or
--o FILE: markdown by default, or --format json. --include-transcript adds
-archived transcript evidence; --max-bytes caps the content (4096 to 1048576,
-default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
+-o FILE: markdown by default, or --format json|srt|vtt. --include-transcript adds
+archived transcript evidence. srt/vtt export one meeting with transcript timing
+and require daemon API schema 3.47.0; --max-bytes caps the requested content
+(4096 to 1048576, default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 		Example: `  msgvault meetings context --id 42 --format json
+  msgvault meetings context --id 42 --format vtt -o meeting.vtt
   msgvault meetings context --id 42 --id 43 --include-transcript -o context.md`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -109,8 +110,8 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 				return usageErr(command, err)
 			}
 			format = strings.ToLower(strings.TrimSpace(format))
-			if format != "json" && format != "markdown" {
-				return usageErr(command, errors.New("--format must be json or markdown"))
+			if format != "json" && format != "markdown" && format != "srt" && format != "vtt" {
+				return usageErr(command, errors.New("--format must be json, markdown, srt or vtt"))
 			}
 			if maxBytes < 4096 || maxBytes > 1048576 {
 				return usageErr(command, errors.New("--max-bytes must be between 4096 and 1048576"))
@@ -135,7 +136,7 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 		},
 	}
 	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "meeting message ID from search (repeatable, required, at most 100)")
-	command.Flags().StringVar(&format, "format", "markdown", "Context format: json or markdown")
+	command.Flags().StringVar(&format, "format", "markdown", "Context format: json, markdown, srt or vtt (subtitles require one meeting)")
 	command.Flags().BoolVar(&includeTranscript, "include-transcript", false, "Include archived transcript evidence")
 	command.Flags().Int64Var(&maxBytes, "max-bytes", 131072, "Maximum UTF-8 content bytes")
 	command.Flags().StringVarP(&output, "output", "o", "", "Output file (default stdout, use - for stdout)")

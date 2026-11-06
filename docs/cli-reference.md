@@ -79,30 +79,22 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 | Flag | Contract |
 |---|---|
 | `--id` | Required meeting message IDs, repeatable; at most 100 |
-| `--format` | `markdown` (default) or `json` |
-| `--include-transcript` | Include archived transcript evidence; off by default |
+| `--format` | `markdown` (default), `json`, `srt`, or `vtt` |
+| `--include-transcript` | Include archived transcript evidence; off by default; automatic for subtitle formats |
 | `--max-bytes` | UTF-8 content budget, default 131072; range 4096–1048576 |
-| `--output`, `-o` | Output file; omitted or `-` writes the exact packet content to stdout |
+| `--output`, `-o` | Output file; omitted or `-` writes the exact requested content to stdout |
 
 Mixed or invalid selections fail. Truncated packets identify omitted content
 and meetings.
 
-### meetings subtitles
-
-`msgvault meetings subtitles --id ID [--format srt|vtt] [-o FILE]`
-
-Exports exactly one archived meeting through the daemon. `--id` must be a
-positive JavaScript-safe integer. The default format is `srt`; output defaults
-to stdout (`-o -` also selects stdout). A file is replaced atomically after
-successful rendering, with a notice on stderr. Both formats use visible speaker
-prefixes. WebVTT escapes text and labels. SRT preserves plain text, including
-ampersands and arrows, and refuses literal `<`, braces, and backslashes that
-players can interpret as markup or formatting controls. Lines starting with a
-number and containing `-->` also fail to prevent extra cues; use `--format vtt`.
-
-Complete retained timing and a complete context packet within 1 MiB are required.
-Unknown schemas, omitted or truncated evidence, unavailable timing, blank cue
-lines, and multiline labels fail before output. See [subtitle timing and source
+SRT and WebVTT require one distinct meeting ID and daemon API schema 3.47.0 or
+newer: `msgvault meetings context --id 42 --format vtt -o meeting.vtt`.
+Transcript evidence loads automatically, even with `--include-transcript=false`.
+The byte budget covers subtitle output alone; overflow fails without partial
+cues. Timing and formatting errors leave an existing output file untouched.
+Both formats show speaker prefixes. WebVTT escapes text and labels; SRT emits
+plain text and refuses `<`, braces, backslashes, and numeric-leading lines
+containing `-->`. Use VTT for those payloads. See [subtitle timing and source
 limits](usage/meetings.md#export-subtitles).
 
 ### meetings actions and meetings metrics

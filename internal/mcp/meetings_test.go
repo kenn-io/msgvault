@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -78,19 +80,7 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
-	}, false).Connect(ctx, serverTransport, nil)
-	must.NoError(err)
-	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
-	client := sdkmcp.NewClient(
-		&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"},
-		&sdkmcp.ClientOptions{Capabilities: &sdkmcp.ClientCapabilities{}},
-	)
-	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	must.NoError(err)
-	t.Cleanup(func() { checks.NoError(clientSession.Close()) })
+	clientSession := newMeetingMCPSession(t, backend)
 
 	listed, err := clientSession.ListTools(ctx, nil)
 	must.NoError(err)
@@ -261,4 +251,44 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
+}
+
+func newMeetingMCPSession(t *testing.T, backend MeetingBackend) *sdkmcp.ClientSession {
+	t.Helper()
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, false).Connect(t.Context(), serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"}, &sdkmcp.ClientOptions{Capabilities: &sdkmcp.ClientCapabilities{}})
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, session.Close()) })
+	return session
+}
+
+func TestMeetingSubtitleContextThroughMCP(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
+	require.NoError(t, err)
+	raw := []byte(`{"summary_markdown":"` + strings.Repeat("summary", 150000) + `","transcript":[{"speaker":{"name":"R&D"},"text":"Hello 世界","start_time":"2026-01-01T00:00:02Z","end_time":"2026-01-01T00:00:04Z"}]}`)
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle-mcp", SourceConversationID: "subtitle-mcp", Title: "Synthetic", Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Email: "subtitle@example.test"}}, meetingarchive.UpsertOptions{})
+	require.NoError(t, err)
+	server := httptest.NewServer(api.NewServer(&config.Config{Server: config.ServerConfig{APIKey: "subtitle-owner"}}, st, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(server.Close)
+	backend, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "subtitle-owner", AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, backend.Close()) })
+	session := newMeetingMCPSession(t, backend)
+	for _, format := range []string{"srt", "vtt"} {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{archived.MessageID}, "format": format, "max_bytes": 4096, "include_transcript": false}})
+		require.NoError(t, err)
+		require.False(t, result.IsError)
+		structured := meetingStructuredContent(t, result)
+		want := "1\n00:00:00,000 --> 00:00:02,000\nR&D: Hello 世界\n\n"
+		if format == "vtt" {
+			want = "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nR&amp;D: Hello 世界\n\n"
+		}
+		assert.Equal(t, want, structured["content"])
+		assert.Equal(t, false, structured["truncated"])
+	}
 }

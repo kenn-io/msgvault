@@ -1256,12 +1256,14 @@ type MeetingContextRequestFormat string
 const (
 	JSON     MeetingContextRequestFormat = "json"
 	Markdown MeetingContextRequestFormat = "markdown"
+	Srt      MeetingContextRequestFormat = "srt"
+	Vtt      MeetingContextRequestFormat = "vtt"
 )
 
 // Validate checks if the MeetingContextRequestFormat value is valid
 func (m MeetingContextRequestFormat) Validate() error {
 	switch m {
-	case JSON, Markdown:
+	case JSON, Markdown, Srt, Vtt:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingContextRequestFormat value, got: %v", m))

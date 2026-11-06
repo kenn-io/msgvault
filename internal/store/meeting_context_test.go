@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,4 +121,26 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 
 func jsonNumberForMeetingTest(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+func TestMeetingSubtitleContextIgnoresSummaryBudget(t *testing.T) {
+	fixture := newMeetingQueryFixture(t)
+	raw := `{"summary_markdown":"` + strings.Repeat("summary", 150000) + `","transcript":[{"speaker":{"name":"R&D"},"text":"Hello 世界","start_time":"2026-01-01T00:00:02Z","end_time":"2026-01-01T00:00:04Z"}]}`
+	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, raw)
+	for _, format := range []meetingcontent.Format{"srt", "vtt"} {
+		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.NoError(t, err)
+		assert.False(t, result.Truncated)
+		assert.Empty(t, result.OmittedMessageIDs)
+		assert.Contains(t, result.Content, "Hello 世界")
+		assert.NotContains(t, result.Content, "summary")
+	}
+}
+
+func TestMeetingSubtitleContextRequiresOneDistinctID(t *testing.T) {
+	fixture := newMeetingQueryFixture(t)
+	for _, ids := range [][]int64{nil, {}, fixture.meetingIDs[:2]} {
+		_, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
+		require.ErrorIs(t, err, meetingcontent.ErrInvalidSubtitles)
+	}
 }

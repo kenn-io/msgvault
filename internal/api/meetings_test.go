@@ -671,6 +671,7 @@ func TestMeetingStoreErrorsUseStableHTTPContracts(t *testing.T) {
 		{name: "wrong type", err: store.ErrNotMeeting, wantStatus: http.StatusBadRequest, wantCode: "not_a_meeting"},
 		{name: "projection", err: store.ErrMeetingProjectionUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "meeting_projection_unavailable"},
 		{name: "cursor", err: store.ErrMeetingInvalidCursor, wantStatus: http.StatusBadRequest, wantCode: "invalid_cursor"},
+		{name: "subtitle input", err: meetingcontent.ErrInvalidSubtitles, wantStatus: http.StatusBadRequest, wantCode: "invalid_meeting_subtitles"},
 		{name: "budget", err: meetingcontent.ErrBudgetTooSmall, wantStatus: http.StatusBadRequest, wantCode: "context_budget_too_small"},
 	}
 	for _, test := range tests {
@@ -713,4 +714,30 @@ func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
 	))
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), "private transcript content")
+}
+
+func TestMeetingSubtitleFormatsReachExistingRoute(t *testing.T) {
+	for _, format := range []string{"srt", "vtt"} {
+		st := &meetingRouteStore{mockStore: &mockStore{}, contextResult: &meetingcontent.PacketResult{Format: meetingcontent.Format(format)}}
+		response := httptest.NewRecorder()
+		newMeetingRouteTestServer(t, st, &querytest.MockEngine{}).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"message_ids":[1],"format":"`+format+`","include_transcript":false,"max_bytes":4096}`))
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.Equal(t, meetingcontent.Format(format), st.contextOptions.Format)
+	}
+}
+
+func TestMeetingSubtitleResolvedSelectionCardinality(t *testing.T) {
+	fixture := storetest.New(t)
+	for _, ids := range [][]int64{{}, {1, 2}} {
+		engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: int64(len(ids)), MeetingCount: int64(len(ids)), MessageIDs: ids, CacheRevision: "r"}}
+		server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: fixture.Store, Engine: engine, Logger: testLogger()})
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"r","search_provenance":{}},"format":"srt"}`))
+		require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		code := "invalid_meeting_subtitles"
+		if len(ids) == 0 {
+			code = "meeting_selection_too_large"
+		} // Existing resolver rejects empty selections first.
+		assert.Contains(t, response.Body.String(), code)
+	}
 }

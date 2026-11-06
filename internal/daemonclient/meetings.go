@@ -17,6 +17,15 @@ func (c *Client) GetMeetingContext(
 	ctx context.Context,
 	body generated.GetMeetingContextBody,
 ) (*meetingcontent.PacketResult, error) {
+	if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") {
+		supported, err := c.SupportsAPISchemaVersion(ctx, "3.47.0")
+		if err != nil {
+			return nil, fmt.Errorf("check meeting subtitle capability: %w", err)
+		}
+		if !supported {
+			return nil, errors.New("meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon")
+		}
+	}
 	response, err := APIResponse(c,
 		func(client *apiclient.Client) (*generated.GetMeetingContextResp, error) {
 			return client.GetMeetingContextWithResponse(ctx,
