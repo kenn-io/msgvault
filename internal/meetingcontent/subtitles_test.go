@@ -127,7 +127,7 @@ func FuzzSubtitlePayload(f *testing.F) {
 		entry.Content.Transcript.Segments[0].Speaker = speaker
 		normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 		unsafe := strings.ContainsAny(speaker, "\r\n")
-		for _, line := range strings.Split(normalized, "\n") {
+		for line := range strings.SplitSeq(normalized, "\n") {
 			unsafe = unsafe || strings.TrimSpace(line) == ""
 		}
 		for _, format := range []string{"srt", "vtt"} {

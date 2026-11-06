@@ -102,6 +102,7 @@ func TestMeetingSubtitlesFlags(t *testing.T) {
 // existing meeting command tests and the real HTTP archive test above.
 type subtitlePacketClient struct {
 	meetingCommandClient
+
 	result *meetingcontent.PacketResult
 }
 

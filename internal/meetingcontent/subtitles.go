@@ -1,6 +1,7 @@
 package meetingcontent
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -69,7 +70,7 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		if strings.ContainsAny(s.Speaker, "\r\n") {
 			return "", fmt.Errorf("subtitle format error at segment %d: multiline speaker label", i+1)
 		}
-		for _, line := range strings.Split(text, "\n") {
+		for line := range strings.SplitSeq(text, "\n") {
 			if strings.TrimSpace(line) == "" {
 				return "", fmt.Errorf("subtitle format error at segment %d: blank cue line", i+1)
 			}
@@ -112,7 +113,7 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		cues = append(cues, cue{startMS, endMS, text})
 	}
 	if len(cues) == 0 {
-		return "", fmt.Errorf("subtitle timing unavailable: no nonblank cues")
+		return "", errors.New("subtitle timing unavailable: no nonblank cues")
 	}
 	sort.SliceStable(cues, func(i, j int) bool { return cues[i].start < cues[j].start })
 	var out strings.Builder
@@ -130,7 +131,7 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 func subtitleSeconds(start, end time.Time) (float64, error) {
 	delta := end.Sub(start)
 	if !start.Add(delta).Equal(end) {
-		return 0, fmt.Errorf("interval overflows supported timing range")
+		return 0, errors.New("interval overflows supported timing range")
 	}
 	return delta.Seconds(), nil
 }
