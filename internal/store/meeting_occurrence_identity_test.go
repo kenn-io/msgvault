@@ -203,3 +203,20 @@ func TestMeetingRecordSparseAllDayCopyUsesCalendarZone(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, []int64{note}, record.MessageIDs)
 }
+
+func TestMeetingUnlinkCanonicalRefSuppressesAliasLink(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"series","status":"cancelled"}`)
+	calendarFixture(t, st, "exception", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	calendarFixture(t, st, "cancellation", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	links, err := meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	require.Len(links, 1)
+	require.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
+	links, err = meetingLinksForTest(t, st, note)
+	require.NoError(err)
+	assert.Empty(t, links)
+}
