@@ -66,14 +66,43 @@ func TestAccountPollingGenerationReplacementInvalidatesCallbacks(t *testing.T) {
 func TestAccountPollingBackoffStaysWithinAdaptiveBounds(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		seconds := hegel.Draw(ht, hegel.Integers(15, 120))
-		failures := hegel.Draw(ht, hegel.Integers(0, math.MaxInt))
-		delay := accountPollBackoff(time.Duration(seconds)*time.Second, failures)
-		minimum := time.Duration(min(seconds<<min(failures, 10), 900)) * time.Second
-		assert.GreaterOrEqual(ht, delay, minimum, "jitter never shortens the adaptive delay")
-		assert.LessOrEqual(ht, delay, 15*time.Minute)
-		if failures == 0 {
-			assert.Equal(ht, time.Duration(seconds)*time.Second, delay)
+		failures := int(min(hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64)), 10))
+		interval := time.Duration(seconds) * time.Second
+		var entered time.Time
+		fail := true
+		s := New(func(context.Context, string) error {
+			entered = time.Now()
+			if fail {
+				return errors.New("synthetic acquisition failure")
+			}
+			return nil
+		})
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(ht, s.AddAccount("sample@example.test", "0 0 1 1 *"))
+		require.NoError(ht, s.SetAccountPollInterval("sample@example.test", interval))
+		checkFailure := func(streak int) {
+			require.NoError(ht, s.TriggerSync("sample@example.test", false))
+			s.wg.Wait()
+			observed := time.Now()
+			status := s.Status()[0]
+			// Independent closed-form contract bounds around the real callback
+			// and completed observation; no private backoff result is the oracle.
+			base := time.Duration(min(seconds<<streak, 900)) * time.Second
+			jitter := min(base/10, 15*time.Minute-base)
+			assert.False(ht, status.NextEligiblePoll.Before(entered.Add(base)), "failure delay never starts early")
+			assert.False(ht, status.NextEligiblePoll.After(observed.Add(base+jitter)), "jitter and adaptive cap bound real eligibility")
 		}
+		for streak := 1; streak <= failures; streak++ {
+			checkFailure(streak)
+		}
+		fail = false
+		require.NoError(ht, s.TriggerSync("sample@example.test", false))
+		s.wg.Wait()
+		status := s.Status()[0]
+		assert.False(ht, status.LastCompleted.IsZero())
+		assert.Equal(ht, status.LastAttempted.Add(interval), status.NextEligiblePoll, "complete acquisition resets the cadence")
+		fail = true
+		checkFailure(1) // a fresh failure after success starts a new streak
 	})
 }
 
