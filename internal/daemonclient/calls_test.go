@@ -48,10 +48,11 @@ func TestCallClientImportPayloadAndQueryEncoding(t *testing.T) {
 	client, err := New(Config{URL: server.URL, APIKey: "example-key", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	result, err := client.ImportCallObservation(t.Context(), []byte(`{"format":"normalized","account":"a","record":{"version":1,"provider":"signal","account":"a","record_id":"7","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","raw":{"sequence":9007199254740993}}}`))
+	const payload = ` {"format":"normalized", "unexpected_field":true,"account":"a","record":{"version":1,"provider":"signal","account":"a","record_id":"7","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","raw":{"sequence":9007199254740993}}} `
+	result, err := client.ImportCallObservation(t.Context(), []byte(payload))
 	requirements.NoError(err)
 	requirements.NoError(readErr)
-	assertions.Contains(string(captured), `9007199254740993`)
+	assertions.Equal([]byte(payload), captured) //nolint:testifylint // Preserve the exact request bytes, including whitespace and unknown fields.
 	assertions.Equal(int64(42), result.MessageID)
 
 	after := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
