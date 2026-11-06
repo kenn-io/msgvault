@@ -20,6 +20,8 @@ type modeledCall struct {
 	messageID int64
 }
 
+// FuzzCallStoreSequences checks that imports and replacements preserve every
+// attendance role, including invited participants.
 func FuzzCallStoreSequences(f *testing.F) {
 	for _, seed := range []uint64{0, 1, 42, 0xffffffffffffffff} {
 		f.Add(seed)
