@@ -72,6 +72,7 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		}
 		if labels == nil {
 			scoped.FromAddrs = []string{address}
+			address = "try " + search.Format(&scoped)
 		}
 		unit := "messages"
 		if count == 1 {
@@ -83,7 +84,11 @@ func (e *SQLiteEngine) matchSenderName(ctx context.Context, q *search.Query,
 		return senderHintFailure(err)
 	}
 	retry := search.Format(&scoped)
-	hint := SearchHint{Code: "sender_name_requires_address", Message: fmt.Sprintf("from: matches addresses; senders matching %q: %s; try %s", q.FromAddrs[0], strings.Join(labels, ", "), retry)}
+	message := fmt.Sprintf("from: matches addresses; senders matching %q: %s", q.FromAddrs[0], labels[0])
+	if len(labels) > 1 {
+		message += "; other matching senders: " + strings.Join(labels[1:], ", ")
+	}
+	hint := SearchHint{Code: "sender_name_requires_address", Message: message}
 	hint.RetryWith.Query = retry
 	return []SearchHint{hint}
 }

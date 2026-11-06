@@ -61,7 +61,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		ids = append(ids, id)
 	}
-	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (42,'alex@example.com','Jordan Lee')`)
+	_, err = st.DB().Exec(`INSERT INTO participants(id,email_address,display_name) VALUES (42,'alex@example.com','Alex Kim')`)
 	require.NoError(err)
 	_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES (?,42,'from')`, ids[0])
 	require.NoError(err)
@@ -117,8 +117,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		args   []string
 		stdout string
 	}{
-		{[]string{"search", "from:alex@exam"}, "No messages found.\n"},
-		{[]string{"search", "from:alex@exam", "--json"}, "[]\n"},
+		{[]string{"search", "from:alex"}, "No messages found.\n"},
+		{[]string{"search", "from:alex", "--json"}, "[]\n"},
 	} {
 		args := tc.args
 		command = exec.CommandContext(t.Context(), binary, append([]string{"--home", home}, args...)...) //nolint:gosec // The binary path is supplied by the test operator.
@@ -128,8 +128,16 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		command.Stdout, command.Stderr = &jsonOut, &warningOut
 		require.NoError(command.Run())
 		assert.Equal(tc.stdout, jsonOut.String())
-		assert.Contains(warningOut.String(), "Hint: from: matches addresses;")
-		assert.Contains(warningOut.String(), "try from:alex@example.com")
+		const hintPrefix = `Hint: from: matches addresses; senders matching "alex": try `
+		_, hint, found := strings.Cut(warningOut.String(), hintPrefix)
+		require.True(found, warningOut.String())
+		hint, _, _ = strings.Cut(hint, "\n")
+		require.Equal("from:alex@example.com (1 message)", hint)
+		retryQuery := strings.TrimSuffix(hint, " (1 message)")
+		var retryResults []map[string]any
+		decode(run("search", retryQuery, "--json"), &retryResults)
+		require.Len(retryResults, 1)
+		assert.Equal(json.Number(strconv.FormatInt(ids[0], 10)), retryResults[0]["id"])
 	}
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
