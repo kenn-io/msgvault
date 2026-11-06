@@ -87,8 +87,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		return nil, err
 	}
 	if len(recipient) == 0 || len(thread) == 0 {
-		return nil, fmt.Errorf("%w: the recipient and thread tables are missing; "+
-			"pass the database.sqlite file written by a Signal Android backup", ErrUnsupportedDatabase)
+		return nil, fmt.Errorf("%w: chat details are missing; use database.sqlite from a Signal Android backup", ErrUnsupportedDatabase)
 	}
 	s := &schema{}
 	if s.messageColumns, err = sqliteutil.TableColumns(ctx, db, "message"); err != nil {
@@ -113,8 +112,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 
 	for _, column := range requiredMessageColumns {
 		if !s.messageColumns[column] {
-			return nil, fmt.Errorf("%w: message.%s is missing; msgvault reads Signal Android "+
-				"database versions %d through %d", ErrUnsupportedDatabase, column, MinDatabaseVersion, MaxDatabaseVersion)
+			return nil, fmt.Errorf("%w: message details are missing; msgvault reads Signal Android database versions %d through %d", ErrUnsupportedDatabase, MinDatabaseVersion, MaxDatabaseVersion)
 		}
 	}
 
@@ -129,7 +127,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		return nil, fmt.Errorf("%w: recipient.e164 is missing", ErrUnsupportedDatabase)
 	}
 	if !recipient["_id"] || !recipient["group_id"] {
-		return nil, fmt.Errorf("%w: recipient._id or recipient.group_id is missing", ErrUnsupportedDatabase)
+		return nil, fmt.Errorf("%w: contact details are missing", ErrUnsupportedDatabase)
 	}
 	s.recipientName = recipientNameExpr(recipient)
 	s.recipientPNI = firstColumn(recipient, "pni")
@@ -151,8 +149,7 @@ func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, erro
 		s.attachmentMessage = firstColumn(s.attachmentColumns, "message_id", "mid")
 		s.attachmentType = firstColumn(s.attachmentColumns, "content_type", "ct")
 		if s.attachmentMessage == "" || s.attachmentType == "" {
-			return nil, fmt.Errorf("%w: the %s table lacks its message or content-type column",
-				ErrUnsupportedDatabase, s.attachmentTable)
+			return nil, fmt.Errorf("%w: attachment details are missing", ErrUnsupportedDatabase)
 		}
 	}
 

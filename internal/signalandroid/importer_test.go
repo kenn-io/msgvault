@@ -226,7 +226,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 		{
 			name: "not signal", version: 215,
 			ddl:  []string{`CREATE TABLE message (_id INTEGER PRIMARY KEY)`},
-			want: "recipient and thread tables are missing",
+			want: "chat details are missing; use database.sqlite from a Signal Android backup",
 		},
 		{
 			name: "before the single message table", version: 184,
@@ -248,7 +248,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 					thread_id INTEGER, recipient_id INTEGER, type INTEGER, body TEXT,
 					quote_id INTEGER, quote_author INTEGER)`,
 			},
-			want: "message.from_recipient_id is missing",
+			want: "message details are missing; msgvault reads Signal Android database versions 185 through 330",
 		},
 	}
 	for _, tt := range tests {
@@ -260,6 +260,24 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			_, err := NewImporter(testutil.NewTestStore(t), nil).Import(context.Background(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tt.want)
+		})
+	}
+}
+
+func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
+	for _, tc := range []struct{ name, change, want string }{
+		{"contacts", `ALTER TABLE recipient DROP COLUMN group_id`, "contact details are missing"},
+		{"attachments", `ALTER TABLE attachment DROP COLUMN content_type`, "attachment details are missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, tc.change)
+			opts := DefaultOptions()
+			opts.Phone = signalfixture.OwnPhone
+			_, err := NewImporter(testutil.NewSQLiteTestStore(t), nil).Import(t.Context(), path, opts)
+			require.ErrorIs(t, err, ErrUnsupportedDatabase)
+			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
 }

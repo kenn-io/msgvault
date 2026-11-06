@@ -51,6 +51,36 @@ func TestLongTextAttachment(t *testing.T) {
 	}
 }
 
+func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
+	for _, tc := range []struct{ name, change, wantError string }{
+		{"attachments", `UPDATE attachment SET width = 'invalid' WHERE _id = 500`, "read Signal attachments"},
+		{"mentions", `UPDATE mention SET range_start = 'invalid' WHERE message_id = 200`, "read Signal mentions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 200, 'text/x-signal-plain')`)
+			require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
+			storage := t.TempDir()
+			runImport(t, st, dir, storage)
+			before := importedMessages(t, st)
+			id := "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
+			require.Equal("Hi @Alice Example, look searchablesuffix\n\nBeach", before[id].body)
+
+			changeFixture(t, dir, tc.change)
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			assert.ErrorContains(err, tc.wantError)
+			assert.Zero(summary.MessagesUpdated)
+			assert.Equal(before, importedMessages(t, st))
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Alice'`))
+		})
+	}
+}
+
 func TestReplyQuotesLatestRevision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()

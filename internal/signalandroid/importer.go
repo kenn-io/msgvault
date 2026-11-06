@@ -209,7 +209,7 @@ func (r *run) resolveSelf(ctx context.Context) error {
 			}
 		}
 		if r.selfRecipientID < 0 {
-			return errors.New("cannot find the account owner's recipient record for --phone")
+			return errors.New("cannot find your Signal account for --phone")
 		}
 	}
 	self := r.recipients[r.selfRecipientID]
@@ -484,9 +484,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 	}
 	attachments, err := fetchAttachments(ctx, r.db, r.schema, lookupRows)
 	if err != nil {
-		r.summary.Errors++
-		r.imp.progress.OnError(err)
-		attachments = map[int64][]sigAttachment{}
+		return 0, fmt.Errorf("read Signal attachments: %w", err)
 	}
 	roots := make([]int64, len(pending))
 	visible := make([]int64, len(pending))
@@ -504,9 +502,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 	}
 	mentions, err := fetchMentions(ctx, r.db, r.schema, visible)
 	if err != nil {
-		r.summary.Errors++
-		r.imp.progress.OnError(err)
-		mentions = map[int64][]sigMention{}
+		return 0, fmt.Errorf("read Signal mentions: %w", err)
 	}
 
 	var added int64

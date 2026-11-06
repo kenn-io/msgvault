@@ -99,6 +99,7 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 5},
 		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
 		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
+		{name: "owner absent from empty backup", phone: "+15555550199", changes: []string{`DELETE FROM message`}, wantError: "cannot find your Signal account for --phone", checkNoSource: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
