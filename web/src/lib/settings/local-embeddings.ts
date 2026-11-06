@@ -18,7 +18,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
     if (status.compatible) return { kind: 'ollama' };
     return { kind: 'ollama-other', itemCount: Number(embedding?.eligible) || 0, rebuildMs: rebuildDuration(embedding) };
   }
-  if (status.download_bytes === 0 || status.ollama_available) return { kind: 'downloaded' };
+  if (status.download_bytes === 0 || (status.provider !== 'builtin' && status.ollama_available)) return { kind: 'downloaded' };
   return { kind: 'off', downloadBytes: status.download_bytes, host: status.host };
 }
 
@@ -26,7 +26,7 @@ export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: Emb
   return {
     meanwhile: 'Keyword search works',
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing search by meaning' } : {}),
-    ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
+    ...(!status.enabled && status.provider !== 'builtin' && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
     rebuild: ('Switching rebuilds the index for {count} {items}' + (rebuildDuration(embedding) ? ', {time}' : '')) + (status.document_rebuild ? '. Document\u00a0search requires consent for the built-in provider.' : '.'),
     ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index. Document\u00a0search requires consent for the built-in provider.' } : {}),
   };

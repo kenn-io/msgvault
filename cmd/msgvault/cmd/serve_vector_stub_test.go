@@ -3,12 +3,38 @@
 package cmd
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedlocal"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/vector"
 )
+
+func TestLocalEmbeddingsUnavailableWithoutVectorBackend(t *testing.T) {
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Vector.Embeddings = vector.EmbeddingsConfig{}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: testDiscardLogger()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	done := make(chan struct{})
+	close(done)
+	server.SetLocalEmbeddings(&localEmbeddingsController{
+		state: &invocation{cfg: cfg}, handle: &vectorInitHandle{done: done}, server: server,
+		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+			return embedlocal.Status{DownloadBytes: 290000000}, nil
+		},
+	})
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+	require.Equal(http.StatusServiceUnavailable, response.Code)
+	require.Contains(response.Body.String(), "sqlite-vec support is not compiled in")
+}
 
 // TestSetupVectorFeatures_EnabledWithoutTag verifies the untagged stub
 // returns a descriptive error when the user enables vector search in

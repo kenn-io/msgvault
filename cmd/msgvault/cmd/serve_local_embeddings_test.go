@@ -236,53 +236,66 @@ func (f *localActivationFixture) start(t *testing.T) {
 	f.controller.handle = f.handle
 }
 
-func TestLocalEmbeddingsRetriesMissingBuiltinFiles(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newLocalActivationFixture(t, "nomic-embed-text", "")
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"local_only": true, "endpoint": ""}}})
-	require.NoError(err)
-	f.cfg.Vector.Embeddings.LocalOnly = true
-	f.cfg.Vector.Embeddings.Endpoint = ""
-	fixtureEndpoint := localEmbeddingEndpoint
-	localEmbeddingEndpoint = embedlocal.Endpoint
-	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
-	require.True(f.handle.WaitTimeout(5 * time.Second))
-	f.controller.handle = f.handle
-	startup, detail := f.server.VectorStatus()
-	require.Equal(api.VectorStatusError, startup)
-	require.Contains(detail, "local embeddings need setup")
-	status, err := f.controller.Inspect(f.ctx)
-	require.NoError(err)
-	require.Equal("builtin", status.Provider)
-	require.False(status.Enabled, "missing model files must leave Turn on available")
-	assert.Equal("Local model files need setup. Turn on to retry.", status.Error)
-	f.server.SetLocalEmbeddings(f.controller)
-	readStatus := func() api.LocalEmbeddingsStatus {
-		t.Helper()
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
-		request.Header.Set("Authorization", "Bearer owner")
-		response := httptest.NewRecorder()
-		f.server.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusOK, response.Code)
-		var status api.LocalEmbeddingsStatus
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-		return status
+func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
+	for _, startupFailed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("startup_failed=%t", startupFailed), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newLocalActivationFixture(t, "nomic-embed-text", "")
+			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+				return embedlocal.Status{OllamaAvailable: true, DownloadBytes: 290000000}, nil
+			}
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": startupFailed}}, {Path: []string{"vector", "embeddings"}, Values: map[string]any{"local_only": true, "endpoint": ""}}})
+			require.NoError(err)
+			f.cfg.Vector.Enabled = startupFailed
+			f.cfg.Vector.Embeddings.LocalOnly = true
+			f.cfg.Vector.Embeddings.Endpoint = ""
+			fixtureEndpoint := localEmbeddingEndpoint
+			localEmbeddingEndpoint = embedlocal.Endpoint
+			f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
+			require.True(f.handle.WaitTimeout(5 * time.Second))
+			f.controller.handle = f.handle
+			var startupError string
+			if startupFailed {
+				startup, detail := f.server.VectorStatus()
+				require.Equal(api.VectorStatusError, startup)
+				require.Contains(detail, "local embeddings need setup")
+				startupError = "Local model files need setup. Turn on to retry."
+			}
+			status, err := f.controller.Inspect(f.ctx)
+			require.NoError(err)
+			require.Equal("builtin", status.Provider)
+			require.False(status.Enabled, "missing model files must leave Turn on available")
+			assert.Equal(startupError, status.Error)
+			assert.True(status.OllamaAvailable)
+			f.server.SetLocalEmbeddings(f.controller)
+			readStatus := func() api.LocalEmbeddingsStatus {
+				t.Helper()
+				request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+				request.Header.Set("Authorization", "Bearer owner")
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusOK, response.Code)
+				var status api.LocalEmbeddingsStatus
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+				return status
+			}
+			assert.Equal(startupError, readStatus().Error)
+			localEmbeddingEndpoint = fixtureEndpoint
+			require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
+			require.Equal(1, f.installs)
+			assert.Empty(readStatus().Error)
+			status, err = f.controller.Inspect(f.ctx)
+			require.NoError(err)
+			require.True(status.Enabled)
+			require.Equal("builtin", status.Provider)
+			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+			require.NoError(err)
+			require.Len(messages, 1)
+		})
 	}
-	assert.Equal("Local model files need setup. Turn on to retry.", readStatus().Error)
-	localEmbeddingEndpoint = fixtureEndpoint
-	require.NoError(f.controller.Enable(f.ctx, false, func(api.LocalEmbeddingsStatus) {}))
-	require.Equal(1, f.installs)
-	assert.Empty(readStatus().Error)
-	status, err = f.controller.Inspect(f.ctx)
-	require.NoError(err)
-	require.True(status.Enabled)
-	require.Equal("builtin", status.Provider)
-	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(err)
-	require.Len(messages, 1)
 }
 
 func TestLocalEmbeddingsDropsOldJobWhenScheduleReplacementFails(t *testing.T) {

@@ -35,6 +35,9 @@ type localEmbeddingsController struct {
 }
 
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
+	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
+		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
+	}
 	host, err := os.Hostname()
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, fmt.Errorf("read local search host: %w", err)

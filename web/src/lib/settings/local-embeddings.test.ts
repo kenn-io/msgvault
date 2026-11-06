@@ -13,6 +13,9 @@ describe('local search row', () => {
     { name: 'off', status: off, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'downloaded', status: { ...off, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
     { name: 'available Ollama', status: { ...off, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Uses Ollama on this computer' },
+    { name: 'paused built-in with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true }, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
+    { name: 'installed built-in with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: 0 }, chip: 'Off', action: 'Turn on', description: 'Already on this computer' },
+    { name: 'failed built-in startup with Ollama available', status: { ...off, provider: 'builtin', compatible: true, ollama_available: true, error: 'Local model files need setup. Turn on to retry.' }, chip: 'Off', action: 'Turn on', description: 'Downloads 290 MB once to archive.example.test' },
     { name: 'matching Ollama', status: { ...off, enabled: true, provider: 'ollama', compatible: true }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching keeps your index', absent: /Switching rebuilds/ },
     { name: 'other Ollama', status: { ...off, enabled: true, provider: 'ollama' }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 10 messages.' },
     { name: 'other Ollama with observed throughput', status: { ...off, enabled: true, provider: 'ollama' }, embedding: { ...embeddingStatus, eligible: 48000, current: 47999, pending: 1, messages_per_minute: 2400, eta_seconds: 0.025, job: { ...embeddingStatus.job, state: 'running' } }, chip: 'On · Ollama', action: 'Use built-in instead', description: 'Switching rebuilds the index for 48,000 messages, about 20 minutes.' },
@@ -23,12 +26,13 @@ describe('local search row', () => {
     { name: 'downloading', status: { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, chip: 'Turning on', progress: { now: '1000000', max: '290000000' } },
     { name: 'indexing', status: { ...off, enabled: true, provider: 'builtin', running: true, phase: 'indexing' }, chip: 'Turning on', progress: { now: '0', max: '10' } },
   ])('$name', ({ status, embedding = embeddingStatus, chip, action, description, absent, progress }) => {
-    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embedding), localLabels: localSearchLabels(status, embedding), localError: status.error, onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
     if (description) expect(screen.getByText(description)).toBeDefined();
     if (absent) expect(screen.queryByText(absent)).toBeNull();
+    if (status.error) expect(screen.getByRole('alert').textContent).toBe(status.error);
     if (progress) {
       expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe(progress.now);
       expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe(progress.max);
@@ -48,4 +52,12 @@ it.each([{ provider: 'builtin', switchAction: false }, { provider: 'ollama', swi
 it('discloses the download size and remote host before hint activation', () => {
  expect(localSearchHintLabels(off).hint).toBe('Search by meaning is off · Downloads 290 MB once to archive.example.test');
  expect(localSearchHintLabels({...off,ollama_available:true}).hint).toBe('Search by meaning is off · Uses Ollama on this computer');
+});
+
+it.each([
+  { state: 'paused', downloadBytes: 290000000, description: 'Downloads 290 MB once to archive.example.test' },
+  { state: 'failed startup', downloadBytes: 290000000, description: 'Downloads 290 MB once to archive.example.test' },
+  { state: 'files installed', downloadBytes: 0, description: 'Already on this computer' },
+])('discloses the selected built-in provider in the $state hint despite available Ollama', ({ state, downloadBytes, description }) => {
+  expect(localSearchHintLabels({ ...off, provider: 'builtin', compatible: true, ollama_available: true, download_bytes: downloadBytes, ...(state === 'failed startup' ? { error: 'Local model files need setup. Turn on to retry.' } : {}) }).hint).toBe(`Search by meaning is off · ${description}`);
 });
