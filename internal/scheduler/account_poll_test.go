@@ -129,7 +129,7 @@ func TestAccountPollingProviderFloorDefersAllOriginsAndRetainsManualReceipt(t *t
 		assert.True(status.LastCompleted.IsZero(), "partial acquisition is not catchup")
 		assert.True(status.LastRun.IsZero())
 		assert.False(status.NextEligiblePoll.Before(floor), "provider floor is independent of the 15m adaptive cap")
-		require.NoError(t, s.TriggerSync("sample@example.test", true))
+		require.NoError(s.TriggerSync("sample@example.test", true))
 		synctest.Wait()
 		require.Error(s.TriggerSync("sample@example.test", true), "one deferred manual request remains accepted")
 		s.onAccountTick("sample@example.test")
