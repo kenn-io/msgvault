@@ -9,11 +9,14 @@ import {
 import { SvelteSet } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
 import type {
+  AttributeDefinition,
   PersonFactClaim as GeneratedPersonFactClaim,
   PersonFactDecision as GeneratedPersonFactDecision,
   PersonFactEvidence as GeneratedPersonFactEvidence,
 } from '../api/generated/models';
+import { sentenceCase } from '../explore/labels';
 import { encodeFactTargetRef } from './fact-target-ref';
+import { displayClaimValue } from '../components/directory/attribute-value';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
 type PagedSection = Exclude<FactLedgerSection, 'pins'>;
@@ -28,6 +31,8 @@ type RawClaim = GeneratedPersonFactClaim;
 type RawDecision = GeneratedPersonFactDecision;
 export interface FactTargetOption {
   optionID: string;
+  name: string;
+  targetKey?: string;
   description: string;
   kind: string;
   valueType: string;
@@ -37,6 +42,7 @@ export interface FactTargetOption {
 }
 export interface FactEvidenceRow {
   rowToken: string;
+  sourceURL: string | null;
   sourceClass: string;
   directness: string;
   authority: string;
@@ -52,6 +58,8 @@ export interface FactEvidenceRow {
 export interface FactClaimRow {
   rowToken: string;
   submittedValue: string;
+  displayValue: string;
+  targetKey?: string;
   normalizedValue: string | null;
   relation: string;
   origin: string;
@@ -78,10 +86,9 @@ export interface FactDecisionRow {
   createdAt: string;
 }
 export interface FactPinRow {
-  rowToken: string;
   pinned: boolean;
   kind: string;
-  description: string;
+  targetKey?: string;
   readonly targetCanonical: string | undefined;
 }
 export interface FactEvidenceStatusRow {
@@ -124,7 +131,7 @@ export function evidenceStatusReasonLabel(reason: string): string {
 export class FactLedgerController {
   active = $state(false);
   personID = $state<number | null>(null);
-  selectedSection = $state<FactLedgerSection>('evidence');
+  selectedSection = $state<FactLedgerSection>('claims');
   selectedTargetOption = $state('all');
   targets = $state<FactTargetOption[]>([]);
   catalogLoading = $state(false);
@@ -185,7 +192,6 @@ export class FactLedgerController {
     this.selectedSection = section;
     this.clearDisclosureAndDialog();
     if (section === 'pins') {
-      this.clearPins();
       if (this.active && this.personID !== null) await this.loadPins(this.contextGeneration);
       return;
     }
@@ -247,6 +253,11 @@ export class FactLedgerController {
     if (!target) return 'unknown';
     return target.sensitive ? 'sensitive' : 'non_sensitive';
   }
+  fieldName(row: { targetKey?: string; targetCanonical: string | undefined }, definitions: Pick<AttributeDefinition, 'universal_id' | 'label'>[] = []): string {
+    return definitions.find(definition => definition.universal_id === row.targetKey)?.label
+      ?? this.targets.find(target => target.canonical === row.targetCanonical)?.name
+      ?? sentenceCase(row.targetKey?.replace(/^system:/, '') ?? 'Unknown field');
+  }
   async openEvidenceHistory(rowToken: string): Promise<void> {
     const row = this.evidence.rows.find((candidate) => candidate.rowToken === rowToken);
     if (!row || !this.active || this.personID === null) return;
@@ -300,7 +311,7 @@ export class FactLedgerController {
   private resetContext(): void {
     ++this.contextGeneration;
     for (const name of Object.keys(this.lanes) as Array<keyof typeof this.lanes>) this.abortLane(name);
-    this.selectedSection = 'evidence';
+    this.selectedSection = 'claims';
     this.selectedTargetOption = 'all';
     this.targets = [];
     this.targetByOption.clear();
@@ -329,10 +340,6 @@ export class FactLedgerController {
     if (section === 'evidence') this.evidence = pageState();
     else if (section === 'claims') this.claims = pageState();
     else this.decisions = pageState();
-  }
-  private clearPins(): void {
-    this.abortLane('pins');
-    this.pins = { rows: [], loading: false, error: null };
   }
   private startLane(name: keyof typeof this.lanes): {
     abort: AbortController;
@@ -391,6 +398,8 @@ export class FactLedgerController {
           continue;
         targets.push({
           optionID: `target-${targets.length}`,
+          name: sentenceCase(raw.slug),
+          targetKey: raw.key,
           description: raw.description,
           kind: raw.kind,
           valueType: raw.value_type,
@@ -401,10 +410,6 @@ export class FactLedgerController {
       }
       this.targets = targets;
       this.targetByOption = new Map(targets.map((target) => [target.optionID, target]));
-      this.pins.rows = this.pins.rows.map((pin) => ({
-        ...pin,
-        description: targets.find((target) => target.canonical === pin.targetCanonical)?.description ?? pin.description,
-      }));
     } catch {
       if (this.owns('catalog', abort, generation, context)) this.catalogError = 'Unable to load fact targets.';
     } finally {
@@ -427,18 +432,15 @@ export class FactLedgerController {
       );
       if (!this.owns('pins', abort, generation, context)) return;
       if (!response.data) {
-        this.pins.rows = [];
         this.pins.error = 'Unable to load fact pins.';
         return;
       }
-      this.pins.rows = (response.data.pins ?? []).map((pin, index) => {
+      this.pins.rows = (response.data.pins ?? []).map((pin) => {
         const canonical = encodeFactTargetRef(pin.target);
-        const descriptor = this.targets.find((target) => target.canonical === canonical);
         return {
-          rowToken: `pin-${index}`,
           pinned: pin.pinned,
           kind: pin.target.kind,
-          description: descriptor?.description ?? 'Eligible fact target',
+          targetKey: pin.target.key,
           targetCanonical: canonical,
         };
       });
@@ -459,7 +461,7 @@ export class FactLedgerController {
     page.retryOffset = undefined;
     const query = {
       ...(this.selectedTarget ? { target: this.selectedTarget } : {}),
-      limit: FACT_LEDGER_PAGE_LIMIT,
+      limit: FACT_LEDGER_PAGE_LIMIT + 1,
       offset: targetOffset,
     };
     try {
@@ -501,9 +503,9 @@ export class FactLedgerController {
         this.requestFocus(`${section}-next`);
         return;
       }
-      page.rows = projected as never[];
+      page.rows = projected.slice(0, FACT_LEDGER_PAGE_LIMIT) as never[];
       page.offset = targetOffset;
-      page.endReached = projected.length < FACT_LEDGER_PAGE_LIMIT;
+      page.endReached = projected.length <= FACT_LEDGER_PAGE_LIMIT;
       this.revealedEvidence.clear();
       this.revealedClaims.clear();
     } catch {
@@ -583,6 +585,7 @@ export class FactLedgerController {
 function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
   return {
     rowToken: `evidence-${index}`,
+    sourceURL: row.source_url,
     sourceClass: row.source_class,
     directness: row.directness,
     authority: row.authority,
@@ -602,6 +605,8 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
   return {
     rowToken: `claim-${index}`,
     submittedValue: row.submitted_value,
+    displayValue: readableValue(row.submitted_value, row.target.kind),
+    targetKey: row.target.key,
     normalizedValue: row.normalized_value ?? null,
     relation: row.relation,
     origin: row.origin,
@@ -629,4 +634,12 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
     projectionKind: row.projection?.kind ?? null,
     createdAt: row.created_at,
   };
+}
+
+function readableValue(value: string, kind: string): string {
+  if (!value.trim()) return 'Blank submission';
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return typeof decoded === 'string' ? decoded.trim() ? decoded : 'Blank submission' : displayClaimValue(decoded, kind);
+  } catch { return value; }
 }

@@ -29,7 +29,7 @@ function payload(path: string, marker = 'safe') {
   }] };
   if (path.endsWith('/fact-claims')) return { claims: [{
     id: 4, claim_key: 'private-claim-key', generation_id: 5, evidence_ids: [1], target: { kind: 'attribute', key: 'work:email', revision },
-    submitted_value: `allowed value ${marker}`, normalized_value: `allowed normalized ${marker}`, relation: 'equals', origin: 'observed',
+    submitted_value: `allowed value ${marker}`, normalized_value: `allowed normalized ${marker}`, relation: 'support', origin: 'extraction',
     valid_from: '2026-01-01T00:00:00Z', valid_until: null, confidence: { reported_score: 80 }, created_at: '2026-08-03T00:00:00Z',
     program_fingerprint: 'private-program-fingerprint', program_id: 'private-program', program_version: 'private-program-version',
     value_fingerprint: 'private-value-fingerprint'
@@ -77,7 +77,7 @@ describe('FactLedgerController', () => {
     expect(new URL(requests[0]!.url).searchParams.get('include_sensitive')).toBe('true');
     for (const request of requests.filter((item) => new URL(item.url).pathname !== '/api/v1/person-fact-targets' && !item.url.endsWith('/fact-pins'))) {
       const query = new URL(request.url).searchParams;
-      expect(query.get('limit')).toBe('50');
+      expect(query.get('limit')).toBe('51');
       expect(query.get('offset')).toBe('0');
       expect(query.has('target')).toBe(false);
     }
@@ -133,7 +133,7 @@ describe('FactLedgerController', () => {
     const target = `attribute:work:email:${revision}`;
     const requests: Request[] = [];
     let laterAttempt = 0;
-    const fifty = Array.from({ length: FACT_LEDGER_PAGE_LIMIT }, (_, index) => ({ ...payload('/fact-evidence').evidence![0], id: index + 1, evidence_key: `key-${index}` }));
+    const fifty = Array.from({ length: FACT_LEDGER_PAGE_LIMIT + 1 }, (_, index) => ({ ...payload('/fact-evidence').evidence![0], id: index + 1, evidence_key: `key-${index}` }));
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input); requests.push(request);
       const url = new URL(request.url);
@@ -149,6 +149,7 @@ describe('FactLedgerController', () => {
     const controller = new FactLedgerController(createAPIClient(fetchFn));
     controller.applyContext(true, 42, false);
     await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+    await controller.selectSection('evidence');
     await controller.selectTarget('target-0');
     await vi.waitFor(() => expect(controller.evidence.rows).toHaveLength(50));
 
@@ -162,7 +163,7 @@ describe('FactLedgerController', () => {
     expect(controller.evidence.endReached).toBe(true);
     expect(controller.focusRequest?.key).toBe('evidence-next');
     const later = requests.filter((request) => new URL(request.url).pathname.endsWith('/fact-evidence')).slice(-2);
-    for (const request of later) expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({ target, limit: '50', offset: '50' });
+    for (const request of later) expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({ target, limit: '51', offset: '50' });
   });
 
   it.each(['evidence', 'claims', 'decisions'] as const)('loads the first %s page explicitly from a later offset', async (section) => {
@@ -180,7 +181,7 @@ describe('FactLedgerController', () => {
 
     const request = requests.at(-1)!;
     expect(new URL(request.url).pathname).toBe(`/api/v1/people/42/fact-${section}`);
-    expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({ limit: '50', offset: '0' });
+    expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({ limit: '51', offset: '0' });
     expect(controller[section].offset).toBe(0);
   });
 
@@ -269,4 +270,100 @@ describe('FactLedgerController', () => {
     expect(historyOffsets).toEqual(['0', '50', '50', '0']);
     expect(controller.history.offset).toBe(0);
   });
+});
+
+it.each([0, 50, 51])('shows at most 50 claims with a next page only for a lookahead row, received %i', async count => {
+  const fetchFn = vi.fn<typeof fetch>(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: Array.from({ length: count }, (_, index) => ({
+      ...payload(path).claims![0], submitted_value: '"Example City"', normalized_value: '"example city"', id: index,
+    })) });
+    return Response.json(payload(path));
+  });
+  const controller = new FactLedgerController(createAPIClient(fetchFn));
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  expect(controller.selectedSection).toBe('claims');
+  expect(controller.claims.rows).toHaveLength(Math.min(50, count));
+  expect(controller.hasNext('claims')).toBe(count === 51);
+  if (count) {
+    controller.revealClaim(controller.claims.rows[0]!.rowToken);
+    await controller.selectSection('evidence');
+    expect(controller.revealedClaims.size).toBe(0);
+  }
+  controller.destroy();
+});
+
+it('keeps field context when the catalog fails', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    if (path.endsWith('/person-fact-targets')) return Response.json({}, { status: 503 });
+    return Response.json(payload(path));
+  });
+  const controller = new FactLedgerController(createAPIClient(fetchFn));
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  expect(controller.fieldName(controller.claims.rows[0]!)).toBe('Work:email');
+  expect(controller.fieldName(controller.claims.rows[0]!, [{ universal_id: 'work:email', label: 'Work email' }])).toBe('Work email');
+  expect(controller.fieldName(controller.pins.rows[0]!)).toBe('Work:email');
+  controller.destroy();
+});
+
+it('retains pins during entry and failed refreshes, then clears them with the person context', async () => {
+  let pending: ((response: Response) => void) | undefined;
+  let hold = false;
+  const client = createAPIClient(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    if (hold && path.endsWith('/fact-pins')) return new Promise<Response>(resolve => { pending = resolve; });
+    return Response.json(payload(path));
+  });
+  const controller = new FactLedgerController(client);
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  hold = true;
+  const entry = controller.selectSection('pins');
+  expect(controller.pins.loading).toBe(true);
+  expect(controller.pins.rows).toHaveLength(1);
+  pending!(Response.json({}, { status: 503 }));
+  await entry;
+  expect(controller.pins.error).toBe('Unable to load fact pins.');
+  expect(controller.pins.rows).toHaveLength(1);
+  const retry = controller.retrySection('pins');
+  expect(controller.pins.rows).toHaveLength(1);
+  pending!(Response.json({ pins: [] }));
+  await retry;
+  expect(controller.pins.rows).toEqual([]);
+  expect(controller.pins.error).toBeNull();
+  hold = false;
+  await controller.retrySection('pins');
+  controller.applyContext(false, 42);
+  expect(controller.pins.rows).toEqual([]);
+  controller.destroy();
+});
+
+it.each([
+  ['attribute', '', 'Blank submission'],
+  ['attribute', '   ', 'Blank submission'],
+  ['attribute', '""', 'Blank submission'],
+  ['attribute', '"   "', 'Blank submission'],
+  ['attribute', '"Example City"', 'Example City'],
+  ['employment', '{"organization":{"name":"Synthetic Org"},"title":"Engineer"}', 'Engineer · Synthetic Org'],
+  ['attribute', '["Go","Rust"]', 'Go, Rust'],
+  ['attribute', 'true', 'Yes'],
+  ['attribute', '5', '5'],
+])('formats %s claim %j while preserving original JSON', async (kind, submitted, expected) => {
+  const client = createAPIClient(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    const data = payload(path);
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind, key: kind === 'employment' ? 'system:employment' : 'location', revision, slug: kind === 'employment' ? 'employment' : 'location', description: 'Claim field', value_type: 'text', cardinality: 'single', sensitive: false }] });
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ ...payload(path).claims![0], target: { kind, key: kind === 'employment' ? 'system:employment' : 'location', revision }, submitted_value: submitted }] });
+    return Response.json(data);
+  });
+  const controller = new FactLedgerController(client);
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  expect(controller.fieldName(controller.claims.rows[0]!)).toBe(kind === 'employment' ? 'Employment' : 'Location');
+  expect(controller.claims.rows[0]!.displayValue).toBe(expected);
+  expect(controller.claims.rows[0]!.submittedValue).toBe(submitted);
+  controller.destroy();
 });

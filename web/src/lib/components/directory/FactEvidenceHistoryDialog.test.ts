@@ -12,7 +12,7 @@ describe('FactEvidenceHistoryDialog', () => {
     const controller = new FactLedgerController(createAPIClient(vi.fn<typeof fetch>()));
     controller.historyOpen = true;
     controller.history.rows = [
-      { supported: false, reasonLabel: 'Source deleted', createdAt: '2026-08-01' },
+      { supported: false, reasonLabel: 'Source deleted', createdAt: '2026-08-01T12:00:00Z' },
       { supported: true, reasonLabel: 'Support status changed', createdAt: '2026-08-02' }
     ];
     const onClose = vi.fn(() => controller.closeEvidenceHistory());
@@ -22,7 +22,9 @@ describe('FactEvidenceHistoryDialog', () => {
     expect(screen.getByText('Unsupported')).toBeDefined();
     expect(screen.getByText('Source deleted')).toBeDefined();
     expect(screen.getByText('Support status changed')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'First support-history page' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('navigation', { name: 'Evidence support-history pages' })).toBeNull();
+    expect(screen.getByText('1–2 of 2')).toBeDefined();
+    expect(dialog.querySelector('time')?.textContent).toBe('Aug 1');
     await fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
   });

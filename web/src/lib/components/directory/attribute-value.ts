@@ -1,3 +1,4 @@
+import { employmentText } from './organization-name';
 import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { AttributeDefinition, AttributeValue, PersonAttributeGroup, PersonAttributeValue } from '../../api/generated/models';
 
@@ -27,6 +28,14 @@ export function displayAttributeValue(definition: AttributeDefinition, value: At
   const canonical = value.type === 'boolean' && value.boolean !== undefined ? String(value.boolean) : display;
   const choice = definition.options?.choices?.find((candidate) => candidate.value === canonical);
   return choice?.label ?? display;
+}
+
+/** Reads a decoded fact claim the way the profile reads the saved value it would become. */
+export function displayClaimValue(value: unknown, kind: string): string {
+  const job = (value ?? {}) as { title?: string; role?: string; organization?: { name?: string } };
+  if (kind === 'employment') return employmentText(job, job.organization?.name);
+  if (Array.isArray(value)) return value.map((item) => displayClaimValue(item, kind)).join(', ');
+  return rawValue(typeof value === 'boolean' ? { type: 'boolean', boolean: value } : typeof value === 'string' ? { type: 'text', text: value } : { type: 'json', json: value });
 }
 
 export interface JoinedAttribute { definition: AttributeDefinition; current: PersonAttributeValue[]; history: PersonAttributeValue[]; }
