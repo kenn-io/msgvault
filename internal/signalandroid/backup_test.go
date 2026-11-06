@@ -160,6 +160,37 @@ func TestLongTextHandling(t *testing.T) {
 	}
 }
 
+func TestLongTextSizeLimit(t *testing.T) {
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Carol here archivedsuffix"), 0o600))
+	opts := DefaultOptions()
+	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
+	id := "signal:aci:" + signalfixture.CarolACI + ":peer:" + ms(signalfixture.TCarol)
+	for _, tc := range []struct {
+		name                   string
+		limit, missing, errors int64
+		body                   string
+		searchCount            int
+	}{
+		{"oversize", 24, 2, 1, "Carol here", 0},
+		{"at limit", 25, 1, 0, "Carol here archivedsuffix", 1},
+		{"oversize rerun", 24, 2, 1, "Carol here archivedsuffix", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			opts.MaxAttachmentSize = tc.limit
+			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			require.NoError(err)
+			assert.Equal(tc.missing, summary.AttachmentsMissing)
+			assert.Equal(tc.errors, summary.Errors)
+			assert.Equal(tc.body, importedMessages(t, st)[id].body)
+			assert.Equal(tc.searchCount, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'archivedsuffix'`))
+		})
+	}
+}
+
 func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
 	for _, storageFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "oversize", true: "storage failure"}[storageFailure], func(t *testing.T) {

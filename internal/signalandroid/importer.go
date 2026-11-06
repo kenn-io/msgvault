@@ -644,7 +644,15 @@ func (r *run) writeMessage(
 		if a.ContentType == "text/x-signal-plain" {
 			found++
 			if name, ok := r.files[a.ID]; ok {
-				full, err := os.ReadFile(filepath.Join(r.opts.AttachmentFilesDir, name))
+				file, err := export.OpenAttachmentSource(filepath.Join(r.opts.AttachmentFilesDir, name), r.opts.MaxAttachmentSize)
+				var full []byte
+				if err == nil {
+					full, err = io.ReadAll(io.LimitReader(file, r.opts.MaxAttachmentSize+1))
+					err = errors.Join(err, file.Close())
+					if int64(len(full)) > r.opts.MaxAttachmentSize {
+						err = fmt.Errorf("long text exceeds maximum attachment size of %d bytes", r.opts.MaxAttachmentSize)
+					}
+				}
 				if err == nil && len(full) > 0 {
 					body = applyMentions(string(full), mentions, r.displayName)
 					continue
