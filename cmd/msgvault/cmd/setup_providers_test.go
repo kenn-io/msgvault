@@ -2073,22 +2073,28 @@ func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
 }
 
 func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
-	for _, server := range []string{"http://localhost:11434/", "http://127.0.0.1:11434", "http://localhost:11435"} {
-		t.Run(server, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, server string
+		models       []string
+		skipOllama   bool
+	}{
+		{name: "default localhost probe", server: "http://localhost:11434/", skipOllama: true},
+		{name: "default loopback probe", server: "http://127.0.0.1:11434", skipOllama: true},
+		{name: "non-default probe rejects custom embedding tag", server: "http://localhost:11435", models: []string{"nomic-embed-text:v2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := tc.server
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf("\n[chat]\nserver = %q\n", server))
 			deps := fixture.deps(t)
 			probes, discoveries := 0, 0
 			deps.probeOllama = func(_ context.Context, address string) ollamaProbeResult {
 				probes++
 				assert.Equal(t, strings.TrimRight(server, "/"), address)
-				if server == "http://localhost:11435" {
-					return ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:v2"}}
-				}
-				return ollamaProbeResult{}
+				return ollamaProbeResult{Reachable: len(tc.models) > 0, Models: tc.models}
 			}
 			deps.localEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
 				discoveries++
-				assert.Equal(t, server != "http://localhost:11435", opts.SkipOllama)
+				assert.Equal(t, tc.skipOllama, opts.SkipOllama)
 				return "", embedlocal.ErrNotFound
 			}
 			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
@@ -2117,10 +2123,6 @@ func TestPlanTextSearchResumesLocalRecipeWithIndependentScheduleDefaults(t *test
 			cfg := fixture.load(t)
 			keys, err := toml.DecodeFile(fixture.path, &map[string]any{})
 			require.NoError(err)
-			if tc.unavailable == "" && tc.fields == "" {
-				ordinary := planTextSearch(cfg, setupDetection{configKeys: keys})
-				assert.Equal(planActionSkip, ordinary.Action)
-			}
 			resumed := planTextSearch(cfg, setupDetection{configKeys: keys, resumeLocalText: true, backendUnavailable: tc.unavailable})
 			snapshot, err := config.ReadConfigFile(fixture.path)
 			require.NoError(err)

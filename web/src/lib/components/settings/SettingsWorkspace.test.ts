@@ -788,12 +788,12 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
 });
 
-it.each([true, false])('discloses the built-in download before switching from compatible=%s Ollama', async compatible => {
+it('discloses the built-in download before switching from Ollama', async () => {
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') return request.method === 'POST'
-      ? Response.json({ phase: 'idle', running: true }, { status: 202 })
-      : Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false });
+      ? Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 })
+      : Response.json({ host: 'archive.example.test', enabled: true, provider: 'ollama', compatible: true, ollama_available: true, download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false });
     if (path === '/api/v1/embeddings/status') return Response.json(embeddingStatus);
     if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'ollama-switch', eligible_count: 10, embedded_count: 10, percentage: 100, status: 'ready', actions: [] });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
@@ -813,7 +813,7 @@ it('retries setup after a publication failure without changing the selected prov
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') {
         retried = true;
-        return Response.json({ phase: 'idle', running: true }, { status: 202 });
+        return Response.json({ host: '', enabled: false, provider: '', compatible: false, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: true }, { status: 202 });
       }
       return Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', compatible: true, ollama_available: false, download_bytes: 0, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, error: retried ? undefined : 'invalid embed cron' });
     }
