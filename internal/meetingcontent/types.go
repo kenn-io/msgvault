@@ -60,11 +60,12 @@ type Section struct {
 }
 
 type Segment struct {
-	Speaker       string     `json:"speaker,omitempty"`
-	Text          string     `json:"text"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	OffsetSeconds *float64   `json:"offset_seconds,omitempty"`
+	Speaker          string     `json:"speaker,omitempty"`
+	Text             string     `json:"text"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	EndedAt          *time.Time `json:"ended_at,omitempty"`
+	OffsetSeconds    *float64   `json:"offset_seconds,omitempty"`
+	EndOffsetSeconds *float64   `json:"end_offset_seconds,omitempty"`
 }
 
 type Transcript struct {

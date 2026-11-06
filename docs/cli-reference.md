@@ -91,7 +91,8 @@ SRT and WebVTT require one distinct meeting ID and daemon API schema 3.47.0 or
 newer: `msgvault meetings context --id 42 --format vtt -o meeting.vtt`.
 Transcript evidence loads automatically, even with `--include-transcript=false`.
 The byte budget covers subtitle output alone; overflow fails without partial
-cues. Timing and formatting errors leave an existing output file untouched.
+cues. Timing and formatting errors, including NUL text or labels, leave an existing
+output file untouched.
 Both formats show speaker prefixes. WebVTT escapes text and labels; SRT emits
 plain text and refuses `<`, braces, backslashes, and numeric-leading lines
 containing `-->`. Use VTT for those payloads. See [subtitle timing and source

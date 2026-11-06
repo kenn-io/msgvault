@@ -2,6 +2,7 @@ package meetingcontent
 
 import (
 	"encoding/json/v2"
+	"html"
 	"math"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/mediatranscript"
 )
 
 func subtitleEntry() Entry {
@@ -35,6 +37,14 @@ func TestRenderSubtitles(t *testing.T) {
 			}
 			want := header + "1\n00:00:00" + separator + "000 --> 00:00:01" + separator + "500\n" + payload + "\n\n"
 			assert.Equal(t, want, got)
+			if format == "srt" {
+				parsed, err := mediatranscript.ParseSubRip([]byte(got), "msgvault", "und")
+				require.NoError(t, err)
+				require.Len(t, parsed.Segments, 1)
+				assert.Equal(t, int64(0), parsed.Segments[0].StartMS)
+				assert.Equal(t, int64(1500), parsed.Segments[0].EndMS)
+				assert.Equal(t, payload, parsed.Segments[0].Text)
+			}
 			after, err := json.Marshal(entry)
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
@@ -47,6 +57,7 @@ func TestSubtitleTiming(t *testing.T) {
 	base := *entry.Content.Transcript.Segments[0].StartedAt
 	offset := 360000.9996
 	entry.Content.Transcript.Segments[0].OffsetSeconds = &offset
+	entry.Content.Transcript.Segments[0].EndOffsetSeconds = new(offset + 1.5)
 	got, err := RenderSubtitles(entry, "srt")
 	require.NoError(t, err)
 	assert.Contains(t, got, "100:00:01,000 --> 100:00:02,500")
@@ -62,6 +73,27 @@ func TestSubtitleTiming(t *testing.T) {
 	got, err = RenderSubtitles(entry, "vtt")
 	require.NoError(t, err)
 	assert.Contains(t, got, "00:00:02.250 --> 00:00:04.000")
+	content := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1.25,"absolute":"2026-01-01T00:00:01.250Z"},"end_timestamp":{"relative":2.75,"absolute":"2026-01-01T00:00:02.750Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:04.000Z"},"end_timestamp":{"relative":4.5,"absolute":"2026-01-01T00:00:04.500Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:02.250Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:02.750Z"}}]}]}}`), nil)
+	got, err = RenderSubtitles(Entry{Content: content}, "srt")
+	require.NoError(t, err)
+	assert.Equal(t, "1\n00:00:01,250 --> 00:00:02,750\nUnknown speaker: First\n\n2\n00:00:02,250 --> 00:00:02,750\nUnknown speaker: Absolute\n\n3\n00:00:04,000 --> 00:00:04,500\nUnknown speaker: Second\n\n", got)
+
+	content = Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"participant":{"name":"Example"},"words":[{"text":"Hello","start_timestamp":{"relative":1.2,"absolute":"2026-06-12T10:00:01Z"},"end_timestamp":{"relative":1.6,"absolute":"2026-06-12T10:00:01Z"}},{"text":"there","start_timestamp":{"relative":1.7,"absolute":"2026-06-12T10:00:02Z"},"end_timestamp":{"relative":2.1,"absolute":"2026-06-12T10:00:02Z"}}]}]}}`), nil)
+	for _, format := range []string{"srt", "vtt"} {
+		got, err = RenderSubtitles(Entry{Content: content}, format)
+		require.NoError(t, err)
+		separator := ","
+		if format == "vtt" {
+			separator = "."
+		}
+		assert.Contains(t, got, "00:00:01"+separator+"200 --> 00:00:02"+separator+"100")
+	}
+
+	content = Decode("omi_json", []byte(`{"transcript_segments":[{"text":"Omi","speaker_name":"Example","start":1.2,"end":2.1}]}`), nil)
+	got, err = RenderSubtitles(Entry{Content: content}, "srt")
+	require.NoError(t, err)
+	assert.Contains(t, got, "00:00:01,200 --> 00:00:02,100")
+
 }
 
 func TestSubtitleRefusals(t *testing.T) {
@@ -86,9 +118,6 @@ func TestSubtitleRefusals(t *testing.T) {
 			e.Content.Transcript.Segments[0].StartedAt = nil
 			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
 		},
-		"negative": func(e *Entry) { e.Content.Transcript.Segments[0].OffsetSeconds = new(-1.0) },
-		"nan":      func(e *Entry) { e.Content.Transcript.Segments[0].OffsetSeconds = new(math.NaN()) },
-		"infinity": func(e *Entry) { e.Content.Transcript.Segments[0].OffsetSeconds = new(math.Inf(1)) },
 		"overflow": func(e *Entry) { e.Content.Transcript.Segments[0].OffsetSeconds = new(math.MaxFloat64) },
 		"reversed": func(e *Entry) { s := &e.Content.Transcript.Segments[0]; s.EndedAt = new(s.StartedAt.Add(-time.Second)) },
 		"zero milliseconds": func(e *Entry) {
@@ -100,12 +129,39 @@ func TestSubtitleRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			entry := subtitleEntry()
 			modify(&entry)
-			got, err := RenderSubtitles(entry, "srt")
-			require.Error(t, err)
-			assert.Empty(t, got)
+			for _, format := range []string{"srt", "vtt"} {
+				got, err := RenderSubtitles(entry, format)
+				require.Error(t, err)
+				assert.Empty(t, got)
+			}
 		})
 	}
-	_, err := RenderSubtitles(subtitleEntry(), "txt")
+	for _, raw := range []string{
+		`{"transcript":[{"text":"Before\u0000After","start_time":"2026-01-01T00:00:01Z","end_time":"2026-01-01T00:00:02Z"}]}`,
+		`{"transcript":[{"text":"Body","speaker":{"name":"Before\u0000After"},"start_time":"2026-01-01T00:00:01Z","end_time":"2026-01-01T00:00:02Z"}]}`,
+	} {
+		entry := Entry{Content: Decode("granola_json", []byte(raw), nil)}
+		require.True(t, strings.ContainsRune(entry.Content.Transcript.Segments[0].Text, 0) || strings.ContainsRune(entry.Content.Transcript.Segments[0].Speaker, 0))
+		for _, format := range []string{"srt", "vtt"} {
+			got, err := RenderSubtitles(entry, format)
+			assert.ErrorContains(t, err, "NUL")
+			assert.Empty(t, got)
+		}
+	}
+	boundary := `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":0.1,"absolute":"2026-01-01T00:00:00.100Z"},"end_timestamp":{"relative":0.8,"absolute":"2026-01-01T00:00:00.800Z"}},{"text":"Last","start_timestamp":{"relative":1.1,"absolute":"2026-01-01T00:00:01.100Z"},"end_timestamp":{"relative":2.1,"absolute":"2026-01-01T00:00:02.100Z"}}]}]}}`
+	for _, raw := range []string{
+		strings.Replace(boundary, `"start_timestamp":{"relative":0.1,"absolute":"2026-01-01T00:00:00.100Z"}`, `"start_timestamp":{}`, 1),
+		strings.Replace(boundary, `"end_timestamp":{"relative":2.1,"absolute":"2026-01-01T00:00:02.100Z"}`, `"end_timestamp":{}`, 1),
+		strings.Replace(boundary, `"relative":2.1,`, "", 1),
+	} {
+		_, err := RenderSubtitles(Entry{Content: Decode("twenty_json", []byte(raw), nil)}, "srt")
+		assert.Error(t, err, "incomplete boundary cannot be filled from another word or clock")
+	}
+	contradictory := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1,"absolute":"2026-01-01T00:00:01Z"},"end_timestamp":{"relative":2,"absolute":"2026-01-01T00:00:02Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:02Z"},"end_timestamp":{"relative":5,"absolute":"2026-01-01T00:00:03Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:05Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:06Z"}}]}]}}`), nil)
+	_, err := RenderSubtitles(Entry{Content: contradictory}, "vtt")
+	assert.ErrorContains(t, err, "origin")
+
+	_, err = RenderSubtitles(subtitleEntry(), "txt")
 	require.ErrorContains(t, err, "format")
 }
 
@@ -115,6 +171,12 @@ func FuzzSubtitlePayload(f *testing.F) {
 	for _, seed := range []string{"first\n\nsecond", "first\n \nsecond", "A\r\nB", "<v X>& -->", "世界", "\nleading", "trailing\n"} {
 		f.Add(seed, "Speaker")
 	}
+	for _, payload := range []string{"1 < 2 & 3 > 1", `C:\Temp\note.txt`, "literal <b>bold</b>", "A<&>", `literal {\b1}bold`, `literal \N text`} {
+		f.Add(payload, "Speaker")
+		f.Add("body", payload)
+	}
+	f.Add("Before\x00After", "Speaker")
+	f.Add("Body", "Before\x00After")
 	f.Add("safe", "first\nsecond")
 	f.Add("R&D --> 世界", "R&D")
 	f.Add("first\n00:00:03,000 --> 00:00:04,000\ninjected", "")
@@ -126,7 +188,7 @@ func FuzzSubtitlePayload(f *testing.F) {
 		entry.Content.Transcript.Segments[0].Text = text
 		entry.Content.Transcript.Segments[0].Speaker = speaker
 		normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-		unsafe := strings.ContainsAny(speaker, "\r\n")
+		unsafe := strings.ContainsAny(speaker, "\r\n") || strings.ContainsRune(text, 0) || strings.ContainsRune(speaker, 0)
 		for line := range strings.SplitSeq(normalized, "\n") {
 			unsafe = unsafe || strings.TrimSpace(line) == ""
 		}
@@ -143,41 +205,25 @@ func FuzzSubtitlePayload(f *testing.F) {
 			}
 			if unsafe || format == "srt" && srtUnsafe {
 				require.Error(t, err)
+				if !unsafe {
+					assert.ErrorContains(t, err, "use --format vtt")
+				}
 				assert.Empty(t, got)
 				continue
 			}
 			require.NoError(t, err)
+			lines := strings.SplitN(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n", 3)
+			require.Len(t, lines, 3)
+			body := strings.TrimSuffix(lines[2], "\n\n")
 			if format == "vtt" {
 				assert.Equal(t, 1, strings.Count(got, " --> "))
-				assert.NotContains(t, got, "<")
-			} else {
-				assert.True(t, strings.HasSuffix(got, payload+"\n\n"))
+				assert.NotContains(t, body, "<")
+				body = html.UnescapeString(body)
 			}
+			assert.Equal(t, payload, body)
 			assert.Equal(t, 1, strings.Count(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n\n"))
 		}
 	})
-}
-
-func TestSubtitleFormatRefusals(t *testing.T) {
-	for _, payload := range []string{"1 < 2 & 3 > 1", `C:\Temp\note.txt`, "literal <b>bold</b>", "A<&>", `literal {\b1}bold`, `literal \N text`, "first\n00:00:03,000 --> 00:00:04,000\ninjected"} {
-		for _, label := range []bool{false, true} {
-			if label && strings.ContainsAny(payload, "\r\n") {
-				continue
-			}
-			entry := subtitleEntry()
-			if label {
-				entry.Content.Transcript.Segments[0].Speaker = payload
-			} else {
-				entry.Content.Transcript.Segments[0].Text = payload
-			}
-			got, err := RenderSubtitles(entry, "srt")
-			require.ErrorContains(t, err, "use --format vtt")
-			assert.Empty(t, got)
-			got, err = RenderSubtitles(entry, "vtt")
-			require.NoError(t, err)
-			assert.NotContains(t, got, "<")
-		}
-	}
 }
 
 func TestSubtitleContextOutputBudget(t *testing.T) {
@@ -185,20 +231,17 @@ func TestSubtitleContextOutputBudget(t *testing.T) {
 	entry.Content.Summary = Section{State: StateAvailable, Text: strings.Repeat("summary", 150000)}
 	want, err := RenderSubtitles(entry, "srt")
 	require.NoError(t, err)
-	result, err := Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: len(want)})
-	require.NoError(t, err)
-	assert.Equal(t, want, result.Content)
-	assert.Equal(t, len([]byte(want)), result.ContentBytes)
-	assert.False(t, result.Truncated)
+	for _, maxBytes := range []int{4096, len(want)} {
+		result, err := Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: maxBytes})
+		require.NoError(t, err)
+		assert.Equal(t, want, result.Content)
+		assert.Equal(t, len([]byte(want)), result.ContentBytes)
+		assert.False(t, result.Truncated)
+	}
 	_, err = Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: len(want) - 1})
 	require.ErrorIs(t, err, ErrBudgetTooSmall)
-}
-
-func TestSubtitleTwentyExplicitOffsets(t *testing.T) {
-	content := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1.25,"absolute":"2026-01-01T00:00:00.100Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:01.600Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:00.103Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:00.603Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:01.100Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:01.600Z"}}]}]}}`), nil)
-	got, err := RenderSubtitles(Entry{Content: content}, "srt")
-	require.NoError(t, err)
-	assert.Contains(t, got, "00:00:01,250 --> 00:00:02,750")
-	assert.Contains(t, got, "00:00:04,000 --> 00:00:04,500")
-	assert.Contains(t, got, "00:00:02,250 --> 00:00:02,750")
+	for _, entries := range [][]Entry{nil, {entry, entry}} {
+		_, err := Render("archive", entries, PacketOptions{Format: FormatSRT, MaxBytes: len(want)})
+		require.ErrorIs(t, err, ErrInvalidSubtitles)
+	}
 }

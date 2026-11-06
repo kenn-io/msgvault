@@ -132,7 +132,7 @@ and require daemon API schema 3.47.0; --max-bytes caps the requested content
 			if result == nil {
 				return errors.New("meeting context response was empty")
 			}
-			return writeMeetingOutput(command, output, result.Content, "meeting context")
+			return writeMeetingContext(command, output, result.Content)
 		},
 	}
 	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "meeting message ID from search (repeatable, required, at most 100)")
@@ -143,18 +143,18 @@ and require daemon API schema 3.47.0; --max-bytes caps the requested content
 	return command
 }
 
-func writeMeetingOutput(command *cobra.Command, output, content, kind string) error {
+func writeMeetingContext(command *cobra.Command, output, content string) error {
 	if output == "" || output == "-" {
 		if _, err := io.WriteString(command.OutOrStdout(), content); err != nil {
-			return fmt.Errorf("write %s: %w", kind, err)
+			return fmt.Errorf("write meeting context: %w", err)
 		}
 		return nil
 	}
 	if _, err := writeAttachmentStreamToFile(output, strings.NewReader(content)); err != nil {
-		return fmt.Errorf("write %s: %w", kind, err)
+		return fmt.Errorf("write meeting context: %w", err)
 	}
-	if _, err := fmt.Fprintf(command.ErrOrStderr(), "Wrote %s to %s\n", kind, output); err != nil {
-		return fmt.Errorf("write %s notice: %w", kind, err)
+	if _, err := fmt.Fprintf(command.ErrOrStderr(), "Wrote meeting context to %s\n", output); err != nil {
+		return fmt.Errorf("write meeting context notice: %w", err)
 	}
 	return nil
 }

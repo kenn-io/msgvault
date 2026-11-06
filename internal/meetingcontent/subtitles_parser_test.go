@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/mediatranscript"
 )
 
 // FFmpeg is an independent subtitle parser, not part of the exporter. Keep the
@@ -41,18 +40,4 @@ func TestSubtitleParserDisplayText(t *testing.T) {
 			assert.Contains(t, string(decoded), `Dialogue: 0,0:00:00.00,0:00:01.50,Default,,0,0,0,,`+display)
 		})
 	}
-}
-
-// This parser is already a project dependency, so cue text/timing round trips
-// run in CI even when FFmpeg is absent.
-func TestSubtitleSubRipParser(t *testing.T) {
-	entry := subtitleEntry()
-	rendered, err := RenderSubtitles(entry, "srt")
-	require.NoError(t, err)
-	parsed, err := mediatranscript.ParseSubRip([]byte(rendered), "msgvault", "und")
-	require.NoError(t, err)
-	require.Len(t, parsed.Segments, 1)
-	assert.Equal(t, int64(0), parsed.Segments[0].StartMS)
-	assert.Equal(t, int64(1500), parsed.Segments[0].EndMS)
-	assert.Equal(t, "R&D: Hi --> 世界\nnext & done", parsed.Segments[0].Text)
 }

@@ -66,14 +66,16 @@ SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
 them as markup or formatting controls. SRT also refuses lines that begin with a
 number and contain `-->`, which players can treat as another cue. Use
 `--format vtt` for those transcripts.
-Interior blank cue lines and multiline speaker labels cause an explicit error.
+Interior blank cue lines, multiline speaker labels, and NUL characters cause an
+explicit error.
 The command validates and renders everything before replacing a file. Timing,
 formatting, and size errors leave an existing destination untouched.
 
 Export uses retained structured segments, independently of the recorder or
-transcription service. Complete start/end intervals are required. Absolute-only
-transcripts start at their earliest cue; explicit offsets preserve recording
-coordinates. Overlaps survive. Plain text, start-only offsets, incomplete
+transcription service. Complete start/end intervals in one coordinate system
+are required. Relative bounds survive from Twenty and Omi. Absolute-only
+transcripts start at their earliest cue; mixing them with relative cues requires
+an exact common recording origin. Overlaps survive. Plain text, start-only offsets, incomplete
 transcripts, and ambiguous timing fail instead of acquiring estimated cue ends.
 Subtitle exports automatically load transcript evidence and require exactly one
 distinct meeting ID. `--max-bytes` limits subtitle output only (4096–1048576,

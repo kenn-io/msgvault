@@ -613,6 +613,7 @@ func TestMeetingExploreScopeMapsPopulationAndRevisionFailures(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
+		{name: "context empty selection", result: &query.ExploreMeetingSelection{CacheRevision: "r"}, wantStatus: http.StatusBadRequest, wantCode: "meeting_selection_too_large"},
 		{name: "context selection too large", result: &query.ExploreMeetingSelection{SelectedCount: 101, MeetingCount: 101, LimitExceeded: true, CacheRevision: "r"}, wantStatus: http.StatusBadRequest, wantCode: "meeting_selection_too_large"},
 		{name: "actions scope too large", result: &query.ExploreMeetingSelection{SelectedCount: 10001, MeetingCount: 10001, LimitExceeded: true, CacheRevision: "r"}, wantStatus: http.StatusConflict, wantCode: "meeting_scope_too_large"},
 		{name: "cache changed", result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{1}, CacheRevision: "new"}, wantStatus: http.StatusConflict, wantCode: "archive_revision_changed"},
@@ -714,30 +715,4 @@ func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
 	))
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), "private transcript content")
-}
-
-func TestMeetingSubtitleFormatsReachExistingRoute(t *testing.T) {
-	for _, format := range []string{"srt", "vtt"} {
-		st := &meetingRouteStore{mockStore: &mockStore{}, contextResult: &meetingcontent.PacketResult{Format: meetingcontent.Format(format)}}
-		response := httptest.NewRecorder()
-		newMeetingRouteTestServer(t, st, &querytest.MockEngine{}).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"message_ids":[1],"format":"`+format+`","include_transcript":false,"max_bytes":4096}`))
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		assert.Equal(t, meetingcontent.Format(format), st.contextOptions.Format)
-	}
-}
-
-func TestMeetingSubtitleResolvedSelectionCardinality(t *testing.T) {
-	fixture := storetest.New(t)
-	for _, ids := range [][]int64{{}, {1, 2}} {
-		engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: int64(len(ids)), MeetingCount: int64(len(ids)), MessageIDs: ids, CacheRevision: "r"}}
-		server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: fixture.Store, Engine: engine, Logger: testLogger()})
-		response := httptest.NewRecorder()
-		server.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"r","search_provenance":{}},"format":"srt"}`))
-		require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-		code := "invalid_meeting_subtitles"
-		if len(ids) == 0 {
-			code = "meeting_selection_too_large"
-		} // Existing resolver rejects empty selections first.
-		assert.Contains(t, response.Body.String(), code)
-	}
 }

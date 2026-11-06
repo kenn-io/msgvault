@@ -231,17 +231,21 @@ func decodeTwentyTranscript(raw jsontext.Value) Transcript {
 		texts := make([]string, 0, len(entry.words))
 		for _, word := range entry.words {
 			texts = append(texts, word.text)
-			if offset, ok := twentyOffset(word.start); ok && segment.OffsetSeconds == nil {
-				segment.OffsetSeconds = &offset
-			}
-			if segment.StartedAt == nil {
-				if start, ok := rawTime(word.start["absolute"], false); ok {
-					segment.StartedAt = &start
-				}
-			}
-			if end, ok := rawTime(word.end["absolute"], false); ok {
-				segment.EndedAt = &end
-			}
+		}
+		// The first/last retained word bounds the whole utterance. Later or earlier
+		// words cannot supply timing missing at either boundary.
+		first, last := entry.words[0], entry.words[len(entry.words)-1]
+		if offset, ok := twentyOffset(first.start); ok {
+			segment.OffsetSeconds = &offset
+		}
+		if offset, ok := twentyOffset(last.end); ok {
+			segment.EndOffsetSeconds = &offset
+		}
+		if start, ok := rawTime(first.start["absolute"], false); ok {
+			segment.StartedAt = &start
+		}
+		if end, ok := rawTime(last.end["absolute"], false); ok {
+			segment.EndedAt = &end
 		}
 		segment.Text = strings.Join(texts, " ")
 		transcript.Segments = append(transcript.Segments, segment)

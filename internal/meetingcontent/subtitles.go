@@ -20,24 +20,46 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
 		return "", fmt.Errorf("subtitle timing unavailable: complete structured transcript required (state %s, reason %s)", transcript.State, transcript.Reason)
 	}
-	var earliest *time.Time
-	for _, s := range transcript.Segments {
-		if strings.TrimSpace(s.Text) != "" && s.StartedAt != nil && (earliest == nil || s.StartedAt.Before(*earliest)) {
-			earliest = s.StartedAt
+	var origin *time.Time
+	relative, absolute := false, false
+	for i, s := range transcript.Segments {
+		if strings.ContainsRune(s.Text, 0) || strings.ContainsRune(s.Speaker, 0) {
+			return "", fmt.Errorf("subtitle format error at segment %d: NUL text or speaker label", i+1)
 		}
-	}
-	// An absolute start plus explicit offset fixes the common recording origin.
-	origin := 0.0
-	for _, s := range transcript.Segments {
-		if strings.TrimSpace(s.Text) == "" || s.StartedAt == nil || s.OffsetSeconds == nil {
+		if strings.TrimSpace(s.Text) == "" {
 			continue
 		}
-		delta, err := subtitleSeconds(*earliest, *s.StartedAt)
-		if err != nil {
-			return "", err
+		if s.OffsetSeconds != nil || s.EndOffsetSeconds != nil {
+			relative = true
+		} else {
+			absolute = true
+			if s.StartedAt != nil && (origin == nil || s.StartedAt.Before(*origin)) {
+				origin = s.StartedAt
+			}
 		}
-		origin = delta - *s.OffsetSeconds
-		break
+	}
+	if relative && absolute {
+		origin = nil
+		for _, s := range transcript.Segments {
+			if strings.TrimSpace(s.Text) == "" || s.OffsetSeconds == nil && s.EndOffsetSeconds == nil {
+				continue
+			}
+			if s.OffsetSeconds == nil || s.EndOffsetSeconds == nil || s.StartedAt == nil || s.EndedAt == nil {
+				return "", errors.New("subtitle timing insufficient: mixed coordinates have no proven recording origin")
+			}
+			startOrigin, err := subtitleOrigin(*s.StartedAt, *s.OffsetSeconds)
+			if err != nil {
+				return "", err
+			}
+			endOrigin, err := subtitleOrigin(*s.EndedAt, *s.EndOffsetSeconds)
+			if err != nil {
+				return "", err
+			}
+			if !startOrigin.Equal(endOrigin) || origin != nil && !origin.Equal(startOrigin) {
+				return "", errors.New("subtitle timing insufficient: contradictory recording origins")
+			}
+			origin = &startOrigin
+		}
 	}
 	type cue struct {
 		start, end int64
@@ -60,30 +82,22 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		var start, end float64
 		var err error
 		switch {
-		case s.StartedAt != nil && s.EndedAt != nil:
-			start, err = subtitleSeconds(*earliest, *s.StartedAt)
-			if err == nil {
-				var duration float64
-				duration, err = subtitleSeconds(*s.StartedAt, *s.EndedAt)
-				if s.OffsetSeconds != nil {
-					start = *s.OffsetSeconds
-				} else {
-					start -= origin
-				}
-				end = start + duration
-			}
-		case s.StartedAt == nil && s.OffsetSeconds != nil && s.EndedAt != nil && entry.Meeting.SourceType == "hex" && entry.Meeting.OccurredAt != nil:
-			// Hex retains end = recording origin + end_ms, and start_ms as offset.
+		case s.OffsetSeconds != nil && s.EndOffsetSeconds != nil:
+			start, end = *s.OffsetSeconds, *s.EndOffsetSeconds
+		case s.OffsetSeconds != nil && s.EndOffsetSeconds == nil && s.StartedAt == nil && s.EndedAt != nil && entry.Meeting.SourceType == "hex" && entry.Meeting.OccurredAt != nil:
+			// Hex1850 retains end = recording origin + end_ms and start_ms as offset.
 			start = *s.OffsetSeconds
 			end, err = subtitleSeconds(*entry.Meeting.OccurredAt, *s.EndedAt)
+		case s.OffsetSeconds == nil && s.EndOffsetSeconds == nil && s.StartedAt != nil && s.EndedAt != nil && origin != nil:
+			start, err = subtitleSeconds(*origin, *s.StartedAt)
+			if err == nil {
+				end, err = subtitleSeconds(*origin, *s.EndedAt)
+			}
 		default:
-			return "", fmt.Errorf("subtitle timing insufficient at segment %d: explicit start and end required", i+1)
+			return "", fmt.Errorf("subtitle timing insufficient at segment %d: complete bounds in one timing coordinate system required", i+1)
 		}
 		if err != nil {
 			return "", fmt.Errorf("subtitle timing at segment %d: %w", i+1, err)
-		}
-		if s.OffsetSeconds != nil && !validSubtitleSeconds(*s.OffsetSeconds) {
-			return "", fmt.Errorf("subtitle timing invalid at segment %d: invalid start offset", i+1)
 		}
 		if !validSubtitleSeconds(start) || !validSubtitleSeconds(end) || end <= start {
 			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, or reversed interval", i+1)
@@ -140,4 +154,18 @@ func validSubtitleSeconds(seconds float64) bool {
 
 func subtitleTimestamp(ms int64, separator string) string {
 	return fmt.Sprintf("%02d:%02d:%02d%s%03d", ms/3600000, ms/60000%60, ms/1000%60, separator, ms%1000)
+}
+
+// A mixed transcript needs an exact origin at time.Time's native precision;
+// coarse clocks or sub-nanosecond offsets cannot prove that conversion.
+func subtitleOrigin(stamp time.Time, offset float64) (time.Time, error) {
+	nanos := math.Round(offset * float64(time.Second))
+	if !finite(nanos) || nanos < 0 || nanos >= float64(math.MaxInt64) {
+		return time.Time{}, errors.New("subtitle timing invalid: recording origin offset overflows")
+	}
+	elapsed := time.Duration(nanos)
+	if elapsed.Seconds() != offset {
+		return time.Time{}, errors.New("subtitle timing insufficient: recording origin is not exact")
+	}
+	return stamp.Add(-elapsed), nil
 }
