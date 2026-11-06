@@ -119,7 +119,7 @@ func TestRapidEmailIMAPRefreshesFlagsWithoutBodyDownload(t *testing.T) {
 			client, err := imapclient.DialInsecure(ln.Addr().String(), nil)
 			require.NoError(t, err)
 			require.NoError(t, client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
-			_, err = client.Select("INBOX", nil)
+			_, err = client.Select("INBOX", nil).Wait()
 			require.NoError(t, err)
 			var uids imap.UIDSet
 			uids.AddNum(1)
