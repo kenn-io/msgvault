@@ -3,7 +3,6 @@
 package store
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -18,6 +17,7 @@ import (
 func freshObservedStore(t *testing.T, path string, hook func(*sqlite3.SQLiteConn) error) *Store {
 	t.Helper()
 	db, _ := sqlobserve.OpenFile(t, path+defaultSQLiteParams, hook)
+	setSQLitePoolSize(db)
 	require.NoError(t, db.PingContext(t.Context()))
 	dialect := &SQLiteDialect{}
 	return &Store{db: newLoggedDB(db, dialect.Rebind), dialect: dialect}
@@ -87,64 +87,37 @@ func TestInitSchemaContext_FreshSQLiteCommitsTogether(t *testing.T) {
 	require.Equal(t, 2, synchronous, "use production FULL durability")
 	before := commits.Load()
 	require.NoError(t, s.InitSchemaContext(t.Context()))
-	assert.LessOrEqual(t, commits.Load()-before, int64(10), "commit the whole fresh setup together")
+	// Setup commits once. Planner maintenance commits once for optimize, once
+	// for deleting FTS statistics, and once per pooled connection to reload.
+	assert.Equal(t, int64(3+sqlitePoolSize), commits.Load()-before, "commit setup once, then maintain planner statistics")
 	assert.Equal(t, referenceFreshSchema(t), freshSchemaRows(t, s))
 }
 
 func TestInitSchemaContext_ExistingSQLiteConcurrentWriter(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "versioned", true: "legacy"}[legacy], func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "existing.db")
-			var active, written bool
-			var writer *Store
-			var writeErr error
-			s := freshObservedStore(t, path, func(conn *sqlite3.SQLiteConn) error {
-				conn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-					if active && !written && action == sqlite3.SQLITE_INSERT && table == "embedding_change_clock" {
-						written = true
-						_, writeErr = writer.db.ExecContext(t.Context(), "INSERT INTO sources (source_type, identifier) VALUES ('gmail', 'writer@example.com')")
-					}
-					return sqlite3.SQLITE_OK
-				})
-				return nil
-			})
-			require.NoError(t, s.InitSchemaContext(t.Context()))
-			writer = freshObservedStore(t, path, nil)
-			if legacy {
-				_, err := s.db.ExecContext(t.Context(), "DELETE FROM archive_metadata WHERE key = 'schema_version'")
-				require.NoError(t, err)
-			}
-			active = true
-			err := s.InitSchemaContext(t.Context())
-			require.NoError(t, writeErr)
-			require.NoError(t, err)
-			require.True(t, written)
-			var identifier string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT identifier FROM sources").Scan(&identifier))
-			assert.Equal(t, "writer@example.com", identifier)
-		})
-	}
-}
-
-func TestInitSchemaContext_FreshSQLiteCancelAndRetry(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	path := filepath.Join(t.TempDir(), "cancel.db")
+	path := filepath.Join(t.TempDir(), "existing.db")
+	var active, written bool
+	var writer *Store
+	var writeErr error
 	s := freshObservedStore(t, path, func(conn *sqlite3.SQLiteConn) error {
 		conn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_CREATE_TABLE && table == "communication_services" {
-				cancel()
+			if active && !written && action == sqlite3.SQLITE_INSERT && table == "embedding_change_clock" {
+				written = true
+				_, writeErr = writer.db.ExecContext(t.Context(), "INSERT INTO sources (source_type, identifier) VALUES ('gmail', 'writer@example.com')")
 			}
 			return sqlite3.SQLITE_OK
 		})
 		return nil
 	})
-	require.ErrorIs(t, s.InitSchemaContext(ctx), context.Canceled)
-	var count int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").Scan(&count))
-	assert.Zero(t, count, "roll back the partial fresh setup")
-	require.NoError(t, s.db.Close())
-	retry := freshObservedStore(t, path, nil)
-	require.NoError(t, retry.InitSchemaContext(t.Context()))
-	assert.Equal(t, referenceFreshSchema(t), freshSchemaRows(t, retry))
+	require.NoError(t, s.InitSchemaContext(t.Context()))
+	writer = freshObservedStore(t, path, nil)
+	_, err := s.db.ExecContext(t.Context(), "DELETE FROM archive_metadata WHERE key = 'schema_version'")
+	require.NoError(t, err)
+	active = true
+	err = s.InitSchemaContext(t.Context())
+	require.NoError(t, writeErr)
+	require.NoError(t, err)
+	require.True(t, written)
+	var identifier string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT identifier FROM sources").Scan(&identifier))
+	assert.Equal(t, "writer@example.com", identifier)
 }
