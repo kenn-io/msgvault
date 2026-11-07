@@ -81,7 +81,7 @@ func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T)
 	generationID := seedAndEmbed(t, b, vectors)
 	installReadyFlatAccelerator(t, b, generationID, 4)
 	b.annWorkCeiling = 32
-	_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	_, err := b.mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
 	require.NoError(t, err)
 
 	hits, metadata, err := b.FusedSearch(ctx, vector.FusedRequest{
@@ -91,6 +91,7 @@ func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 	assert.True(t, metadata.PoolSaturated)
+	assert.False(t, metadata.CandidatePoolOmitted, "a work ceiling alone does not prove a K limit")
 }
 
 func TestFusedSearchReportsExactRetrievalPaths(t *testing.T) {
@@ -111,9 +112,9 @@ func TestFusedSearchReportsExactRetrievalPaths(t *testing.T) {
 				req.Filter.MessageIDs = []int64{1, 2, 3}
 			}
 			if path == "exact-fallback" {
-				_, err := b.db.Exec(`DROP TABLE ` + acceleratorTableName(gen))
+				_, err := b.db.ExecContext(t.Context(), `DROP TABLE `+acceleratorTableName(gen))
 				require.NoError(t, err)
-				_, err = b.db.Exec(`CREATE TABLE ` + acceleratorTableName(gen) + ` (embedding BLOB)`)
+				_, err = b.db.ExecContext(t.Context(), `CREATE TABLE `+acceleratorTableName(gen)+` (embedding BLOB)`)
 				require.NoError(t, err)
 			}
 
@@ -257,6 +258,7 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 	hits, metadata, err := b.FusedSearch(ctx, req)
 	require.NoError(t, err, "FusedSearch")
 	assert.Truef(t, metadata.PoolSaturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
+	assert.True(t, metadata.CandidatePoolOmitted)
 }
 
 // TestFusedSearch_AnnSaturation_BelowCap is the counter-test for
@@ -313,7 +315,7 @@ func TestFusedSearch_UnknownGeneration(t *testing.T) {
 // most-relevant messages from the fused signal.
 func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	// Fresh main DB where we control the FTS content density so BM25
 	// produces a known ranking. Message 5 gets the highest rank by
 	// having "meeting" dense in a short doc; 4 is next; 1 is barely
@@ -442,7 +444,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	return db
 }
@@ -478,7 +480,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	return db
 }
@@ -565,7 +567,7 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 // the expected subset.
 func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)
@@ -656,7 +658,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 
 func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)
@@ -731,7 +733,7 @@ func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 
 func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithoutMessageType(t, mainPath)
@@ -782,7 +784,7 @@ func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
 func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)
@@ -1316,4 +1318,77 @@ func TestKitFusionOrderingMissingLegsBoostAndFilters(t *testing.T) {
 	assert.Equal(t, int64(7), hits[0].MessageID)
 	assert.True(t, math.IsNaN(hits[0].VectorScore))
 	assert.False(t, math.IsNaN(hits[0].BM25Score))
+}
+
+func TestFusedSearch_CandidatePoolOmission(t *testing.T) {
+	for _, path := range []string{"cte", "accelerator"} {
+		t.Run(path, func(t *testing.T) {
+			b, ctx := newFusedBackendForTest(t)
+			gen := seedAndEmbed(t, b, map[int64][]float32{1: {1, 0.3, 0, 0}, 2: {1, 0.5, 0, 0}, 3: {1, 0.1, 0, 0}, 4: {1, 0.2, 0, 0}, 5: {1, 0.4, 0, 0}})
+			_, err := b.mainDB.ExecContext(t.Context(), `DELETE FROM messages_fts`)
+			require.NoError(t, err)
+			for id, rank := range map[int64]int{1: 1, 2: 2, 3: 3, 4: 5, 5: 4} {
+				_, err := b.mainDB.ExecContext(t.Context(), `INSERT INTO messages_fts(rowid,subject,body) VALUES (?, '', ?)`, id, strings.Repeat("invoice ", 6-rank)+strings.Repeat("filler ", rank))
+				require.NoError(t, err)
+			}
+			if path == "accelerator" {
+				installReadyFlatAccelerator(t, b, gen, 4)
+				b.exactFilterVectorThreshold = 1
+			}
+
+			for _, tc := range []struct {
+				name       string
+				ids        []int64
+				deleted    bool
+				unembedded bool
+				term       string
+				limit      int
+				omitted    bool
+				wantIDs    []int64
+				wantScores []float64
+			}{
+				{"recovered_probes_later_omission", []int64{1, 2, 3, 4, 5}, false, false, "invoice", 10, true, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"complete_union", []int64{1, 2, 3, 4}, false, false, "invoice", 10, false, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"deleted_omission", []int64{1, 2, 3, 4, 5}, true, false, "invoice", 10, false, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+				{"page_inside_union", []int64{1, 2, 3, 4, 5}, false, false, "invoice", 1, false, []int64{1}, []float64{1.0 / 61}},
+				{"empty_lexical_leg", []int64{1, 2, 3, 4, 5}, false, false, "missing", 10, true, []int64{3, 4}, []float64{1.0 / 61, 1.0 / 62}},
+				{"unembedded_lexical_omission", nil, false, true, "invoice", 10, true, []int64{1, 3, 2, 4}, []float64{1.0 / 61, 1.0 / 61, 1.0 / 62, 1.0 / 62}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assert, require := assert.New(t), require.New(t)
+					_, err := b.mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id=5`, tc.deleted)
+					require.NoError(err)
+					if tc.unembedded {
+						require.NoError(b.Delete(ctx, gen, []int64{5}))
+					}
+					req := vector.FusedRequest{Generation: gen, FTSTerms: []string{tc.term}, QueryVec: []float32{1, 0, 0, 0}, KPerSignal: 2, Limit: tc.limit, RRFK: 60, Filter: vector.Filter{MessageIDs: tc.ids}}
+					hits, meta, err := b.FusedSearch(ctx, req)
+					require.NoError(err)
+					if path == "accelerator" {
+						assert.Equal(acceleratorKind, meta.Accelerator)
+					}
+					assert.Equal(tc.omitted, meta.CandidatePoolOmitted)
+					gotIDs := make([]int64, len(hits))
+					for i, hit := range hits {
+						gotIDs[i] = hit.MessageID
+					}
+					require.Equal(tc.wantIDs, gotIDs)
+					for i, hit := range hits {
+						assert.InDelta(tc.wantScores[i], hit.RRFScore, 1e-12)
+						switch hit.MessageID {
+						case 1, 2:
+							assert.True(math.IsNaN(hit.VectorScore))
+							assert.False(math.IsNaN(hit.BM25Score))
+						case 3:
+							assert.True(math.IsNaN(hit.BM25Score))
+							assert.InDelta(0.9, hit.VectorScore, 1e-6)
+						case 4:
+							assert.True(math.IsNaN(hit.BM25Score))
+							assert.InDelta(0.8, hit.VectorScore, 1e-6)
+						}
+					}
+				})
+			}
+		})
+	}
 }

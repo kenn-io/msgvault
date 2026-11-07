@@ -33,7 +33,7 @@ func suggestionFixture(t *testing.T, names []string, ready bool) (*Server, *stor
 	var ids []int64
 	for _, name := range names {
 		var id int64
-		require.NoError(t, tx.QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,?,'application/pdf','') RETURNING id`), message, name).Scan(&id))
+		require.NoError(t, tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,?,'application/pdf','') RETURNING id`), message, name).Scan(&id))
 		ids = append(ids, id)
 	}
 	require.NoError(t, tx.Commit())
@@ -56,7 +56,7 @@ func drainSuggestionProjection(t *testing.T, s *store.Store) {
 }
 func suggestionPost(t *testing.T, s *Server, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.Router().ServeHTTP(w, r)
@@ -109,7 +109,7 @@ func TestFileSuggestionsHTTP(t *testing.T) {
 		assert.NotContains(body, field)
 	}
 	// The projection is deliberately stale. Authority must remove this old name.
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename='unrelated.pdf' WHERE id=?`), ids[2])
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename='unrelated.pdf' WHERE id=?`), ids[2])
 	require.NoError(err)
 	w = suggestionPost(t, srv, "/api/v1/files/suggest", `{"filename_query":"report.pdf"}`)
 	require.Equal(200, w.Code, w.Body.String())
@@ -209,7 +209,7 @@ func TestFileSuggestionsHTTPReadinessDefaultsAndLimitedScope(t *testing.T) {
 	assert.Equal(false, suggestionBody(t, w)["candidate_limit_reached"])
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/files/suggest", strings.NewReader(`{"filename_query":"report"}`)).WithContext(canceled)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/suggest", strings.NewReader(`{"filename_query":"report"}`)).WithContext(canceled)
 	r.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)
@@ -227,7 +227,7 @@ func TestPersonFileSuggestionsHTTP(t *testing.T) {
 	person, _, err := f.Store.CreatePersonFromParticipant(member)
 	require.NoError(err)
 	var message int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
 	require.NoError(f.Store.ReplaceMessageRecipients(message, "cc", []int64{member}, []string{"Member Example"}))
 	path := fmt.Sprintf("/api/v1/people/%d/files/suggest", person.ID)
 	w := suggestionPost(t, srv, path, `{"filename_query":"report.pdf","directions":["to_person"]}`)
@@ -251,8 +251,8 @@ func TestPersonFileSuggestionsHTTP(t *testing.T) {
 	require.NoError(err)
 	for i := range 64 {
 		var participant int64
-		require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO participants(email_address) VALUES(?) RETURNING id`), fmt.Sprintf("overflow%03d@example.test", i)).Scan(&participant))
-		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), person.ID, participant)
+		require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO participants(email_address) VALUES(?) RETURNING id`), fmt.Sprintf("overflow%03d@example.test", i)).Scan(&participant))
+		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), person.ID, participant)
 		require.NoError(err)
 	}
 	require.NoError(tx.Commit())
@@ -272,7 +272,7 @@ func TestFileSuggestionsHTTPOperationGate(t *testing.T) {
 	person, _, err := f.Store.CreatePersonFromParticipant(member)
 	require.NoError(err)
 	var message int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
 	require.NoError(f.Store.ReplaceMessageRecipients(message, "to", []int64{member}, []string{"Gate Example"}))
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "synthetic-mutation")
@@ -303,7 +303,7 @@ func TestFileSuggestionsHTTPRestrictedKeys(t *testing.T) {
 			header, key string
 			status      int
 		}{{"X-Api-Key", "synthetic-reader-key", http.StatusForbidden}, {apiprotocol.AgentTokenHeader, secret, http.StatusUnauthorized}} {
-			r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"filename_query":"report"}`))
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(`{"filename_query":"report"}`))
 			r.Header.Set(auth.header, auth.key)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
@@ -322,7 +322,7 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 		id         int64
 		path, hash string
 	}{{ids[1], "https://files.example.test/report.pdf", strings.Repeat("b", 64)}, {ids[2], "", hash}, {ids[3], "aa/" + hash, ""}} {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET storage_path=?,content_hash=? WHERE id=?`), tc.path, tc.hash, tc.id)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET storage_path=?,content_hash=? WHERE id=?`), tc.path, tc.hash, tc.id)
 		require.NoError(err)
 	}
 	dir := t.TempDir()
@@ -371,10 +371,10 @@ func TestFileSuggestionsHTTPReleasesSnapshotBeforeBlobResolution(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	content := []byte("packed attachment bytes")
 	entry := buildTestPack(t, cfg.AttachmentsDir(), content)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET content_hash=?,size=? WHERE id=?`), entry.BlobHash, len(content), ids[0])
 	require.NoError(err)
-	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+	require.NoError(f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: entry.PackID, EntryCount: 1, StoredBytes: entry.StoredLen, CreatedAt: time.Now(),
 	}, []store.PackIndexEntry{entry}))
 	blobs, err := attachmentstore.New(store.NewPackCatalog(f.Store), cfg.AttachmentsDir())
@@ -392,7 +392,7 @@ func TestFileSuggestionsHTTPReleasesSnapshotBeforeBlobResolution(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/files/suggest", strings.NewReader(`{"filename_query":"report.pdf"}`)).WithContext(ctx)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/suggest", strings.NewReader(`{"filename_query":"report.pdf"}`)).WithContext(ctx)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	handlerDone := make(chan struct{})
@@ -484,7 +484,7 @@ func validSuggestionAccounts(n int) []map[string]any {
 func TestFileSuggestionsHTTPDateOffsets(t *testing.T) {
 	srv, f, ids := suggestionFixture(t, []string{"report.pdf"}, true)
 	instant := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=(SELECT message_id FROM attachments WHERE id=?)`), instant, ids[0])
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=(SELECT message_id FROM attachments WHERE id=?)`), instant, ids[0])
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		filter string

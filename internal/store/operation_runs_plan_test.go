@@ -13,7 +13,7 @@ import (
 // it in a temporary b-tree. sync_runs is never pruned, so the active and
 // latest-successful lookups must walk a status-filtered index in run order.
 func TestOperationLaneStatusQueriesUseStatusIndexesSQLite(t *testing.T) {
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "operation-status-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "operation-status-plan.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	require.NoError(t, st.InitSchema())

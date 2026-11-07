@@ -135,7 +135,7 @@ func TestLoopEvidenceSurvivesUnchangedImports(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	conv, err := f.Store.EnsureConversation(f.Source.ID, "identical-import", "Question")
+	conv, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "identical-import", "Question")
 	require.NoError(err)
 	data := &store.MessagePersistData{
 		Message:  &store.Message{SourceID: f.Source.ID, ConversationID: conv, SourceMessageID: "stable-question", MessageType: store.MessageTypeEmail, SentAt: sql.NullTime{Time: time.Now().Add(-48 * time.Hour), Valid: true}},

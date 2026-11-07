@@ -12,7 +12,7 @@ func TestPersonVCardSnapshotTransactionDoesNotMixConcurrentSemanticWrites(t *tes
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
-	reader, err := OpenForTest(dbPath)
+	reader, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = reader.Close() })
 	require.NoError(reader.InitSchema())
@@ -27,7 +27,7 @@ func TestPersonVCardSnapshotTransactionDoesNotMixConcurrentSemanticWrites(t *tes
 	)
 	require.NoError(err)
 
-	writer, err := OpenForTest(dbPath)
+	writer, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = writer.Close() })
 	var insideSnapshot []Employment

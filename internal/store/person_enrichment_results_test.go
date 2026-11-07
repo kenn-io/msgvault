@@ -1145,7 +1145,7 @@ func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwners
 
 func reopenPostgresStore(t *testing.T, current *Store) *Store {
 	t.Helper()
-	st, err := OpenForTest(current.dbPath)
+	st, err := OpenForTest(t.Context(), current.dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st

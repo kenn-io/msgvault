@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +14,7 @@ func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
 	assert := assert.New(t)
 	st := storetest.New(t).Store
 
-	services, err := st.ListCommunicationServicesContext(context.Background(), true)
+	services, err := st.ListCommunicationServicesContext(t.Context(), true)
 	require.NoError(err)
 	bySlug := make(map[string]store.CommunicationService, len(services))
 	for _, service := range services {
@@ -41,7 +40,7 @@ func TestServiceAliasesResolveToOneCanonicalService(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, test := range []struct{ lookup, want string }{
 		{"twitter", "x"}, {"X", "x"}, {"gmessages", "google-messages"},
@@ -59,7 +58,7 @@ func TestUnknownServiceIsRegisteredWithoutASchemaMigration(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	created, isNew, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
 		Slug: "example-bridge", DisplayLabel: "Example Bridge",
@@ -87,7 +86,7 @@ func TestCommunicationServiceDiscoveryProvenance(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	input := store.CommunicationServiceInput{
 		Slug:                 "discovered-example",
 		DisplayLabel:         "Discovered Example",
@@ -120,7 +119,7 @@ func TestServiceSeedIsIdempotentAndPreservesUserEdits(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	service, err := st.ResolveCommunicationServiceContext(ctx, "slack")
 	require.NoError(err)
@@ -208,7 +207,7 @@ func TestServiceAliasCannotBeStolenFromAnotherService(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
 		Slug: "other-bridge", DisplayLabel: "Other Bridge", Aliases: []string{"twitter"},
@@ -226,7 +225,7 @@ func TestCanonicalServiceSlugCannotShadowExistingAlias(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
 		Slug: "twitter", DisplayLabel: "Twitter",
@@ -244,7 +243,7 @@ func TestNormalizeServiceValuePerStrategy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tests := []struct {
 		service     string
@@ -280,7 +279,7 @@ func TestValidateServiceScopeFollowsScopePolicy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	slack, err := st.ResolveCommunicationServiceContext(ctx, "slack")
 	require.NoError(err)
@@ -298,7 +297,7 @@ func TestValidateServiceScopeFollowsScopePolicy(t *testing.T) {
 func TestValidateServiceScopeRejectsHalfScopes(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	googleChat, err := st.ResolveCommunicationServiceContext(ctx, "google-chat")
 	require.NoError(err)
@@ -327,7 +326,7 @@ func TestBlankScopeStringsDoNotFragmentObservationIdentity(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"example", "blank-scope", "Blank Scope",
 	)
@@ -357,9 +356,9 @@ func TestInlineServiceSeedUpgradesExistingArchiveAndPreservesEdits(t *testing.T)
 	st := storetest.New(t).Store
 	ctx := t.Context()
 	// Model an older archive with the original service catalog already seeded.
-	_, err := st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+	_, err := st.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`DELETE FROM communication_services WHERE slug = 'inline'`)
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM communication_services WHERE slug = 'inline'`)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
 	service, err := st.ResolveCommunicationServiceContext(ctx, "inline")
@@ -374,7 +373,7 @@ func TestInlineServiceSeedUpgradesExistingArchiveAndPreservesEdits(t *testing.T)
 		DefaultScopeKind: new("server"), Normalization: store.NormalizationNone, NormalizationVersion: 1,
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
 	again, err := st.ResolveCommunicationServiceContext(ctx, "inline")

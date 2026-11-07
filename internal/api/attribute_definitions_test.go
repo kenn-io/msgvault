@@ -17,7 +17,7 @@ func attributeRequest(
 	t *testing.T, srv *Server, method, path string, body []byte, ifMatch string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

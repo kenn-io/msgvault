@@ -109,7 +109,7 @@ func TestFindChatCommandReadsNamesAcrossNetworksThroughProductionAdapter(t *test
 	assertions.NotContains(stdout.String(), "\x1b")
 
 	// Provider-controlled metadata must not execute terminal escape sequences.
-	_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET title = ? WHERE id = ?"), "Lee \x1b[31mChen\x1b[0m", wantIDs[1])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE id = ?"), "Lee \x1b[31mChen\x1b[0m", wantIDs[1])
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceDisplayName(nativeSource, "Beeper iMessage\x1b[31m"))
 	command = newFindChatCommand()

@@ -130,7 +130,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			}
 			var messageID int64
 			var sourceAttachmentID string
-			err := tx.QueryRow(`
+			err := tx.QueryRowContext(ctx, `
 				SELECT message_id, COALESCE(source_attachment_id, '')
 				FROM attachments WHERE id = ?
 			`, exclusion.AttachmentID).Scan(&messageID, &sourceAttachmentID)
@@ -146,7 +146,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			if sourceAttachmentID == "" {
 				return fmt.Errorf("attachment occurrence %d has no provider identity", exclusion.AttachmentID)
 			}
-			result, err := tx.Exec(`
+			result, err := tx.ExecContext(ctx, `
 				UPDATE attachments
 				SET storage_path = ?, content_hash = NULL,
 				    thumbnail_hash = NULL, thumbnail_path = NULL,
@@ -167,7 +167,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			messageIDs[messageID] = struct{}{}
 		}
 		for messageID := range messageIDs {
-			if _, err := tx.Exec(`
+			if _, err := tx.ExecContext(ctx, `
 				UPDATE messages
 				SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
 				    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)

@@ -32,7 +32,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	if m.Type != "file" && m.ContentProvider != nil && m.ContentProvider.Type == "external" {
 		return false, nil
 	}
-	refs, err := p.store.MessageProviderAttachments(messageID, "line:")
+	refs, err := p.store.MessageProviderAttachments(ctx, messageID, "line:")
 	if err != nil {
 		return false, err
 	}
@@ -126,7 +126,7 @@ func (p *Processor) storeMediaBody(ctx context.Context, source *export.SourceRea
 }
 
 func (p *Processor) finishUnstoredMedia(ctx context.Context, messageID int64, state attachmentpolicy.DownloadState, reason attachmentpolicy.SkipReason) error {
-	refs, err := p.store.MessageProviderAttachments(messageID, "line:")
+	refs, err := p.store.MessageProviderAttachments(ctx, messageID, "line:")
 	if err != nil {
 		return err
 	}

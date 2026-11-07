@@ -57,17 +57,13 @@ func readAccountIdentityRevision(q rowQuerier) (int64, error) {
 	return revision, nil
 }
 
-// bumpAccountIdentityRevision increments the account-identity revision
+// bumpAccountIdentityRevisionContext increments the account-identity revision
 // inside tx, seeding the row with 0 first if it does not exist yet. Follows
 // bumpIdentityRevision's approach in participant_links.go. Callers are the
 // identity mutations that invalidate baked message data: AddAccountIdentity,
 // RemoveAccountIdentity, and the participant-merge paths (MergeParticipants,
 // mergeParticipant); none of them expose the new value, so unlike
 // bumpIdentityRevision this returns only an error.
-func (s *Store) bumpAccountIdentityRevision(tx *loggedTx) error {
-	return s.bumpAccountIdentityRevisionContext(context.Background(), tx)
-}
-
 func (s *Store) bumpAccountIdentityRevisionContext(ctx context.Context, tx *loggedTx) error {
 	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
@@ -660,7 +656,7 @@ func (s *Store) persistDefaultIdentityOptOutAfterLastRemovalContext(
 //
 // Identifiers are returned with the case the user stored. Callers comparing
 // against email-shaped strings should lowercase both sides at compare time.
-func (s *Store) GetIdentitiesForScope(sourceIDs []int64) (map[string]struct{}, error) {
+func (s *Store) GetIdentitiesForScope(ctx context.Context, sourceIDs []int64) (map[string]struct{}, error) {
 	out := make(map[string]struct{})
 	if len(sourceIDs) == 0 {
 		return out, nil
@@ -675,7 +671,7 @@ func (s *Store) GetIdentitiesForScope(sourceIDs []int64) (map[string]struct{}, e
 	query := `SELECT address FROM account_identities WHERE source_id IN (` +
 		strings.Join(placeholders, ",") + `)`
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get identities for scope: %w", err)
 	}

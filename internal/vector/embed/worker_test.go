@@ -108,7 +108,7 @@ func TestWorker_DrainsToZeroEndToEnd(t *testing.T) {
 	f := newWorkerFixture(t, 5)
 
 	w := newTestWorker(f, 2)
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 
 	assert.Equal(5, res.Succeeded, "Succeeded")
@@ -234,7 +234,7 @@ func TestWorkerOperationPassRecordsBackstopAsFreshInvocation(t *testing.T) {
 		Key: "manual:message:forward", Trigger: operations.TriggerManual, StartedAt: started,
 	})
 	require.NoError(t, err)
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 1`)
 	require.NoError(t, err)
 	_, err = w.RunBackstop(t.Context(), f.BuildingGen, operations.PassScope{
 		Key: "manual:message:backstop", Trigger: operations.TriggerManual, StartedAt: started.Add(time.Second),
@@ -319,7 +319,7 @@ func operationCounter(run operations.Run, name operations.CounterName) int64 {
 func TestWorker_EmptyCorpusReturnsZero(t *testing.T) {
 	f := newWorkerFixture(t, 0)
 	w := newTestWorker(f, 8)
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(t, 0, res.Claimed, "Claimed")
 	assert.Equal(t, 0, res.Succeeded, "Succeeded")
@@ -346,7 +346,7 @@ func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
 		MaxConsecutiveFailures: 3,
 		Recorder:               f.Recorder,
 	})
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err, "expected abort")
 	require.ErrorContains(err, "consecutive failures")
 	assert.Equal(0, res.Succeeded, "nothing should succeed")
@@ -358,7 +358,7 @@ func TestWorker_YieldCancellationDuringUpsertStopsCleanly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newWorkerFixture(t, 1)
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
 	logs := &captureLogHandler{}
 	w := NewWorker(WorkerDeps{
@@ -380,7 +380,7 @@ func TestWorker_YieldCancellationDuringUpsertStopsCleanly(t *testing.T) {
 	assert.Equal(0, res.Failed, "Failed")
 	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "row remains unstamped")
 	var embedGen sql.NullInt64
-	require.NoError(f.MainDB.QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen))
+	require.NoError(f.MainDB.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen))
 	assert.False(embedGen.Valid, "row remains unstamped")
 	assert.Equal(int64(0), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark does not advance")
 	for _, record := range logs.records {
@@ -389,7 +389,7 @@ func TestWorker_YieldCancellationDuringUpsertStopsCleanly(t *testing.T) {
 	}
 
 	healthy := newTestWorker(f, 1)
-	res, err = healthy.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err = healthy.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "healthy worker retry")
 	assert.Equal(1, res.Succeeded, "healthy worker succeeds")
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "row stamped after retry")
@@ -399,7 +399,7 @@ func TestWorker_YieldCancellationDuringEmbedStopsCleanly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newWorkerFixture(t, 1)
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
 	logs := &captureLogHandler{}
 	w := NewWorker(WorkerDeps{
@@ -436,7 +436,7 @@ func TestWorker_YieldCancellationDuringDownshiftStampLogsOnce(t *testing.T) {
 		}
 		return [][]float32{make([]float32, f.FakeClient.dim)}, nil
 	}
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
 	logs := &captureLogHandler{}
 	w := NewWorker(WorkerDeps{
@@ -486,7 +486,7 @@ func TestWorker_FailureLeavesUnstampedThenRecovers(t *testing.T) {
 	})
 	// First run: the single batch fails once, then the loop re-scans the
 	// same (unstamped) ids and succeeds.
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(t, 3, res.Succeeded, "Succeeded after recovery")
 	assert.Equal(t, 0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "missing after recovery")
@@ -495,7 +495,7 @@ func TestWorker_FailureLeavesUnstampedThenRecovers(t *testing.T) {
 // TestWorker_RespectsContextCancel: a cancelled context aborts RunOnce.
 func TestWorker_RespectsContextCancel(t *testing.T) {
 	f := newWorkerFixture(t, 3)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	w := newTestWorker(f, 2)
 	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
@@ -512,7 +512,7 @@ func TestWorker_MissingMessagesSkipMarked(t *testing.T) {
 	f := newWorkerFixture(t, 3)
 	// Delete message 2's row entirely (gone from main DB) but leave its
 	// embed_gen NULL so the scan still finds it.
-	_, err := f.MainDB.Exec(`DELETE FROM messages WHERE id = 2`)
+	_, err := f.MainDB.ExecContext(t.Context(), `DELETE FROM messages WHERE id = 2`)
 	require.NoError(
 		err, "delete msg 2")
 
@@ -521,17 +521,18 @@ func TestWorker_MissingMessagesSkipMarked(t *testing.T) {
 	// present-but-empty. Instead, simulate "missing" by inserting an id
 	// the scan returns but messages has no row: not possible after delete.
 	// So this test covers the empty case via a blank body.
-	_, err = f.MainDB.Exec(
+	_, err = f.MainDB.ExecContext(
+		t.Context(),
 		`INSERT INTO messages (id, subject, embed_gen) VALUES (2, '', NULL)`)
 	require.NoError(
 		err, "reinsert msg 2 empty")
 
-	_, err = f.MainDB.Exec(`DELETE FROM message_bodies WHERE message_id = 2`)
+	_, err = f.MainDB.ExecContext(t.Context(), `DELETE FROM message_bodies WHERE message_id = 2`)
 	require.NoError(
 		err, "delete body 2")
 
 	w := newTestWorker(f, 8)
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 
@@ -546,18 +547,18 @@ func TestWorker_EmptyMessageSkipMarkedNotReprocessed(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 1)
 	// Blank out the only message so it preprocesses to empty.
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = '' WHERE id = 1`)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = '' WHERE id = 1`)
 	require.NoError(err, "blank subject")
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '' WHERE message_id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '' WHERE message_id = 1`)
 	require.NoError(err, "blank body")
 
 	w := newTestWorker(f, 8)
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 1")
 	require.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "skip-marked")
 
 	callsBefore := f.FakeClient.calls
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 2")
 	// Second run finds nothing (the empty message is stamped), so the
 	// embedder is not called again.
@@ -619,10 +620,10 @@ func TestWorker_SkipsInvisibleOnlyContent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newWorkerFixture(t, len(tc.messages))
-			_, err := f.MainDB.Exec(`UPDATE messages SET subject = ''`)
+			_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = ''`)
 			require.NoError(t, err)
 			for i, msg := range tc.messages {
-				_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ?, body_html = ? WHERE message_id = ?`, msg.text, msg.html, i+1)
+				_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ?, body_html = ? WHERE message_id = ?`, msg.text, msg.html, i+1)
 				require.NoError(t, err)
 			}
 			client, calls := newRecordingOpenAIClient(t, 4)
@@ -635,7 +636,7 @@ func TestWorker_SkipsInvisibleOnlyContent(t *testing.T) {
 			assert.Equal(t, tc.want, *calls)
 			assert.Equal(t, tc.wantSucceeded, res.Succeeded)
 			assert.Zero(t, countMissing(t, f.MainDB, int64(f.BuildingGen)))
-			rows, err := f.VectorsDB.Query(`SELECT message_id, chunk_index, chunk_char_start, chunk_char_end FROM embeddings WHERE generation_id = ? ORDER BY message_id, chunk_index`, f.BuildingGen)
+			rows, err := f.VectorsDB.QueryContext(t.Context(), `SELECT message_id, chunk_index, chunk_char_start, chunk_char_end FROM embeddings WHERE generation_id = ? ORDER BY message_id, chunk_index`, f.BuildingGen)
 			require.NoError(t, err)
 			defer func() { _ = rows.Close() }()
 			chunks := []chunk{}
@@ -653,7 +654,7 @@ func TestWorker_SkipsInvisibleOnlyContent(t *testing.T) {
 func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 1)
 	w := newTestWorker(f, 1)
 
@@ -664,9 +665,9 @@ func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T)
 	require.NoError(err, "EmbeddedMessageCount before empty")
 	require.Equal(int64(1), embedded, "precondition: message has an embedding")
 
-	_, err = f.MainDB.Exec(`UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
 	require.NoError(err, "blank subject and invalidate")
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
 	require.NoError(err, "blank body")
 
 	res, err := w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
@@ -690,26 +691,26 @@ func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T)
 func TestWorker_EmptyMessageCASMissDoesNotDeleteExistingEmbedding(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 2)
 	w := newTestWorker(f, 2)
 
 	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "initial RunOnce")
 
-	_, err = f.MainDB.Exec(`UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
 	require.NoError(err, "blank subject and invalidate msg 1")
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
 	require.NoError(err, "blank body msg 1")
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 2`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 2`)
 	require.NoError(err, "invalidate msg 2 to force mixed batch embed")
 
 	f.FakeClient.preReturn = func() {
-		_, err := f.MainDB.Exec(`UPDATE messages SET subject = ?, embed_gen = NULL WHERE id = 1`, "repaired subject")
+		_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = ?, embed_gen = NULL WHERE id = 1`, "repaired subject")
 		require.NoError(err, "race update subject")
-		_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, "repaired body")
+		_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, "repaired body")
 		require.NoError(err, "race update body")
-		_, err = f.MainDB.Exec(`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = 1`)
+		_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = 1`)
 		require.NoError(err, "force CAS token change")
 	}
 	res, err := w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
@@ -731,15 +732,16 @@ func TestWorker_EmptyMessageCASMissDoesNotDeleteExistingEmbedding(t *testing.T) 
 func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 1)
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = 'hi' WHERE id = 1`)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = 'hi' WHERE id = 1`)
 	require.NoError(err)
-	_, err = f.MainDB.Exec(
+	_, err = f.MainDB.ExecContext(
+		t.Context(),
 		`UPDATE message_bodies SET body_text = '', body_html = ? WHERE message_id = 1`,
 		"<p>distinctive html body content</p>")
 	require.NoError(err)
 
 	w := newTestWorker(f, 1)
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 	joined := strings.Join(f.FakeClient.LastInputs, " ")
 	assert.Contains(t, joined, "distinctive html body content", "HTML fallback text embedded")
@@ -751,17 +753,18 @@ func TestWorker_RuneCountUsedForSourceCharLen(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 1)
 	body := strings.Repeat("é", 50) // 50 runes, 100 bytes
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = '' WHERE id = 1`)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = '' WHERE id = 1`)
 	require.NoError(err)
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
 	require.NoError(err)
 
 	w := newTestWorker(f, 1)
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 
 	var srcLen int
-	require.NoError(f.VectorsDB.QueryRow(
+	require.NoError(f.VectorsDB.QueryRowContext(
+		t.Context(),
 		`SELECT source_char_len FROM embeddings WHERE message_id = 1 AND chunk_index = 0`).Scan(&srcLen))
 	assert.LessOrEqual(t, srcLen, utf8.RuneCountInString(body), "source_char_len in runes")
 	assert.Positive(t, srcLen, "non-zero")
@@ -775,7 +778,7 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 	assert := assert.New(t)
 	f := newWorkerFixture(t, 1)
 	body := strings.Repeat("lorem ipsum dolor sit amet consectetur adipiscing elit. ", 40)
-	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
 	require.NoError(err, "update body")
 
 	const batchSize = 4
@@ -800,7 +803,7 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 		BatchSize:     batchSize,
 		Recorder:      f.Recorder,
 	})
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 	require.GreaterOrEqual(len(sizes), 2, "expected >= 2 sub-batches, got %v", sizes)
 	for i, n := range sizes {
@@ -830,7 +833,7 @@ func TestWorker_Progress(t *testing.T) {
 		Progress:     func(p ProgressReport) { reports = append(reports, p) },
 		Recorder:     f.Recorder,
 	})
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce")
 
@@ -848,7 +851,7 @@ func TestWorker_Progress(t *testing.T) {
 func TestWorker_AdvancesWatermark(t *testing.T) {
 	f := newWorkerFixture(t, 5)
 	w := newTestWorker(f, 2)
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(t, int64(5), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark at max id")
 }
@@ -859,16 +862,16 @@ func TestWorker_WatermarkLossHarmless(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 4)
 	w := newTestWorker(f, 4)
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 1")
 	require.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "all stamped")
 
 	// Simulate watermark loss.
-	_, err = f.VectorsDB.Exec(`DELETE FROM embed_watermark`)
+	_, err = f.VectorsDB.ExecContext(t.Context(), `DELETE FROM embed_watermark`)
 	require.NoError(err, "drop watermark")
 
 	callsBefore := f.FakeClient.calls
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 2 (watermark lost)")
 	assert.Equal(t, 0, res.Succeeded, "nothing to re-embed")
 	assert.Equal(t, callsBefore, f.FakeClient.calls, "no re-embed after watermark loss")
@@ -884,7 +887,7 @@ func TestWorker_BackstopCatchesSubWatermarkStraggler(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 5)
 	w := newTestWorker(f, 5)
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 1")
 	require.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "all stamped")
 	require.Equal(int64(5), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark")
@@ -892,17 +895,17 @@ func TestWorker_BackstopCatchesSubWatermarkStraggler(t *testing.T) {
 	// Manually un-stamp message 2 (a sub-watermark straggler) — as if a
 	// prior run dropped it during a transient fault while the watermark
 	// advanced past it.
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 2`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 2`)
 	require.NoError(err, "unstamp msg 2")
 
 	// RunOnce resumes from the watermark (id > 5) and does NOT see id 2.
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce 2")
 	assert.Equal(0, res.Succeeded, "RunOnce misses sub-watermark straggler")
 	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler still missing")
 
 	// Backstop scans from 0 and catches it.
-	res, err = w.RunBackstop(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err = w.RunBackstop(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunBackstop")
 	assert.Equal(1, res.Succeeded, "backstop embeds the straggler")
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler covered")
@@ -914,14 +917,14 @@ func TestWorker_BackstopDoesNotPersistWatermark(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 3)
 	w := newTestWorker(f, 3)
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 	wmBefore := readWatermark(t, f.VectorsDB, int64(f.BuildingGen))
 
 	// Un-stamp one and run the backstop; the watermark must be unchanged.
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 1`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 1`)
 	require.NoError(err)
-	_, err = w.RunBackstop(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunBackstop(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunBackstop")
 	assert.Equal(t, wmBefore, readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark unchanged by backstop")
 }
@@ -960,7 +963,7 @@ func TestWorker_Downshift_MessageSpecific4xxSkipStamp(t *testing.T) {
 			if tc.stampMiss {
 				w.deps.beforeSkipStamp = func(_ context.Context, ids []int64) {
 					for _, id := range ids {
-						_, err := f.MainDB.Exec(`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
+						_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
 						require.NoError(err)
 					}
 				}
@@ -1002,7 +1005,7 @@ func TestWorker_Downshift_AllDropNoSilentDelete(t *testing.T) {
 		MaxConsecutiveFailures: 2,
 		Recorder:               f.Recorder,
 	})
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.Error(t, err, "expected abort")
 	// No message stamped — the misconfigured endpoint did not silently
 	// drop work.
@@ -1055,7 +1058,7 @@ func TestWorker_Downshift_Non4xxDoesNotStrandStraggler(t *testing.T) {
 		MaxConsecutiveFailures: 5,
 		Recorder:               f.Recorder,
 	})
-	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err, "expected a transient drain error")
 
 	// (a) Watermark must stay at the contiguously-stamped id (1), NOT
@@ -1068,7 +1071,7 @@ func TestWorker_Downshift_Non4xxDoesNotStrandStraggler(t *testing.T) {
 	// (c) A subsequent RunOnce (NO backstop) with a healthy embedder
 	// re-finds the stragglers (scan id > watermark==1) and embeds them.
 	f.FakeClient.OnEmbed = nil // restore default healthy behavior
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "second RunOnce")
 	assert.Equal(2, res.Succeeded, "stragglers embedded on retry")
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)),
@@ -1083,14 +1086,15 @@ func TestWorker_EmbedRunLifecycle(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 2)
 	w := newTestWorker(f, 2)
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 
 	var n int
-	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embed_runs`).Scan(&n))
+	require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embed_runs`).Scan(&n))
 	require.Equal(1, n, "exactly one embed_runs row")
 	var ended, succeeded int
-	require.NoError(f.VectorsDB.QueryRow(
+	require.NoError(f.VectorsDB.QueryRowContext(
+		t.Context(),
 		`SELECT COALESCE(ended_at, 0), succeeded FROM embed_runs LIMIT 1`).Scan(&ended, &succeeded))
 	assert.NotZero(t, ended, "ended_at stamped")
 	assert.Equal(t, res.Succeeded, succeeded, "succeeded counter")
@@ -1106,17 +1110,19 @@ func TestWorker_RetiredGenerationStopsCleanly(t *testing.T) {
 	f := newWorkerFixture(t, 3)
 	// Retire the building generation directly so the next Upsert observes
 	// state='retired'.
-	_, err := f.VectorsDB.Exec(
+	_, err := f.VectorsDB.ExecContext(
+		t.Context(),
 		`UPDATE index_generations SET state = 'retired' WHERE id = ?`, int64(f.BuildingGen))
 	require.NoError(err, "retire gen")
 
 	w := newTestWorker(f, 3)
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.ErrorIs(err, context.Canceled, "a retired generation cancels the operation")
 	assert.Equal(t, 0, res.Succeeded, "nothing embedded into retired gen")
 	// No message stamped to the retired generation.
 	var stamped int
-	require.NoError(f.MainDB.QueryRow(
+	require.NoError(f.MainDB.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE embed_gen = ?`, int64(f.BuildingGen)).Scan(&stamped))
 	assert.Equal(t, 0, stamped, "no stamps for retired gen")
 }

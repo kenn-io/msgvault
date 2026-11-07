@@ -85,7 +85,7 @@ func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (I
 	return opts, nil
 }
 
-func (imp *Importer) loadState(sourceID int64, account string) (*SyncState, error) {
+func (imp *Importer) loadState(ctx context.Context, sourceID int64, account string) (*SyncState, error) {
 	checkpoint, err := imp.store.GetLatestCheckpointedSync(sourceID)
 	if err == nil {
 		if !checkpoint.CursorBefore.Valid {
@@ -96,7 +96,7 @@ func (imp *Importer) loadState(sourceID int64, account string) (*SyncState, erro
 	if !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
-	previous, err := imp.store.GetLastSuccessfulSync(sourceID)
+	previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 	if err == nil {
 		if !previous.CursorAfter.Valid {
 			return nil, errors.New("inline completed cursor is missing")
@@ -135,12 +135,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Account.Identifier())
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, opts.Account.Identifier())
 	if err != nil {
 		return sum, err
 	}
 	sum.SourceID = source.ID
-	state, err := imp.loadState(source.ID, opts.Account.Identifier())
+	state, err := imp.loadState(ctx, source.ID, opts.Account.Identifier())
 	if err != nil {
 		return sum, fmt.Errorf("load Inline resume state: %w", err)
 	}
@@ -218,7 +218,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, errors.New("inline conversation response does not match selected chat")
 		}
 		var conversationID int64
-		conversationID, err = scoped.persistConversation(source.ID, conversation, opts.Account)
+		conversationID, err = scoped.persistConversation(ctx, source.ID, conversation, opts.Account)
 		if err != nil {
 			return sum, err
 		}
@@ -284,11 +284,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, err
 }
 
-func (imp *Importer) persistConversation(sourceID int64, conversation Conversation, account Account) (int64, error) {
+func (imp *Importer) persistConversation(ctx context.Context, sourceID int64, conversation Conversation, account Account) (int64, error) {
 	if !validID(conversation.ID) || conversation.ParentChatID < 0 || conversation.ParentChatID > MaxID || conversation.RootMessageID < 0 || conversation.RootMessageID > MaxID || conversation.PeerUserID < 0 || conversation.PeerUserID > MaxID || conversation.MemberCount < 0 {
 		return 0, errors.New("invalid Inline conversation identity or roster metadata")
 	}
-	id, err := imp.store.EnsureConversationWithType(sourceID, chatKey(conversation.ID), conversationType(conversation.Type), conversation.Title)
+	id, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, chatKey(conversation.ID), conversationType(conversation.Type), conversation.Title)
 	if err != nil {
 		return 0, err
 	}
@@ -300,7 +300,7 @@ func (imp *Importer) persistConversation(sourceID int64, conversation Conversati
 	if err != nil {
 		return 0, err
 	}
-	if err = imp.store.SetConversationMetadata(id, sql.NullString{String: string(data), Valid: true}); err != nil {
+	if err = imp.store.SetConversationMetadataContext(ctx, id, sql.NullString{String: string(data), Valid: true}); err != nil {
 		return 0, err
 	}
 	// Direct-chat membership is known independently of who has authored the
@@ -312,19 +312,19 @@ func (imp *Importer) persistConversation(sourceID int64, conversation Conversati
 			members = append(members, Account{UserID: conversation.PeerUserID})
 		}
 		for _, member := range members {
-			participantID, resolveErr := imp.store.EnsureParticipantByIdentifier(SourceType, member.Identifier(), member.DisplayName)
+			participantID, resolveErr := imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, member.Identifier(), member.DisplayName)
 			if resolveErr != nil {
 				return 0, resolveErr
 			}
-			if err = imp.store.EnsureConversationParticipant(id, participantID, "member"); err != nil {
+			if err = imp.store.EnsureConversationParticipantContext(ctx, id, participantID, "member"); err != nil {
 				return 0, err
 			}
 		}
 	}
 	if conversation.MemberCountKnown {
-		err = imp.store.SetConversationMemberCount(id, conversation.MemberCount)
+		err = imp.store.SetConversationMemberCountContext(ctx, id, conversation.MemberCount)
 	} else {
-		err = imp.store.MarkConversationMemberCountUnknown(id)
+		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, id)
 	}
 	return id, err
 }
@@ -432,11 +432,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 		}
 	}
 	key := messageKey(message.ChatID, message.ID)
-	existing, err := imp.store.MessageExistsBatch(sourceID, []string{key})
+	existing, err := imp.store.MessageExistsBatchContext(ctx, sourceID, []string{key})
 	if err != nil {
 		return err
 	}
-	senderID, err := imp.store.EnsureParticipantByIdentifier(SourceType, fmt.Sprintf("%s:user:%d", ProductionOrigin, message.SenderID), message.SenderName)
+	senderID, err := imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, fmt.Sprintf("%s:user:%d", ProductionOrigin, message.SenderID), message.SenderName)
 	if err != nil {
 		return err
 	}
@@ -446,7 +446,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 	}
 	raw := []byte(message.Raw)
 	if oldID := existing[key]; oldID != 0 {
-		prior, readErr := imp.store.GetMessageMetadata(oldID)
+		prior, readErr := imp.store.GetMessageMetadataContext(ctx, oldID)
 		if readErr != nil {
 			return readErr
 		}
@@ -490,11 +490,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 	if err != nil {
 		return err
 	}
-	if err = imp.store.EnsureConversationParticipant(conversationID, senderID, "member"); err != nil {
+	if err = imp.store.EnsureConversationParticipantContext(ctx, conversationID, senderID, "member"); err != nil {
 		return err
 	}
 	if !message.EditedAt.IsZero() {
-		if err = imp.store.SetMessageEdited(messageID); err != nil {
+		if err = imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
 			return err
 		}
 	}
@@ -504,20 +504,20 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 			if !validID(reaction.UserID) {
 				return errors.New("invalid Inline reaction actor")
 			}
-			id, resolveErr := imp.store.EnsureParticipantByIdentifier(SourceType, fmt.Sprintf("%s:user:%d", ProductionOrigin, reaction.UserID), "")
+			id, resolveErr := imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, fmt.Sprintf("%s:user:%d", ProductionOrigin, reaction.UserID), "")
 			if resolveErr != nil {
 				return resolveErr
 			}
 			refs = append(refs, store.ReactionRef{ParticipantID: id, Type: "emoji", Value: reaction.Emoji, CreatedAt: reaction.CreatedAt})
 		}
-		if err = imp.store.ReplaceReactions(messageID, refs); err != nil {
+		if err = imp.store.ReplaceReactionsContext(ctx, messageID, refs); err != nil {
 			return err
 		}
 	}
 	if err = imp.persistMedia(ctx, messageID, body, conversation, message.Media, opts, sum); err != nil {
 		return err
 	}
-	if err = imp.store.ClearMessageDeletedFromSource(sourceID, key); err != nil {
+	if err = imp.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, key); err != nil {
 		return err
 	}
 	sum.MessagesProcessed++
@@ -539,7 +539,7 @@ func (imp *Importer) repairReplies(ctx context.Context, sourceID int64, chatIDs 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rows, err := imp.store.ListUnresolvedMessageRepliesAfter(sourceID, SourceType, after, 100)
+		rows, err := imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, sourceID, SourceType, after, 100, 0)
 		if err != nil {
 			return err
 		}
@@ -553,7 +553,7 @@ func (imp *Importer) repairReplies(ctx context.Context, sourceID int64, chatIDs 
 				return err
 			}
 			if selected[metadata.ChatID] && metadata.ReplyToMessageID > 0 {
-				if err = imp.store.SetReplyTo(sourceID, row.SourceMessageID, messageKey(metadata.ChatID, metadata.ReplyToMessageID)); err != nil {
+				if err = imp.store.SetReplyToContext(ctx, sourceID, row.SourceMessageID, messageKey(metadata.ChatID, metadata.ReplyToMessageID)); err != nil {
 					return err
 				}
 			}

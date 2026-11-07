@@ -3,7 +3,6 @@
 package pgvector
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -58,7 +57,7 @@ func TestDocumentPublicationIgnoresStaleScopeSequencePostgreSQL(t *testing.T) {
 	assert.Equal(t, "revision-20", got.PublishedRevision)
 	assert.Equal(t, int64(20), got.SourceSequence)
 	assert.Equal(t, vector.DocumentCurrent, got.State)
-	_, err = b.DB().Exec(`UPDATE embedding_documents SET published_revision = 'tampered'
+	_, err = b.DB().ExecContext(t.Context(), `UPDATE embedding_documents SET published_revision = 'tampered'
 		WHERE generation_id = $1 AND document_key = $2`, int64(gen), newer.Key)
 	require.NoError(t, err)
 	require.NoError(t, publisher.PublishScope(ctx, gen, scope, 20,
@@ -103,9 +102,9 @@ func TestDocumentPublicationPreservesMatchingVectorsPostgreSQL(t *testing.T) {
 	require.NoError(t, b.PublishScope(ctx, gen, scope, 2,
 		[]vector.DocumentPublication{first, second}, []vector.Chunk{pgDocumentChunk(92, 0.3)}))
 	var firstVectors, secondVectors int
-	require.NoError(t, b.DB().QueryRow(`SELECT COUNT(*) FROM embeddings
+	require.NoError(t, b.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings
 		WHERE generation_id = $1 AND message_id = $2`, int64(gen), 91).Scan(&firstVectors))
-	require.NoError(t, b.DB().QueryRow(`SELECT COUNT(*) FROM embeddings
+	require.NoError(t, b.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings
 		WHERE generation_id = $1 AND message_id = $2`, int64(gen), 92).Scan(&secondVectors))
 	assert.Equal(t, 1, firstVectors)
 	assert.Equal(t, 1, secondVectors)
@@ -137,7 +136,7 @@ func TestDocumentSequenceFencePostgreSQL(t *testing.T) {
 	assert.Equal(t, "revision-a", got.PublishedRevision)
 	assert.Equal(t, int64(3), got.SourceSequence)
 	var vectorRows int
-	require.NoError(t, b.DB().QueryRow(`SELECT COUNT(*) FROM embeddings
+	require.NoError(t, b.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings
 		WHERE generation_id = $1 AND message_id = 91`, int64(gen)).Scan(&vectorRows))
 	assert.Equal(t, 1, vectorRows, "a fence-only publication must preserve vectors")
 
@@ -374,7 +373,7 @@ func TestDocumentPaginationWatermarksAndBasisPostgreSQL(t *testing.T) {
 
 func TestDocumentJournalDisablesAfterLastContextualGenerationPostgreSQL(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE embedding_change_clock (
 			singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
 			sequence BIGINT NOT NULL,
@@ -388,7 +387,7 @@ func TestDocumentJournalDisablesAfterLastContextualGenerationPostgreSQL(t *testi
 	require.NoError(t, err)
 	seedJournal := func() {
 		t.Helper()
-		_, seedErr := db.Exec(`
+		_, seedErr := db.ExecContext(t.Context(), `
 			UPDATE embedding_change_clock SET enabled = TRUE, sequence = sequence + 1 WHERE singleton = 1;
 			INSERT INTO embedding_changes (sequence, kind)
 			SELECT sequence, 'message_update' FROM embedding_change_clock WHERE singleton = 1;`)
@@ -398,9 +397,10 @@ func TestDocumentJournalDisablesAfterLastContextualGenerationPostgreSQL(t *testi
 		t.Helper()
 		var enabled bool
 		var rows int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(
+			t.Context(),
 			`SELECT enabled FROM embedding_change_clock WHERE singleton = 1`).Scan(&enabled))
-		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM embedding_changes`).Scan(&rows))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_changes`).Scan(&rows))
 		assert.False(t, enabled)
 		assert.Zero(t, rows)
 	}
@@ -408,9 +408,10 @@ func TestDocumentJournalDisablesAfterLastContextualGenerationPostgreSQL(t *testi
 		t.Helper()
 		var enabled bool
 		var rows int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(
+			t.Context(),
 			`SELECT enabled FROM embedding_change_clock WHERE singleton = 1`).Scan(&enabled))
-		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM embedding_changes`).Scan(&rows))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_changes`).Scan(&rows))
 		assert.True(t, enabled)
 		assert.Equal(t, 1, rows)
 	}
@@ -439,7 +440,7 @@ func TestDocumentJournalCleanupFailureDoesNotMaskLifecyclePostgreSQL(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	b, ctx, db := newBackendForTest(t)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE embedding_change_clock (
 			singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
 			sequence BIGINT NOT NULL,
@@ -461,7 +462,7 @@ func TestDocumentJournalCleanupFailureDoesNotMaskLifecyclePostgreSQL(t *testing.
 	require.NoError(err)
 	installCleanupFailure := func() {
 		t.Helper()
-		_, triggerErr := db.Exec(`
+		_, triggerErr := db.ExecContext(t.Context(), `
 			CREATE TRIGGER fail_contextual_journal_cleanup
 			BEFORE UPDATE OF sequence ON embedding_change_clock
 			FOR EACH ROW EXECUTE FUNCTION fail_contextual_journal_cleanup()`)
@@ -469,12 +470,12 @@ func TestDocumentJournalCleanupFailureDoesNotMaskLifecyclePostgreSQL(t *testing.
 	}
 	removeCleanupFailure := func() {
 		t.Helper()
-		_, triggerErr := db.Exec(`DROP TRIGGER fail_contextual_journal_cleanup ON embedding_change_clock`)
+		_, triggerErr := db.ExecContext(t.Context(), `DROP TRIGGER fail_contextual_journal_cleanup ON embedding_change_clock`)
 		require.NoError(triggerErr)
 	}
 	seedJournal := func() {
 		t.Helper()
-		_, seedErr := db.Exec(`
+		_, seedErr := db.ExecContext(t.Context(), `
 			UPDATE embedding_change_clock SET enabled = TRUE, sequence = sequence + 1 WHERE singleton = 1;
 			INSERT INTO embedding_changes (sequence, kind)
 			SELECT sequence, 'message_update' FROM embedding_change_clock WHERE singleton = 1;`)
@@ -511,7 +512,7 @@ func TestDocumentJournalCleanupFailureDoesNotMaskLifecyclePostgreSQL(t *testing.
 }
 
 func TestDocumentMigrationUpgradePostgreSQL(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 	_, err := db.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
 	require.NoError(t, err)
@@ -597,7 +598,7 @@ func TestDocumentMigrationUpgradePostgreSQL(t *testing.T) {
 
 func assertScoredChunkBasisPostgreSQL(t *testing.T, b *Backend, gen vector.GenerationID, chunk vector.Chunk, want vector.SourceBasis) {
 	t.Helper()
-	hits, err := b.ScoreMessageChunks(context.Background(), gen, chunk.MessageID, chunk.Vector)
+	hits, err := b.ScoreMessageChunks(t.Context(), gen, chunk.MessageID, chunk.Vector)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, want, hits[0].SourceBasis)

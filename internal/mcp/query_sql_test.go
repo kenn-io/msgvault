@@ -131,7 +131,7 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 		if dataset == "relationship_activity" {
 			rows = "SELECT 1::BIGINT AS message_id, NULL::BIGINT AS canonical_id, FALSE AS unsent, 'synthetic archive row' AS subject"
 		}
-		_, err := fixtureDB.Exec("COPY (" + rows + ") TO '" + path + "' (FORMAT PARQUET)")
+		_, err := fixtureDB.ExecContext(t.Context(), "COPY ("+rows+") TO '"+path+"' (FORMAT PARQUET)")
 		require.NoError(err)
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
@@ -143,7 +143,7 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 	require.NoError(err)
 	require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 	options := query.DuckDBOptions{DisableLegacyAnalyticalViews: true}
-	owner, err := query.NewDuckDBEngine(analyticsDir, "", nil, options)
+	owner, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil, options)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(owner.Close()) })
 	archive, err := query.NewArchiveDuckDBEngine(t.Context(), analyticsDir, options)
@@ -226,7 +226,7 @@ func callSQLToolHTTP(t *testing.T, handler http.Handler, statement, apiKey strin
 		},
 	})
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)

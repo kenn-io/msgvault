@@ -34,7 +34,7 @@ func TestLineChannelsDrainWithoutCancelingSlowMedia(t *testing.T) {
 	for i := range loaded.Line {
 		loaded.Line[i].MaxMediaMB = 1
 	}
-	a, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	a, err := st.GetSourceByTypeAndIdentifier(t.Context(), "line", "2000000001")
 	must.NoError(err)
 	synctest.Test(t, func(t *testing.T) {
 		must := require.New(t)
@@ -80,7 +80,7 @@ func TestLineChannelsDrainWithoutCancelingSlowMedia(t *testing.T) {
 		case <-time.After(time.Minute):
 			must.FailNow("channel A did not start downloading")
 		}
-		b, err := st.GetSourceByTypeAndIdentifier("line", "2000000002")
+		b, err := st.GetSourceByTypeAndIdentifier(t.Context(), "line", "2000000002")
 		must.NoError(err)
 		must.NoError(st.EnqueueLineEventsContext(t.Context(), b.ID, b.Identifier, []store.LineWebhookEvent{{WebhookEventID: "text-b", EventType: "message", TargetMessageID: "text-b", EventTimestamp: 1000, RawJSON: `{"type":"message","timestamp":1000,"webhookEventId":"text-b","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"text-b","type":"text","text":"channel B text"}}`}}))
 		runtime.wake(b.Identifier)
@@ -89,7 +89,7 @@ func TestLineChannelsDrainWithoutCancelingSlowMedia(t *testing.T) {
 		synctest.Wait()
 		row, err := st.LineMessageContext(t.Context(), a.ID, "1")
 		must.NoError(err)
-		refs, err := st.MessageProviderAttachments(row.ID, "line:")
+		refs, err := st.MessageProviderAttachments(t.Context(), row.ID, "line:")
 		must.NoError(err)
 		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State, "the first bounded download must finish before the pass budget")
 		var count int
@@ -108,7 +108,7 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 	for i := range loaded.Line {
 		loaded.Line[i].MaxMediaMB = 1
 	}
-	a, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	a, err := st.GetSourceByTypeAndIdentifier(t.Context(), "line", "2000000001")
 	must.NoError(err)
 	raw := `{"type":"message","webhookEventId":"slow-media","timestamp":1000,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"file","fileName":"example.txt"}}`
 	must.NoError(st.EnqueueLineEventsContext(t.Context(), a.ID, a.Identifier, []store.LineWebhookEvent{{WebhookEventID: "slow-media", EventType: "message", TargetMessageID: "1", EventTimestamp: 1000, RawJSON: raw}}))
@@ -150,7 +150,7 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			refs, err := st.MessageProviderAttachments(row.ID, "line:")
+			refs, err := st.MessageProviderAttachments(t.Context(), row.ID, "line:")
 			if err == nil && refs["line:1"].State == attachmentpolicy.StateStored {
 				ranAfterMedia.Store(true)
 			}
@@ -168,7 +168,7 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 		synctest.Wait()
 		row, err := st.LineMessageContext(t.Context(), a.ID, "1")
 		must.NoError(err)
-		refs, err := st.MessageProviderAttachments(row.ID, "line:")
+		refs, err := st.MessageProviderAttachments(t.Context(), row.ID, "line:")
 		must.NoError(err)
 		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State, "the first bounded download must finish before the pass budget")
 		checks.True(ranAfterMedia.Load(), "queued sync must run after LINE records the completed download")

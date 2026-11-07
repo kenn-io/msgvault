@@ -51,7 +51,7 @@ func TestSyncRemoteImagesRequireOptIn(t *testing.T) {
 			_, err = syncer.ingestMessage(t.Context(), src.ID, &gmail.RawMessage{ID: "message", Raw: raw}, "thread", nil)
 			require.NoError(err)
 			var id int64
-			require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 			refs, err := st.MessageRemoteImages(id)
 			require.NoError(err)
 			if enabled {

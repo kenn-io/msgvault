@@ -35,8 +35,9 @@ func TestPostgreSQLMergeSerializesWithObservationInsert(t *testing.T) {
 	const advisoryKey int64 = 88442211
 	barrier, err := st.DB().Conn(ctx)
 	require.NoError(err)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = barrier.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryKey)
+		_, _ = barrier.ExecContext(context.WithoutCancel(t.Context()), "SELECT pg_advisory_unlock($1)", advisoryKey)
 		_ = barrier.Close()
 	})
 	_, err = barrier.ExecContext(ctx, "SELECT pg_advisory_lock($1)", advisoryKey)
@@ -110,7 +111,7 @@ func TestPostgreSQLConcurrentParticipantObservationInsertIsIdempotent(t *testing
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL concurrency regression")
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"example", "participant-1", "Test User",
 	)
@@ -162,7 +163,7 @@ func TestPostgreSQLConcurrentIdentityMatchCandidateInsertIsIdempotent(t *testing
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL concurrency regression")
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	leftID, err := st.EnsureParticipantByIdentifier("example", "left", "Left User")
 	require.NoError(err)
 	rightID, err := st.EnsureParticipantByIdentifier("example", "right", "Right User")

@@ -635,9 +635,9 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
@@ -703,7 +703,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
+	emailConv, err := s.EnsureConversation(t.Context(), src.ID, "email-thread", "")
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
@@ -795,7 +795,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	conv, err := s.EnsureConversation(src.ID, "c1", "")
+	conv, err := s.EnsureConversation(t.Context(), src.ID, "c1", "")
 	require.NoError(err, "create conv")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
@@ -896,9 +896,9 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,

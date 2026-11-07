@@ -116,13 +116,13 @@ func overrideSetupVectorFeatures(t *testing.T, fn func(context.Context, *store.S
 func TestVectorInitHandleWaitContextReturnsTrueWhenFinished(t *testing.T) {
 	h := &vectorInitHandle{done: make(chan struct{})}
 	close(h.done)
-	assert.True(t, h.WaitContext(context.Background()),
+	assert.True(t, h.WaitContext(t.Context()),
 		"finished init should report done")
 }
 
 func TestVectorInitHandleWaitContextReturnsFalseWhenCancelled(t *testing.T) {
 	h := &vectorInitHandle{done: make(chan struct{})}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.False(t, h.WaitContext(ctx),
 		"a done context must stop the wait before init finishes")
@@ -137,7 +137,7 @@ func TestVectorInitHandleWaitContextPrefersDoneWhenBothReady(t *testing.T) {
 	for range 200 {
 		h := &vectorInitHandle{done: make(chan struct{})}
 		close(h.done)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		require.True(t, h.WaitContext(ctx),
 			"finished init must report done even when ctx is also ready")
@@ -205,7 +205,7 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 	requirements.True(h.WaitTimeout(5 * time.Second))
 	status, _ := srv.VectorStatus()
 	requirements.Equal(api.VectorStatusReady, status)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/people/search",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/people/search",
 		strings.NewReader(`{"query":"synthetic"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -364,7 +364,7 @@ func TestStartVectorInitInstallsOnlyConsentedDocumentSearch(t *testing.T) {
 			h := startVectorInit(testCtx, mainStore, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
 			require.True(t, h.WaitTimeout(5*time.Second))
 
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=bounded&mode=semantic&candidate_limit=10", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=bounded&mode=semantic&candidate_limit=10", nil)
 			response := httptest.NewRecorder()
 			srv.Router().ServeHTTP(response, request)
 			assert.Equal(t, test.wantStatus, response.Code, response.Body.String())
@@ -464,17 +464,18 @@ func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
 		srv := newVectorInitTestServer(t)
 		testCtx := withTestConfig(t, c)
 		h := startVectorInit(testCtx, nil, "/tmp/msgvault.db", gate, srv, scheduler.New(nil))
+		// Cleanup runs after t.Context() is canceled.
 		t.Cleanup(func() {
 			releaseWork()
 			require.True(h.WaitTimeout(5 * time.Second))
-			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			require.NoError(srv.Shutdown(context.WithoutCancel(t.Context())), "shutdown")
 			synctest.Wait()
 		})
 
 		synctest.Wait()
 		_, _, held := gate.Holder()
 		require.True(held, "gate should be held during init")
-		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		probeCtx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 		defer cancel()
 		probeDone := make(chan bool, 1)
 		go func() {
@@ -1089,7 +1090,7 @@ func serveVisualOperationRequest(
 	t *testing.T, handler http.Handler, path, body string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}

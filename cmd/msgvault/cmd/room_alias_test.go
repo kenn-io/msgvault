@@ -22,9 +22,9 @@ func TestRoomAliasDetailUsesLiveMembershipBeforeCacheRebuild(t *testing.T) {
 		SentAt: sql.NullTime{Time: f.lastAt.Add(time.Hour), Valid: true},
 	})
 	requirements.NoError(f.store.ReplaceMessageRecipients(message, "to", []int64{room}, []string{"Room"}))
-	_, err = buildCache(f.dbPath, f.analyticsDir, true)
+	_, err = buildCache(t.Context(), f.dbPath, f.analyticsDir, true)
 	requirements.NoError(err)
-	engine, err := query.NewDuckDBEngine(f.analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), f.analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -48,9 +48,9 @@ func TestRoomAliasDetailUsesLiveMembershipBeforeCacheRebuild(t *testing.T) {
 	// Retain the linked cache while the live store removes the link.
 	requirements.NoError(engine.Close())
 	engine = nil
-	_, err = buildCache(f.dbPath, f.analyticsDir, true)
+	_, err = buildCache(t.Context(), f.dbPath, f.analyticsDir, true)
 	requirements.NoError(err)
-	engine, err = query.NewDuckDBEngine(f.analyticsDir, "", nil)
+	engine, err = query.NewDuckDBEngine(t.Context(), f.analyticsDir, "", nil)
 	requirements.NoError(err)
 	_, err = f.store.UnlinkParticipants(room, f.personID)
 	requirements.NoError(err)

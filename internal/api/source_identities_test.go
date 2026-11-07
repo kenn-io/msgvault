@@ -119,7 +119,7 @@ func TestSourceIdentitiesRejectsInvalidAndUnknownSourceIDs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/sources/"+test.sourceID+"/identities", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/"+test.sourceID+"/identities", nil)
 			response := httptest.NewRecorder()
 			fixture.server.Router().ServeHTTP(response, request)
 			assertions.Equal(test.wantStatus, response.Code, response.Body.String())
@@ -176,7 +176,7 @@ func TestSourceIdentitiesOpenAPIContract(t *testing.T) {
 
 func getSourceIdentities(t *testing.T, server *Server, sourceID int64) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/sources/"+strconv.FormatInt(sourceID, 10)+"/identities", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/"+strconv.FormatInt(sourceID, 10)+"/identities", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	return response

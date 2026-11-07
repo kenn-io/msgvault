@@ -1,7 +1,6 @@
 package personenrollment
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,7 +156,7 @@ func TestServiceCreatesProfileWithoutSelectionAndRequiresCheckAndConsent(t *test
 	assert.NotEqual("remote", after.People.Sweep.Provider.Name)
 	_, err = service.CreateProfile(before.ETag, "other", provider)
 	require.ErrorIs(err, config.ErrConfigConflict)
-	_, err = service.SelectProfile(context.Background(), created.ETag, "remote")
+	_, err = service.SelectProfile(t.Context(), created.ETag, "remote")
 	require.ErrorIs(err, ErrCheckRequired)
 
 	profileConfig := after.People.Sweep
@@ -165,18 +164,18 @@ func TestServiceCreatesProfileWithoutSelectionAndRequiresCheckAndConsent(t *test
 	profileConfig.Provider = peoplesweep.ProviderSelection{Name: "remote"}
 	profile, err := profileConfig.Profile()
 	require.NoError(err)
-	_, err = st.EnsurePersonInferenceProfile(context.Background(), profile)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
-	require.NoError(st.RecordPersonInferenceCheck(context.Background(), store.PersonInferenceCheck{
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
 		ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(),
 		DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode,
 		ModelVersion: profile.Model,
 	}))
-	_, err = service.SelectProfile(context.Background(), created.ETag, "remote")
+	_, err = service.SelectProfile(t.Context(), created.ETag, "remote")
 	require.ErrorIs(err, ErrConsentRequired)
-	_, _, err = st.GrantPersonInferenceConsent(context.Background(), profile.Fingerprint, "test")
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
-	selected, err := service.SelectProfile(context.Background(), created.ETag, "remote")
+	selected, err := service.SelectProfile(t.Context(), created.ETag, "remote")
 	require.NoError(err)
 	assert.Equal(profile.Fingerprint, selected.Fingerprint)
 	after, err = config.Load(configured.ConfigFilePath(), "")

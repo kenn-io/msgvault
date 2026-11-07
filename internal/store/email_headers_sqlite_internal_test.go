@@ -27,7 +27,7 @@ func TestEmailHeaderSQLiteWriterReservation(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)
 				path := filepath.Join(t.TempDir(), "header-reservation.db")
-				st, err := OpenForTest(path)
+				st, err := OpenForTest(t.Context(), path)
 				requirements.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
 				requirements.NoError(st.InitSchema())
@@ -35,7 +35,7 @@ func TestEmailHeaderSQLiteWriterReservation(t *testing.T) {
 				st.db.SetMaxIdleConns(1)
 				source, err := st.GetOrCreateSource("apple-mail", "reservation@example.test")
 				requirements.NoError(err)
-				conversation, err := st.EnsureConversation(source.ID, "thread", "Synthetic thread")
+				conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic thread")
 				requirements.NoError(err)
 				id, err := st.UpsertMessage(&Message{
 					SourceID: source.ID, ConversationID: conversation,
@@ -127,7 +127,7 @@ func TestEmailHeaderSQLiteWriterReservation(t *testing.T) {
 func TestEmailHeaderSQLiteFenceRejectsBeforeCallback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "header-fence.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "header-fence.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	requirements.NoError(st.InitSchema())

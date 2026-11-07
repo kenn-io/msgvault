@@ -103,7 +103,7 @@ Examples:
 			}
 		}()
 
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -127,7 +127,9 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if err := runPstPostImportMigrations(cmd.OutOrStdout(), st, summary, importPstSourceType, identifier, state); err != nil {
+		// These steps run for interrupted imports too (see the function), so
+		// a cancel must not stop them before the summary prints.
+		if err := runPstPostImportMigrations(context.WithoutCancel(ctx), cmd.OutOrStdout(), st, summary, importPstSourceType, identifier, state); err != nil {
 			return err
 		}
 
@@ -174,6 +176,7 @@ func init() {
 }
 
 func runPstPostImportMigrations(
+	ctx context.Context,
 	out io.Writer,
 	st *store.Store,
 	summary *importer.PstImportSummary,
@@ -192,9 +195,9 @@ func runPstPostImportMigrations(
 	// imports, so migrated legacy [identity] rows cannot suppress the
 	// source's own account identifier on a later resume.
 	if store.SourceTypeUsesEmailIdentity(sourceType) {
-		confirmDefaultIdentity(out, st, summary.SourceID, identifier, identifier, "account-identifier", state.logger)
+		confirmDefaultIdentity(ctx, out, st, summary.SourceID, identifier, identifier, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	return nil

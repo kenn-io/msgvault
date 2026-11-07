@@ -53,7 +53,7 @@ func TestInputs(t *testing.T) {
 		{"git", "add", "."},
 		{"git", "-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"},
 	} {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 		cmd.Dir = source
 		output, err := cmd.CombinedOutput()
 		req.NoError(err, "%s", output)
@@ -71,7 +71,7 @@ func TestInputs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
-			cmd := exec.Command("git", "clone", "-q", source, checkout)
+			cmd := exec.CommandContext(t.Context(), "git", "clone", "-q", source, checkout)
 			output, err := cmd.CombinedOutput()
 			require.NoError(err, "%s", output)
 			t.Cleanup(func() { require.NoError(os.RemoveAll(checkout)) })
@@ -79,8 +79,8 @@ func TestInputs(t *testing.T) {
 			if tc.edit {
 				require.NoError(os.WriteFile("testdata/café.txt", []byte("abd"), 0o644))
 			}
-			require.NoError(run())
-			cmd = exec.Command("go", "test", "./...")
+			require.NoError(run(t.Context()))
+			cmd = exec.CommandContext(t.Context(), "go", "test", "./...")
 			output, err = cmd.CombinedOutput()
 			require.NoError(err, "%s", output)
 			assert.Equal(t, tc.cached, strings.Contains(string(output), "(cached)"), "%s", output)

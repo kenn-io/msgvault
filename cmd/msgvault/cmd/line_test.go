@@ -136,7 +136,7 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	must.NoError(err)
 	loaded.Line[0].Enabled = false
 	must.NoError(loaded.Save())
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "line", "2000000001")
 	must.NoError(err)
 	events := make([]store.LineWebhookEvent, 1)
 	for i := range events {

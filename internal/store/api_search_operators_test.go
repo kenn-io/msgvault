@@ -26,8 +26,8 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[1], "cc", []int64{bob}, nil))
 	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[0], "bcc", []int64{carol}, nil))
 	labels := f.EnsureLabels(map[string]string{"work": "Work", "literal": "work_100%", "decoy": "workX100Z"}, "user")
-	requirements.NoError(f.Store.AddMessageLabels(ids[0], []int64{labels["work"], labels["literal"]}))
-	requirements.NoError(f.Store.AddMessageLabels(ids[1], []int64{labels["decoy"]}))
+	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[0], []int64{labels["work"], labels["literal"]}))
+	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[1], []int64{labels["decoy"]}))
 
 	for _, tc := range []struct {
 		input string

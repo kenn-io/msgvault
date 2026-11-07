@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode"
@@ -14,7 +15,7 @@ import (
 // for any phone numbers that match existing participants in the store.
 // Only updates existing participants — does not create new ones.
 // Returns the number of existing participants whose names were updated.
-func ImportContacts(s *store.Store, vcfPath string) (matched, total int, err error) {
+func ImportContacts(ctx context.Context, s *store.Store, vcfPath string) (matched, total int, err error) {
 	contacts, err := vcard.ParseFileWithOptions(vcfPath, vcard.ParseFileOptions{
 		NormalizePhone: normalizeWhatsAppVCardPhone,
 	})
@@ -32,7 +33,7 @@ func ImportContacts(s *store.Store, vcfPath string) (matched, total int, err err
 			if phone == "" {
 				continue
 			}
-			updated, updateErr := s.UpdateParticipantDisplayNameByPhone(phone, c.FullName)
+			updated, updateErr := s.UpdateParticipantDisplayNameByPhone(ctx, phone, c.FullName)
 			if updateErr != nil {
 				errCount++
 				continue

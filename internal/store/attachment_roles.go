@@ -143,10 +143,11 @@ func (s *Store) UpsertAttachmentRecord(
 	}
 	if s.syncGeneration != nil {
 		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 				return err
 			}
-			return s.upsertAttachmentRecord(tx, messageID, write)
+			return s.upsertAttachmentRecord(q, messageID, write)
 		})
 	}
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
@@ -169,14 +170,14 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.syncGeneration != nil {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 				return err
 			}
 		}
 		if write.StoragePath == "" && write.ContentHash == "" {
 			var storagePath, contentHash, state, skipReason string
 			var size int64
-			err := tx.QueryRow(`
+			err := tx.QueryRowContext(ctx, `
 				SELECT storage_path, COALESCE(content_hash, ''), COALESCE(size, 0),
 				       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
 				FROM attachments WHERE message_id = ? AND source_part_key = ?
@@ -195,7 +196,7 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 				return fmt.Errorf("load stored attachment occurrence: %w", err)
 			}
 		}
-		return s.upsertAttachmentRecord(tx, messageID, write)
+		return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: tx}, messageID, write)
 	})
 }
 
@@ -232,7 +233,7 @@ func (s *Store) upsertAttachmentRecordWithStats(
 			}
 		}
 		if invalidateCache {
-			return s.bumpDerivedDataRevision(tx)
+			return s.bumpDerivedDataRevisionContext(ctx, tx)
 		}
 		return nil
 	})

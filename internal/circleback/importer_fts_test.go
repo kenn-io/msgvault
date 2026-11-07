@@ -3,7 +3,6 @@
 package circleback
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -27,7 +26,7 @@ func TestImport_FTSIndexed(t *testing.T) {
 				imp, st := newTestImporter(t, f)
 				require.True(st.FTS5Available(), "FTS5 build tag set but FTS5 not available")
 
-				_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 				if refresh.payload == nil {
@@ -35,7 +34,7 @@ func TestImport_FTSIndexed(t *testing.T) {
 				} else {
 					f.transcripts["42"] = refresh.payload
 				}
-				_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 
 				for _, term := range []string{
@@ -43,13 +42,15 @@ func TestImport_FTSIndexed(t *testing.T) {
 					"pineapplemetric", "forecasttag",
 				} {
 					var hits int
-					require.NoError(st.DB().QueryRow(
+					require.NoError(st.DB().QueryRowContext(
+						t.Context(),
 						`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, term).Scan(&hits),
 						"MATCH %q", term)
 					require.Equal(1, hits, "expected recovered/current FTS hit for %q", term)
 				}
 				var staleHits int
-				require.NoError(st.DB().QueryRow(
+				require.NoError(st.DB().QueryRowContext(
+					t.Context(),
 					`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'layout'`).Scan(&staleHits))
 				require.Zero(staleHits, "the canonical FTS row must replace stale meeting notes")
 			})

@@ -18,7 +18,7 @@ func TestWriterRoleAndExactCalendarGrant(t *testing.T) {
 	s, f, r := fixture(t)
 	f.Calendars[0].AccessRole = "writer"
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, Sources: []agentgrant.SourceRef{{Type: "gcal", Identifier: "person@example.com/team@example.com"}}}
-	_, err := s.Execute(context.Background(), r, grant)
+	_, err := s.Execute(t.Context(), r, grant)
 	require.NoError(t, err)
 	assert.Equal(t, "team@example.com", f.calendar)
 }
@@ -31,7 +31,7 @@ func TestMoveVerifiesBothCalendarsAndArchivesBothSides(t *testing.T) {
 	r.Destination = "other@example.com"
 	r.Event = gcal.EventInput{}
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"event": {ID: "event", Summary: "Original"}}
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Writes, 2)
 	assertions.Equal("team@example.com", result.Writes[0].CalendarID)
@@ -39,7 +39,7 @@ func TestMoveVerifiesBothCalendarsAndArchivesBothSides(t *testing.T) {
 	assertions.Equal("other@example.com", result.Writes[1].CalendarID)
 	f.calls = nil
 	f.Calendars[2].AccessRole = "reader"
-	_, err = s.Execute(context.Background(), r, nil)
+	_, err = s.Execute(t.Context(), r, nil)
 	requirements.Error(err)
 	assertions.Empty(f.calls)
 }
@@ -53,11 +53,11 @@ func TestAvailabilityRequiresIndependentCalendarReadGrant(t *testing.T) {
 	r.TimeMax = r.TimeMin.Add(time.Hour)
 	f.busy = gcal.FreeBusyResponse{Calendars: map[string]gcal.CalendarBusy{"team@example.com": {Busy: []gcal.BusyPeriod{}}}}
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, Sources: []agentgrant.SourceRef{{Type: "gcal", Identifier: "person@example.com/team@example.com"}}}
-	_, err := s.Execute(context.Background(), r, grant)
+	_, err := s.Execute(t.Context(), r, grant)
 	requirements.Error(err)
 	assertions.Empty(f.calls)
 	grant.Permissions = []agentgrant.Permission{agentgrant.PermissionCalendarRead}
-	_, err = s.Execute(context.Background(), r, grant)
+	_, err = s.Execute(t.Context(), r, grant)
 	requirements.NoError(err)
 	assertions.Equal([]string{"freebusy"}, f.calls)
 }
@@ -95,7 +95,7 @@ func TestFuturePartialFailureReturnsCompletedWrite(t *testing.T) {
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"}}}
 	f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)}}}
 	s.Client = failingInsert{f}
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Writes, 1)
 	assertions.True(result.Writes[0].Archived)
@@ -127,7 +127,7 @@ func TestFuturePartialUnknownOutcomeIsExplicitAndKeepsCompletedReceipt(t *testin
 	}}
 	s.Client = unknownOutcomeInsert{f}
 
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Writes, 1)
 	assertions.True(result.Writes[0].Archived)
@@ -165,7 +165,7 @@ func TestFuturePartialMissingEventMarksOutcomeUnknownAndKeepsCompletedReceipt(t 
 	}}
 	s.Client = missingEventInsert{f}
 
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 
 	requirements.NoError(err)
 	requirements.Len(result.Writes, 1)
@@ -198,7 +198,7 @@ func TestExpectedPlanFingerprintRejectsChangedFuturePlanBeforeWrites(t *testing.
 		End:               gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)},
 	}}
 	r.DryRun = true
-	preview, err := s.Execute(context.Background(), r, nil)
+	preview, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.NotEmpty(preview.PlanFingerprint)
 
@@ -207,7 +207,7 @@ func TestExpectedPlanFingerprintRejectsChangedFuturePlanBeforeWrites(t *testing.
 	changedMaster := f.EventsByID["team@example.com"]["series"]
 	changedMaster.Recurrence = []string{"RRULE:FREQ=DAILY;COUNT=5"}
 	f.EventsByID["team@example.com"]["series"] = changedMaster
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 
 	requirements.ErrorIs(err, ErrPlanChanged)
 	assertions.Nil(result)
@@ -265,7 +265,7 @@ func TestExpectedPlanFingerprintBindsNormalizedOAuthAccount(t *testing.T) {
 	r.DryRun = true
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"event": {ID: "event", Summary: "Original"}}
 
-	preview, err := s.Execute(context.Background(), r, nil)
+	preview, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.NotEmpty(preview.PlanFingerprint)
 	assertions.Empty(f.calls)
@@ -276,7 +276,7 @@ func TestExpectedPlanFingerprintBindsNormalizedOAuthAccount(t *testing.T) {
 	r.DryRun = false
 	r.ExpectedPlanFingerprint = preview.PlanFingerprint
 
-	_, err = otherAccountService.Execute(context.Background(), r, nil)
+	_, err = otherAccountService.Execute(t.Context(), r, nil)
 
 	requirements.ErrorIs(err, ErrPlanChanged)
 	assertions.Empty(f.calls)
@@ -292,7 +292,7 @@ func TestFutureDetachedExceptionsAreRejectedBeforeWrite(t *testing.T) {
 	r.Event = gcal.EventInput{}
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, Recurrence: []string{"RRULE:FREQ=DAILY"}}}
 	f.FullEvents["team@example.com"] = [][]gcal.Event{{{ID: "exception", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{DateTime: start.DateTime.Add(48 * time.Hour)}}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "detached exceptions")
 	assert.Empty(t, f.calls)

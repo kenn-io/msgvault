@@ -287,7 +287,7 @@ func TestLineBotConfigMerge(t *testing.T) {
 	ctx := context.Background()
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
-	must.NoError(st.UpdateSourceSyncConfig(src.ID, `{"no_default_identity":true}`))
+	must.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"no_default_identity":true}`))
 	must.NoError(st.SetLineBotContext(ctx, src.ID, "U00000000000000000000000000000002"))
 	bot, err := st.LineBotUserIDContext(ctx, src.ID)
 	must.NoError(err)

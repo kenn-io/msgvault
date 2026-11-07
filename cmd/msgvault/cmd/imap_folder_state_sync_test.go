@@ -41,7 +41,7 @@ func TestIMAPSyncFolderFilter(t *testing.T) {
 		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			filter := imapSyncFolderFilter(st, tc.account, testInvocationWithConfig(cfg), tc.folders, tc.skip)
+			filter := imapSyncFolderFilter(t.Context(), st, tc.account, testInvocationWithConfig(cfg), tc.folders, tc.skip)
 			client := listedIMAPClient(t, addr, filter)
 			resp, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	require.NoError(err)
 	configJSON, err := imapCfg.ToJSON()
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
 	src, err = st.GetSourceByID(src.ID)
 	require.NoError(err)
 	home := t.TempDir()
@@ -83,7 +83,7 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert.Zero(summary.Errors)
 	_, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 	require.NoError(err)
-	rows, err := st.DB().Query(st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ?`), src.ID)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ?`), src.ID)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var ids []string
@@ -110,7 +110,7 @@ func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
 	require.NoError(first.Close())
 	before, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ? AND source_message_id = 'Trash|1'`), src.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ? AND source_message_id = 'Trash|1'`), src.ID)
 	require.NoError(err)
 	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapapi.UID(1))
 	testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
@@ -143,7 +143,7 @@ func listedIMAPClient(t *testing.T, addr string, opts ...imaplib.Option) *imapli
 	}, testutil.IMAPTestPassword, opts...)
 	t.Cleanup(func() { _ = client.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	pageToken := ""
 	for {
@@ -159,7 +159,7 @@ func listedIMAPClient(t *testing.T, addr string, opts ...imaplib.Option) *imapli
 func imapMembershipRowCount(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?`,
 	), sourceID).Scan(&count))
 	return count
@@ -168,7 +168,7 @@ func imapMembershipRowCount(t *testing.T, st *store.Store, sourceID int64) int {
 func imapTombstonedMessageCount(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages
 		 WHERE source_id = ? AND deleted_from_source_at IS NOT NULL`,
 	), sourceID).Scan(&count))
@@ -179,7 +179,7 @@ func seedObservedIMAPMessages(
 	t *testing.T, st *store.Store, src *store.Source, client *imaplib.Client,
 ) {
 	t.Helper()
-	conversationID, err := st.EnsureConversation(src.ID, "imap-membership", "IMAP membership")
+	conversationID, err := st.EnsureConversation(t.Context(), src.ID, "imap-membership", "IMAP membership")
 	require.NoError(t, err)
 	for _, observation := range client.ObservedMemberships() {
 		_, err := st.UpsertMessage(&store.Message{
@@ -200,7 +200,7 @@ func seedIMAPMessage(
 	t *testing.T, st *store.Store, src *store.Source, sourceMessageID, rfc822MessageID string,
 ) {
 	t.Helper()
-	conversationID, err := st.EnsureConversation(src.ID, "imap-delta", "IMAP delta")
+	conversationID, err := st.EnsureConversation(t.Context(), src.ID, "imap-delta", "IMAP delta")
 	require.NoError(t, err)
 	_, err = st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -232,7 +232,7 @@ func TestSaveIMAPFolderStates_CleanRunPersists(t *testing.T) {
 	client := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, client)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+		t.Context(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -268,7 +268,7 @@ func TestSaveIMAPFolderStates_SupersededGenerationCannotOverwriteNewerRun(t *tes
 	require.NoError(err)
 
 	err = saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{SyncRunID: oldRunID}, 0)
+		t.Context(), st, src, client, &gmail.SyncSummary{SyncRunID: oldRunID}, 0)
 	require.ErrorIs(err, store.ErrSyncRunSuperseded)
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
@@ -295,7 +295,7 @@ func TestSaveIMAPFolderStates_ErrorsBlockPersistence(t *testing.T) {
 		Mailbox: "prior", UIDValidity: 7, UIDNext: 9, HighestModSeq: 11,
 	}}))
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{Errors: 1}, 0))
+		t.Context(), st, src, client, &gmail.SyncSummary{Errors: 1}, 0))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -313,7 +313,7 @@ func TestSaveIMAPFolderStates_InterruptionBlocksPersistence(t *testing.T) {
 
 	client := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, client)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.NoError(saveIMAPFolderStates(ctx, st, src, client, &gmail.SyncSummary{}, 0))
 
@@ -332,7 +332,7 @@ func TestSaveIMAPFolderStates_ResumedRunBlocksPersistence(t *testing.T) {
 	client := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, client)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{WasResumed: true}, 0))
+		t.Context(), st, src, client, &gmail.SyncSummary{WasResumed: true}, 0))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -348,7 +348,7 @@ func TestSaveIMAPFolderStates_LimitTruncationBlocksPersistence(t *testing.T) {
 
 	client := listedIMAPClient(t, addr)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{MessagesFound: 3}, 3))
+		t.Context(), st, src, client, &gmail.SyncSummary{MessagesFound: 3}, 3))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -365,7 +365,7 @@ func TestSaveIMAPFolderStates_BelowLimitStillBlocksPersistence(t *testing.T) {
 	client := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, client)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{MessagesFound: 1}, 3))
+		t.Context(), st, src, client, &gmail.SyncSummary{MessagesFound: 1}, 3))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -381,7 +381,7 @@ func TestSaveIMAPFolderStates_NonIMAPClientIsNoOp(t *testing.T) {
 
 	var notIMAP gmail.API
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, notIMAP, &gmail.SyncSummary{}, 0))
+		t.Context(), st, src, notIMAP, &gmail.SyncSummary{}, 0))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -398,7 +398,7 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	first := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, first)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+		t.Context(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
 	require.NoError(first.Close())
 
 	beforeMemberships := imapMembershipRowCount(t, st, src.ID)
@@ -408,7 +408,7 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	require.NotEmpty(opts, "saved states must produce a client option")
 
 	second := listedIMAPClient(t, addr, opts...)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	resp, err := second.ListMessages(ctx, "", "")
 	require.NoError(err)
@@ -419,7 +419,7 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	// the resulting deltas must leave every membership row and every message
 	// exactly as the first sync left them.
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
+		t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
 	assert.Equal(t, beforeMemberships, imapMembershipRowCount(t, st, src.ID),
 		"skipping a mailbox must not delete its memberships")
 	assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID),
@@ -439,14 +439,14 @@ func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing
 	first := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, first)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+		t.Context(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
 	require.NoError(first.Close())
 
 	opts := imapFolderStateOptions(st, src, true, testConfigValue(), testDiscardLogger())
 
 	second := listedIMAPClient(t, addr, opts...)
 	ctx, cancel := context.WithTimeout(
-		context.Background(), 30*time.Second)
+		t.Context(), 30*time.Second)
 	defer cancel()
 	resp, err := second.ListMessages(ctx, "", "")
 	require.NoError(err)
@@ -463,7 +463,7 @@ func TestSaveIMAPFolderStates_UnmappableObservationRollsBackCursor(t *testing.T)
 
 	client := listedIMAPClient(t, addr)
 	err = saveIMAPFolderStates(
-		context.Background(), st, src, client, completedIMAPSyncSummary(t, st, src), 0)
+		t.Context(), st, src, client, completedIMAPSyncSummary(t, st, src), 0)
 	require.Error(err)
 	assert.Contains(t, err.Error(), "resolve IMAP membership")
 	loaded, loadErr := loadIMAPFolderStates(st, src.ID)
@@ -494,7 +494,7 @@ func TestSaveIMAPFolderStates_StatusFailureBlocksDurableApply(t *testing.T) {
 	client := listedIMAPClient(t, addr)
 	seedObservedIMAPMessages(t, st, src, client)
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, &gmail.SyncSummary{}, 0))
+		t.Context(), st, src, client, &gmail.SyncSummary{}, 0))
 
 	states, err := st.GetIMAPFolderStates(src.ID)
 	require.NoError(err)
@@ -503,7 +503,7 @@ func TestSaveIMAPFolderStates_StatusFailureBlocksDurableApply(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(t, known)
 	var membershipCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?
 	`), src.ID).Scan(&membershipCount))
 	assert.Zero(t, membershipCount)
@@ -554,7 +554,7 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 	}}))
 
 	summary := completedIMAPSyncSummary(t, st, src)
-	err = applyIMAPMailboxDeltas(context.Background(), st, src, summary.SyncRunID, []imaplib.MailboxDelta{{
+	err = applyIMAPMailboxDeltas(t.Context(), st, src, summary.SyncRunID, []imaplib.MailboxDelta{{
 		Mailbox: "INBOX",
 		State: imaplib.FolderState{
 			UIDValidity: 17, UIDNext: 4, HighestModSeq: 101, KnownUIDs: []uint32{2, 3},
@@ -596,7 +596,7 @@ func TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists(t *testing.T) {
 
 	client := listedIMAPClient(t, addr)
 	results, err := client.GetMessageLabelsBatch(
-		context.Background(), []string{"INBOX|1", "INBOX|2"})
+		t.Context(), []string{"INBOX|1", "INBOX|2"})
 	require.NoError(err)
 	require.Len(results, 2)
 	require.NoError(results[0].Err)
@@ -607,7 +607,7 @@ func TestSaveIMAPFolderStates_MessageGoneMidRunStillPersists(t *testing.T) {
 	seedIMAPMessage(t, st, src, "INBOX|1", "")
 
 	require.NoError(saveIMAPFolderStates(
-		context.Background(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+		t.Context(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
@@ -628,7 +628,7 @@ func TestSaveIMAPFolderStates_LiveMessageWithoutHeadersBlocksPersistence(t *test
 	// session with an empty body rather than leaving it out of the response.
 	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapapi.UID(2))
 	results, err := client.GetMessageLabelsBatch(
-		context.Background(), []string{"INBOX|1", "INBOX|2"})
+		t.Context(), []string{"INBOX|1", "INBOX|2"})
 	require.NoError(err)
 	require.Len(results, 2)
 	require.Error(results[1].Err)
@@ -642,7 +642,7 @@ func syncedIMAPClient(
 	t *testing.T, addr string, opts ...imaplib.Option,
 ) (*imaplib.Client, []gmail.MessageLabelsBatchResult) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	client := listedIMAPClient(t, addr, opts...)
@@ -687,7 +687,7 @@ func syncedIMAPClient(
 func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	addr, _, hideUID := testutil.StartIMAPMemServerWithMissingUID(
 		t, map[string]int{"INBOX": 2}, "INBOX", imapapi.UID(2))
 	st := testutil.NewTestStore(t)

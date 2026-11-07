@@ -82,16 +82,16 @@ type traversalState struct {
 	Attempts map[string]int64 `json:"attempts"`
 }
 
-func (i *Importer) loadState(sourceID int64, full bool) (traversalState, error) {
+func (i *Importer) loadState(ctx context.Context, sourceID int64, full bool) (traversalState, error) {
 	state := traversalState{Version: 1, Attempts: map[string]int64{}}
 	var raw string
-	run, err := i.store.GetLatestCheckpointedSyncByType(sourceID, SourceType)
+	run, err := i.store.GetLatestCheckpointedSyncByType(ctx, sourceID, SourceType)
 	if err == nil {
 		raw = run.CursorBefore.String
 	} else if !errors.Is(err, store.ErrSyncRunNotFound) {
 		return state, err
 	} else {
-		run, err = i.store.GetLastSuccessfulSyncByType(sourceID, SourceType)
+		run, err = i.store.GetLastSuccessfulSyncByType(ctx, sourceID, SourceType)
 		if err == nil {
 			raw = run.CursorAfter.String
 		} else if !errors.Is(err, store.ErrSyncRunNotFound) {
@@ -213,7 +213,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 	if account.Email != strings.ToLower(strings.TrimSpace(opts.AccountEmail)) {
 		return summary, errors.New("pocket account email does not match configuration")
 	}
-	src, err := i.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	src, err := i.store.GetSourceByTypeAndIdentifier(ctx, SourceType, opts.Identifier)
 	if err != nil {
 		return summary, fmt.Errorf("register Pocket with add-pocket first: %w", err)
 	}
@@ -221,7 +221,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 		return summary, err
 	}
 	summary.SourceID = src.ID
-	state, err := i.loadState(src.ID, opts.Full || !opts.StartedAfter.IsZero())
+	state, err := i.loadState(ctx, src.ID, opts.Full || !opts.StartedAfter.IsZero())
 	if err != nil {
 		return summary, err
 	}
@@ -316,7 +316,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 		}
 		if readErr == nil {
 			var snapshot meetingarchive.Snapshot
-			snapshot, readErr = buildSnapshot(scoped, src.ID, account, rec)
+			snapshot, readErr = buildSnapshot(ctx, scoped, src.ID, account, rec)
 			if readErr == nil && (opts.StartedAfter.IsZero() || (!snapshot.StartedAt.IsZero() && !snapshot.StartedAt.Before(opts.StartedAfter))) {
 				result, readErr = archiver.Upsert(ctx, snapshot, meetingarchive.UpsertOptions{Force: opts.Full || !opts.StartedAfter.IsZero()})
 			}

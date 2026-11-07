@@ -54,7 +54,7 @@ func NewSQLiteTestStore(t *testing.T) *store.Store {
 func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 	t.Helper()
 
-	template, err := sqliteTemplateBytes()
+	template, err := sqliteTemplateBytes(t.Context())
 	require.NoError(t, err, "build sqlite template")
 
 	require.NotContains(t, dbPath, "://", "NewSQLiteTestStoreAt takes a file path, not a database URL")
@@ -62,12 +62,13 @@ func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700), "create sqlite fixture directory")
 	require.NoError(t, os.WriteFile(dbPath, template, 0o600), "clone sqlite template")
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(t, err, "open store")
 
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		// A test may close the store early to run a command against the file.
-		if st.DB().Ping() == nil {
+		if st.DB().PingContext(context.WithoutCancel(t.Context())) == nil {
 			_ = st.Close()
 		}
 	})
@@ -105,18 +106,19 @@ func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 func cloneTestDatabase(t *testing.T, tmpl *pgTemplate) *store.Store {
 	t.Helper()
 
-	name, err := tmpl.clone(context.Background())
+	name, err := tmpl.clone(t.Context())
 	require.NoError(t, err, "clone template database")
 
 	// Register removal before opening, so a failure below does not leak the
 	// clone.
 	var st *store.Store
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
 		}
 		if admin, err := pgAdminDB(tmpl.dbURL); err == nil {
-			dropOwnedDatabase(admin, name)
+			dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name)
 		}
 	})
 
@@ -137,6 +139,7 @@ func newSchemaTestStore(t *testing.T, dbURL string) *store.Store {
 	// Register schema cleanup immediately so that any failure below this
 	// point (store.Open, InitSchema) doesn't leak the schema.
 	var st *store.Store
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
@@ -145,7 +148,7 @@ func newSchemaTestStore(t *testing.T, dbURL string) *store.Store {
 		if err != nil {
 			return
 		}
-		dropOwnedSchema(cleanupDB, schemaName)
+		dropOwnedSchema(context.WithoutCancel(t.Context()), cleanupDB, schemaName)
 	})
 
 	st, err := store.Open(schemaURL(dbURL, schemaName))
@@ -169,7 +172,7 @@ func createTestSchema(t *testing.T, dbURL string) string {
 
 	setupDB, err := pgAdminDB(dbURL)
 	require.NoError(t, err, "open setup connection")
-	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
+	_, schemaErr := setupDB.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
 
 	return schemaName
@@ -182,13 +185,13 @@ var fixtureSchemaNamePattern = regexp.MustCompile("^msgvault_test_([0-9a-f]{16})
 // dropOwnedSchema removes a schema this package created, and does nothing at
 // all for any other name. Failure is ignored: the schema is a leak, not a
 // wrong verdict.
-func dropOwnedSchema(db *sql.DB, name string) {
+func dropOwnedSchema(ctx context.Context, db *sql.DB, name string) {
 	match := fixtureSchemaNamePattern.FindStringSubmatch(name)
 	if match == nil {
 		return
 	}
 
-	_, _ = db.Exec("DROP SCHEMA IF EXISTS msgvault_test_" + match[1] + " CASCADE")
+	_, _ = db.ExecContext(ctx, "DROP SCHEMA IF EXISTS msgvault_test_"+match[1]+" CASCADE")
 }
 
 // schemaURL returns dbURL with its search_path pointed at a schema.
@@ -217,7 +220,7 @@ func assignFreshArchiveUID(t *testing.T, st *store.Store) {
 	if st.IsPostgreSQL() {
 		statement = "UPDATE archive_metadata SET value = $1 WHERE key = 'archive_uid'"
 	}
-	result, err := st.DB().Exec(statement, hex.EncodeToString(random))
+	result, err := st.DB().ExecContext(t.Context(), statement, hex.EncodeToString(random))
 	require.NoError(t, err, "assign archive UID")
 	updated, err := result.RowsAffected()
 	require.NoError(t, err, "assigned archive UID rows")
@@ -225,25 +228,25 @@ func assignFreshArchiveUID(t *testing.T, st *store.Store) {
 }
 
 // CreateIndexedSourceMessage inserts a synthetic email and its search index for shared read fixtures.
-func CreateIndexedSourceMessage(st *store.Store, identifier, providerID, subject, body string) (*store.Source, int64, error) {
+func CreateIndexedSourceMessage(ctx context.Context, st *store.Store, identifier, providerID, subject, body string) (*store.Source, int64, error) {
 	source, err := st.GetOrCreateSource("test", identifier)
 	if err != nil {
 		return nil, 0, fmt.Errorf("create fixture source: %w", err)
 	}
-	conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+	conv, err := st.EnsureConversation(ctx, source.ID, "thread", "Synthetic")
 	if err != nil {
 		return nil, 0, fmt.Errorf("create fixture conversation: %w", err)
 	}
-	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: providerID, MessageType: "email", Subject: sql.NullString{String: subject, Valid: true}})
+	id, err := st.UpsertMessageContext(ctx, &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: providerID, MessageType: "email", Subject: sql.NullString{String: subject, Valid: true}})
 	if err != nil {
 		return nil, 0, fmt.Errorf("create fixture message: %w", err)
 	}
 	if body != "" {
-		if err := st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
+		if err := st.UpsertMessageBodyContext(ctx, id, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
 			return nil, 0, fmt.Errorf("create fixture body: %w", err)
 		}
 	}
-	if err := st.UpsertFTS(id, subject, body, identifier, "", ""); err != nil {
+	if err := st.UpsertFTSContext(ctx, id, subject, body, identifier, "", ""); err != nil {
 		return nil, 0, fmt.Errorf("index fixture message: %w", err)
 	}
 	return source, id, nil
