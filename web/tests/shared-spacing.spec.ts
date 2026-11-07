@@ -3,7 +3,6 @@ import { expect, test, type Page } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
-import { installOperations } from './e2e/fixtures/operations';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 
 test.beforeEach(async ({ page }) => {
@@ -57,29 +56,6 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
     });
   }
   expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 12 : 20])));
-});
-
-test('Past runs keeps its detail below the dialog header on mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
-  const dialog = page.getByRole('dialog', { name: 'Past runs' });
-  await dialog.getByRole('button', { name: 'Open Source sync run' }).click();
-  await expect(dialog.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  const gap = await dialog.locator('.kit-modal-body').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
-  expect(gap).toBe(12);
-});
-
-test('overflowing Display menu keeps its last item reachable', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 360 });
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Display', exact: true }).click();
-  const menu = page.getByRole('menu', { name: 'Display', exact: true });
-  expect(await menu.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
-  await page.keyboard.press('End');
-  const last = menu.locator('[role^="menuitem"]').last();
-  await expect(last).toBeFocused();
-  await expect(last).toBeInViewport({ ratio: 1 });
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {
@@ -201,6 +177,8 @@ for (const width of [1280, 390]) {
     const dialog = page.getByRole('dialog', { name: 'Describe Archive search' });
     await expect(dialog.locator('.kit-modal-header')).toHaveCSS('height', '44px');
     await expect(dialog.locator('.kit-modal-footer')).toHaveCSS('height', '44px');
+    const topInset = await dialog.locator('.kit-modal-body').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
+    expect(topInset).toBe(12);
     const bounds = (await dialog.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(16);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width - 16);

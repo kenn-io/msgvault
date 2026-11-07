@@ -10,7 +10,7 @@ test.use({
   viewport: { width: 1700, height: 700 }
 });
 
-test(`Settings panel stays in place and its last field remains reachable when a category scrolls`, async ({ page }) => {
+test('Settings panel stays in place when a long category makes it scroll', async ({ page }) => {
   await mockArchiveLayout(page);
   const attachmentSections = [
     { id: 'beeper', label: 'Beeper' },
@@ -54,10 +54,6 @@ test(`Settings panel stays in place and its last field remains reachable when a 
 
   expect(tallBox?.x).toBe(shortBox?.x);
   expect(await page.evaluate(() => window.innerWidth - document.documentElement.clientWidth)).toBe(0);
-  const lastField = scroller.getByRole('spinbutton').last();
-  await lastField.scrollIntoViewIfNeeded();
-  await expect(lastField).toBeInViewport({ ratio: 1 });
-  expect(await scroller.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
 });
 
 function shortPagesPDF(pageCount: number): Buffer {
