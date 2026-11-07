@@ -8025,6 +8025,8 @@ components:
           enum:
             - json
             - markdown
+            - srt
+            - vtt
           type: string
         include_transcript:
           type: boolean
@@ -17030,7 +17032,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.47.0
+  version: 3.48.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-07"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.47.0**.
+it is separate from the binary release version. The current schema is **3.48.0**.
+
+Schema 3.48.0 adds SRT and VTT meeting context exports.
 
 Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
 
@@ -2397,6 +2399,13 @@ Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 envelope. Save `content` directly; `content_bytes`, `truncated`, and
 `omitted_message_ids` describe that exact download. Mixed selections fail with
 `selection_not_all_meetings`.
+
+Context also accepts `format: "srt"` or `"vtt"` for exactly one distinct
+meeting. These formats load the transcript automatically and apply `max_bytes`
+to the complete subtitle output alone. Invalid timing or unrepresentable text
+returns `invalid_meeting_subtitles`; output exceeding the budget returns
+`context_budget_too_small`. Neither produces partial subtitles. See the
+[meeting guide](usage/meetings.md) for timing and text policies.
 
 A direct `scope` supports `message_ids`, `source_ids`, `participant_id` or
 `participant_ids`, `person_id`, `domains`, `after`, `before`, and `deletion`.

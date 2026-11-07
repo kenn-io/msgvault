@@ -74,6 +74,12 @@ func (s *Store) GetMeetingContextContext(
 	if scope.MessageIDs != nil {
 		ids = normalizedSignedIDs(*scope.MessageIDs)
 	}
+	if options.Format == meetingcontent.FormatSRT || options.Format == meetingcontent.FormatVTT {
+		options.IncludeTranscript = true
+		if len(ids) != 1 {
+			return nil, fmt.Errorf("%w: exactly one distinct meeting ID is required", meetingcontent.ErrInvalidSubtitles)
+		}
+	}
 	var archiveUID string
 	entries := make([]meetingcontent.Entry, 0, len(ids))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {

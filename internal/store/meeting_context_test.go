@@ -1,10 +1,13 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"math"
+	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +74,11 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
+	for _, ids := range [][]int64{nil, fixture.meetingIDs[:2]} {
+		_, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
+		requirements.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+		requirements.ErrorContains(err, "exactly one distinct meeting ID is required")
+	}
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
 		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2]})}, meetingcontent.PacketOptions{
 			Format: meetingcontent.FormatJSON, IncludeTranscript: true, MaxBytes: 1 << 20,
@@ -84,6 +92,48 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	requirements.Len(transcript.Segments, 2)
 	assertions.Equal("Start", transcript.Segments[0].Text)
 	assertions.Equal("Finish", transcript.Segments[1].Text)
+	raw, err := os.ReadFile("../granola/testdata/note_full.json")
+	requirements.NoError(err)
+	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, string(raw))
+	metadata := sql.NullString{String: `{"platform":"granola","retained":"synthetic"}`, Valid: true}
+	requirements.NoError(fixture.store.SetMessageMetadataContext(t.Context(), id, metadata))
+	before, err := fixture.store.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	beforeMetadata, err := fixture.store.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	requirements.True(beforeMetadata.Valid)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, meetingcontent.PacketOptions{Format: format, IncludeTranscript: false, MaxBytes: 4096})
+		requirements.NoError(err)
+		assertions.Contains(result.Content, "Let's get started with the quarterly review.")
+	}
+	after, err := fixture.store.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+	storedRaw, err := fixture.store.GetMessageRawContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(raw, storedRaw)
+	storedMetadata, err := fixture.store.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(beforeMetadata, storedMetadata)
+	twenty, err := fixture.store.GetOrCreateSource("twenty", "origin@example.test")
+	requirements.NoError(err)
+	anchored := []byte(`{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"words":[{"text":"Anchored","start_timestamp":{"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]},"calendar_event":{"startsAt":"2025-01-01T00:00:00Z","endsAt":"2025-01-01T01:00:00Z"}}`)
+	anchoredID, err := fixture.store.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: twenty.ID, SourceMessageID: "anchored", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: "anchored", ConversationType: "meeting", Title: "Anchored"},
+		RawMIME:      anchored, RawFormat: "twenty_json",
+	})
+	requirements.NoError(err)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{anchoredID})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		requirements.NoError(err)
+		want := "00:00:10,000 --> 00:00:12,000"
+		if format == meetingcontent.FormatVTT {
+			want = "00:00:10.000 --> 00:00:12.000"
+		}
+		assertions.Contains(result.Content, want)
+	}
 }
 
 func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {

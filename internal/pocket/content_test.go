@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,40 @@ func TestPocketContent(t *testing.T) {
 	requirements.NotNil(content.DurationSeconds)
 	assertions.InDelta(60.0, *content.DurationSeconds, 0)
 	assertions.Equal(1, rec.StartedAt.Day())
+	for _, test := range []struct {
+		name, bounds     string
+		complete, legacy bool
+	}{
+		{"missing start", `"end":3`, false, false},
+		{"null start", `"start":null,"end":3`, false, false},
+		{"zero start", `"start":0,"end":3`, true, false},
+		{"positive", `"start":1.25,"end":3`, true, false},
+		{"missing end", `"start":1.25`, false, false},
+		{"null end", `"start":1.25,"end":null`, false, false},
+		{"zero interval", `"start":0,"end":0`, false, false},
+		{"legacy missing normalized end", `"start":1.25,"end":3`, true, true},
+	} {
+		rec, err := DecodeRecording([]byte(strings.Replace(recordingFixture, `"start":1.25,"end":3`, test.bounds, 1)))
+		requirements.NoError(err)
+		content, err := Normalize(rec)
+		requirements.NoError(err)
+		if test.legacy {
+			content.Transcript.Segments[0].EndOffsetSeconds = nil
+		}
+		snapshot, err := makeSnapshot(1, Account{Email: "owner@example.com"}, rec, content)
+		requirements.NoError(err)
+		decoded := meetingcontent.Decode("pocket_json", snapshot.Raw, nil)
+		for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+			result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: decoded}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+			if test.complete {
+				requirements.NoError(err, test.name)
+				assertions.Contains(result.Content, "Speaker One: Decide roadmap")
+			} else {
+				requirements.ErrorIs(err, meetingcontent.ErrInvalidSubtitles, test.name)
+				assertions.Nil(result)
+			}
+		}
+	}
 }
 
 func TestPocketContentKeepsOriginalTextAndResolvedSpeakers(t *testing.T) {

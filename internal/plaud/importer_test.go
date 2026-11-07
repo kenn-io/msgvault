@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -50,7 +52,7 @@ func (f *fakeSource) Recording(_ context.Context, id string) (Recording, error) 
 }
 
 func fixture(id string) Recording {
-	return Recording{File: File{ID: id, Name: "Planning", StartedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), DurationMS: 90000}, Notes: []Note{{ID: "summary", Type: "auto_sum_note", Content: "Release summary"}}, Segments: []Segment{{Speaker: "Speaker 1", Text: "Ship the searchable release", StartSeconds: 2}}, TranscriptBlock: "transaction_polish"}
+	return Recording{File: File{ID: id, Name: "Planning", StartedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), DurationMS: 90000}, Notes: []Note{{ID: "summary", Type: "auto_sum_note", Content: "Release summary"}}, Segments: []Segment{{Speaker: "Speaker 1", Text: "Ship the searchable release", StartSeconds: new(2.0)}}, TranscriptBlock: "transaction_polish"}
 }
 
 func sourceFixture(ids ...string) *fakeSource {
@@ -94,6 +96,9 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	require := require.New(t)
 	st, src := registered(t)
 	f := sourceFixture("f")
+	r := f.recordings["f"]
+	r.Segments[0].StartSeconds, r.Segments[0].EndSeconds = new(1.25), new(2.75)
+	f.recordings["f"] = r
 	imp := NewImporter(st, f)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
 	sum, err := imp.Import(t.Context(), opts)
@@ -106,7 +111,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsUpdated)
-	r := f.recordings["f"]
+	r = f.recordings["f"]
 	r.Segments[0].Speaker = "Alex Example"
 	r.Notes[0].ID = "regenerated-summary"
 	r.Notes[0].Content = "Updated summary"
@@ -130,6 +135,16 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	require.Len(c.Transcript.Segments, 1)
 	assert.Equal("Alex Example", c.Transcript.Segments[0].Speaker)
 	assert.Equal("Updated summary", c.Summary.Text)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: c}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.NoError(err)
+		want := "00:00:01,250 --> 00:00:02,750"
+		if format == meetingcontent.FormatVTT {
+			want = "00:00:01.250 --> 00:00:02.750"
+		}
+		assert.Contains(result.Content, want)
+		assert.Contains(result.Content, "Alex Example: Ship the searchable release")
+	}
 	body, err := st.GetMessageBodyText(t.Context(), mid)
 	require.NoError(err)
 	assert.Contains(body, "Ship the searchable release")
@@ -139,12 +154,93 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	assert.Equal(int64(1), hits)
 	assert.NotContains(string(raw), "presigned")
 	assert.NotContains(string(raw), "data_link")
+	for _, tc := range []struct {
+		version    int
+		start, end float64
+	}{
+		{1, 1250, 2750}, {2, 1250, 2750}, {3, 1.25, 2.75}, {1, 0, 2750}, {2, 0, 2750},
+	} {
+		var legacy evidence
+		require.NoError(json.Unmarshal(raw, &legacy))
+		legacy.Version, legacy.Speakers = tc.version, nil
+		legacy.Segments[0].StartSeconds, legacy.Segments[0].EndSeconds = new(tc.start), new(tc.end)
+		snapshot, err := legacy.snapshot(src.ID, "user@example.com")
+		require.NoError(err)
+		_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+		require.NoError(err)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		preserved, err := st.GetMessageRaw(mid)
+		require.NoError(err)
+		require.NoError(json.Unmarshal(preserved, &legacy))
+		assert.Equal(tc.version, legacy.Version)
+		assert.InDelta(tc.start, *legacy.Segments[0].StartSeconds, 0)
+		assert.InDelta(tc.end, *legacy.Segments[0].EndSeconds, 0)
+		body, err = st.GetMessageBodyText(t.Context(), mid)
+		require.NoError(err)
+		if tc.version == 1 && tc.start == 0 {
+			assert.NotContains(body, "[00:00] Alex Example")
+		} else if tc.start != 0 {
+			assert.Contains(body, "[00:01] Alex Example")
+		}
+		c := meetingcontent.Decode("plaud_json", preserved, nil)
+		require.NotNil(c.DurationSeconds)
+		assert.InDelta(90.0, *c.DurationSeconds, 0)
+		assert.Equal("Updated summary", c.Summary.Text)
+		for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+			result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: c}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+			if tc.version == 1 && tc.start == 0 {
+				require.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+				continue
+			}
+			require.NoError(err)
+			want := "00:00:01,250 --> 00:00:02,750"
+			if tc.start == 0 {
+				want = "00:00:00,000 --> 00:00:02,750"
+			}
+			if format == meetingcontent.FormatVTT {
+				want = strings.ReplaceAll(want, ",", ".")
+			}
+			assert.Contains(result.Content, want)
+		}
+	}
+	r.Segments = []Segment{{Speaker: "Alex Example", Text: "Ship the searchable release", StartSeconds: new(0.0), EndSeconds: new(0.25)}}
+	f.recordings["f"] = r
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	raw, err = st.GetMessageRaw(mid)
+	require.NoError(err)
+	var fresh evidence
+	require.NoError(json.Unmarshal(raw, &fresh))
+	assert.Equal(3, fresh.Version)
+	assert.Equal(r.Segments, fresh.Segments)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: meetingcontent.Decode("plaud_json", raw, nil)}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.NoError(err)
+		want := "00:00:00,000 --> 00:00:00,250"
+		if format == meetingcontent.FormatVTT {
+			want = strings.ReplaceAll(want, ",", ".")
+		}
+		assert.Contains(result.Content, want)
+	}
+	pages := f.pages
 	f.pages = nil
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	ids, err = st.MessageExistsBatch(src.ID, []string{"f"})
 	require.NoError(err)
 	assert.Equal(mid, ids["f"])
+	fresh.Version = 4
+	snapshot, err := fresh.snapshot(src.ID, "user@example.com")
+	require.NoError(err)
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	f.pages = pages
+	_, err = imp.Import(t.Context(), opts)
+	require.ErrorContains(err, "invalid archived plaud evidence")
+	after, err := st.GetMessageRaw(mid)
+	require.NoError(err)
+	assert.Equal(snapshot.Raw, after)
 }
 
 func TestImporterEnumeratesShortPagesBeyondFiveHundred(t *testing.T) {

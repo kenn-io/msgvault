@@ -613,6 +613,7 @@ func TestMeetingExploreScopeMapsPopulationAndRevisionFailures(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
+		{name: "context empty selection", result: &query.ExploreMeetingSelection{CacheRevision: "r"}, wantStatus: http.StatusBadRequest, wantCode: "meeting_selection_too_large"},
 		{name: "context selection too large", result: &query.ExploreMeetingSelection{SelectedCount: 101, MeetingCount: 101, LimitExceeded: true, CacheRevision: "r"}, wantStatus: http.StatusBadRequest, wantCode: "meeting_selection_too_large"},
 		{name: "actions scope too large", result: &query.ExploreMeetingSelection{SelectedCount: 10001, MeetingCount: 10001, LimitExceeded: true, CacheRevision: "r"}, wantStatus: http.StatusConflict, wantCode: "meeting_scope_too_large"},
 		{name: "cache changed", result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{1}, CacheRevision: "new"}, wantStatus: http.StatusConflict, wantCode: "archive_revision_changed"},
@@ -671,6 +672,7 @@ func TestMeetingStoreErrorsUseStableHTTPContracts(t *testing.T) {
 		{name: "wrong type", err: store.ErrNotMeeting, wantStatus: http.StatusBadRequest, wantCode: "not_a_meeting"},
 		{name: "projection", err: store.ErrMeetingProjectionUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "meeting_projection_unavailable"},
 		{name: "cursor", err: store.ErrMeetingInvalidCursor, wantStatus: http.StatusBadRequest, wantCode: "invalid_cursor"},
+		{name: "subtitle input", err: meetingcontent.ErrInvalidSubtitles, wantStatus: http.StatusBadRequest, wantCode: "invalid_meeting_subtitles"},
 		{name: "budget", err: meetingcontent.ErrBudgetTooSmall, wantStatus: http.StatusBadRequest, wantCode: "context_budget_too_small"},
 	}
 	for _, test := range tests {

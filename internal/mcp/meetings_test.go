@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
-	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -14,14 +15,16 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -60,37 +63,31 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 		require.NoError(t, err)
 	}
 	server := httptest.NewServer(api.NewServer(
-		&config.Config{}, st, nil, slog.New(slog.DiscardHandler),
+		&config.Config{Server: config.ServerConfig{APIKey: "meeting-owner"}}, st, nil, slog.New(slog.DiscardHandler),
 	).Router())
 	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{
+	client, err := daemonclient.New(daemonclient.Config{APIKey: "meeting-owner",
 		URL: server.URL, AllowInsecure: true, HTTPClient: server.Client(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, st
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported := newMeetingMCPBackend(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	t.Cleanup(cancel)
+	backend, imported, st := newMeetingMCPBackend(t)
+	ctx := t.Context()
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
-	}, false).Connect(ctx, serverTransport, nil)
-	must.NoError(err)
-	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
-	client := sdkmcp.NewClient(
-		&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"},
-		&sdkmcp.ClientOptions{Capabilities: &sdkmcp.ClientCapabilities{}},
-	)
-	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	must.NoError(err)
-	t.Cleanup(func() { checks.NoError(clientSession.Close()) })
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, false).Connect(t.Context(), serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"}, &sdkmcp.ClientOptions{Capabilities: &sdkmcp.ClientCapabilities{}})
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, clientSession.Close()) })
 
 	listed, err := clientSession.ListTools(ctx, nil)
 	must.NoError(err)
@@ -204,6 +201,36 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.NotNil(emptyMetrics)
 	checks.Nil(emptyMetrics.Totals.AverageKnownSeconds)
+	assert, require := assert.New(t), require.New(t)
+	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
+	require.NoError(err)
+	raw, err := os.ReadFile("../granola/testdata/note_full.json")
+	require.NoError(err)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle-mcp", SourceConversationID: "subtitle-mcp", Title: "Synthetic", Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Email: "subtitle@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	for _, format := range []string{"srt", "vtt"} {
+		result, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{archived.MessageID}, "format": format, "max_bytes": 4096, "include_transcript": false}})
+		require.NoError(err)
+		require.False(result.IsError)
+		structured := meetingStructuredContent(t, result)
+		requestFormat := generated.MeetingContextRequestFormat(format)
+		expected, err := backend.GetMeetingContext(ctx, generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &requestFormat, MaxBytes: new(int64(4096)), IncludeTranscript: new(false)})
+		require.NoError(err)
+		assert.Equal(expected.Content, structured["content"])
+		assert.Equal(false, structured["truncated"])
+	}
+	snapshot.Raw = []byte(strings.Replace(string(raw), "Let's get started with the quarterly review.", "Hello <b>", 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	refused, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{archived.MessageID}, "format": "srt", "max_bytes": 4096}})
+	require.NoError(err)
+	require.True(refused.IsError)
+	require.Len(refused.Content, 1)
+	message, ok := refused.Content[0].(*sdkmcp.TextContent)
+	require.True(ok)
+	assert.Contains(message.Text, "invalid_meeting_subtitles:")
+	assert.Contains(message.Text, "use --format vtt")
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {

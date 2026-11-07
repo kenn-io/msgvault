@@ -77,14 +77,17 @@ func decodeOmiTranscript(fields map[string]jsontext.Value) (Transcript, float64)
 		if (wire.Start != nil && *wire.Start < 0) || (wire.End != nil && *wire.End < 0) || (wire.Start != nil && wire.End != nil && *wire.End < *wire.Start) {
 			wire.Start = nil
 		}
-		speaker := strings.TrimSpace(wire.Name)
-		if speaker == "" && wire.SpeakerID != nil {
-			speaker = fmt.Sprintf("Speaker %d", *wire.SpeakerID)
+		if wire.End != nil && *wire.End < 0 {
+			wire.End = nil
 		}
-		if speaker == "" {
+		speaker := wire.Name
+		if strings.TrimSpace(speaker) == "" {
 			speaker = "Unknown speaker"
+			if wire.SpeakerID != nil {
+				speaker = fmt.Sprintf("Speaker %d", *wire.SpeakerID)
+			}
 		}
-		segments = append(segments, Segment{Speaker: speaker, Text: strings.TrimSpace(*wire.Text), OffsetSeconds: wire.Start})
+		segments = append(segments, Segment{Speaker: speaker, Text: *wire.Text, OffsetSeconds: wire.Start, EndOffsetSeconds: wire.End})
 	}
 	if len(segments) == 0 {
 		return Transcript{State: StateEmpty}, last - first

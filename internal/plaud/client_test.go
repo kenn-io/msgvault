@@ -15,10 +15,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/time/rate"
 )
 
-// Fixtures follow the official @plaud-ai/mcp 0.3.13 tool surface. The
+// Fixtures follow the official @plaud-ai/mcp 0.3.14 tool surface. The
 // in-memory server replaces the external account, exercising real MCP calls.
 func toolSession(t *testing.T, results map[string]func(map[string]any) string) *Session {
 	t.Helper()
@@ -33,7 +35,7 @@ func toolSession(t *testing.T, results map[string]func(map[string]any) string) *
 
 func resultSession(t *testing.T, results map[string]func(map[string]any) *mcp.CallToolResult) *Session {
 	t.Helper()
-	server := mcp.NewServer(&mcp.Implementation{Name: "fixture-plaud", Version: "0.3.13"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "fixture-plaud", Version: "0.3.14"}, nil)
 	for name, handler := range results {
 		mcp.AddTool[map[string]any, any](server, &mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}, func(_ context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			return handler(args), nil, nil
@@ -156,31 +158,97 @@ func wrap(payload string) string {
 }
 
 func TestRecordingHydratesEveryTranscriptPageAndNotes(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	s := toolSession(t, map[string]func(map[string]any) string{
-		"get_file": func(map[string]any) string {
-			return wrap(`{"id":"file-1","name":"Planning","start_at":"2026-09-01T12:00:00Z","duration":90000,"presigned_url":"https://example.com/audio?secret=temporary","source_list":[{"data_type":"transaction_polish","data_content":"","data_link":"https://example.com/block"}]}`)
-		},
-		"get_note": func(map[string]any) string {
-			return wrap(`[{"id":"note-1","data_type":"auto_sum_note","data_content":"Ship the release."}]`)
-		},
-		"get_transcript": func(args map[string]any) string {
-			if args["cursor"] == nil {
-				return wrap(`{"file_id":"file-1","block":"transaction_polish","total":2,"offset":0,"returned":1,"next_cursor":"next","segments":[{"speaker":"Speaker 1","content":"First page","start_time":0,"end_time":1}]}`)
+	for _, tc := range []struct {
+		name, bounds, block string
+		start, end          *float64
+		complete, invalid   bool
+	}{
+		{"missing", `,"end_time":2750`, "", nil, new(2.75), false, false},
+		{"null", `,"start_time":null,"end_time":2750`, "", nil, new(2.75), false, false},
+		{"zero", `,"start_time":0,"end_time":250`, "", new(0.0), new(0.25), true, false},
+		{"positive", `,"start_time":1250,"end_time":2750`, "", new(1.25), new(2.75), true, false},
+		{"transaction", `,"start_time":1250,"end_time":2750`, "transaction", new(1.25), new(2.75), true, false},
+		{"missing end", `,"start_time":0`, "", new(0.0), nil, false, false},
+		{"null end", `,"start_time":0,"end_time":null`, "", new(0.0), nil, false, false},
+		{"zero end", `,"start_time":0,"end_time":0`, "", new(0.0), new(0.0), false, false},
+		{"negative", `,"start_time":-1,"end_time":1000`, "", nil, nil, false, true},
+		{"negative end", `,"start_time":0,"end_time":-1`, "", nil, nil, false, true},
+		{"reversed", `,"start_time":2750,"end_time":1250`, "", nil, nil, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			if tc.block == "" {
+				tc.block = "transaction_polish"
 			}
-			return wrap(`{"file_id":"file-1","block":"transaction_polish","total":2,"offset":1,"returned":1,"next_cursor":null,"segments":[{"speaker":"Alex Example","content":"Second page","start_time":61,"end_time":62}]}`)
-		},
-	})
-	rec, err := s.Recording(t.Context(), "file-1")
-	require.NoError(err)
-	require.Len(rec.Segments, 2)
-	assert.Equal("Second page", rec.Segments[1].Text)
-	assert.Equal("Alex Example", rec.Segments[1].Speaker)
-	assert.InDelta(61.0, rec.Segments[1].StartSeconds, 1e-9)
-	require.Len(rec.Notes, 1)
-	assert.Equal("Ship the release.", rec.Notes[0].Content)
-	assert.Equal(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), rec.File.StartedAt)
+			file := `{"id":"file-1","name":"Planning","start_at":"2026-09-01T12:00:00Z","duration":90000,"presigned_url":"https://example.com/audio?secret=temporary","source_list":[{"data_type":"` + tc.block + `","data_content":"","data_link":"https://example.com/block"}]}`
+			s := toolSession(t, map[string]func(map[string]any) string{
+				"get_current_user": func(map[string]any) string { return `{"email":"user@example.com"}` },
+				"list_files":       func(map[string]any) string { return wrap(`{"data":[` + file + `],"total":1,"has_more":false}`) },
+				"get_file":         func(map[string]any) string { return wrap(file) },
+				"get_note": func(map[string]any) string {
+					return wrap(`[{"id":"note-1","data_type":"auto_sum_note","data_content":"Ship the release."}]`)
+				},
+				"get_transcript": func(args map[string]any) string {
+					if args["cursor"] == nil {
+						return wrap(`{"file_id":"file-1","block":"` + tc.block + `","total":2,"offset":0,"returned":1,"next_cursor":"next","segments":[{"speaker":"Speaker 1","content":"First page"` + tc.bounds + `}]}`)
+					}
+					return wrap(`{"file_id":"file-1","block":"` + tc.block + `","total":2,"offset":1,"returned":1,"next_cursor":null,"segments":[{"speaker":"Alex Example","content":"Second page","start_time":61000,"end_time":62000}]}`)
+				},
+			})
+			rec, err := s.Recording(t.Context(), "file-1")
+			if tc.invalid {
+				require.ErrorIs(err, ErrContract)
+				return
+			}
+			require.NoError(err)
+			require.Len(rec.Segments, 2)
+			assert.Equal(tc.start, rec.Segments[0].StartSeconds)
+			assert.Equal(tc.end, rec.Segments[0].EndSeconds)
+			assert.Equal("Second page", rec.Segments[1].Text)
+			assert.Equal("Alex Example", rec.Segments[1].Speaker)
+			require.NotNil(rec.Segments[1].StartSeconds)
+			assert.InDelta(61.0, *rec.Segments[1].StartSeconds, 1e-9)
+			require.Len(rec.Notes, 1)
+			assert.Equal("Ship the release.", rec.Notes[0].Content)
+			assert.Equal(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), rec.File.StartedAt)
+			st, source := registered(t)
+			_, err = NewImporter(st, s).Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
+			require.NoError(err)
+			ids, err := st.MessageExistsBatch(source.ID, []string{"file-1"})
+			require.NoError(err)
+			body, err := st.GetMessageBodyText(t.Context(), ids["file-1"])
+			require.NoError(err)
+			raw, err := st.GetMessageRaw(ids["file-1"])
+			require.NoError(err)
+			var saved evidence
+			require.NoError(json.Unmarshal(raw, &saved))
+			assert.Equal(3, saved.Version)
+			assert.Equal(rec.Segments, saved.Segments)
+			assert.InDelta(90.0, saved.DurationSeconds, 0)
+			if tc.start == nil {
+				assert.Nil(rec.Segments[0].StartSeconds)
+				assert.NotContains(body, "[00:00] Speaker 1")
+			}
+			for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+				result, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: new([]int64{ids["file-1"]})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+				if tc.complete {
+					require.NoError(err)
+					assert.Contains(result.Content, "Speaker 1: First page")
+					if tc.name == "positive" || tc.name == "transaction" {
+						want := "00:00:01,250 --> 00:00:02,750"
+						if format == meetingcontent.FormatVTT {
+							want = strings.ReplaceAll(want, ",", ".")
+						}
+						assert.Contains(result.Content, want)
+						assert.Contains(body, "[00:01] Speaker 1")
+					}
+				} else {
+					require.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+					assert.Nil(result)
+				}
+			}
+		})
+	}
 }
 
 func TestTranscriptFallbackAndContractFailures(t *testing.T) {
@@ -191,7 +259,7 @@ func TestTranscriptFallbackAndContractFailures(t *testing.T) {
 		{"fallback", `Block "transaction_polish" has no content for this recording yet.`, wrap(`{"file_id":"f","block":"transaction","total":1,"offset":0,"returned":1,"segments":[{"speaker":"Speaker 1","content":"Raw","start_time":0}]}`), false},
 		{"wrong identity", wrap(`{"file_id":"other","block":"transaction_polish","total":0,"offset":0,"returned":0,"segments":[]}`), "", true},
 		{"empty midstream", wrap(`{"file_id":"f","block":"transaction_polish","total":2,"offset":0,"returned":1,"next_cursor":"x","segments":[{"content":"First","start_time":0}]}`), `Block "transaction_polish" has no content for this recording yet.`, true},
-		{"repeat cursor", wrap(`{"file_id":"f","block":"transaction_polish","total":3,"offset":0,"returned":1,"next_cursor":"x","segments":[{"content":"First","start_time":0}]}`), wrap(`{"file_id":"f","block":"transaction_polish","total":3,"offset":1,"returned":1,"next_cursor":"x","segments":[{"content":"Second","start_time":1}]}`), true},
+		{"repeat cursor", wrap(`{"file_id":"f","block":"transaction_polish","total":3,"offset":0,"returned":1,"next_cursor":"x","segments":[{"content":"First","start_time":0}]}`), wrap(`{"file_id":"f","block":"transaction_polish","total":3,"offset":1,"returned":1,"next_cursor":"x","segments":[{"content":"Second","start_time":1000}]}`), true},
 		{"unknown prose", "Unexpected recording data", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -773,6 +773,39 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			checks.NotContains(raw, privateMessage)
 		})
 	}
+	assert, require := assert.New(t), require.New(t)
+	oldDaemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/meetings/context", r.URL.Path)
+		assert.Equal(http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		assert.NoError(json.NewEncoder(w).Encode(map[string]string{"error": "invalid_meeting_format", "message": "format must be json or markdown"}))
+	}))
+	t.Cleanup(oldDaemon.Close)
+	oldClient, err := daemonclient.New(daemonclient.Config{URL: oldDaemon.URL, AllowInsecure: true, HTTPClient: oldDaemon.Client()})
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(oldClient.Close()) })
+	format := generated.MeetingContextRequestFormat("srt")
+	_, capabilityError := oldClient.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
+	require.Error(capabilityError)
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{&daemonclient.APIError{Status: 400, Code: "invalid_meeting_subtitles", Message: "Use VTT for this payload"}, "invalid_meeting_subtitles: Use VTT for this payload"},
+		{&daemonclient.APIError{Status: 400, Code: "context_budget_too_small", Message: "Raise the output budget"}, "context_budget_too_small: Raise the output budget"},
+		{capabilityError, "meeting_subtitles_unsupported: meeting subtitles require daemon API schema 3.48.0 or newer; upgrade the daemon"},
+	} {
+		result, _, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+			return nil, newInternalError("meeting context", test.err)
+		})(t.Context(), &sdkmcp.CallToolRequest{}, nil)
+		require.NoError(err)
+		require.True(result.IsError)
+		require.Len(result.Content, 1)
+		message, ok := result.Content[0].(*sdkmcp.TextContent)
+		require.True(ok)
+		assert.Equal(test.want, message.Text)
+	}
 }
 
 func TestMCPDaemonBodySearchUnknownCodeStaysPrivate(t *testing.T) {

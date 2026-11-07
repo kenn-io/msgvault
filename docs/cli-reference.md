@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -79,13 +79,25 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 | Flag | Contract |
 |---|---|
 | `--id` | Required meeting message IDs, repeatable; at most 100 |
-| `--format` | `markdown` (default) or `json` |
-| `--include-transcript` | Include archived transcript evidence; off by default |
+| `--format` | `markdown` (default), `json`, `srt`, or `vtt` |
+| `--include-transcript` | Include archived transcript evidence; off by default; automatic for subtitle formats |
 | `--max-bytes` | UTF-8 content budget, default 131072; range 4096–1048576 |
-| `--output`, `-o` | Output file; omitted or `-` writes the exact packet content to stdout |
+| `--output`, `-o` | Output file; omitted or `-` writes the exact requested content to stdout |
 
 Mixed or invalid selections fail. Truncated packets identify omitted content
 and meetings.
+
+SRT and WebVTT require one distinct meeting ID and daemon API schema 3.48.0 or
+newer: `msgvault meetings context --id 42 --format vtt -o meeting.vtt`.
+Transcript evidence loads automatically, even with `--include-transcript=false`.
+The byte budget covers subtitle output alone; overflow fails without partial
+cues. Timing and formatting errors, including NUL text or labels, leave an existing
+output file untouched.
+Both formats show speaker prefixes. WebVTT escapes text and labels; SRT emits
+plain text and refuses `<`, braces, backslashes, complete timing headers at the
+start of a payload line, leading/trailing ASCII whitespace, and payload lines over
+4095 UTF-8 bytes including the speaker prefix. Use VTT for those payloads. See
+[subtitle timing and source limits](usage/meetings.md#export-subtitles).
 
 ### meetings actions and meetings metrics
 

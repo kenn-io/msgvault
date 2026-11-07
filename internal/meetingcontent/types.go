@@ -49,6 +49,8 @@ type Format string
 const (
 	FormatJSON     Format = "json"
 	FormatMarkdown Format = "markdown"
+	FormatSRT      Format = "srt"
+	FormatVTT      Format = "vtt"
 )
 
 type Section struct {
@@ -58,18 +60,20 @@ type Section struct {
 }
 
 type Segment struct {
-	Speaker       string     `json:"speaker,omitempty"`
-	Text          string     `json:"text"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	OffsetSeconds *float64   `json:"offset_seconds,omitempty"`
+	Speaker          string     `json:"speaker,omitempty"`
+	Text             string     `json:"text"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	EndedAt          *time.Time `json:"ended_at,omitempty"`
+	OffsetSeconds    *float64   `json:"offset_seconds,omitempty"`
+	EndOffsetSeconds *float64   `json:"end_offset_seconds,omitempty"`
 }
 
 type Transcript struct {
-	State    State     `json:"state"`
-	Reason   string    `json:"reason,omitempty"`
-	Text     string    `json:"text,omitempty"`
-	Segments []Segment `json:"segments,omitempty"`
+	recordingOrigin *time.Time
+	State           State     `json:"state"`
+	Reason          string    `json:"reason,omitempty"`
+	Text            string    `json:"text,omitempty"`
+	Segments        []Segment `json:"segments,omitempty"`
 }
 
 type Action struct {
@@ -220,3 +224,6 @@ type Metrics struct {
 }
 
 var ErrBudgetTooSmall = errors.New("meeting context budget too small")
+
+// ErrInvalidSubtitles marks unavailable or unrepresentable subtitle input.
+var ErrInvalidSubtitles = errors.New("invalid meeting subtitles")

@@ -26,7 +26,7 @@ type evidence struct {
 
 func normalized(rec Recording) evidence {
 	e := evidence{
-		Version:         1,
+		Version:         3,
 		FileID:          rec.File.ID,
 		Title:           rec.File.Name,
 		StartedAt:       rec.File.StartedAt,
@@ -46,6 +46,7 @@ func normalized(rec Recording) evidence {
 func (e *evidence) preserve(old evidence) {
 	if len(e.Segments) == 0 {
 		e.Segments = old.Segments
+		e.Version = old.Version
 		e.TranscriptBlock = old.TranscriptBlock
 	}
 	if e.Title == "" {
@@ -122,7 +123,14 @@ func (e *evidence) snapshot(sourceID int64, email string) (meetingarchive.Snapsh
 		body.WriteString("Transcript:\n")
 	}
 	for _, seg := range e.Segments {
-		fmt.Fprintf(&body, "[%02d:%02d] %s: %s\n", int(seg.StartSeconds)/60, int(seg.StartSeconds)%60, seg.Speaker, seg.Text)
+		if seg.StartSeconds != nil && (e.Version >= 2 || *seg.StartSeconds != 0) {
+			start := *seg.StartSeconds
+			if e.Version == 1 || e.Version == 2 {
+				start /= 1000
+			}
+			fmt.Fprintf(&body, "[%02d:%02d] ", int(start)/60, int(start)%60)
+		}
+		fmt.Fprintf(&body, "%s: %s\n", seg.Speaker, seg.Text)
 		if !seen[seg.Speaker] {
 			e.Speakers = append(e.Speakers, meetingcontent.Participant{Name: seg.Speaker, Role: "speaker"})
 			seen[seg.Speaker] = true

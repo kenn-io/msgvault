@@ -56,6 +56,10 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		}
 	}
 	start, startOK := rawTime(recording["startedAt"], false)
+	if startOK {
+		recordingStart := start
+		c.Transcript.recordingOrigin = &recordingStart
+	}
 	end, endOK := rawTime(recording["endedAt"], false)
 	if startOK && endOK && end.After(start) {
 		setDuration(&c, end.Sub(start).Seconds(), DurationProvider)
@@ -160,8 +164,8 @@ func twentyEntries(raw jsontext.Value) ([]twentyEntry, bool) {
 		var participant struct {
 			Name string `json:"name"`
 		}
-		if json.Unmarshal(fields.Participant, &participant) == nil {
-			entry.speaker = strings.TrimSpace(participant.Name)
+		if json.Unmarshal(fields.Participant, &participant) == nil && strings.TrimSpace(participant.Name) != "" {
+			entry.speaker = participant.Name
 		}
 		entries = append(entries, entry)
 	}
@@ -179,7 +183,7 @@ func twentyWords(values []jsontext.Value) []twentyWord {
 		if json.Unmarshal(fields["text"], &text) != nil || strings.TrimSpace(text) == "" {
 			continue
 		}
-		word := twentyWord{text: strings.TrimSpace(text)}
+		word := twentyWord{text: text}
 		if json.Unmarshal(fields["start_timestamp"], &word.start) != nil {
 			word.start = nil
 		}
@@ -231,17 +235,21 @@ func decodeTwentyTranscript(raw jsontext.Value) Transcript {
 		texts := make([]string, 0, len(entry.words))
 		for _, word := range entry.words {
 			texts = append(texts, word.text)
-			if offset, ok := twentyOffset(word.start); ok && segment.OffsetSeconds == nil {
-				segment.OffsetSeconds = &offset
-			}
-			if segment.StartedAt == nil {
-				if start, ok := rawTime(word.start["absolute"], false); ok {
-					segment.StartedAt = &start
-				}
-			}
-			if end, ok := rawTime(word.end["absolute"], false); ok {
-				segment.EndedAt = &end
-			}
+		}
+		// The first/last retained word bounds the whole utterance. Later or earlier
+		// words cannot supply timing missing at either boundary.
+		first, last := entry.words[0], entry.words[len(entry.words)-1]
+		if offset, ok := twentyOffset(first.start); ok {
+			segment.OffsetSeconds = &offset
+		}
+		if offset, ok := twentyOffset(last.end); ok {
+			segment.EndOffsetSeconds = &offset
+		}
+		if start, ok := rawTime(first.start["absolute"], false); ok {
+			segment.StartedAt = &start
+		}
+		if end, ok := rawTime(last.end["absolute"], false); ok {
+			segment.EndedAt = &end
 		}
 		segment.Text = strings.Join(texts, " ")
 		transcript.Segments = append(transcript.Segments, segment)

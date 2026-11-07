@@ -33,10 +33,10 @@ type FilePage struct {
 
 // Segment is a speaker's transcript text with offsets from the recording start.
 type Segment struct {
-	Speaker      string  `json:"speaker"`
-	Text         string  `json:"text"`
-	StartSeconds float64 `json:"offset_seconds"`
-	EndSeconds   float64 `json:"end_seconds,omitempty"`
+	Speaker      string   `json:"speaker"`
+	Text         string   `json:"text"`
+	StartSeconds *float64 `json:"offset_seconds,omitzero"`
+	EndSeconds   *float64 `json:"end_seconds,omitzero"`
 }
 
 // Note is one Plaud note tab, identified by its provider ID and data type.

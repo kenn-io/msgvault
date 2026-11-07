@@ -10,19 +10,23 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingCommandClient(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingCommandClient(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -62,15 +66,15 @@ func newMeetingCommandClient(t *testing.T) (*daemonclient.Client, []meetingimpor
 		require.NoError(t, err)
 	}
 	server := httptest.NewServer(api.NewServer(
-		&config.Config{}, st, nil, slog.New(slog.DiscardHandler),
+		&config.Config{Server: config.ServerConfig{APIKey: "meeting-owner"}}, st, nil, slog.New(slog.DiscardHandler),
 	).Router())
 	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{
+	client, err := daemonclient.New(daemonclient.Config{APIKey: "meeting-owner",
 		URL: server.URL, AllowInsecure: true, HTTPClient: server.Client(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, st
 }
 
 func meetingTestInt64(value int64) string { return strconv.FormatInt(value, 10) }
@@ -82,6 +86,8 @@ func executeMeetingsCommand(
 	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) {
 		return client, func() {}, nil
 	}})
+	// Match the root command's runtime-error output policy.
+	silenceUsageInRunE(command)
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
@@ -93,7 +99,7 @@ func executeMeetingsCommand(
 func TestMeetingsCommandsUseDaemonResultsAndFilters(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	client, imported := newMeetingCommandClient(t)
+	client, imported, _ := newMeetingCommandClient(t)
 
 	_, _, err := executeMeetingsCommand(t, client,
 		"context", "--id", "999999", "--format", "markdown")
@@ -151,7 +157,7 @@ func TestMeetingsCommandsUseDaemonResultsAndFilters(t *testing.T) {
 func TestMeetingContextWritesExactContentAtomically(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	client, imported := newMeetingCommandClient(t)
+	client, imported, st := newMeetingCommandClient(t)
 	output := filepath.Join(t.TempDir(), "context.md")
 	messageIDs := []int64{imported[0].MessageID}
 	format := generated.Markdown
@@ -169,6 +175,44 @@ func TestMeetingContextWritesExactContentAtomically(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(expected.Content, string(content))
 	assertions.Contains(string(content), "Planning review")
+	assert, require := assert.New(t), require.New(t)
+	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
+	require.NoError(err)
+	raw := []byte(`{"summary_markdown":"summary","transcript":[{"speaker":{"name":"R&D"},"text":"Hello --> 世界 & done","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04.250Z"},{"speaker":{"name":"B"},"text":"Next","start_time":"2026-01-01T10:00:03Z","end_time":"2026-01-01T10:00:05Z"}]}`)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Subtitle fixture", StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "subtitle@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	id := meetingTestInt64(archived.MessageID)
+	output = filepath.Join(filepath.Dir(output), "meeting.vtt")
+	for _, format := range []string{"srt", "vtt"} {
+		requestFormat := generated.MeetingContextRequestFormat(format)
+		expected, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &requestFormat, MaxBytes: new(int64(4096)), IncludeTranscript: new(false)})
+		require.NoError(err)
+		stdout, stderr, err := executeMeetingsCommand(t, client, "context", "--id", id, "--max-bytes", "4096", "--include-transcript=false", "--format", format)
+		require.NoError(err)
+		assert.Empty(stderr)
+
+		assert.Equal(expected.Content, stdout)
+		stdout, stderr, err = executeMeetingsCommand(t, client, "context", "--id", id, "--max-bytes", "4096", "--include-transcript=false", "--format", format, "-o", output)
+		require.NoError(err)
+		assert.Empty(stdout)
+		assert.Contains(stderr, output)
+		saved, err := os.ReadFile(output)
+		require.NoError(err)
+		assert.Equal(expected.Content, string(saved))
+		t.Logf("synthetic CLI %s output:\n%s", format, expected.Content)
+	}
+	// A representative renderer failure must not write stdout or replace files.
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"end_time":"2026-01-01T10:00:04.250Z"`, `"end_time":null`, 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	require.NoError(os.WriteFile(output, []byte("keep"), 0600))
+	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", id, "--format", "srt", "-o", output)
+	require.ErrorContains(err, "start and end times")
+	assert.Empty(stdout)
+	saved, err := os.ReadFile(output)
+	require.NoError(err)
+	assert.Equal("keep", string(saved))
 }
 
 func TestMeetingsCommandsFailClosedForOlderDaemon(t *testing.T) {

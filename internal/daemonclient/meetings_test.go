@@ -2,6 +2,8 @@ package daemonclient_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -207,4 +209,55 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 		assertions.Nil(result)
 		requirements.ErrorIs(err, context.Canceled)
 	})
+}
+
+func TestMeetingSubtitleCapabilityIsSharedAndFormatSpecific(t *testing.T) {
+	for _, version := range []string{"3.46.0", "3.47.0", "", "broken", "3.48.0"} {
+		t.Run(version, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v1/meetings/context", r.URL.Path)
+				assert.Equal(http.MethodPost, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
+					assert.NoError(err)
+					return
+				}
+				posts++
+				var request generated.GetMeetingContextBody
+				assert.NoError(json.NewDecoder(r.Body).Decode(&request))
+				if *request.Format == "unknown" || version != "3.48.0" && (*request.Format == "srt" || *request.Format == "vtt") {
+					w.WriteHeader(http.StatusBadRequest)
+					_, err := w.Write([]byte(`{"error":"invalid_meeting_format","message":"format must be json or markdown"}`))
+					assert.NoError(err)
+					return
+				}
+				_, err := w.Write([]byte(`{"schema_version":1,"format":"json","content":"","content_bytes":0,"truncated":false,"omitted_message_ids":[]}`))
+				assert.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(client.Close()) })
+			for _, format := range []generated.MeetingContextRequestFormat{"json", "markdown", "srt", "vtt", "unknown"} {
+				before := posts
+				_, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
+				if (format == "srt" || format == "vtt") && version != "3.48.0" {
+					require.EqualError(err, "meeting subtitles require daemon API schema 3.48.0 or newer; upgrade the daemon")
+					var coded interface{ APIErrorCode() string }
+					require.ErrorAs(err, &coded)
+					assert.Equal("meeting_subtitles_unsupported", coded.APIErrorCode())
+				} else if format == "unknown" {
+					var apiError *daemonclient.APIError
+					require.ErrorAs(err, &apiError)
+					assert.Equal("invalid_meeting_format", apiError.Code)
+				} else {
+					require.NoError(err)
+				}
+				assert.Equal(before+1, posts)
+			}
+		})
+	}
 }
