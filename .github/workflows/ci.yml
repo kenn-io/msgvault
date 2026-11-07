@@ -21,8 +21,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "GOCACHE=$env:RUNNER_TEMP/go-build" >> $env:GITHUB_ENV
-          "GOMODCACHE=$env:RUNNER_TEMP/go-mod" >> $env:GITHUB_ENV
+          $paths = @{ GOCACHE = 'go-build'; GOMODCACHE = 'go-mod' }
+          foreach ($entry in $paths.GetEnumerator()) {
+            $path = Join-Path $env:RUNNER_TEMP $entry.Value
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            "$($entry.Key)=$path" >> $env:GITHUB_ENV
+          }
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
