@@ -108,11 +108,11 @@ type replyState struct {
 func (s *syncState) complete() bool       { return s.Exhausted && len(s.Videos) == 0 && s.Active == nil }
 func freshState(source string) *syncState { return &syncState{Version: 1, Source: source} }
 
-func loadState(st *store.Store, source *store.Source, full bool) (*syncState, error) {
+func loadState(ctx context.Context, st *store.Store, source *store.Source, full bool) (*syncState, error) {
 	if full {
 		return freshState(source.Identifier), nil
 	}
-	prior, err := st.GetLatestCheckpointedSyncByType(source.ID, CommentsSourceType)
+	prior, err := st.GetLatestCheckpointedSyncByType(ctx, source.ID, CommentsSourceType)
 	if errors.Is(err, store.ErrSyncRunNotFound) {
 		return freshState(source.Identifier), nil
 	}
@@ -179,7 +179,7 @@ func (imp *Importer) Import(ctx context.Context, app, account string, opts Impor
 	if !ValidID(app) || !ValidID(account) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid TikTok import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(CommentsSourceType, SourceIdentifier(app, account))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, CommentsSourceType, SourceIdentifier(app, account))
 	if err != nil {
 		return nil, fmt.Errorf("TikTok source is not registered: %w", err)
 	}
@@ -195,7 +195,7 @@ func (imp *Importer) Import(ctx context.Context, app, account string, opts Impor
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
 		return nil, store.ErrSourceRetired
 	}
-	state, err := loadState(imp.store, source, opts.Full)
+	state, err := loadState(ctx, imp.store, source, opts.Full)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (imp *Importer) Import(ctx context.Context, app, account string, opts Impor
 		if retErr != nil {
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, cp))
 		} else if sum.Partial {
-			retErr = imp.store.PauseSyncWithCheckpoint(syncID, cp)
+			retErr = imp.store.PauseSyncWithCheckpoint(ctx, syncID, cp)
 		} else {
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, cp.PageToken)
 		}
