@@ -38,7 +38,7 @@ func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *
 }
 
 func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
-	for _, kind := range []string{"disabled", "revoked on disk", "missing secret", "cwd", "revision", "missing revision"} {
+	for _, kind := range []string{"disabled", "revoked on disk", "missing secret", "cwd", "revision", "missing revision", "push 401", "invalid text"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -55,6 +55,12 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				req.Args[2] = "--revision=2"
 			case "missing revision":
 				req.Args = []string{"send-line-reply", draft.DraftID}
+			case "push 401":
+				fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusUnauthorized}, lineapi.Response{Status: http.StatusUnauthorized})
+			case "invalid text":
+				_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, strings.Repeat("a", 5001))
+				require.NoError(err)
+				req.Args[2] = "--revision=2"
 			}
 			require.NoError(a.config.Save())
 			if kind == "revoked on disk" {
@@ -65,19 +71,30 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				assert.True(a.config.Line[0].AllowSend)
 			}
 			before := len(fake.Requests())
-			err := a.RunCLICommand(t.Context(), req, func(api.CLIRunEvent) error { return nil })
+			var events []api.CLIRunEvent
+			err := a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
 			require.Error(err)
 			switch kind {
 			case "disabled", "revoked on disk":
 				assert.Equal("send_disabled", err.Error())
-			case "missing secret":
+			case "missing secret", "push 401":
 				assert.Equal("credentials_unavailable", err.Error())
 			case "revision":
 				assert.Equal("revision_mismatch", err.Error())
 			case "missing revision", "cwd":
 				assert.Equal("invalid_args", err.Error())
+			case "invalid text":
+				assert.Equal("invalid_args", err.Error())
+				assert.Equal([]api.CLIRunEvent{{Type: cliStreamStderr, Data: "line: invalid reply text: exceeds 5000 UTF-16 code units\n"}}, events)
 			}
-			assert.Len(fake.Requests(), before)
+			if kind == "push 401" {
+				assert.Positive(fake.Count(http.MethodPost, "/v2/bot/message/push"))
+			} else {
+				assert.Len(fake.Requests(), before)
+			}
 		})
 	}
 }
@@ -141,33 +158,6 @@ func TestLineReplyEmitsPendingArchiveReceipt(t *testing.T) {
 	assert.Equal("synthetic-request-1", pending.RequestID)
 	assert.Equal("900000000000000001", pending.RemoteMessageID)
 	assert.Equal("sent_archive_pending", pending.Status)
-}
-
-func TestLineReplyCredentialFailureCode(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusUnauthorized}, lineapi.Response{Status: http.StatusUnauthorized})
-	err := a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1"}}, func(api.CLIRunEvent) error { return nil })
-	require.Error(err)
-	assert.Equal("credentials_unavailable", err.Error())
-}
-
-func TestLineReplyInvalidTextExplainsLimit(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, strings.Repeat("a", 5001))
-	require.NoError(err)
-	var events []api.CLIRunEvent
-	err = a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=2"}}, func(event api.CLIRunEvent) error {
-		events = append(events, event)
-		return nil
-	})
-	require.Error(err)
-	assert.Equal("invalid_args", err.Error())
-	assert.Equal([]api.CLIRunEvent{{Type: cliStreamStderr, Data: "line: invalid reply text: exceeds 5000 UTF-16 code units\n"}}, events)
-	assert.Zero(fake.Count(http.MethodPost, "/v2/bot/message/push"))
 }
 
 func TestLineReplyJSONFlagForwarding(t *testing.T) {

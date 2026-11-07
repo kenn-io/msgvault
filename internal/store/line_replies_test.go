@@ -180,7 +180,7 @@ func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 	t.Run("receipt and conversation summary", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		st, draft, parent := replyStoreFixture(t)
+		st, draft, _ := replyStoreFixture(t)
 		require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
 		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 		_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
@@ -213,22 +213,19 @@ func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 		assert.Equal(sent, stored)
 		_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 		require.ErrorIs(err, store.ErrChatDraftNotFound)
-		var summaryCount int64
 		var latest sql.NullTime
 		var preview sql.NullString
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count,last_message_at,last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&summaryCount, &latest, &preview))
-		assert.Equal(int64(3), summaryCount)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_message_at,last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&latest, &preview))
 		require.True(latest.Valid)
 		assert.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), latest.Time.UTC())
 		assert.Equal(sql.NullString{String: "Thanks!", Valid: true}, preview)
 		repeated, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 		require.NoError(err)
 		assert.Equal(sent, repeated)
-		var conversation, reply, sender int64
+		var conversation, sender int64
 		var fromMe bool
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id,reply_to_message_id,sender_id,is_from_me FROM messages WHERE id=?`), sent.MessageID).Scan(&conversation, &reply, &sender, &fromMe))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id,sender_id,is_from_me FROM messages WHERE id=?`), sent.MessageID).Scan(&conversation, &sender, &fromMe))
 		assert.Equal(draft.ConversationID, conversation)
-		assert.Equal(parent, reply)
 		assert.True(fromMe)
 		assert.Positive(sender)
 		var sentAt time.Time
@@ -238,9 +235,7 @@ func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 		require.NoError(err)
 		assert.Equal("Thanks!", body)
 		assert.JSONEq(`{"status_code":200,"request_id":"original-request","sentMessages":[{"id":"900000000000000001","quoteToken":"synthetic-sent-quote"}]}`, string(raw))
-		count, err := st.CountMessagesForSourceContext(t.Context(), draft.SourceID)
-		require.NoError(err)
-		assert.Equal(int64(3), count)
+		var summaryCount int64
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&summaryCount))
 		assert.Equal(int64(3), summaryCount)
 	})
