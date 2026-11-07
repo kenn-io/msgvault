@@ -737,11 +737,14 @@
     background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
+  /* Selected rows read as one block: the fill and the 3px accent run under each
+   * row's divider, so neither a stripe nor a rule breaks them. */
   .data-row.data-row--selected {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
-    box-shadow: inset 3px 0 0 var(--accent-blue);
+    border-bottom-color: transparent;
+    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-bg) 3px);
+    box-shadow: none;
   }
 
   .cell--people :global(.kit-tooltip-trigger) { max-width: 100%; }

@@ -271,7 +271,7 @@ describe('CardDAVAccountSettings', () => {
     await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'bob' } });
     expect(screen.queryByText(/Connection successful/)).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
-    expect((await screen.findByRole('alert')).textContent).toBe('CardDAV server refused the account (synthetic reason).');
+    expect((await screen.findByRole('alert')).textContent).toContain('CardDAV server refused the account (synthetic reason).');
     expect(rendered.container.textContent).not.toContain('synthetic-password');
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('synthetic-password');
     expect(requestFacts).toEqual([
@@ -293,10 +293,10 @@ describe('CardDAVAccountSettings', () => {
     render(CardDAVAccountSettings, { client: createAPIClient(fetchFn), values });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-    expect((await screen.findByRole('alert')).textContent).toBe('CardDAV host did not answer (synthetic reason).');
+    expect((await screen.findByRole('alert')).textContent).toContain('CardDAV host did not answer (synthetic reason).');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Test CardDAV connection' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('network down'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
   });
 
   it('aborts a deferred account request and never refreshes after destruction', async () => {

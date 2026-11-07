@@ -8,6 +8,7 @@ describe('MeetingMetrics', () => {
     render(MeetingMetrics, { metrics: meetingMetrics() });
     expect(screen.getByText('4 meetings')).toBeDefined();
     expect(screen.getByText('3 known · 1 unknown duration')).toBeDefined();
+    expect(screen.getByText('Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average.')).toBeDefined();
     expect(screen.getByLabelText('Total known meeting time').textContent).toContain('1h 40m');
     expect(screen.getByLabelText('Average known duration').textContent).toContain('33m 20s');
     expect(screen.queryByText(/recorded hours/i)).toBeNull();

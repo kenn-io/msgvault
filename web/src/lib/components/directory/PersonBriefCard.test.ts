@@ -136,6 +136,7 @@ describe('PersonBriefCard', () => {
     for (const text of sentenceTexts) {
       expect(await screen.findByRole('button', { name: text })).toBeDefined();
     }
+    expect(document.querySelector('.paragraph')?.textContent?.trim().replace(/\s+/g, ' ')).toBe(sentenceTexts.join(' '));
     expect(screen.getByText(/Version 2/)).toBeDefined();
     expect(document.querySelector('time[datetime="2026-08-29T18:42:10Z"]')).not.toBeNull();
     expect(screen.getByText(/1 item was dropped/)).toBeDefined();
@@ -248,7 +249,7 @@ describe('PersonBriefCard', () => {
     });
     render(PersonBriefCard, { client: createAPIClient(fetchFn), personID: 7 });
 
-    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    const toggle = await screen.findByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: 'Also track this person' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Generate a brief now' })).toBeNull();
@@ -273,7 +274,7 @@ describe('PersonBriefCard', () => {
     render(PersonBriefCard, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
 
     await fireEvent.click(await screen.findByRole('checkbox', { name: 'Also track this person' }));
-    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' });
+    const toggle = await screen.findByRole('switch', { name: 'Write briefs for this person' });
     toggle.focus();
     await fireEvent.click(toggle);
 
@@ -297,7 +298,7 @@ describe('PersonBriefCard', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Set up Briefs' }));
     expect(onSetUp).toHaveBeenCalledOnce();
     await screen.findByRole('button', { name: sentenceTexts[0] });
-    await fireEvent.click(screen.getByRole('switch', { name: 'Enroll this person in briefs' }));
+    await fireEvent.click(screen.getByRole('switch', { name: 'Write briefs for this person' }));
     await waitFor(() => expect(writes).toEqual([{ enrolled: false, track: false }]));
   });
 
@@ -321,7 +322,7 @@ describe('PersonBriefCard', () => {
     // Wait for the requested enrollment state and its content before the
     // next toggle. Focus can return before the asynchronous PUT settles.
     const toggle = (await screen.findByRole('switch', {
-      name: 'Enroll this person in briefs'
+      name: 'Write briefs for this person'
     })) as HTMLInputElement;
     async function clickAndSettle(nextEnrolled: boolean): Promise<void> {
       const previousCount = bodies.length;
@@ -370,7 +371,7 @@ describe('PersonBriefCard', () => {
     });
     render(PersonBriefCard, { client: createAPIClient(fetchFn), personID: 7 });
 
-    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' });
+    const toggle = await screen.findByRole('switch', { name: 'Write briefs for this person' });
     toggle.focus();
     await fireEvent.click(toggle);
 
@@ -534,7 +535,7 @@ describe('PersonBriefCard', () => {
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9 });
 
     await waitFor(() => expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull());
-    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    const toggle = await screen.findByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement;
     await waitFor(() => expect(toggle.checked).toBe(false));
     expect(document.body.textContent).not.toContain('Said by this person');
   });
@@ -593,7 +594,7 @@ describe('PersonBriefCard', () => {
     const view = render(PersonBriefCard, { client, personID: 7, refreshKey: '1', onAnnounce });
     await screen.findByRole('button', { name: 'Regenerate this brief' });
     const control = action === 'enrollment'
-      ? screen.getByRole('switch', { name: 'Enroll this person in briefs' })
+      ? screen.getByRole('switch', { name: 'Write briefs for this person' })
       : screen.getByRole('button', { name: action === 'generate' ? 'Regenerate this brief' : 'Reject this brief version' });
     await fireEvent.click(control);
     await waitFor(() => expect(mutationRequest).toBeDefined());

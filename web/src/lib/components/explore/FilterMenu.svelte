@@ -184,9 +184,10 @@
 {/if}
 
 <style>
-  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-  .dates label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .dates input { min-width: 0; width: 100%; box-sizing: border-box; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font: inherit; }
+  /* A Meta label 4 above each field, the two dates a pair 12 apart. */
+  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-box); }
+  .dates label { display: grid; gap: var(--space-tight); color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .dates input { min-width: 0; width: 100%; height: var(--field-h); box-sizing: border-box; padding: 0 var(--field-pad-x); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font: inherit; font-size: var(--field-text-size); line-height: var(--type-body-line); }
   .filter-trigger {
     display: inline-flex;
   }

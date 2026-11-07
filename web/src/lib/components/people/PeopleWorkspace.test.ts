@@ -553,7 +553,7 @@ it.each(['link', 'merge'])('keeps Details current and its draft mounted after a 
   try {
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(false));
+    await waitFor(() => expect((screen.getByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement).checked).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
     const draft = screen.getByRole('textbox', { name: 'Contact value' });
     await fireEvent.input(draft, { target: { value: '+12025550123' } });
@@ -576,7 +576,7 @@ it.each(['link', 'merge'])('keeps Details current and its draft mounted after a 
     expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toBe(draft);
     expect(draft).toHaveProperty('value', '+12025550123');
-    if (operation === 'merge') await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(true));
+    if (operation === 'merge') await waitFor(() => expect((screen.getByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement).checked).toBe(true));
     expect(sawLoadingPerson).toBe(false);
   } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -817,7 +817,7 @@ it.each([false, true])('refreshes duplicates and keeps the split receipt after s
   const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    const enrollment = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    const enrollment = await screen.findByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement;
     await waitFor(() => expect(enrollment.checked).toBe(true));
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
@@ -830,7 +830,7 @@ it.each([false, true])('refreshes duplicates and keeps the split receipt after s
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(onDuplicatesChanged).toHaveBeenCalled();
     expect(state.current.relationshipTarget).toBeNull();
-    await waitFor(() => expect((screen.getByLabelText('Enroll this person in briefs') as HTMLInputElement).checked).toBe(false));
+    await waitFor(() => expect((screen.getByLabelText('Write briefs for this person') as HTMLInputElement).checked).toBe(false));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
