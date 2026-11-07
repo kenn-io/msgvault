@@ -59,13 +59,13 @@ func TestHexImportBoundary(t *testing.T) {
 				_, token, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "user@example.com"}}, time.Time{})
 				require.NoError(t, err)
 				secret = token
-				health := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+				health := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 				health.Header.Set(apiprotocol.AgentTokenHeader, secret)
 				healthOut := httptest.NewRecorder()
 				server.Router().ServeHTTP(healthOut, health)
 				require.Equal(t, http.StatusOK, healthOut.Code, "delegated token authenticates before endpoint denial")
 			}
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(tt.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/hex", strings.NewReader(tt.body))
 			req.Header.Set("X-Api-Key", tt.key)
 			req.Header.Set("Content-Type", tt.media)
 			if tt.delegated {
@@ -116,7 +116,7 @@ func TestHexImportRejectsEmptyEntryTextAndAcceptsEmptyFinalTranscript(t *testing
 		return `{"action":"upsert","full":true,"source":` + sourceJSON + `,"meeting":{"manifest":` + manifestJSON + `,"entries":` + entries + `,"transcript_state":"final"}}`
 	}
 	post := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/hex", strings.NewReader(body))
 		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		out := httptest.NewRecorder()
@@ -164,7 +164,7 @@ func TestHexImportWaitsForOperationGate(t *testing.T) {
 	server := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, Store: st, Logger: testLogger(), OperationGate: gate})
 	release, ok := gate.BeginWork()
 	require.True(ok)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/import/hex", strings.NewReader(`{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/hex", strings.NewReader(`{"action":"register","source":{"identifier":"recorder","account_email":"user@example.com"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	out := httptest.NewRecorder()

@@ -31,7 +31,10 @@ func TestMuesliRemoteUnchangedPreservesDeferredCacheRefresh(t *testing.T) {
 	}, nil)
 	previous := daemonCacheRefresher
 	daemonCacheRefresher = refresher
-	t.Cleanup(func() { daemonCacheRefresher = previous; require.NoError(refresher.Shutdown(context.Background())) })
+	t.Cleanup(func() {
+		daemonCacheRefresher = previous
+		require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
+	})
 	source := meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}
 	_, err := adapter.ImportMuesli(t.Context(), muesli.RemoteRequest{Action: "register", Source: source})
 	require.NoError(err)

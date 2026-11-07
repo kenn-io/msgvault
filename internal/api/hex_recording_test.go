@@ -84,7 +84,7 @@ func TestHexRecordingOwnerBoundaryAndSizeCap(t *testing.T) {
 				secret = token
 			}
 			url := fmt.Sprintf("%s?track=system&identifier=recorder&account_email=user%%40example.com&message_id=42&sha256=%s&size=%s", hexRecordingEndpointPath, hash, size)
-			req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(recording))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, url, bytes.NewReader(recording))
 			req.Header.Set("Content-Type", tt.media)
 			req.Header.Set("X-Api-Key", tt.key)
 			if tt.delegated {
@@ -116,7 +116,7 @@ func TestHexRecordingReceivesBodyBeforeTakingOperationGate(t *testing.T) {
 		Logger:        testLogger(),
 		OperationGate: gate,
 	})
-	req := httptest.NewRequest(http.MethodPost, url, body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, url, body)
 	req.Header.Set("Content-Type", "audio/wav")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	resp := httptest.NewRecorder()

@@ -57,7 +57,7 @@ func TestRecorderRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 			jobs := newCacheBuildJobs(ctx, nil, func(_ context.Context, mode buildCacheMode) error { modes <- mode; return nil })
 			t.Cleanup(func() {
 				cancel()
-				wait, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+				wait, stop := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 				defer stop()
 				must.True(jobs.waitContext(wait))
 			})
@@ -122,7 +122,7 @@ func TestRecorderScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 			db, err := sql.Open("sqlite3", path)
 			must.NoError(err)
 			t.Cleanup(func() { _ = db.Close() })
-			_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
+			_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
 			must.NoError(err)
 			off := false
 			source := config.MuesliSource{Identifier: "recorder", AccountEmail: "user@example.com", DBPath: path, Contacts: &off}

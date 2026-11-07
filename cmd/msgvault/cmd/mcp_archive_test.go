@@ -50,7 +50,8 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"mbox", ""},
 		{"granola", "get_meeting_context"}, {"chatwoot", "get_meeting_context"},
 		{"circleback", "get_meeting_context"}, {"pocket", "get_meeting_context"},
-		{"muesli", "get_meeting_context"}, {"notion_meetings", "get_meeting_context"},
+		{"muesli", "get_meeting_context"}, {"hex", "get_meeting_context"},
+		{"notion_meetings", "get_meeting_context"},
 		{"meeting_import", "get_meeting_context"}, {"omi", "get_meeting_context"},
 		{"plaud", "get_meeting_context"}, {"twilio", "get_meeting_context"},
 		{"twenty", "get_meeting_context"}, {"beeper", "find_chat"},
@@ -90,6 +91,10 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			}
 			if tc.tool != "" {
 				assert.Contains(names, tc.tool)
+			}
+			if tc.source == "hex" {
+				assert.Contains(names, "list_meeting_action_items")
+				assert.Contains(names, "get_meeting_metrics")
 			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")
