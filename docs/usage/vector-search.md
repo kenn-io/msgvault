@@ -57,8 +57,7 @@ runs and keep using keyword search.
 If Ollama already serves `nomic-embed-text`, Turn on uses it. An existing
 Ollama configuration stays on Ollama.
 When the browser uses a remote address, the download line names the daemon host.
-The **Turn on** hint below full-text search results starts the same setup and
-opens Settings to show progress.
+The **Turn on** hint below full-text search results starts the same setup.
 
 ## Prerequisites
 
