@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: 2026-11-02
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -33,6 +33,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 
 | Your source | Start here | Scope |
 |---|---|---|
+| TikTok video comments | [TikTok comments](../usage/tiktok-comments.md) | Captions, comments, and replies on owned videos; approved company app required; unreleased |
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |

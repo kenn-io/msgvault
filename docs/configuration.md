@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-02
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,32 @@ For a first archive, add only the sections required by your source. Optional
 provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
+
+### TikTok
+
+`[[tiktok]]` selects an account for [TikTok comment sync](usage/tiktok-comments.md).
+This integration is unreleased. Each profile requires `identifier`, `app_id`,
+`account_id` (the OAuth `open_id`), and `token_env`. Set `enabled = true` to
+allow manual commands and scheduled sync. A disabled profile cannot be selected.
+Optional `schedule` uses the standard five-field cron grammar. Only enabled
+profiles with a schedule run automatically.
+
+```toml
+[[tiktok]]
+identifier = "example-account"
+app_id = "100001"
+account_id = "example-open-id"
+token_env = "EXAMPLE_TIKTOK_TOKEN"
+app_secret_env = "EXAMPLE_TIKTOK_APP_SECRET" # optional, for automatic refresh
+enabled = true
+schedule = "*/30 * * * *"
+```
+
+Environment-variable fields name daemon variables. `token_env` accepts a plain
+access token or the [JSON token bundle](usage/tiktok-comments.md#keep-authorization-working)
+with absolute expiry times. Automatic refresh also requires `app_secret_env`.
+Rotated tokens and app-wide rate state live in private files under
+`<data_dir>/tiktok/`. Restart the daemon after changing its environment or profiles.
 
 ### Validation
 

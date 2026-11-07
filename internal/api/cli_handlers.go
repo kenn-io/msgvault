@@ -1716,6 +1716,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}
+	if args[0] == "source" {
+		return len(args) >= 3 && args[1] == "tiktok-comments" && (args[2] == "add" || args[2] == "sync")
+	}
 	if args[0] == "documents" {
 		if len(args) < 2 {
 			return false
