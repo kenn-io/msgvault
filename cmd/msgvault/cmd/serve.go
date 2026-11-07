@@ -323,7 +323,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// remaining move is SIGKILL on a writing process. Cancelling here stops it
 	// at the next batch boundary, keeps every batch already committed, and
 	// leaves the migration unmarked so the next start resumes.
-	if err := s.InitSchemaContext(cmd.Context()); err != nil {
+	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())

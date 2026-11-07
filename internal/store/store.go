@@ -1154,8 +1154,8 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 // INVALID during this run.
 //
 // Both an initial failure and a failed retry are logged and swallowed: a
-// future InitSchema call (the next process start) retries the same
-// idempotent build. SQLite has no CONCURRENTLY equivalent and does not need
+// full initializer run (upgrade, msgvault migrate, or setup) retries the
+// build. SQLite has no CONCURRENTLY equivalent and does not need
 // one — its index build over a working-set-sized archive is fast enough to
 // run inline in schema.sql — so this is a no-op there.
 func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
@@ -1229,7 +1229,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 				slog.Warn("drop invalid leftover index failed", "index", index.name, "error", dropErr.Error())
 			}
 			if err := build(); err != nil {
-				slog.Warn("concurrent index build failed after retry; will retry on next start",
+				slog.Warn("index retry failed; retry on upgrade, msgvault migrate, or setup",
 					"index", index.name, "error", err.Error())
 			}
 		}
@@ -2087,7 +2087,7 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 	// statement_timeout escape hatch (CONCURRENTLY cannot run inside a
 	// transaction at all, so runMaintenance does not apply here). Carries ctx
 	// like every other statement in this method: a cancelled build leaves at
-	// worst an INVALID leftover, which the next start drops and rebuilds.
+	// worst an INVALID leftover, rebuilt on upgrade, msgvault migrate, or setup.
 	if s.beforeLargeIndexBuildHook != nil {
 		s.beforeLargeIndexBuildHook()
 	}
