@@ -12,7 +12,8 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-const meetingProjectionVersion = 1
+// Version 2 refreshes cached durations after legacy Plaud millisecond normalization.
+const meetingProjectionVersion = 2
 const maxMeetingRawBytes = 64 << 20
 
 var errMeetingRawTooLarge = errors.New("meeting raw exceeds decode limit")

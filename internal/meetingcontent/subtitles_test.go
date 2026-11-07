@@ -103,7 +103,7 @@ func TestRenderSubtitles(t *testing.T) {
 	for format, raw := range map[string]string{
 		"granola_json": `{"transcript":[{"speaker":{"name":"  Label  "},"text":"  first\n  second  ","start_time":"2026-01-01T00:00:00Z","end_time":"2026-01-01T00:00:01.5Z"}]}`,
 		"omi_json":     `{"transcript_segments":[{"speaker_name":"  Label  ","text":"  first\n  second  ","start":0,"end":1.5}]}`,
-		"plaud_json":   `{"schema_version":2,"transcript_segments":[{"speaker":"  Label  ","text":"  first\n  second  ","offset_seconds":0,"end_seconds":1.5}]}`,
+		"plaud_json":   `{"schema_version":2,"transcript_segments":[{"speaker":"  Label  ","text":"  first\n  second  ","offset_seconds":0,"end_seconds":1500}]}`,
 		"twenty_json":  `{"schema_version":1,"recording":{"transcript":[{"participant":{"name":"  Label  "},"words":[{"text":"  first\n  second  ","start_timestamp":{"relative":0},"end_timestamp":{"relative":1.5}}]}]}}`,
 	} {
 		content := Decode(format, []byte(raw), nil)
