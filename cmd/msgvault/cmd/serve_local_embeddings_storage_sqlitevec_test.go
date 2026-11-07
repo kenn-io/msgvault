@@ -92,7 +92,7 @@ func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
 				require.NoError(err)
 				installs, builds := f.installs, len(f.runner.calls)
 				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-				assert.ErrorContains(err, "Restart msgvault")
+				require.ErrorContains(err, "Restart msgvault")
 				assert.Equal(installs, f.installs, "a pending storage change must be refused before installation")
 				assert.Len(f.runner.calls, builds, "the builder must keep the serving archive")
 				after, err := config.ReadConfigFile(f.cfg.ConfigFilePath())

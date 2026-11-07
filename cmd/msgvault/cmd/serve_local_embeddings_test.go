@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -452,13 +453,13 @@ func TestLocalEmbeddingsCommandError(t *testing.T) {
 		name, stderr, want string
 		err                error
 	}{
-		{name: "canceled without output", err: context.Canceled, want: "Message index build interrupted."},
-		{name: "canceled after progress", err: errors.New(cliSubprocessExitSentinel), stderr: strings.Repeat("index progress\n", 1024) + "Error: embedding build interrupted: context canceled\n", want: "Message index build interrupted."},
+		{name: "canceled without output", err: context.Canceled, want: "context canceled"},
+		{name: "canceled after progress", err: errors.New(cliSubprocessExitSentinel), stderr: strings.Repeat("index progress\n", 1024) + "Error: embedding build interrupted: context canceled\n", want: "embedding build interrupted: context canceled"},
 		{name: "plain failure", err: errors.New(cliSubprocessExitSentinel), stderr: "index progress\nError: model unavailable\n", want: "model unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
-			err := localEmbeddingsCommandError(t.Context(), true, tc.err, tc.stderr)
+			err := localEmbeddingsCommandError(t.Context(), tc.err, tc.stderr)
 			require.EqualError(err, tc.want)
 			if errors.Is(tc.err, context.Canceled) {
 				require.ErrorIs(err, context.Canceled)
@@ -659,19 +660,62 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "exact vectors retained")
 }
 
-func TestLocalEmbeddingsOllamaRetriesUnfinishedInitialBuild(t *testing.T) {
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "")
-	f.ollamaTags = true
-	f.start(t)
-	f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
-	require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
-	require.NoError(err)
-	require.NotNil(building, "the first setup saved a generation that still needs its vectors")
-	f.onEmbedding = nil
-	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "Retry setup must resume the provider it just selected")
-	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(err)
-	require.Len(results, 1)
+func TestLocalEmbeddingsBuildIndexResumesUnfinishedInitialBuild(t *testing.T) {
+	for _, provider := range []string{"ollama", "builtin after restart"} {
+		t.Run(provider, func(t *testing.T) {
+			require := require.New(t)
+			f := newLocalActivationFixture(t, "")
+			f.ollamaTags = provider == "ollama"
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": "", "run_after_sync": false}}})
+			require.NoError(err)
+			f.start(t)
+			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
+			require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
+			require.NoError(err)
+			require.NotNil(building, "the first setup saved a generation that still needs its vectors")
+			f.onEmbedding = nil
+			snapshot, err = config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			saved, err := f.cfg.ReloadConfigFile(snapshot)
+			require.NoError(err)
+			require.Empty(saved.Vector.Embed.Schedule.Cron)
+			require.False(saved.Vector.Embed.Schedule.RunAfterSync)
+			if provider == "builtin after restart" {
+				f.handle.CloseFeatures(f.state.logger)
+				f.cfg, f.state.cfg = saved, saved
+				f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
+				require.True(f.handle.WaitTimeout(5 * time.Second))
+				f.controller.handle = f.handle
+			}
+			analyticsDir := t.TempDir()
+			_, err = buildCache(f.ctx, f.cfg.DatabaseDSN(), analyticsDir, true)
+			require.NoError(err)
+			engine, err := query.NewDuckDBEngine(f.ctx, analyticsDir, "", nil)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(engine.Close()) })
+			f.server.SetAnalyticsEngine(engine, api.AnalyticsModeDuckDB)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/coverage", strings.NewReader(`{}`))
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var coverage api.SearchCoverageResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
+			require.Contains(coverage.Actions, api.SearchCoverageActionBuildIndex)
+			// This is the existing Build index action's CLI request, through the fixture's real builder.
+			f.runner.beforeBuild = nil // The hook checks Turn on's gate ownership; this call exercises the builder.
+			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(err)
+			require.Equal(building.ID, active.ID, "Build index must resume the matching generation")
+			results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+			require.NoError(err)
+			require.Len(results, 1)
+		})
+	}
 }

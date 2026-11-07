@@ -736,6 +736,7 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
 			},
 			wantStatus: SearchCoverageInitializing,
+			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
 		},
 		{
 			name: "no generation", status: VectorStatusReady,

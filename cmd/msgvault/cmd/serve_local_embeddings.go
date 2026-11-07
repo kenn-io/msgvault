@@ -43,16 +43,6 @@ func (e localEmbeddingsConflictError) Unwrap() error {
 	return e.cause
 }
 
-type localEmbeddingsInterruptedError struct{ cause error }
-
-func (localEmbeddingsInterruptedError) Error() string {
-	return "Message index build interrupted."
-}
-
-func (e localEmbeddingsInterruptedError) Unwrap() error {
-	return e.cause
-}
-
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
 	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
 		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
@@ -119,7 +109,7 @@ func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.LocalEmbeddingsStatus)) (result error) {
-	// Large archives may take hours; retries resume an unfinished message build.
+	// Large archives may take hours; Build index resumes an unfinished build.
 	runtimeCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
 	defer cancel()
@@ -167,8 +157,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	c.handle.mu.Lock()
 	live := c.handle.vf
 	c.handle.mu.Unlock()
-	if live != nil && nextConfig.Vector.DBPath != live.Cfg.DBPath {
-		return errors.New("Restart msgvault to use the new vector database path.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
+	if nextConfig.DatabaseDSN() != c.dbPath || nextConfig.Data.DataDir != c.state.cfg.Data.DataDir ||
+		(live != nil && nextConfig.Vector.DBPath != live.Cfg.DBPath) {
+		return errors.New("Restart msgvault to use the new storage settings.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
 	useOllama := !lane.local
 	var builtinEndpoint string
@@ -265,7 +256,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 			}
 			return nil
 		})
-		return localEmbeddingsCommandError(workCtx, args[1] == "build", err, string(stderr.tail))
+		return localEmbeddingsCommandError(workCtx, err, string(stderr.tail))
 	}
 	if building != nil && building.Fingerprint != fingerprint {
 		if err := run("embeddings", "retire", strconv.FormatInt(int64(building.ID), 10), "--yes"); err != nil {
@@ -287,9 +278,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 }
 
 // Log the full command output, then surface only its final error line.
-func localEmbeddingsCommandError(ctx context.Context, build bool, err error, stderr string) error {
+func localEmbeddingsCommandError(ctx context.Context, err error, stderr string) error {
 	detail := strings.TrimSpace(stderr)
-	if err == nil || detail == "" && (!build || !errors.Is(err, context.Canceled)) {
+	if err == nil || detail == "" {
 		return err
 	}
 	loggerFromContext(ctx).Warn("Local search index command failed", "error", err, "stderr", detail)
@@ -297,10 +288,6 @@ func localEmbeddingsCommandError(ctx context.Context, build bool, err error, std
 		detail = strings.TrimSpace(("\n" + detail)[index+len("\nError: "):])
 	} else if index := strings.LastIndex(detail, "\n"); index >= 0 {
 		detail = strings.TrimSpace(detail[index+1:])
-	}
-	// An interrupted build resumes from its saved progress.
-	if build && (errors.Is(err, context.Canceled) || strings.HasSuffix(detail, context.Canceled.Error())) {
-		return localEmbeddingsInterruptedError{cause: err}
 	}
 	if err.Error() == cliSubprocessExitSentinel {
 		return errors.New(detail)
