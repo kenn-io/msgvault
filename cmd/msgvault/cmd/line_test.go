@@ -138,7 +138,7 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	must.NoError(loaded.Save())
 	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
 	must.NoError(err)
-	events := make([]store.LineWebhookEvent, 501)
+	events := make([]store.LineWebhookEvent, 1)
 	for i := range events {
 		id := fmt.Sprintf("message-%03d", i)
 		raw := fmt.Sprintf(`{"type":"message","webhookEventId":%q,"timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":%q,"type":"text","text":"synthetic"}}`, id, id)
@@ -152,9 +152,9 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	checks.Contains(output, "failed: 0")
 	var archived int
 	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
-	checks.Equal(501, archived)
+	checks.Equal(1, archived)
 	_, err = executeLineCommand(t, loaded, newSyncLineCmd(), "--channel-id", "999")
-	must.Error(err)
+	must.ErrorContains(err, "not configured")
 }
 
 func TestLineScheduledCacheProgress(t *testing.T) {

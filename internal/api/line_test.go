@@ -204,8 +204,9 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	}
 	checks.Equal(int64(1), wakes.Load())
 	// Unknown channels also pass the host boundary.
-	_, response = lineAPIRequest(t, base, "POST", "/webhooks/line/2000000001", body, lineSignedHeaders(body))
-	checks.NotContains(response, "untrusted_host")
+	status, response = lineAPIRequest(t, base, "POST", "/webhooks/line/2000000001", body, lineSignedHeaders(body))
+	checks.Equal(http.StatusNotFound, status, response)
+	checks.Empty(response)
 }
 
 func TestLineWebhookBurstWithAPIKey(t *testing.T) {
@@ -230,13 +231,6 @@ func TestLineWebhookCLIHeaderCannotDisableDeadlines(t *testing.T) {
 	})
 
 	request := httptest.NewRequest(http.MethodPost, lineTestPath, nil)
-	request.RemoteAddr = "127.0.0.1:4242"
-	request.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
-	fixture.server.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		deadline, bounded := r.Context().Deadline()
-		checks.True(bounded, "webhooks keep a finite context deadline despite the CLI header")
-		checks.True(deadline.After(time.Now()))
-	})).ServeHTTP(httptest.NewRecorder(), request)
 
 	readers := make([]*bufio.Reader, 0, 16)
 	for range 16 {

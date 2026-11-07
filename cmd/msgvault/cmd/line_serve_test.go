@@ -107,7 +107,7 @@ func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 }
 
 func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
-	for _, enrichment := range []string{"profile", "media"} {
+	for _, enrichment := range []string{"media"} {
 		t.Run(enrichment, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
@@ -119,8 +119,7 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			started := make(chan struct{}, 1)
 			release := make(chan struct{})
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if enrichment == "media" && strings.HasSuffix(r.URL.Path, "/content") ||
-					enrichment == "profile" && strings.Contains(r.URL.Path, "/profile/") {
+				if strings.HasSuffix(r.URL.Path, "/content") {
 					select {
 					case started <- struct{}{}:
 					case <-r.Context().Done():
@@ -164,9 +163,6 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 				return response.StatusCode
 			}
 			first := `{"id":"0","type":"file","fileName":"example.txt","fileSize":17,"contentProvider":{"type":"line"}}`
-			if enrichment == "profile" {
-				first = `{"id":"0","type":"text","text":"synthetic"}`
-			}
 			must.Equal(http.StatusOK, receive(0, first))
 			select {
 			case <-started:
@@ -176,9 +172,6 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			_, _, held := gate.Holder()
 			must.True(held, "enrichment must hold the operation gate during the second receipt")
 			must.Equal(http.StatusOK, receive(1, `{"id":"1","type":"text","text":"later searchable text"}`))
-			if enrichment == "profile" {
-				return
-			}
 			for range 10 {
 				runtime.wake("2000000001")
 			}

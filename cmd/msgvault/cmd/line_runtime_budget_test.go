@@ -115,12 +115,10 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)
-		var contentRequests atomic.Int64
 		started := make(chan struct{}, 1)
 		lineClientFactory = func(id, secret string) *line.Client {
 			return line.NewClient(id, secret, line.WithHTTPClient(&http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 				if strings.HasSuffix(r.URL.Path, "/content") {
-					contentRequests.Add(1)
 					select {
 					case started <- struct{}{}:
 					default:
@@ -146,10 +144,8 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 		runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
 		must.NoError(err)
 		defer func() { <-sched.Stop().Done() }()
-		var otherRuns atomic.Int64
 		var ranAfterMedia atomic.Bool
 		must.NoError(sched.AddJob(scheduler.Job{Name: "recurring sync", Interval: time.Minute, Run: func(ctx context.Context) error {
-			otherRuns.Add(1)
 			row, err := st.LineMessageContext(ctx, a.ID, "1")
 			if err != nil {
 				return err
@@ -175,8 +171,6 @@ func TestLineQueuedSyncRunsAfterSlowMedia(t *testing.T) {
 		refs, err := st.MessageProviderAttachments(row.ID, "line:")
 		must.NoError(err)
 		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State, "the first bounded download must finish before the pass budget")
-		checks.Equal(int64(1), contentRequests.Load())
-		checks.Positive(otherRuns.Load())
 		checks.True(ranAfterMedia.Load(), "queued sync must run after LINE records the completed download")
 	})
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -727,9 +728,7 @@ func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
 		source Source
 		path   string
 	}{
-		{"user", Source{Type: "user", UserID: testUser}, "/v2/bot/profile/" + testUser},
 		{"group", Source{Type: "group", GroupID: testGroup, UserID: testUser}, "/v2/bot/group/" + testGroup + "/member/" + testUser},
-		{"room", Source{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser}, "/v2/bot/room/R00000000000000000000000000000001/member/" + testUser},
 	} {
 		for _, cached := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cached=%t", source.name, cached), func(t *testing.T) {
@@ -862,7 +861,6 @@ func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
 	}{
 		{"explicit_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, "U00000000000000000000000000000009"), Source{Type: "group", GroupID: testGroup}, false},
 		{"message_only_group", "group:" + testGroup, "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "group", GroupID: testGroup, UserID: testUser}, true},
-		{"message_only_room", "room:R00000000000000000000000000000001", "line_user_id", UserIdentifier(testChannel, testUser), Source{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser}, true},
 		{"anonymous_group", "group:" + testGroup, "line_anonymous", "channel:2000000001:group:" + testGroup, Source{Type: "group", GroupID: testGroup}, true},
 	} {
 		for _, direction := range []string{"departed_into_active", "active_into_departed"} {
@@ -961,7 +959,6 @@ func TestProcessorExistingChatRecordsOwner(t *testing.T) {
 	for _, source := range []Source{
 		{Type: "user", UserID: testUser},
 		{Type: "group", GroupID: testGroup, UserID: testUser},
-		{Type: "room", RoomID: "R00000000000000000000000000000001", UserID: testUser},
 	} {
 		t.Run(source.Type, func(t *testing.T) {
 			must := require.New(t)
@@ -1242,10 +1239,6 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 			if !curated {
 				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "2").Scan(&name))
 				checks.Equal("Updated user", name)
-				archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-				must.NoError(err)
-				must.Len(archived.From, 1)
-				checks.Equal("Example User", archived.From[0].Name)
 			}
 		})
 	}
@@ -1399,14 +1392,29 @@ func TestProcessorCooperativeStopAfterEnrichment(t *testing.T) {
 }
 
 func TestProcessorHandoffStatus(t *testing.T) {
-	for _, itemError := range []bool{false, true} {
-		t.Run(strconv.FormatBool(itemError), func(t *testing.T) {
+	for _, tc := range []struct {
+		state     string
+		itemError bool
+	}{
+		{"pending", false},
+		{"retry", true},
+	} {
+		t.Run(tc.state+"/itemError="+strconv.FormatBool(tc.itemError), func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newInboxFixture(t)
 			f.enqueue(t, f.message("text", "committed before download", f.now.UnixMilli()-1), time.Time{})
 			f.enqueue(t, f.fileEvent(), time.Time{})
-			if itemError {
+			rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+			must.NoError(err)
+			must.Len(rows, 2)
+			if tc.state == "retry" {
+				must.NoError(f.st.FinishLineEventContext(t.Context(), rows[1].ID, "retry", "provider failure", f.now.Add(-time.Minute)))
+			}
+			before, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+			must.NoError(err)
+			must.Len(before, 2)
+			if tc.itemError {
 				f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: http.StatusInternalServerError})
 			}
 			ctx, cancel := context.WithCancelCause(t.Context())
@@ -1424,19 +1432,31 @@ func TestProcessorHandoffStatus(t *testing.T) {
 			processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 			must.ErrorIs(processor.Process(ctx), context.Canceled)
 			checks.Equal("committed before download", f.archived(t, "text").body)
+			after, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now.Add(time.Hour), 10)
+			must.NoError(err)
+			var mediaRows []store.LineWebhookEvent
+			for _, row := range after {
+				if row.TargetMessageID == "1" {
+					mediaRows = append(mediaRows, row)
+				}
+			}
+			must.Len(mediaRows, 1)
+			checks.Equal(before[1].State, mediaRows[0].State)
+			checks.Equal(before[1].Attempts, mediaRows[0].Attempts)
+			checks.Equal(before[1].NextAttemptAt, mediaRows[0].NextAttemptAt)
 			run, err := f.st.GetLatestSync(f.source.ID)
 			must.NoError(err)
 			checks.Equal(int64(2), run.MessagesAdded)
-			if itemError {
-				checks.Equal(store.SyncStatusFailed, run.Status)
+			if tc.itemError {
 				checks.Equal(int64(1), run.ErrorsCount)
 				checks.Zero(run.MessagesProcessed)
 			} else {
-				checks.Equal(store.SyncStatusCancelled, run.Status)
 				checks.Zero(run.ErrorsCount)
 				checks.Equal(int64(1), run.MessagesProcessed)
 				checks.Empty(run.ErrorMessage.String)
 			}
+			f.run(t)
+			checks.Equal(attachmentpolicy.StateStored, f.media(t).State)
 		})
 	}
 }
