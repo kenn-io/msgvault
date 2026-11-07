@@ -833,6 +833,20 @@ it.each([
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
+it('offers recovery for a first index build interrupted by a daemon restart', async () => {
+  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') return request.method === 'POST'
+      ? Response.json(localStatus({ running: true }), { status: 202 })
+      : Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0 }));
+    return unfinishedIndex(path);
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  const row = (await screen.findByText('Message index')).closest('li')!;
+  await fireEvent.click(await within(row).findByRole('button', { name: 'Retry setup, Search by meaning' }));
+  await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
+});
+
 it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {
   let recovered = false;
   let running = false;
