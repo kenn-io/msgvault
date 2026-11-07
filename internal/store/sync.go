@@ -23,6 +23,9 @@ const (
 	SyncRunItemStatusError    = "error"
 	SyncRunItemStatusSkipped  = "skipped"
 	SyncRunItemStatusResolved = "resolved"
+	// SyncRunItemFilesPendingMessage identifies a synthetic retry obligation,
+	// rather than a failure encountered while saving a message's files.
+	SyncRunItemFilesPendingMessage = "Message files still need saving"
 
 	manualTransactionCleanupTimeout = 5 * time.Second
 	syncWorkerExitedMessage         = "sync worker exited before recording completion"
@@ -958,6 +961,12 @@ func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
 
 // RecordSyncRunItemContext honors cancellation during RecordSyncRunItem.
 func (s *Store) RecordSyncRunItemContext(ctx context.Context, item SyncRunItem) error {
+	if s.syncGeneration != nil {
+		if item.SyncRunID != s.syncGeneration.runID {
+			return fmt.Errorf("record item for a different sync generation: %w", ErrSyncRunSuperseded)
+		}
+		return s.withTxContext(ctx, func(tx *loggedTx) error { return s.recordSyncRunItemWith(ctx, tx, item) })
+	}
 	return s.recordSyncRunItemWith(ctx, s.db, item)
 }
 
@@ -1005,6 +1014,8 @@ func (s *Store) ListSyncRunItems(syncRunID int64, status string, limit int) ([]S
 }
 
 // ListSyncRunItemsContext lists sync items while honoring request cancellation.
+// Error projection omits settled synthetic file obligations before applying
+// the limit. An empty status still returns the unfiltered durable ledger.
 func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]SyncRunItem, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -1020,6 +1031,25 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 	if status != "" {
 		query += ` AND status = ?`
 		args = append(args, status)
+	}
+	if status == SyncRunItemStatusError {
+		// Recognize the synthetic marker text without hiding genuine
+		// failures, even if a later attempt repaired the files.
+		query += ` AND NOT (
+			COALESCE(error_kind, '') IN ('attachment_error', 'remote_image_error', 'attachment_remote_image_error')
+			AND COALESCE(error_message, '') = ?
+			AND EXISTS (
+				SELECT 1 FROM sync_run_items settled
+				JOIN sync_runs settled_run ON settled_run.id = settled.sync_run_id
+				WHERE settled.source_message_id = sync_run_items.source_message_id
+				  AND settled.id > sync_run_items.id
+				  AND settled.phase IN ('fetch', 'ingest') AND settled.status = 'resolved'
+				  AND settled_run.source_id = (
+					SELECT source_id FROM sync_runs WHERE id = sync_run_items.sync_run_id
+				  )
+			)
+		)`
+		args = append(args, SyncRunItemFilesPendingMessage)
 	}
 	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)

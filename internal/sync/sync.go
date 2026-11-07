@@ -96,8 +96,9 @@ type Syncer struct {
 	successfulHookName string
 	successfulHook     SuccessfulSyncHook
 
-	acquisitionSyncID   int64
-	pendingAcquisitions map[string]struct{}
+	acquisitionSyncID        int64
+	pendingAcquisitions      map[string]struct{}
+	pendingAttachmentRepairs map[string]materializationWork
 
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
@@ -468,13 +469,15 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
 // pre-coverage checkpoints as safe to resume with the wider acquisition scope.
-// The membership version also restarts older recovery scans: their processed
-// prefix may still carry stale labels, even if they reached catch-up.
+// Restart older scans whose processed prefix may still carry stale labels,
+// including scans that skipped label refresh after a file-repair failure.
 const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
-const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
+const gmailHistoryRecoveryLabelFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
+const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryLabelFingerprint + ":files:v1"
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
 	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryLabelFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
 		run.CursorAfter.Valid && run.CursorAfter.String != ""
@@ -746,6 +749,21 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
+		if _, pending := s.pendingAcquisitions[id]; pending &&
+			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && s.pendingAttachmentRepairs[id] == 0 {
+			if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
+				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+					return nil, err
+				}
+				if recErr := s.recordAcquisitionFailure(syncID, id, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
+				checkpoint.ErrorsCount++
+				if !s.requireLabelRefresh {
+					continue
+				}
+			}
+		}
 		if canReadLabels {
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
@@ -775,6 +793,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		for i, sourceMessageID := range labelRefreshIDs {
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
+				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, err)
+				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
@@ -1132,7 +1154,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					return nil, recErr
 				}
 				checkpoint.ErrorsCount++
-				continue
+				_, committed := errors.AsType[*committedMessageError](err)
+				if !committed || (s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+					continue
+				}
 			}
 
 			result.added++
@@ -1450,6 +1475,20 @@ func (s *Syncer) full(
 	// List and sync messages
 	var totalEstimate int64
 	var discoveryHealth pageDiscoveryHealth
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		replayed, err := s.replayLocalMaterialization(ctx, state.syncID, source.ID, state.checkpoint)
+		if err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, err
+		}
+		if len(replayed) > 0 {
+			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayed))
+			if err := ctx.Err(); err != nil {
+				s.failStoppedSync(state.syncID, err)
+				return nil, err
+			}
+		}
+	}
 	firstPage := true
 	pageToken := state.pageToken
 
@@ -1716,6 +1755,7 @@ type messageData struct {
 	bcc               []mime.Address
 	gmailLabelIDs     []string
 	attachments       []mime.Attachment
+	mimeIncomplete    bool
 	participantMap    map[string]int64
 }
 
@@ -1918,6 +1958,7 @@ func (s *Syncer) prepareMessage(
 		bcc:               parsed.Bcc,
 		gmailLabelIDs:     raw.LabelIDs,
 		attachments:       parsed.Attachments,
+		mimeIncomplete:    parsed.Incomplete,
 	}, nil
 }
 
@@ -1957,7 +1998,22 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		recipientSets = append(recipientSets, rs)
 	}
 
-	// Persist atomically
+	// Retain the original even if later file publication fails. A pending
+	// acquisition is settled only after its required files have been stored.
+	resolution := s.acquisitionResolution(data.message.SourceMessageID)
+	materialize := s.opts.AttachmentsDir != "" && len(data.attachments) > 0
+	work := s.requiredMaterialization(data)
+	gmailMaterialization := (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && work != 0
+	if gmailMaterialization {
+		if s.acquisitionSyncID == 0 {
+			return 0, errors.New("materialization requires an active acquisition run")
+		}
+		// This obligation and RAW are one transaction. A process exit or a
+		// rejected ledger write cannot leave committed RAW without retry debt.
+		resolution = &store.SyncRunItem{SyncRunID: s.acquisitionSyncID, SourceMessageID: data.message.SourceMessageID,
+			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: store.SyncRunItemFilesPendingMessage}
+	}
+	// Publish the search document with RAW before interruptible file I/O.
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
@@ -1966,54 +2022,78 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		RawMIME:     data.rawMIME,
 		Recipients:  recipientSets,
 		LabelIDs:    labelIDs,
-		SyncRunItem: s.acquisitionResolution(data.message.SourceMessageID),
+		SyncRunItem: resolution,
+		FTS: &store.FTSDoc{
+			Subject:  data.message.Subject.String,
+			Body:     data.bodyText,
+			FromAddr: joinEmails(data.from),
+			ToAddrs:  joinEmails(data.to),
+			CcAddrs:  joinEmails(data.cc),
+		},
 	})
 	if err != nil {
 		return 0, err
 	}
-	delete(s.pendingAcquisitions, data.message.SourceMessageID)
-	// The message row is committed. Finish its local attachment and search
-	// writes so a cancellation cannot leave it permanently incomplete.
+	if gmailMaterialization {
+		if s.pendingAcquisitions == nil {
+			s.pendingAcquisitions = make(map[string]struct{})
+		}
+		if s.pendingAttachmentRepairs == nil {
+			s.pendingAttachmentRepairs = make(map[string]materializationWork)
+		}
+		s.pendingAcquisitions[data.message.SourceMessageID] = struct{}{}
+		s.pendingAttachmentRepairs[data.message.SourceMessageID] = work
+	} else {
+		delete(s.pendingAcquisitions, data.message.SourceMessageID)
+	}
+	// The message row is committed. Finish its local attachment writes so a
+	// cancellation cannot leave them incomplete; image downloads stay cancellable.
 	postCommit := context.WithoutCancel(ctx)
 
-	// Store attachments (best-effort, file I/O outside transaction)
-	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {
+	// File I/O stays outside the RAW transaction. Gmail retains the expected
+	// count on failure; IMAP keeps its existing best-effort subset statistics.
+	var attachmentErr error
+	if gmailMaterialization && work&materializeMIME != 0 && data.mimeIncomplete {
+		attachmentErr = errors.New("saved message is incomplete and needs repair")
+	}
+	if work&materializeMIME != 0 && s.opts.AttachmentsDir == "" {
+		attachmentErr = errors.Join(attachmentErr, errors.New("set an attachments directory to finish saving files"))
+	}
+	if materialize {
 		for _, att := range data.attachments {
 			if err := s.storeAttachment(postCommit, messageID, &att); err != nil {
-				s.logger.Warn("failed to store attachment", "message", messageID, "filename", att.Filename, "error", err)
+				if s.opts.SourceType == sourceTypeIMAP {
+					s.logger.Warn("failed to store attachment", "message", messageID, "attachment", att.Filename, "error", err)
+					continue
+				}
+				attachmentErr = errors.Join(attachmentErr, fmt.Errorf("store attachment %q: %w", att.Filename, err))
 			}
 		}
 
-		// Correct metadata if any attachments failed to store
-		var storedCount int
-		if err := s.store.DB().QueryRowContext(postCommit, // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
-			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
-			messageID,
-		).Scan(&storedCount); err != nil {
-			s.logger.Warn("failed to count stored attachments",
-				"message", messageID, "error", err)
-		} else if storedCount != len(data.attachments) {
-			if err := s.store.RecomputeMessageAttachmentStatsContext(postCommit, messageID); err != nil {
-				s.logger.Warn("failed to update attachment metadata",
-					"message", messageID, "error", err)
+		if attachmentErr == nil {
+			attachmentErr = s.store.RecomputeMessageAttachmentStatsContext(postCommit, messageID)
+			if attachmentErr != nil && s.opts.SourceType == sourceTypeIMAP {
+				s.logger.Warn("failed to recompute attachment stats", "message", messageID, "error", attachmentErr)
+				attachmentErr = nil
 			}
 		}
 	}
-
-	// Populate FTS index (best-effort outside transaction)
-	if s.store.FTS5Available() {
-		subject := ""
-		if data.message.Subject.Valid {
-			subject = data.message.Subject.String
-		}
-		fromAddr := joinEmails(data.from)
-		toAddrs := joinEmails(data.to)
-		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTSContext(postCommit, messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
-			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
+	if attachmentErr != nil {
+		attachmentErr = fmt.Errorf("%w: %w", errAttachmentMaterialization, attachmentErr)
+	}
+	if work&archiveRemoteImages != 0 {
+		imageErr := s.archiveMessageRemoteImages(ctx, messageID, data.bodyHTML, attachmentErr != nil)
+		if gmailMaterialization {
+			attachmentErr = errors.Join(attachmentErr, imageErr)
 		}
 	}
 
+	if attachmentErr == nil && gmailMaterialization {
+		attachmentErr = s.settleAcquisition(data.message.SourceMessageID)
+	}
+	if attachmentErr != nil {
+		return messageID, &committedMessageError{messageID: messageID, err: attachmentErr}
+	}
 	return messageID, nil
 }
 
@@ -2242,13 +2322,7 @@ func (s *Syncer) ingestMessage(
 	if err != nil {
 		return false, err
 	}
-	messageID, err := s.persistMessage(ctx, data, labelMap)
-	if err == nil && s.opts.RemoteImages != nil && data.message.MessageType == store.MessageTypeEmail {
-		archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, messageID, data.bodyHTML)
-		for _, imageErr := range archived.Errors {
-			s.logger.Warn("failed to archive remote image", "message", messageID, "error", imageErr)
-		}
-	}
+	_, err = s.persistMessage(ctx, data, labelMap)
 	return false, err
 }
 
@@ -2398,6 +2472,10 @@ func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.Att
 		return store.AttachmentWrite{}, err
 	}
 
+	return mimeAttachmentWrite(att, storagePath), nil
+}
+
+func mimeAttachmentWrite(att *mime.Attachment, storagePath string) store.AttachmentWrite {
 	role, roleSource := store.AttachmentRoleFromMIME(
 		att.Disposition, att.IsInline, att.ContentID)
 	return store.AttachmentWrite{
@@ -2410,11 +2488,21 @@ func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.Att
 		RoleSource:    roleSource,
 		SourcePartKey: att.PartKey,
 		ContentID:     att.ContentID,
-	}, nil
+	}
 }
 
 // storeAttachment stores an attachment to disk and records it in the database.
 func (s *Syncer) storeAttachment(ctx context.Context, messageID int64, att *mime.Attachment) error {
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		if len(att.Content) == 0 {
+			return nil
+		}
+		receipt, err := export.StoreAttachmentFileDurable(ctx, s.opts.AttachmentsDir, att)
+		if err != nil {
+			return err
+		}
+		return s.store.UpsertAttachmentRecord(ctx, messageID, mimeAttachmentWrite(att, receipt.StoragePath))
+	}
 	write, err := StoreMIMEAttachment(s.opts.AttachmentsDir, att)
 	if err != nil || write.StoragePath == "" {
 		return err
