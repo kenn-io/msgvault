@@ -120,6 +120,7 @@ Import local exports:
   import-mbox         Import an MBOX export into msgvault
   import-messenger    Import Facebook Messenger from a Meta data export
   import-pst          Import a PST (Outlook) archive into msgvault
+  import-signal       Import a decrypted Signal Android backup
   import-slackdump    Import a Slackdump export
   import-synctech-sms Import SMS Backup & Restore exports
   import-telegram     Import a Telegram export

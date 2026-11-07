@@ -177,7 +177,7 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 // Mirrors identityindex.TextMessageTypes plus its chat/text fallbacks
 // (internal/identityindex/schema.go).
 export const CHAT_MESSAGE_TYPES = new Set([
-  'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
+  'chat', 'text', 'google_chat', 'whatsapp', 'signal', 'imessage', 'sms', 'mms', 'rcs',
   'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram'
 ]);
 

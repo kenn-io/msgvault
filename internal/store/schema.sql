@@ -1420,7 +1420,7 @@ CREATE TABLE IF NOT EXISTS messages (
     hidden_text_present BOOLEAN NOT NULL DEFAULT 0,
 
     -- Message classification
-    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger', 'teams'
+    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'signal', 'fbmessenger', 'teams'
 
     -- Timestamps (sent_at is canonical, others platform-specific)
     sent_at DATETIME,

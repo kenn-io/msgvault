@@ -16,6 +16,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | Local source | What to provide |
 |---|---|
 | [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db` or Apple `ChatStorage.sqlite` |
+| [Signal](#import-signal) | Signal Android backup decrypted by signalbackup-tools |
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
@@ -127,6 +128,92 @@ Supply your own phone number with `--phone` for either format. msgvault records
 it as the source's confirmed “me” identity unless you pass
 `--no-default-identity`. This confirmation also happens after a completed run
 that reports recoverable message errors.
+
+## import-signal
+
+Import direct and group chats from a Signal Android backup. Signal encrypts
+its backup files, so first unpack one with
+[signalbackup-tools](https://github.com/bepaald/signalbackup-tools), using the
+30-digit passphrase Signal showed when you turned on chat backups:
+
+```bash
+signalbackup-tools signal-2026-01-01-00-00-00.backup <passphrase> --output ~/signal-backup/
+msgvault import-signal ~/signal-backup --phone +14155551234
+```
+
+The trailing slash selects directory output. The output directory holds `database.sqlite`, `DatabaseVersion.sbf`, and one
+`Attachment_*.bin` file per attachment. Keep `DatabaseVersion.sbf` beside the
+database so msgvault can check its version. Pass the directory or the
+`database.sqlite` file. Export without `--onlydb`, which also omits the required
+version file. Missing or oversize attachments
+and files that cannot be stored are skipped and counted; their messages still
+import. Long text stored in an attachment needs its file to import the full text; without it, only the inline preview is
+available on a first import.
+
+### Flags
+
+| Flag | Required | Description |
+|---|---|---|
+| `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
+| `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
+| `--display-name` | No | Display name for the phone owner |
+| `--limit` | No | Maximum new messages to import (0 imports all; must be non-negative) |
+| `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
+
+msgvault identifies the backup's own account from its messages. It refuses the
+backup when that account has a different number than `--phone` or the backup
+does not record that account's number.
+
+### What is imported
+
+- **Chats:** direct chats and groups, with group titles and current members.
+- **Messages:** text with `@` mentions spelled out, sender, and sent and received
+  times. Long text stored in an attachment is imported in full and indexed for search.
+- **Edits:** an edited message keeps one archive entry with its newest text and
+  is marked as edited. A short replacement takes precedence over an older long-text attachment.
+- **Replies:** a reply links to the message it quotes when that message is in
+  the archive.
+- **Reactions:** emoji reactions with who reacted.
+- **Attachments:** files from the backup directory, with captions added to the
+  message text. Stickers are marked as stickers.
+
+Contacts whose number Signal knows are matched by number, so they join the same
+person as their WhatsApp or SMS messages. Contacts Signal knows only by their
+account ID are recorded. If a later backup adds
+a phone number, their archived messages and group membership follow that contact.
+
+### Run it again
+
+Run the command with each newer backup. A rerun adds
+new messages and updates existing edits and reactions. It reuses archived
+attachments and stores newly available files. Each rerun replaces a message's reactions with
+the ones in the backup, and a message whose text was removed loses its archived
+text.
+
+Missing, oversized, or failed attachment files leave message text available and count as missing or skipped attachments. File storage failures also count as errors. Reruns store files that become available later.
+If the import fails or is interrupted, rerun it to finish.
+The message summary separates new messages from those already archived, including unchanged messages.
+The unresolved reply count covers messages written in that run.
+
+Messages deleted in Signal stay in your archive. If a later backup marks a message
+as deleted for everyone, rerunning the import keeps its earlier archived text.
+
+### Format limits
+
+msgvault reads Signal Android database versions 185 through 331. It refuses
+newer versions before writing to the archive. It reads the version from
+`DatabaseVersion.sbf`; a missing or invalid version file stops the import. Older
+versions and databases missing required tables or columns also stop with an error.
+
+These are left out:
+
+- SMS and MMS that Signal stored as the phone's SMS app, and calls. Import those
+  from an SMS backup with [`import-synctech-sms`](#import-synctech-sms).
+- Group and safety-number updates, timer changes, payments, and other events.
+- Stories and group story replies, messages deleted for everyone, scheduled messages
+  that were not sent yet, and earlier versions of edited messages.
+- MMS groups, story distribution lists, and call links.
+- Signal Desktop and iOS databases.
 
 ## import-imessage
 

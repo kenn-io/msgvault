@@ -37,16 +37,16 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 
-	_, err := st.EnsureParticipantByPhone(
-		t.Context(),
-		"+15550100001", "Test User", "whatsapp",
-	)
-	require.NoError(err)
-	assertParticipantIdentifierClassification(
-		t, st, "whatsapp", "+15550100001", "whatsapp", "", "",
-	)
+	for _, tc := range []struct{ service, phone string }{
+		{"whatsapp", "+15550100001"},
+		{"signal", "+15550100004"},
+	} {
+		_, err := st.EnsureParticipantByPhone(t.Context(), tc.phone, "Test User", tc.service)
+		require.NoError(err)
+		assertParticipantIdentifierClassification(t, st, tc.service, tc.phone, tc.service, "", "")
+	}
 
-	_, err = st.EnsureParticipantByIdentifier(
+	_, err := st.EnsureParticipantByIdentifier(
 		"discord_user_id", "discord-user-1", "Test User",
 	)
 	require.NoError(err)

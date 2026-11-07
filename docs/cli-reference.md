@@ -2291,6 +2291,34 @@ See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
 ---
 
+## import-signal
+
+Import a Signal Android backup that signalbackup-tools decrypted into a
+directory. Pass the directory or its `database.sqlite` file.
+
+```bash
+msgvault import-signal <directory | database.sqlite> --phone <your-number>
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
+| `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
+| `--display-name` | No | Display name for the phone owner |
+| `--limit` | No | Limit number of new messages (for testing) |
+| `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
+
+Source and message type: `signal`. Chats: `signal:{aci|pni}:<UUID>`, `signal:tel:<E.164>`, or
+`signal:{group|group-v1}:<unpadded base64url ID>`. Messages:
+`<chat>:<author>:<original sent ms>`. Authors: `self`/`peer` in direct chats;
+`self`, ACI, `pni:<UUID>`, or `tel:<E.164>` in groups.
+Database versions 185 through 331 import; others fail with an error.
+
+See [Text Messages](/docs/usage/text-messages/#import-signal) for what is
+imported and usage examples.
+
+---
+
 ## import-imessage
 
 Import messages from the local iMessage database on macOS. Requires Full Disk Access in System Settings.
