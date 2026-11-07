@@ -799,7 +799,7 @@ it('retries a failed startup in the Off row through Turn on', async () => {
       retried = true;
       return Response.json(localStatus({ running: true }), { status: 202 });
     }
-    return Response.json(localStatus(retried ? { enabled: true, provider: 'builtin', download_bytes: 0 } : { download_bytes: 0, error: 'Local model files need setup. Turn on to retry.' }));
+    return Response.json(localStatus({ provider: 'builtin', download_bytes: 0, ...(retried ? { enabled: true } : { error: 'Local model files need setup. Turn on to retry.' }) }));
   });
   render(SettingsWorkspace, { client, operationsController });
   expect((await screen.findByRole('alert')).textContent).toBe('Local model files need setup. Turn on to retry.');
@@ -808,37 +808,22 @@ it('retries a failed startup in the Off row through Turn on', async () => {
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
-it('finishes a first index build interrupted by a daemon restart through Build index', async () => {
-  let built = false;
-  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0 }));
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: built ? 'restart-2' : 'restart-1', eligible_count: built ? 6 : 0, embedded_count: built ? 6 : 0, percentage: built ? 100 : 0, status: built ? 'ready' : 'initializing', actions: built ? [] : ['build_index'] });
-    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: built ? 6 : 4, pending: built ? 0 : 2 });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
-    if (path === '/api/v1/cli/run') {
-      built = true;
-      return new Response('{"type":"complete"}\n');
-    }
-  });
-  render(SettingsWorkspace, { client, operationsController });
-  const row = (await screen.findByText('Message index')).closest('li')!;
-  await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
-  await waitFor(() => expect(within(row).queryByText('Message index')).toBeNull());
-  expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(1);
-  expect(localPosts(seen)).toEqual([]);
-});
-
-it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {
+it.each([
+  { recovery: 'manual', provider: 'builtin', error: 'Message index build interrupted.' },
+  { recovery: 'scheduled', provider: 'builtin', error: 'Message index build interrupted.' },
+  // A daemon restart forgets the failure; Build index still finishes the first build.
+  { recovery: 'manual', provider: 'builtin', error: undefined },
+  // An unavailable Ollama makes the daemon classify the saved provider as configured.
+  { recovery: 'manual', provider: 'configured', error: 'Message index build interrupted.' },
+] as const)('hides the $provider setup failure ($error) after a successful $recovery index recovery', async ({ recovery, provider, error }) => {
   let recovered = false;
   let running = false;
   let recoveredStatusReads = 0;
-  const { client, operationsController } = fixture(settingsDoc(), request => {
+  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (recovered) recoveredStatusReads++;
-      return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: recovered ? undefined : 'Message index build interrupted.' }));
+      return Response.json(localStatus({ enabled: true, provider, download_bytes: 0, error: recovered ? undefined : error }));
     }
     if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: recovered ? 6 : 0, embedded_count: recovered ? 6 : 0, percentage: recovered ? 100 : 0, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
@@ -851,9 +836,9 @@ it.each(['manual', 'scheduled'] as const)('hides the setup failure after a succe
     }
   });
   render(SettingsWorkspace, { client, operationsController });
-  await screen.findByRole('alert');
-  const row = screen.getByText('Search by meaning').closest('li')!;
-  expect(within(row).getByRole('alert').textContent).toBe('Message index build interrupted.');
+  const row = (await screen.findByText('Search by meaning')).closest('li')!;
+  await within(row).findByText(provider === 'configured' ? error! : 'Message index');
+  expect(within(row).queryByRole('alert')?.textContent).toBe(error);
   if (recovery === 'manual') {
     await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
@@ -868,6 +853,26 @@ it.each(['manual', 'scheduled'] as const)('hides the setup failure after a succe
   await waitFor(() => expect(recoveredStatusReads).toBeGreaterThan(0));
   await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
   expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull();
+  if (recovery === 'manual') expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(1);
+  expect(localPosts(seen)).toEqual([]);
+});
+
+it('releases setup progress and shows the diagnostic when a status read rejects the configuration', async () => {
+  let rejected = false;
+  const { client, operationsController } = fixture(settingsDoc(), request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (!rejected) {
+      rejected = true;
+      return Response.json(localStatus({ phase: 'downloading', running: true, done_bytes: 1000, total_bytes: 290000000 }));
+    }
+    return Response.json({ error: 'unavailable', message: 'toml: line 3: expected value but found "=" instead' }, { status: 503 });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  const row = screen.getByText('Search by meaning').closest('li')!;
+  expect((await within(row).findByRole('alert', {}, { timeout: 3000 })).textContent).toBe('toml: line 3: expected value but found "=" instead.');
+  expect(within(row).queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(within(row).getByRole('button', { name: 'Turn on' })).toBeDefined();
 });
 
 it('retries a failed initial local status read through Refresh feature status', async () => {

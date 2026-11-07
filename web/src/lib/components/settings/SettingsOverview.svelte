@@ -70,7 +70,7 @@
     {@const local = row.id === 'message_embedding' && localSearch}
     {@const enabled = local && (local.kind === 'on' || local.kind === 'ollama')}
     {@const recovery = enabled && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
-    {@const error = local && (local.kind === 'off' || local.kind === 'downloaded' || (enabled && row.chip.text !== 'On')) ? sentence(localError) : ''}
+    {@const error = row.id === 'message_embedding' && (!local || local.kind === 'off' || local.kind === 'downloaded' || (enabled && row.chip.text !== 'On')) ? sentence(localError) : ''}
     <li class="row" data-feature={row.id}>
       {#if local}
         <div class="row__local">
@@ -140,7 +140,7 @@
   .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: calc((var(--font-size-md) * 1.45 - 24px) / 2); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   .row__recovery .row__action { grid-column: 3; margin-top: calc((var(--font-size-xs) * 1.45 - 24px) / 2); }
-  .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); }
+  .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); contain: inline-size; }
   .row > .row__error { margin-top: calc(var(--control-gap) / -2); }
   .row__name {
     display: flex;
