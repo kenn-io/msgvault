@@ -71,10 +71,12 @@ new Docbank `revision`. A stale revision returns 412; conflicting links return
 `GET /api/v1/people/by-uid/photos?uid=<uid>` returns the canonical UID, a
 `link_state` of `linked` or `unlinked`, and confirmed photo assertions with
 current visible attachment occurrences. Results include Docbank assertion and
-content version IDs. They do not include unconfirmed face suggestions. If
-`truncated` is true, pass `next_cursor` as the `cursor` query parameter for the
-next assertion page. Each photo returns at most ten occurrences and reports
-`occurrences_truncated` when more may exist. Distinct Docbank people linked to
+content version IDs. A retained original remains queryable after a Docbank
+node is replaced; an assertion on the replacement version cannot match the
+original attachment receipt. Results do not include unconfirmed face
+suggestions. If `truncated` is true, pass `next_cursor` as the `cursor` query
+parameter for the next assertion page. Each photo returns at most ten
+occurrences and reports `occurrences_truncated` when more may exist. Distinct Docbank people linked to
 the same profile's current and retired UIDs produce a 409 instead of a guessed
 merge.
 

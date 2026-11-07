@@ -109,7 +109,7 @@ func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
 		if withdrawDuringRead && pageReads > 1 {
 			action = "withdrawn"
 		}
-		_, _ = fmt.Fprintf(w, `{"person_id":"p","state":"curated","revision":1,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":%q,"role":"depicted","action":%q},{"person_id":"p","assertion_id":"b","content_version_id":%q,"role":"depicted","action":"withdrawn"}]}`, version, action, version)
+		_, _ = fmt.Fprintf(w, `{"person_id":"p","state":"curated","revision":1,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":%q,"role":"depicted","action":%q},{"person_id":"p","assertion_id":"b","content_version_id":%q,"role":"depicted","action":"withdrawn"},{"person_id":"p","assertion_id":"replacement","content_version_id":"00000000-0000-4000-8000-000000000002","role":"depicted","action":"assert"}]}`, version, action, version)
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
