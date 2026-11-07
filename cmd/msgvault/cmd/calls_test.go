@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +15,15 @@ import (
 )
 
 type fakeCallCommandClient struct {
+	schemaVersion    string
 	imports          [][]byte
 	lists, summaries []store.CallQuery
 }
 
 func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error) {
+	if c.schemaVersion != "" {
+		return c.schemaVersion, nil
+	}
 	return callsMinAPIVersion, nil
 }
 
@@ -73,4 +78,30 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	requirements.Error(err)
 	assertions.Len(client.summaries, 1)
 	assertions.Equal(3, cleanups, "invalid --after must fail before opening the daemon client")
+}
+
+func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	var version [3]int
+	n, err := fmt.Sscanf(callsMinAPIVersion, "%d.%d.%d", &version[0], &version[1], &version[2])
+	requirements.NoError(err)
+	requirements.Equal(3, n)
+	requirements.NotEqual([3]int{}, version)
+	for i := len(version) - 1; i >= 0; i-- {
+		if version[i] > 0 {
+			version[i]--
+			break
+		}
+	}
+	olderVersion := fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2])
+	client := &fakeCallCommandClient{schemaVersion: olderVersion}
+	command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) { return client, func() {}, nil }})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"list"})
+	err = command.ExecuteContext(t.Context())
+	requirements.ErrorContains(err, "calls require daemon API "+callsMinAPIVersion+" or newer")
+	assertions.Contains(err.Error(), "daemon reports "+olderVersion)
+	assertions.Empty(client.lists)
 }

@@ -115,6 +115,8 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	if q.Before != nil {
 		where, args = append(where, "c.occurred_at < ?"), append(args, q.Before.UTC())
 	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(args, scopeArgs...)
 	args = append(args, limit)
 	out := []CallObservationView{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
@@ -123,7 +125,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 			c.owner_participation, c.occurred_at, c.duration_seconds
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			JOIN sources src ON src.id = m.source_id
-			WHERE `+strings.Join(where, " AND ")+` ORDER BY m.id LIMIT ?`, args...)
+			WHERE `+strings.Join(where, " AND ")+scope+` ORDER BY m.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}
@@ -206,17 +208,18 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(scopeArgs, args...)
 	out := []PersonCallSummary{}
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `
 		WITH active AS (
 			SELECT c.*
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
-			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`+scope+`
 		), per_person AS (
 			SELECT a.message_id, pp.person_id,
-				MAX(CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
-					AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END) AS confirmed
+				MAX(`+callConfirmedSQL()+`) AS confirmed
 			FROM active a JOIN (`+s.callRolesSQL()+`) r ON r.message_id = a.message_id
 			JOIN person_participants pp ON pp.participant_id = r.participant_id
 			GROUP BY a.message_id, pp.person_id
@@ -255,4 +258,25 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		return nil, fmt.Errorf("summarize calls: %w", err)
 	}
 	return out, nil
+}
+
+func (s *Store) callActiveSQL(extra string) string {
+	// Direction and duration remain in normalized evidence, outside the scalar
+	// projection used by the summary. Extract only those fields for this reader.
+	direction := "m.metadata ->> 'direction'"
+	duration := "m.metadata ->> 'duration_seconds'"
+	if s.dialect.DriverName() != postgresDriverName {
+		direction = "CASE WHEN json_valid(m.metadata) THEN " + direction + " END"
+		duration = "CASE WHEN json_valid(m.metadata) THEN " + duration + " END"
+	}
+	return `SELECT c.message_id, c.outcome, c.owner_participation,
+ c.occurred_at, CASE WHEN m.message_type = 'call_record' THEN ` + direction + ` ELSE c.direction END AS direction,
+ CASE WHEN m.message_type = 'call_record' THEN CAST(` + duration + ` AS DOUBLE PRECISION) ELSE c.duration_seconds END AS duration_seconds
+ FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
+ WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
+}
+
+func callConfirmedSQL() string {
+	return `CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
+ AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END`
 }
