@@ -16,14 +16,14 @@ func TestProjectorNativeCallObservation(t *testing.T) {
 	st := storetest.New(t).Store
 	observation := callhistory.Observation{
 		RecordID: "native-call", Version: 1, Provider: "signal", Account: "example",
-		NativeCallID: "native-call", Direction: "incoming",
-		Outcome: "answered", OwnerParticipation: "joined",
+		Direction: "incoming",
+		Outcome:   "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC),
 		Raw:        []byte(`{"status":"Accepted"}`),
 	}
 	source, err := st.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
 	requirements.NoError(err)
-	peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
 	requirements.NoError(err)
 	_, _, err = st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)

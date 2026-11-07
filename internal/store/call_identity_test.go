@@ -26,7 +26,7 @@ type logicalCallFixture struct {
 func newLogicalCallFixture(t *testing.T) *logicalCallFixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
-	peer, err := st.EnsureParticipantByPhone("+12025550101", "Alice", "signal")
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Alice", "signal")
 	require.NoError(t, err)
 	src, err := st.GetOrCreateSource(callhistory.SourceType, (callhistory.Evidence{Provider: "signal", Account: "a"}).SourceIdentifier())
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func (f *logicalCallFixture) put(t *testing.T, native string, change func(*callh
 	if recordID == "" {
 		recordID = strconv.Itoa(f.serial)
 	}
-	o := callhistory.Observation{RecordID: recordID, Version: 1, Provider: "signal", Account: "a", NativeCallID: native,
+	o := callhistory.Observation{RecordID: recordID, Version: 1, Provider: "signal", Account: "a",
 		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: f.at,
 		Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`)}
 	if change != nil {
@@ -64,11 +64,11 @@ func TestLogicalCallsImportedPhoneContact(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
 				f := storetest.New(t)
-				peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "phone")
+				peer, err := f.Store.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "phone")
 				require.NoError(err)
 				person, _, err := f.Store.CreatePersonFromParticipant(peer)
 				require.NoError(err)
-				owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "phone")
+				owner, err := f.Store.EnsureParticipantByPhone(t.Context(), "+12025550102", "Owner", "phone")
 				require.NoError(err)
 				at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 				message := f.NewMessage().WithSentAt(at).Build()
@@ -111,7 +111,7 @@ func TestLogicalCallsPerParticipantCredit(t *testing.T) {
 	f := newLogicalCallFixture(t)
 	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
 	requirements.NoError(err)
-	bob, err := f.st.EnsureParticipantByPhone("+12025550102", "Bob", "signal")
+	bob, err := f.st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Bob", "signal")
 	requirements.NoError(err)
 	f.put(t, "one", func(o *callhistory.Observation) {
 		o.Participants = append(o.Participants, callhistory.Participant{ID: bob, Participation: "invited"})
@@ -292,7 +292,7 @@ func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
-	alias, err := f.st.EnsureParticipantByPhone("+12025550102", "Alice", "signal")
+	alias, err := f.st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Alice", "signal")
 	requirements.NoError(err)
 	_, err = f.st.LinkParticipants(f.peer, alias)
 	requirements.NoError(err)
