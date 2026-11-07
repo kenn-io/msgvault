@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Disclosure, Notice } from '@kenn-io/kit-ui';
+  import { Disclosure, Notice, type NoticeTone } from '@kenn-io/kit-ui';
 
   interface Props {
+    tone?: NoticeTone;
     /** One sentence that says what happened. */
     message: string;
     /** The original error, folded under Details inside the notice. */
@@ -10,12 +11,11 @@
     onaction?: () => void;
   }
 
-  let { message, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
+  let { tone = 'error', message, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
 </script>
 
-<!-- The sentence and the error tone say what happened, so Notice's tone heading ("Error") is hidden below. -->
 <div class="inline-notice">
-  <Notice tone="error" {actionLabel} {onaction}>
+  <Notice {tone} {actionLabel} {onaction}>
     <p>{message}</p>
     {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
   </Notice>
@@ -27,7 +27,8 @@
    * Classes repeat to outrank Notice's scoped rules, which are as specific as a single class here. */
   .inline-notice { --notice-line-offset: calc((var(--control-h) - var(--type-meta-line)) / 2); min-width: 0; }
   .inline-notice :global(.kit-notice.kit-notice) { padding: var(--space-box); gap: var(--space-group); }
-  .inline-notice :global(.kit-notice .kit-notice__tone.kit-notice__tone) { display: none; }
+  /* kit-ui-check-ignore: Notice has no class prop for its tone heading, so the kit-sr-only recipe hides it from view while screen readers keep it. */
+  .inline-notice :global(.kit-notice .kit-notice__tone.kit-notice__tone) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .inline-notice :global(.kit-notice .kit-notice__mark.kit-notice__mark) { margin-top: calc((var(--type-meta-line) - 8px) / 2); }
   .inline-notice :global(.kit-notice:has(> button) .kit-notice__mark.kit-notice__mark) { margin-top: calc(var(--notice-line-offset) + (var(--type-meta-line) - 8px) / 2); }
   .inline-notice :global(.kit-notice:has(> button) .kit-notice__content) { padding-top: var(--notice-line-offset); }
