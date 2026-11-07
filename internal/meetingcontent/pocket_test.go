@@ -49,7 +49,7 @@ func TestDecodePocketEvidence(t *testing.T) {
 		{name: "order", recording: `{"transcript":{"segments":[` + second + `,` + first + `]}}`},
 		{name: "count", recording: `{"transcript":{"segments":[` + first + `]}}`},
 		{name: "known end", recording: strings.Replace(matching, `"end":2`, `"end":3`, 1)},
-		{name: "pending", recording: `{"transcript_error":"processing failed","transcript":{"segments":[]}}`},
+		{name: "pending", recording: strings.Replace(matching, `{"transcript":`, `{"transcript_error":"processing failed","transcript":`, 1)},
 		{name: "invalid", recording: `{"transcript":{"segments":[{"text":"First","start":-1}]}}`},
 		{name: "state", recording: matching, mutate: func(tr *Transcript) { tr.State = StateUnavailable }},
 		{name: "reason", recording: matching, mutate: func(tr *Transcript) { tr.Reason = "retained reason" }},

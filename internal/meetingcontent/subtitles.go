@@ -20,6 +20,9 @@ var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*
 // renderSubtitles preserves complete retained intervals without changing entry.
 func renderSubtitles(entry Entry, format string) (string, error) {
 	transcript := entry.Content.Transcript
+	if transcript.Reason == "plaud_units_unknown" {
+		return "", errors.New("cannot export Plaud subtitles: timestamp units are unknown")
+	}
 	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
 		return "", errors.New("cannot export subtitles: a complete timed transcript is unavailable")
 	}

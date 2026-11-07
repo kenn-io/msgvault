@@ -36,7 +36,7 @@ type Segment struct {
 	Speaker      string   `json:"speaker"`
 	Text         string   `json:"text"`
 	StartSeconds *float64 `json:"offset_seconds,omitzero"`
-	EndSeconds   float64  `json:"end_seconds,omitempty"`
+	EndSeconds   *float64 `json:"end_seconds,omitzero"`
 }
 
 // Note is one Plaud note tab, identified by its provider ID and data type.

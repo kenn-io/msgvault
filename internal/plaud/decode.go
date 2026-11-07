@@ -117,13 +117,13 @@ func decodeSegment(raw jsontext.Value) (Segment, error) {
 		if *v.Start < 0 || math.IsNaN(*v.Start) || math.IsInf(*v.Start, 0) {
 			return Segment{}, fmt.Errorf("%w: invalid transcript segment", ErrContract)
 		}
-		s.StartSeconds = v.Start
+		s.StartSeconds = new(*v.Start / 1000)
 	}
 	if v.End != nil {
-		if *v.End < 0 || (s.StartSeconds != nil && *v.End < *s.StartSeconds) || math.IsNaN(*v.End) || math.IsInf(*v.End, 0) {
+		if *v.End < 0 || (v.Start != nil && *v.End < *v.Start) || math.IsNaN(*v.End) || math.IsInf(*v.End, 0) {
 			return Segment{}, fmt.Errorf("%w: invalid transcript end time", ErrContract)
 		}
-		s.EndSeconds = *v.End
+		s.EndSeconds = new(*v.End / 1000)
 	}
 	if len(v.Speaker) > 0 && string(v.Speaker) != "null" {
 		var name string

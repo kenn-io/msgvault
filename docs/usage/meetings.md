@@ -77,9 +77,11 @@ formatting, and size errors leave an existing destination untouched.
 Export uses retained structured segments, independently of the recorder or
 transcription service. Complete start/end intervals in one coordinate system
 are required. Relative bounds survive from Twenty, Omi, and Plaud. New Plaud
-captures preserve explicit zero starts; older saved zero starts are ambiguous
-and refuse export. A later sync with fresh complete transcript data replaces
-that evidence; export never fetches it. Pocket can recover missing end bounds
+captures normalize published millisecond bounds once and preserve explicit zero
+starts and ends. Legacy Plaud v1/v2 bounds use their versioned millisecond
+encoding; v1 zero starts and old zero ends remain unknown. Unversioned units
+refuse subtitle export while preserving text and metadata. A later sync with
+fresh complete transcript data replaces that evidence; export never fetches it. Pocket can recover missing end bounds
 from retained recording data only when the complete normalized transcript matches
 its archived speech and timing. Pending, invalid or mismatched recording data
 leaves unknown bounds unavailable; export never fetches missing timing.

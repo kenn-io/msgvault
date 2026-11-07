@@ -77,6 +77,7 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	for _, ids := range [][]int64{nil, fixture.meetingIDs[:2]} {
 		_, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
 		requirements.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+		requirements.ErrorContains(err, "exactly one distinct meeting ID is required")
 	}
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
 		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2]})}, meetingcontent.PacketOptions{

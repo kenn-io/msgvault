@@ -26,7 +26,7 @@ type evidence struct {
 
 func normalized(rec Recording) evidence {
 	e := evidence{
-		Version:         2,
+		Version:         3,
 		FileID:          rec.File.ID,
 		Title:           rec.File.Name,
 		StartedAt:       rec.File.StartedAt,
@@ -123,8 +123,12 @@ func (e *evidence) snapshot(sourceID int64, email string) (meetingarchive.Snapsh
 		body.WriteString("Transcript:\n")
 	}
 	for _, seg := range e.Segments {
-		if seg.StartSeconds != nil && (e.Version == 2 || *seg.StartSeconds != 0) {
-			fmt.Fprintf(&body, "[%02d:%02d] ", int(*seg.StartSeconds)/60, int(*seg.StartSeconds)%60)
+		if seg.StartSeconds != nil && (e.Version >= 2 || *seg.StartSeconds != 0) {
+			start := *seg.StartSeconds
+			if e.Version == 1 || e.Version == 2 {
+				start /= 1000
+			}
+			fmt.Fprintf(&body, "[%02d:%02d] ", int(start)/60, int(start)%60)
 		}
 		fmt.Fprintf(&body, "%s: %s\n", seg.Speaker, seg.Text)
 		if !seen[seg.Speaker] {

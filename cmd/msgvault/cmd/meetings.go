@@ -136,7 +136,7 @@ and require daemon API schema 3.47.0; --max-bytes caps the requested content
 		},
 	}
 	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "meeting message ID from search (repeatable, required, at most 100)")
-	command.Flags().StringVar(&format, "format", "markdown", "Context format: json, markdown, srt or vtt (subtitles require one meeting)")
+	command.Flags().StringVar(&format, "format", "markdown", "Context format: json, markdown, srt or vtt")
 	command.Flags().BoolVar(&includeTranscript, "include-transcript", false, "Include archived transcript evidence")
 	command.Flags().Int64Var(&maxBytes, "max-bytes", 131072, "Maximum UTF-8 content bytes")
 	command.Flags().StringVarP(&output, "output", "o", "", "Output file (default stdout, use - for stdout)")
