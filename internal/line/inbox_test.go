@@ -421,6 +421,8 @@ func TestProcessorUnsendUpdatesSyncCounters(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
+	path := "/v2/bot/group/" + testGroup + "/member/" + testUser
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusServiceUnavailable})
 	f.enqueue(t, f.message("1", "original", f.now.UnixMilli()), time.Time{})
 	f.run(t)
 	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "unsend-1", Timestamp: f.now.UnixMilli() + 1, Source: Source{Type: "group", GroupID: testGroup}, Unsend: &Unsend{MessageID: "1"}}, time.Time{})
@@ -432,6 +434,12 @@ func TestProcessorUnsendUpdatesSyncCounters(t *testing.T) {
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
 	checks.Zero(added)
 	checks.Equal(int64(1), updated, "unsends must invalidate already exported messages")
+	f.now = f.now.Add(time.Minute)
+	f.run(t)
+	checks.True(f.archived(t, "1").deleted)
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+	checks.Zero(added)
+	checks.Zero(updated, "reconciling an unchanged unsend must preserve the cache update watermark")
 }
 
 func TestProcessorUnsendBeforeMessage(t *testing.T) {
@@ -1037,15 +1045,27 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 
 func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 	t.Run("unavailable profile preserves transitions", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
 		f := newInboxFixture(t)
-		f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
+		path := "/v2/bot/group/" + testGroup + "/member/" + testUser
+		f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusServiceUnavailable})
 		e := Event{Type: "memberJoined", WebhookEventID: "join-many", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: "U00000000000000000000000000000003"}}}}
 		f.enqueue(t, e, time.Time{})
 		f.run(t)
 		var count int
-		require.NoError(t, f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&count))
-		assert.Equal(t, 2, count)
-		assert.Equal(t, 1, f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/U00000000000000000000000000000003"))
+		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&count))
+		checks.Equal(2, count)
+		checks.Equal(1, f.api.Count(http.MethodGet, path))
+		checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/U00000000000000000000000000000003"))
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
+		checks.Equal("retry", state)
+		f.now = f.now.Add(25 * time.Hour)
+		f.run(t)
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
+		checks.Equal("failed", state)
+		checks.Equal(1, f.api.Count(http.MethodGet, path), "expired events must stop fetching profiles")
 	})
 	t.Run("missing profile allows other members", func(t *testing.T) {
 		must := require.New(t)

@@ -138,7 +138,7 @@ func (p *Processor) finishUnstoredMedia(ctx context.Context, messageID int64, st
 		if err = p.store.UpsertLineAttachmentContext(ctx, messageID, write); err != nil {
 			return err
 		}
-		jobctx.RecordProgress(ctx)
+		p.recordMutation(ctx, 0, 1)
 	}
 	return nil
 }

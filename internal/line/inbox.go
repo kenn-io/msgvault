@@ -489,10 +489,16 @@ func (p *Processor) unsend(ctx context.Context, e Event) error {
 	if !row.SourceConversationID.Valid || row.SourceConversationID.String != key {
 		return invalidEvent("LINE unsend target belongs to a different chat")
 	}
-	if err = p.store.MarkMessageDeletedContext(ctx, p.sourceID, e.Unsend.MessageID); err != nil {
+	deleted, err := p.store.LineMessageDeletedContext(ctx, row.ID)
+	if err != nil {
 		return err
 	}
-	p.recordMutation(ctx, 0, 1)
+	if !deleted {
+		if err = p.store.MarkMessageDeletedContext(ctx, p.sourceID, e.Unsend.MessageID); err != nil {
+			return err
+		}
+		p.recordMutation(ctx, 0, 1)
+	}
 	return p.finishUnstoredMedia(ctx, row.ID, attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 }
 
@@ -553,12 +559,12 @@ func (p *Processor) membership(ctx context.Context, e Event) (func(context.Conte
 
 // Every member transition commits before the first optional provider request.
 func (p *Processor) enrichMembership(ctx context.Context, e Event, users []string) error {
-	var enrichmentErr error
 	for _, userID := range users {
 		if userID != p.botID {
-			_, err := p.profile(ctx, e.Source, userID)
-			enrichmentErr = errors.Join(enrichmentErr, err)
+			if _, err := p.profile(ctx, e.Source, userID); err != nil {
+				return err
+			}
 		}
 	}
-	return enrichmentErr
+	return nil
 }
