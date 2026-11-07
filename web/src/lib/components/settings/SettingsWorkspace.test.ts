@@ -809,13 +809,12 @@ it('retries a failed startup in the Off row through Turn on', async () => {
 });
 
 it.each([
-  { recovery: 'manual', provider: 'builtin', error: 'Message index build interrupted.' },
-  { recovery: 'scheduled', provider: 'builtin', error: 'Message index build interrupted.' },
-  // A daemon restart forgets the failure; Build index still finishes the first build.
-  { recovery: 'manual', provider: 'builtin', error: undefined },
+  { recovery: 'manual', provider: 'builtin', error: 'Message index build interrupted.', coverageStatus: 'initializing', wantArgs: ['embeddings', 'build', '--full-rebuild', '--yes'] },
+  { recovery: 'scheduled', provider: 'builtin', error: 'Message index build interrupted.', coverageStatus: 'initializing', wantArgs: [] },
   // An unavailable Ollama makes the daemon classify the saved provider as configured.
-  { recovery: 'manual', provider: 'configured', error: 'Message index build interrupted.' },
-] as const)('hides the $provider setup failure ($error) after a successful $recovery index recovery', async ({ recovery, provider, error }) => {
+  { recovery: 'manual', provider: 'configured', error: 'Message index build interrupted.', coverageStatus: 'incomplete', wantArgs: ['embeddings', 'build', '--yes'] },
+] as const)('hides the $provider setup failure ($error) after a successful $recovery index recovery', async ({ recovery, provider, error, coverageStatus, wantArgs }) => {
+  let errorCleared = false;
   let recovered = false;
   let running = false;
   let recoveredStatusReads = 0;
@@ -823,9 +822,9 @@ it.each([
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (recovered) recoveredStatusReads++;
-      return Response.json(localStatus({ enabled: true, provider, download_bytes: 0, error: recovered ? undefined : error }));
+      return Response.json(localStatus({ enabled: true, provider, download_bytes: 0, error: recovered || errorCleared ? undefined : error }));
     }
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: recovered ? 6 : 0, embedded_count: recovered ? 6 : 0, percentage: recovered ? 100 : 0, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: recovered ? 6 : 0, embedded_count: recovered ? 6 : 0, percentage: recovered ? 100 : 0, status: recovered ? 'ready' : coverageStatus, actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
       configured: true, active: running ? { id: 'recovery-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } : undefined,
@@ -839,8 +838,15 @@ it.each([
   const row = (await screen.findByText('Search by meaning')).closest('li')!;
   await within(row).findByText(provider === 'configured' ? error! : 'Message index');
   expect(within(row).queryByRole('alert')?.textContent).toBe(error);
+  if (recovery === 'manual' && provider === 'builtin') {
+    // A daemon restart clears the setup error while the durable index is still unfinished.
+    errorCleared = true;
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+    await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
+    expect(await within(row).findByRole('button', { name: 'Build index, Search by meaning' })).toBeDefined();
+  }
   if (recovery === 'manual') {
-    await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
+    await fireEvent.click(within(row).getByRole('button', { name: 'Build index, Search by meaning' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
   } else {
     running = true;
@@ -853,7 +859,7 @@ it.each([
   await waitFor(() => expect(recoveredStatusReads).toBeGreaterThan(0));
   await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
   expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull();
-  if (recovery === 'manual') expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(1);
+  if (recovery === 'manual') expect(seen.filter(request => request.path === '/api/v1/cli/run').map(request => request.body)).toEqual([{ args: wantArgs }]);
   expect(localPosts(seen)).toEqual([]);
 });
 

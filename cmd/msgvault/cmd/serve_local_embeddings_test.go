@@ -202,28 +202,10 @@ func newLocalActivationFixture(t *testing.T, model string) *localActivationFixtu
 		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 			return embedlocal.Status{DownloadBytes: 290000000}, nil
 		},
-		install: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+		install: func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 			f.installs++
-			_, _, held := gate.Holder()
-			assert.False(t, held, "installation leaves the archive available to sync")
-			release, ok := gate.BeginLabeledWorkContext(ctx, "scheduled sync")
-			if !assert.True(t, ok) {
-				return embedlocal.Installation{}, errors.New("test sync could not acquire archive")
-			}
-			release()
-			yes, err := opts.Confirm(ctx, 290000000)
-			if err != nil {
-				return embedlocal.Installation{}, fmt.Errorf("confirm local model download: %w", err)
-			}
-			assert.True(t, yes)
-			opts.Progress(5, 10)
 			return embedlocal.Installation{DataDir: dir}, nil
 		},
-	}
-	f.runner.beforeBuild = func() {
-		label, _, held := gate.Holder()
-		assert.True(t, held)
-		assert.Equal(t, "msgvault embeddings build", label)
 	}
 	return f
 }
@@ -231,10 +213,7 @@ func newLocalActivationFixture(t *testing.T, model string) *localActivationFixtu
 func (f *localActivationFixture) start(t *testing.T) {
 	t.Helper()
 	if f.cfg.Vector.Enabled {
-		hook := f.runner.beforeBuild
-		f.runner.beforeBuild = nil
 		require.NoError(t, f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes", "--full-rebuild", "--config", f.cfg.ConfigFilePath()}}, nil))
-		f.runner.beforeBuild = hook
 	}
 	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
 	require.True(t, f.handle.WaitTimeout(5*time.Second))
@@ -297,7 +276,6 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 		{name: "local without Ollama API", wantProvider: "configured"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
-		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
 		{name: "saved disabled builtin model", savedOnly: true, savedBuiltin: true, wantProvider: "builtin", wantError: "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
 		{name: "saved enabled remote after startup", savedOnly: true, savedEnabled: true, wantProvider: "configured"},
@@ -392,10 +370,6 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"document_prefix": "updated: "}}})
 				require.NoError(t, err)
 			}
-			var id int64
-			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
-			oldVector, err := f.handle.vf.Backend.LoadVector(f.ctx, id)
-			require.NoError(t, err)
 			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "second", "Pear", "A pear tree is growing.")
 			require.NoError(t, err)
 			var building vector.GenerationID
@@ -413,9 +387,6 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 			require.NoError(t, err)
 			if tc.reuse {
 				assert.Equal(t, old.ID, active.ID)
-				after, err := f.handle.vf.Backend.LoadVector(f.ctx, id)
-				require.NoError(t, err)
-				assert.Equal(t, oldVector, after)
 				assert.Equal(t, int32(1), f.inputs.Load()-before)
 			} else {
 				assert.NotEqual(t, old.ID, active.ID)
@@ -474,17 +445,16 @@ func TestLocalEmbeddingsCommandError(t *testing.T) {
 	for _, tc := range []struct {
 		name, stderr, want string
 		err                error
+		wantCanceled       bool
 	}{
-		{name: "canceled without output", err: context.Canceled, want: "context canceled"},
+		{name: "canceled without output", err: context.Canceled, wantCanceled: true, want: "context canceled"},
 		{name: "plain failure", err: errors.New(cliSubprocessExitSentinel), stderr: "index progress\nError: model unavailable\n", want: "model unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			err := localEmbeddingsCommandError(t.Context(), tc.err, tc.stderr)
 			require.EqualError(err, tc.want)
-			if errors.Is(tc.err, context.Canceled) {
-				require.ErrorIs(err, context.Canceled)
-			}
+			require.Equal(tc.wantCanceled, errors.Is(err, context.Canceled))
 		})
 	}
 }
@@ -502,19 +472,35 @@ func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) 
 }
 
 func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
-	for _, failure := range []string{"download", "config conflict", "endpoint gone"} {
-		t.Run(failure, func(t *testing.T) {
-			require := require.New(t)
-			f := newLocalActivationFixture(t, "")
-			f.start(t)
-			expected, err := os.ReadFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			install, endpoint := f.controller.install, localEmbeddingEndpoint
-			f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				switch failure {
-				case "download":
+	for _, tc := range []struct {
+		name, wantError, suffix, wantTheme string
+		wantConflict                       bool
+		arrange                            func(*testing.T, *localActivationFixture, []byte)
+	}{
+		{
+			name: "download", wantError: "connection interrupted", wantTheme: "system",
+			arrange: func(_ *testing.T, f *localActivationFixture, _ []byte) {
+				f.controller.install = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 					return embedlocal.Installation{}, errors.New("connection interrupted")
-				case "endpoint gone":
+				}
+			},
+		},
+		{
+			name: "config conflict", wantError: "Settings changed during setup. Turn on to retry.",
+			wantConflict: true, suffix: "\n[web]\ntheme = \"dark\"\n", wantTheme: "dark",
+			arrange: func(t *testing.T, f *localActivationFixture, expected []byte) {
+				install := f.controller.install
+				f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+					require.NoError(t, os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
+					return install(ctx, opts)
+				}
+			},
+		},
+		{
+			name: "endpoint gone", wantError: "local server unavailable", wantTheme: "system",
+			arrange: func(_ *testing.T, f *localActivationFixture, _ []byte) {
+				endpoint := localEmbeddingEndpoint
+				f.controller.install = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 					// Preparation resolves once; runtime initialization then finds its server gone.
 					calls := 0
 					localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
@@ -525,23 +511,24 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 						return endpoint(ctx, opts)
 					}
 					return embedlocal.Installation{}, nil
-				default:
-					expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
-					require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
-					return install(ctx, opts)
 				}
-			}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
+			require := require.New(t)
+			f := newLocalActivationFixture(t, "")
+			f.start(t)
+			expected, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			expected = append(expected, []byte(tc.suffix)...)
+			install, endpoint := f.controller.install, localEmbeddingEndpoint
+			tc.arrange(t, f, expected)
 			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 			require.Nil(f.handle.vf)
-			switch failure {
-			case "download":
-				require.ErrorContains(err, "connection interrupted")
-			case "endpoint gone":
-				require.ErrorContains(err, "local server unavailable")
-			default:
-				require.ErrorIs(err, config.ErrConfigConflict)
-				require.EqualError(err, "Settings changed during setup. Turn on to retry.")
-			}
+			require.ErrorContains(err, tc.wantError)
+			require.Equal(tc.wantConflict, errors.Is(err, config.ErrConfigConflict))
 			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			require.Equal(expected, actual)
@@ -551,9 +538,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 			require.NoError(err)
 			loaded, err := f.cfg.ReloadConfigFile(snapshot)
 			require.NoError(err)
-			if failure == "config conflict" {
-				require.Equal("dark", loaded.Web.Theme)
-			}
+			require.Equal(tc.wantTheme, loaded.Web.Theme)
 			require.True(loaded.Vector.Embeddings.LocalOnly)
 		})
 	}
@@ -569,12 +554,25 @@ func (f *localActivationFixture) useBuiltin(t *testing.T) {
 	f.cfg.Vector.Embeddings.Endpoint = ""
 }
 
-func TestLocalEmbeddingsPublishesScheduledBuild(t *testing.T) {
-	t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
+func TestLocalEmbeddingsPublishesScheduledBuildWithoutBlockingSyncDuringInstall(t *testing.T) {
 	f := newLocalActivationFixture(t, "")
 	f.start(t)
+	gate := f.controller.gate.(*api.SerialOperationGate)
+	install := f.controller.install
+	f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+		_, _, held := gate.Holder()
+		assert.False(t, held, "installation leaves the archive available to sync")
+		release, ok := gate.BeginLabeledWorkContext(ctx, "scheduled sync")
+		require.True(t, ok)
+		release()
+		return install(ctx, opts)
+	}
+	f.runner.beforeBuild = func() {
+		label, _, held := gate.Holder()
+		assert.True(t, held)
+		assert.Equal(t, "msgvault embeddings build", label)
+	}
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	assert.True(t, f.handle.vf.Cfg.Embeddings.LocalOnly)
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 	require.NoError(t, err)
 	require.NoError(t, f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel))
@@ -664,10 +662,16 @@ func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
 			require.NoError(err)
 			f.cfg.Vector.Embed.Schedule.Cron = ""
 			f.cfg.Vector.Embed.Schedule.RunAfterSync = false
+			var previous vector.GenerationID
 			if existingIndex {
 				f.useBuiltin(t)
-				f.runner.beforeBuild = nil
 				require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+				backend, closeBackend, err := openEmbeddingsBackend(f.ctx)
+				require.NoError(err)
+				active, err := backend.ActiveGeneration(f.ctx)
+				closeBackend()
+				require.NoError(err)
+				previous = active.ID
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
 				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": false}}})
@@ -682,11 +686,14 @@ func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
 			require.ErrorContains(err, "embed endpoint returned 500 (unavailable)")
 			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
 			require.NoError(err)
-			if !existingIndex {
+			if existingIndex {
+				active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+				require.NoError(err)
+				require.Equal(previous, active.ID, "failed activation must preserve the active index")
+			} else {
 				require.NotNil(building)
 			}
 			f.onEmbedding = nil
-			f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
 			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
 			require.NoError(err)

@@ -112,24 +112,23 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 }
 
 func TestLocalEmbeddingsHostDisplay(t *testing.T) {
-	for _, host := range []string{"localhost:8080", "archive.example.test:8080"} {
-		t.Run(host, func(t *testing.T) {
+	for _, tc := range []struct{ host, wantHost string }{
+		{host: "localhost:8080"},
+		{host: "archive.example.test:8080", wantHost: "archive.example.test"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
 			t.Cleanup(func() { require.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 			server.SetLocalEmbeddings(&localSetupTestController{})
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
-			request.Host = host
+			request.Host = tc.host
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)
 			require.Equal(http.StatusOK, response.Code)
 			var status LocalEmbeddingsStatus
 			require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-			if host == "archive.example.test:8080" {
-				assert.Equal("archive.example.test", status.Host)
-			} else {
-				assert.Empty(status.Host)
-			}
+			assert.Equal(tc.wantHost, status.Host)
 		})
 	}
 }

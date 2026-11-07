@@ -740,6 +740,15 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			wantAction: []SearchCoverageAction{SearchCoverageActionRetry, SearchCoverageActionBuildIndex},
 		},
 		{
+			name: "matching first build", status: VectorStatusInitializing,
+			backend: &filteredCoverageBackend{
+				activeErr: vector.ErrNoActiveGeneration,
+				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
+			},
+			wantStatus: SearchCoverageInitializing,
+			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
+		},
+		{
 			name: "different first build", status: VectorStatusReady,
 			backend: &filteredCoverageBackend{
 				activeErr: vector.ErrNoActiveGeneration,
