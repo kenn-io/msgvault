@@ -2383,6 +2383,11 @@ var exclusiveLockTables = []string{
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	// Recording reconciliation and visual publication transactions take the
+	// sync_runs gate before child writes (including FK checks on messages).
+	// Publication commit writes publications then claims; generation cleanup
+	// uses the reverse order, so table ordering alone cannot fence both safely.
+	"recording_references", "visual_publications", "visual_work_claims",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
@@ -2405,10 +2410,14 @@ var exclusiveLockTables = []string{
 	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
+	// Source merge takes the identity row before any archive writes, matching
+	// BeginExclusive. Subset copies write these markers only to new SQLite DBs.
+	"source_merge_messages", "source_merge_archive_only_messages", "source_merge_conversations",
+	"source_merge_attachments", "source_merge_preserved_attachments",
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
-	"loop_decisions",
+	"loop_decisions", "loop_message_evidence",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-11-06
 title: PostgreSQL Backend
 description: Run msgvault on PostgreSQL with native full-text search and optional pgvector semantic search.
 ---
@@ -182,6 +183,17 @@ Not implemented:
   operational tooling such as `pg_amcheck`.
 
 ## Operational Notes
+
+Serialized source removal fences writes to every table reachable through an
+`ON DELETE CASCADE` chain, including recording references, source-merge
+evidence, visual publications and claims, and loop evidence. Reads remain
+available. Writers that check a parent foreign key after writing a child, or
+touch these tables in a different order, take the shared `sync_runs`
+maintenance gate first. Source merges take the identity-revision row lock
+before writing archive rows, matching source removal. Keep these lock orders
+when adding writers; adding a table to the maintenance lock list alone can
+create a deadlock. The PostgreSQL catalog regression checks the full cascade
+chain whenever the schema changes.
 
 If you expose `serve` or MCP beyond localhost, use a dedicated PostgreSQL role
 with the minimum privileges needed for that process. msgvault's read-only mode

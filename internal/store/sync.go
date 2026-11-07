@@ -1281,6 +1281,8 @@ func (s *Store) validateCurrentSyncGeneration(
 // their generation fence. ROW EXCLUSIVE lets syncs proceed together but makes
 // BeginExclusive wait before it holds any of their table locks. Attribution
 // transactions instead gate maintenance on the identity row before their fence.
+// Cascade-child writers use the same gate through
+// withSourceMaintenanceGateContext, before child writes and parent FK checks.
 func (s *Store) lockSyncMaintenanceGate(ctx context.Context, q contextStatementQuerier) error {
 	if !s.IsPostgreSQL() {
 		return nil
