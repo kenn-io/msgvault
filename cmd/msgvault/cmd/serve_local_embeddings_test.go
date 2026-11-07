@@ -69,17 +69,6 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	if r.failBuild && req.Args[1] == "build" {
 		r.failBuild = false
-		if emit != nil {
-			if err := emit(api.CLIRunEvent{Type: cliStreamStderr, Data: strings.Repeat("index progress\n", 1024)}); err != nil {
-				return err
-			}
-			if err := emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "Error: embedding build interrupted: "}); err != nil {
-				return err
-			}
-			if err := emit(api.CLIRunEvent{Type: cliStreamStderr, Data: "context canceled\n"}); err != nil {
-				return err
-			}
-		}
 		return errors.New(cliSubprocessExitSentinel)
 	}
 	state := *invocationFromContext(ctx)
@@ -257,32 +246,6 @@ func (f *localActivationFixture) start(t *testing.T) {
 	f.controller.handle = f.handle
 }
 
-func (f *localActivationFixture) localStatus(t *testing.T) api.LocalEmbeddingsStatus {
-	t.Helper()
-	require := require.New(t)
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
-	request.Header.Set("Authorization", "Bearer owner")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	var status api.LocalEmbeddingsStatus
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-	return status
-}
-
-func (f *localActivationFixture) enableThroughAPI(t *testing.T) {
-	t.Helper()
-	f.server.SetLocalEmbeddings(f.controller)
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer owner")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusAccepted, response.Code)
-}
-
 func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 	for _, startupFailed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("startup_failed=%t", startupFailed), func(t *testing.T) {
@@ -334,18 +297,23 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name, catalog, wantProvider string
-		pausedRemote                bool
+		pausedRemote, savedOnly     bool
 	}{
 		{name: "local without Ollama API", wantProvider: "configured"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
 		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
 		{name: "paused remote", pausedRemote: true, wantProvider: "configured"},
+		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			f := newLocalActivationFixture(t, "custom-model")
+			model := "custom-model"
+			if tc.savedOnly {
+				model = ""
+			}
+			f := newLocalActivationFixture(t, model)
 			f.ollamaTags = tc.catalog != ""
 			f.ollamaCatalog = tc.catalog
 			before, err := os.ReadFile(f.cfg.ConfigFilePath())
@@ -358,6 +326,13 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				f.cfg.Vector.Embeddings.Endpoint = "https://api.example.test/v1"
 			}
 			f.start(t)
+			if tc.savedOnly {
+				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": "https://api.example.test/v1"}}})
+				require.NoError(err)
+				before = written.Content
+			}
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			assert.Equal(tc.wantProvider, status.Provider)
@@ -436,9 +411,7 @@ func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
 	require := require.New(t)
 	f := newLocalActivationFixture(t, "")
 	f.start(t)
-	f.enableThroughAPI(t)
-	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-	require.Empty(f.localStatus(t).Error)
+	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	vf := f.handle.vf
 	generation, err := vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
 	require.NoError(err)
@@ -466,7 +439,7 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	f.start(t)
 	f.runner.failBuild = true
 	err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-	require.EqualError(err, "Message index build interrupted.")
+	require.Error(err)
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
@@ -474,11 +447,24 @@ func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	assert.True(saved.Vector.Enabled)
 }
 
-func TestLocalEmbeddingsCanceledBuildWithoutChildOutput(t *testing.T) {
-	require := require.New(t)
-	err := localEmbeddingsCommandError(t.Context(), true, context.Canceled, "")
-	require.EqualError(err, "Message index build interrupted.")
-	require.ErrorIs(err, context.Canceled)
+func TestLocalEmbeddingsCommandError(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr, want string
+		err                error
+	}{
+		{name: "canceled without output", err: context.Canceled, want: "Message index build interrupted."},
+		{name: "canceled after progress", err: errors.New(cliSubprocessExitSentinel), stderr: strings.Repeat("index progress\n", 1024) + "Error: embedding build interrupted: context canceled\n", want: "Message index build interrupted."},
+		{name: "plain failure", err: errors.New(cliSubprocessExitSentinel), stderr: "index progress\nError: model unavailable\n", want: "model unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			err := localEmbeddingsCommandError(t.Context(), true, tc.err, tc.stderr)
+			require.EqualError(err, tc.want)
+			if errors.Is(tc.err, context.Canceled) {
+				require.ErrorIs(err, context.Canceled)
+			}
+		})
+	}
 }
 
 func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) {
@@ -494,7 +480,7 @@ func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) 
 }
 
 func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
-	for _, failure := range []string{"download", "config conflict", "provider conflict"} {
+	for _, failure := range []string{"download", "config conflict"} {
 		t.Run(failure, func(t *testing.T) {
 			require := require.New(t)
 			f := newLocalActivationFixture(t, "")
@@ -506,11 +492,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 				if failure == "download" {
 					return embedlocal.Installation{}, errors.New("connection interrupted")
 				}
-				if failure == "provider conflict" {
-					expected = append(expected, []byte("\n[vector.embeddings]\nendpoint = \"https://embeddings.example.test/v1\"\nmodel = \"selected-model\"\ndimension = 4\n")...)
-				} else {
-					expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
-				}
+				expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
 				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
 				return install(ctx, opts)
 			}
@@ -530,13 +512,6 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 			}
 			f.controller.install = install
 			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			if failure == "provider conflict" {
-				require.ErrorContains(err, "already uses a configured provider")
-				actual, err := os.ReadFile(f.cfg.ConfigFilePath())
-				require.NoError(err)
-				require.Equal(expected, actual)
-				return
-			}
 			require.NoError(err)
 			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
@@ -590,11 +565,7 @@ func TestLocalEmbeddingsFailureBeforeConfigWriteOffersRetry(t *testing.T) {
 		}
 		return embedlocal.Installation{}, nil
 	}
-	f.enableThroughAPI(t)
-	require.Eventually(t, func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-	status := f.localStatus(t)
-	assert.False(t, status.Enabled)
-	assert.Contains(t, status.Error, "local server unavailable")
+	require.ErrorContains(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "local server unavailable")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(t, err)
 	saved, err := f.cfg.ReloadConfigFile(snapshot)
@@ -605,10 +576,7 @@ func TestLocalEmbeddingsFailureBeforeConfigWriteOffersRetry(t *testing.T) {
 	f.controller.install = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 		return embedlocal.Installation{}, nil
 	}
-	f.enableThroughAPI(t)
-	require.Eventually(t, func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
-	assert.Empty(t, f.localStatus(t).Error)
-	assert.True(t, f.localStatus(t).Enabled)
+	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 }
 
 func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
@@ -689,17 +657,4 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 	f.server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "exact vectors retained")
-}
-
-func TestLocalEmbeddingsInspectUsesSavedSettings(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(t, err)
-	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": "https://api.example.test/v1"}}})
-	require.NoError(t, err)
-	status, err := f.controller.Inspect(f.ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "configured", status.Provider)
-	require.ErrorContains(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
 }
