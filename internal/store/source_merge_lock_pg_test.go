@@ -52,10 +52,10 @@ func TestMergeSourcesWithTwoPostgresConnections(t *testing.T) {
 
 // waitForPostgresBlocker observes a real lock wait, not a scheduling delay.
 // Both cancellation and removal regressions use it to establish their race.
-func waitForPostgresBlocker(t testing.TB, db *sql.DB, blocker int) int {
-	t.Helper()
-	require := require.New(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+func waitForPostgresBlocker(tb testing.TB, db *sql.DB, blocker int) int {
+	tb.Helper()
+	require := require.New(tb)
+	ctx, cancel := context.WithTimeout(tb.Context(), 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()

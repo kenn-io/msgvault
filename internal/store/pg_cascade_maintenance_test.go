@@ -14,18 +14,19 @@ import (
 )
 
 func cascadeMaintenanceFixture(t *testing.T) (*Store, int64, int64, int64) {
+	require := require.New(t)
 	t.Helper()
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
 	source, err := st.GetOrCreateSource("gmail", "cascade@example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	var conversationID, messageID, attachmentID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO conversations
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO conversations
 		(source_id, source_conversation_id) VALUES ($1, 'cascade') RETURNING id`, source.ID).Scan(&conversationID))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO messages
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO messages
 		(source_id, conversation_id, source_message_id) VALUES ($1, $2, 'cascade') RETURNING id`,
 		source.ID, conversationID).Scan(&messageID))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO attachments
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO attachments
 		(message_id, content_hash, attachment_role, role_source)
 		VALUES ($1, $2, 'standalone', 'importer_semantics') RETURNING id`,
 		messageID, strings.Repeat("a", 64)).Scan(&attachmentID))
@@ -55,15 +56,16 @@ func TestIndirectCascadeMaintenanceLocks(t *testing.T) {
 		"loop_message_evidence":              "token",
 	} {
 		t.Run(table, func(t *testing.T) {
+			require := require.New(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			tx, err := st.DB().BeginTx(ctx, nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			defer func() { _ = tx.Rollback() }()
 			_, err = tx.ExecContext(ctx, "SELECT 1 FROM "+table+" LIMIT 1")
-			require.NoError(t, err, "maintenance permits readers")
+			require.NoError(err, "maintenance permits readers")
 			_, err = tx.ExecContext(ctx, "SET LOCAL lock_timeout = '100ms'")
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = tx.ExecContext(ctx, "UPDATE "+table+" SET "+column+" = "+column+" WHERE FALSE")
 			assert.True(t, isPgError(err, "55P03"), "maintenance must fence writes to %s: %v", table, err)
 		})
@@ -80,17 +82,19 @@ func TestCascadeWritersTakeMaintenanceGate(t *testing.T) {
 		"visual_reject", "visual_tombstone", "visual_purge", "visual_restart",
 	} {
 		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			st, _, messageID, attachmentID := cascadeMaintenanceFixture(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
 			removable, err := st.GetOrCreateSource("gmail", "unrelated@example.test")
-			require.NoError(t, err)
+			require.NoError(err)
 			generation, err := st.EnsureVisualGeneration(ctx, VisualGenerationSpec{
 				Fingerprint: "cascade-generation", Model: "synthetic-model", Dimension: 1024,
 			})
-			require.NoError(t, err)
+			require.NoError(err)
 			fence, err := st.AttachmentChangeHighWater(ctx)
-			require.NoError(t, err)
+			require.NoError(err)
 			request := VisualClaimRequest{
 				GenerationID:     generation.ID,
 				Owner:            VisualOwner{MessageID: messageID, BlobHash: strings.Repeat("a", 64), MediaInputKey: "original"},
@@ -98,30 +102,30 @@ func TestCascadeWritersTakeMaintenanceGate(t *testing.T) {
 				Now: time.Now().UTC(), LeaseDuration: time.Hour, SourceFence: fence,
 			}
 			claim, acquired, err := st.ClaimVisualWork(ctx, request)
-			require.NoError(t, err)
-			require.True(t, acquired)
+			require.NoError(err)
+			require.True(acquired)
 			prepared := PreparedVisualPublication{Claim: claim, RepresentativeAttachmentID: attachmentID,
 				Role: AttachmentRoleStandalone, RoleSource: AttachmentRoleSourceImporterSemantics}
 			token, err := st.PrepareVisualPublication(ctx, prepared)
-			require.NoError(t, err)
+			require.NoError(err)
 			refs := []RecordingReferenceInput{{RouteKey: "route", RefSHA256: "hash", OccurrenceJSON: `{}`}}
-			require.NoError(t, st.ReconcileRecordingReferences(ctx, "destination", messageID, true, refs))
+			require.NoError(st.ReconcileRecordingReferences(ctx, "destination", messageID, true, refs))
 			recordings, err := st.ClaimRecordingReferences(ctx, "destination", time.Now().Add(time.Hour), 1)
-			require.NoError(t, err)
-			require.Len(t, recordings, 1)
+			require.NoError(err)
+			require.Len(recordings, 1)
 			if operation == "visual_restore" {
-				require.NoError(t, st.CommitVisualPublication(ctx, claim, token))
+				require.NoError(st.CommitVisualPublication(ctx, claim, token))
 				claim, acquired, err = st.ClaimVisualWork(ctx, request)
-				require.NoError(t, err)
-				require.True(t, acquired)
+				require.NoError(err)
+				require.True(acquired)
 				prepared.Claim = claim
 			}
 			if operation == "visual_purge" || operation == "visual_restart" {
-				require.NoError(t, st.RetireVisualGeneration(ctx, generation.ID))
+				require.NoError(st.RetireVisualGeneration(ctx, generation.ID))
 				// A restart is allowed only once backend token references are gone.
-				require.NoError(t, st.ClearObsoleteVisualToken(ctx, generation.ID, token))
+				require.NoError(st.ClearObsoleteVisualToken(ctx, generation.ID, token))
 				_, err = st.DB().ExecContext(ctx, "UPDATE visual_publications SET pending_vector_token = NULL")
-				require.NoError(t, err)
+				require.NoError(err)
 			}
 			write := func() error {
 				switch operation {
@@ -164,33 +168,33 @@ func TestCascadeWritersTakeMaintenanceGate(t *testing.T) {
 			}
 
 			blocker, err := st.DB().BeginTx(ctx, nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			defer func() { _ = blocker.Rollback() }()
 			_, err = blocker.ExecContext(ctx, "LOCK TABLE sync_runs IN EXCLUSIVE MODE")
-			require.NoError(t, err)
+			require.NoError(err)
 			var blockerPID int
-			require.NoError(t, blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
+			require.NoError(blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
 			done := make(chan error, 1)
 			go func() { done <- write() }()
 			writerPID := waitForPostgresBlocker(t, st.DB(), blockerPID)
 			var gateWait, childLock bool
-			require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT
+			require.NoError(st.DB().QueryRowContext(ctx, `SELECT
 				EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='sync_runs'::regclass
 					AND mode='RowExclusiveLock' AND NOT granted),
 				EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND granted AND mode='RowExclusiveLock'
 					AND relation IN ('messages'::regclass, 'recording_references'::regclass,
 					'visual_publications'::regclass, 'visual_work_claims'::regclass,
 					'loop_message_evidence'::regclass))`, writerPID).Scan(&gateWait, &childLock))
-			assert.True(t, gateWait, "writer must wait at the maintenance gate")
-			assert.False(t, childLock, "writer must not hold a child write lock while waiting")
+			assert.True(gateWait, "writer must wait at the maintenance gate")
+			assert.False(childLock, "writer must not hold a child write lock while waiting")
 			removeDone := make(chan error, 1)
 			go func() {
 				_, _, err := st.RemoveSourceSerialized(ctx, removable.ID)
 				removeDone <- err
 			}()
-			require.NoError(t, blocker.Commit())
-			require.NoError(t, <-done)
-			require.NoError(t, <-removeDone)
+			require.NoError(blocker.Commit())
+			require.NoError(<-done)
+			require.NoError(<-removeDone)
 		})
 	}
 }
@@ -208,46 +212,48 @@ func TestRecordingInsertDrainsBeforeMaintenance(t *testing.T) {
 // Unscoped attachment updates must drain before maintenance locks the parents
 // their visual invalidation triggers still need for foreign-key checks.
 func TestAttachmentInvalidationDrainsBeforeMaintenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st, _, messageID, attachmentID := cascadeMaintenanceFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	removable, err := st.GetOrCreateSource("gmail", "unrelated@example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	generation, err := st.EnsureVisualGeneration(ctx, VisualGenerationSpec{
 		Fingerprint: "cascade-generation", Model: "synthetic-model", Dimension: 1024,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	fence, err := st.AttachmentChangeHighWater(ctx)
-	require.NoError(t, err)
+	require.NoError(err)
 	claim, acquired, err := st.ClaimVisualWork(ctx, VisualClaimRequest{
 		GenerationID:     generation.ID,
 		Owner:            VisualOwner{MessageID: messageID, BlobHash: strings.Repeat("a", 64), MediaInputKey: "original"},
 		ProposedRevision: "revision", LeaseOwner: "synthetic-worker",
 		Now: time.Now().UTC(), LeaseDuration: time.Hour, SourceFence: fence,
 	})
-	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NoError(err)
+	require.True(acquired)
 	_, err = st.PrepareVisualPublication(ctx, PreparedVisualPublication{
 		Claim: claim, RepresentativeAttachmentID: attachmentID,
 		Role: AttachmentRoleStandalone, RoleSource: AttachmentRoleSourceImporterSemantics,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	blocker, err := st.DB().Conn(ctx)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = blocker.Close() }()
 	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_lock(678902)")
-	require.NoError(t, err)
+	require.NoError(err)
 	// Release the session lock even if an assertion fails.
 	defer func() { _, _ = blocker.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(678902)") }()
 	var blockerPID int
-	require.NoError(t, blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
+	require.NoError(blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
 	// Run after the FK check (RI_ConstraintTrigger...) and before visual
 	// invalidation (trg_visual_publication...), isolating the trigger lock order.
 	_, err = st.DB().ExecContext(ctx, `CREATE FUNCTION pause_attachment_update() RETURNS trigger AS $$
 		BEGIN PERFORM pg_advisory_xact_lock(678902); RETURN NEW; END; $$ LANGUAGE plpgsql;
 		CREATE TRIGGER pause_attachment_update AFTER UPDATE ON attachments
 		FOR EACH ROW EXECUTE FUNCTION pause_attachment_update()`)
-	require.NoError(t, err)
+	require.NoError(err)
 	done := make(chan error, 1)
 	go func() {
 		done <- st.UpdateAttachmentMediaMetadataContext(ctx, messageID, strings.Repeat("a", 64),
@@ -261,23 +267,23 @@ func TestAttachmentInvalidationDrainsBeforeMaintenance(t *testing.T) {
 	}()
 	maintenancePID := waitForPostgresBlocker(t, st.DB(), writerPID)
 	var waitingAtGate, lockedPublication bool
-	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT
 		EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='sync_runs'::regclass
 			AND mode='ExclusiveLock' AND NOT granted),
 		EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='visual_publications'::regclass
 			AND mode='ExclusiveLock' AND granted)`, maintenancePID).Scan(&waitingAtGate, &lockedPublication))
-	assert.True(t, waitingAtGate, "maintenance must drain the attachment writer before locking parents")
-	assert.False(t, lockedPublication, "attachment triggers still need to update publications")
+	assert.True(waitingAtGate, "maintenance must drain the attachment writer before locking parents")
+	assert.False(lockedPublication, "attachment triggers still need to update publications")
 	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_unlock(678902)")
-	require.NoError(t, err)
-	require.NoError(t, <-done)
-	require.NoError(t, <-removeDone)
+	require.NoError(err)
+	require.NoError(<-done)
+	require.NoError(<-removeDone)
 	var state string
 	var pendingToken sql.NullString
-	require.NoError(t, st.DB().QueryRowContext(ctx,
+	require.NoError(st.DB().QueryRowContext(ctx,
 		"SELECT state, pending_vector_token FROM visual_publications WHERE message_id=$1", messageID).Scan(&state, &pendingToken))
-	assert.Equal(t, "stale", state)
-	assert.False(t, pendingToken.Valid, "attachment invalidation clears the pending publication")
+	assert.Equal("stale", state)
+	assert.False(pendingToken.Valid, "attachment invalidation clears the pending publication")
 }
 
 func TestRecordingBatchDrainsBeforeMaintenanceProperty(t *testing.T) {
@@ -297,43 +303,45 @@ func TestRecordingBatchDrainsBeforeMaintenanceProperty(t *testing.T) {
 	}, hegel.WithTestCases(8), hegel.WithDatabase(""))
 }
 
-func recordingBatchDrainsBeforeMaintenance(t testing.TB, st *Store, sourceID, messageID int64, refs []RecordingReferenceInput) {
-	t.Helper()
-	defer func() { require.NoError(t, st.Close()) }()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+func recordingBatchDrainsBeforeMaintenance(tb testing.TB, st *Store, sourceID, messageID int64, refs []RecordingReferenceInput) {
+	tb.Helper()
+	require := require.New(tb)
+	assert := assert.New(tb)
+	defer func() { require.NoError(st.Close()) }()
+	ctx, cancel := context.WithTimeout(tb.Context(), 20*time.Second)
 	defer cancel()
 	blocker, err := st.DB().Conn(ctx)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = blocker.Close() }()
 	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_lock(678901)")
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _, _ = blocker.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(678901)") }()
 	var blockerPID int
-	require.NoError(t, blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
+	require.NoError(blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
 	_, err = st.DB().ExecContext(ctx, `CREATE FUNCTION pause_recording_insert() RETURNS trigger AS $$
 		BEGIN PERFORM pg_advisory_xact_lock(678901); RETURN NEW; END; $$ LANGUAGE plpgsql;
 		CREATE TRIGGER pause_recording_insert BEFORE INSERT ON recording_references
 		FOR EACH ROW EXECUTE FUNCTION pause_recording_insert()`)
-	require.NoError(t, err)
+	require.NoError(err)
 	done := make(chan error, 1)
 	go func() { done <- st.ReconcileRecordingReferences(ctx, "destination", messageID, true, refs) }()
-	writerPID := waitForPostgresBlocker(t, st.DB(), blockerPID)
+	writerPID := waitForPostgresBlocker(tb, st.DB(), blockerPID)
 	removeDone := make(chan error, 1)
 	go func() {
 		_, _, err := st.RemoveSourceSerialized(ctx, sourceID)
 		removeDone <- err
 	}()
-	maintenancePID := waitForPostgresBlocker(t, st.DB(), writerPID)
+	maintenancePID := waitForPostgresBlocker(tb, st.DB(), writerPID)
 	var waitingAtGate bool
-	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
 		WHERE pid=$1 AND relation='sync_runs'::regclass AND mode='ExclusiveLock' AND NOT granted)`,
 		maintenancePID).Scan(&waitingAtGate))
-	assert.True(t, waitingAtGate, "maintenance must wait before locking messages")
+	assert.True(waitingAtGate, "maintenance must wait before locking messages")
 	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_unlock(678901)")
-	require.NoError(t, err)
-	require.NoError(t, <-done)
-	require.NoError(t, <-removeDone)
+	require.NoError(err)
+	require.NoError(<-done)
+	require.NoError(<-removeDone)
 	var remaining int
-	require.NoError(t, st.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM recording_references").Scan(&remaining))
-	assert.Zero(t, remaining, "source deletion cascades the committed reference")
+	require.NoError(st.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM recording_references").Scan(&remaining))
+	assert.Zero(remaining, "source deletion cascades the committed reference")
 }
