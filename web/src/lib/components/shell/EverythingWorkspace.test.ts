@@ -2812,7 +2812,8 @@ it.each(['http', 'network'] as const)('checks local availability once and turns 
   await waitFor(() => expect(availabilityRequests).toBe(1));
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
-  await screen.findByRole('button', { name: 'Turn on' });
+  const hint = (await screen.findByRole('button', { name: 'Turn on' })).closest('p')!;
+  expect(hint.textContent!.replace(/\s+/g, ' ').trim()).toBe('Search by meaning is off · Turn on');
   state.replaceSearchDraft('pear', 'full_text');
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);

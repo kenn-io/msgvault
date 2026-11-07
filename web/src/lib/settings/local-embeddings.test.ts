@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-ui';
 import type { LocalEmbeddingsStatus } from '../api/generated/models';
 import { embeddingStatus } from '../../test/operations';
-import { localSearchHintLabels, localSearchLabels, localSearchState } from './local-embeddings';
+import { localSearchLabels, localSearchState } from './local-embeddings';
 
 const off: LocalEmbeddingsStatus = { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', done_bytes: 0, total_bytes: 0, download_bytes: 290000000 };
 
@@ -22,13 +22,4 @@ describe('local search row', () => {
     const labels = localSearchLabels(status);
     for (const key of Object.keys(expectedLabels ?? {}) as (keyof SearchByMeaningLabels)[]) expect(labels[key]).toBe(expectedLabels![key]);
   });
-});
-
-it.each([
-  { name: 'a download to another machine', status: off, disclosure: 'Downloads 290\u00a0MB once to archive.example.test' },
-  { name: 'a download to this machine', status: { ...off, host: '' }, disclosure: 'Downloads 290\u00a0MB once' },
-  { name: 'an installed server', status: { ...off, host: '', download_bytes: 0 }, disclosure: 'Already downloaded' },
-  { name: 'a running Ollama', status: { ...off, provider: 'ollama' }, disclosure: 'Uses Ollama on archive.example.test' },
-])('discloses $name before hint activation', ({ status, disclosure }) => {
-  expect(localSearchHintLabels(status).hint).toBe(`Search by meaning is off · ${disclosure}`);
 });

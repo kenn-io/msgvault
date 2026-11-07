@@ -1,12 +1,6 @@
 import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-ui';
 import type { EmbeddingStatus, LocalEmbeddingsStatus } from '../api/generated/models';
 
-// kit-ui formats the row's size itself but doesn't export the formatter the hint needs.
-// The hint wraps on phones, so its size stays on one line.
-function megabytes(bytes: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', unitDisplay: 'short', maximumFractionDigits: 0 }).format(bytes / 1_000_000).replace(/ /g, '\u00a0');
-}
-
 export function localSearchState(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): SearchByMeaningState {
   if (status.phase === 'downloading' || (status.running && status.phase === 'idle')) return { kind: 'downloading', doneBytes: status.done_bytes, totalBytes: status.total_bytes || status.download_bytes };
   if (status.phase === 'indexing') return {
@@ -25,14 +19,6 @@ export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<Search
     ...(!status.enabled ? { downloaded: status.provider === 'ollama' ? `Uses Ollama${where}` : where ? `Already${where}` : 'Already downloaded' } : {}),
     keepsIndex: '',
   };
-}
-
-export function localSearchHintLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
-  const labels = localSearchLabels(status);
-  const disclosure = status.provider !== 'ollama' && status.download_bytes
-    ? `Downloads ${megabytes(status.download_bytes)} once${status.host ? ` to ${status.host}` : ''}`
-    : labels.downloaded;
-  return { ...labels, hint: `Search by meaning is off · ${disclosure}` };
 }
 
 export function sentence(message: string): string {
