@@ -130,12 +130,11 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 	}
 	statistics := func(st *Store, phase string) {
 		for _, table := range []string{"messages_fts_data", "messages_metadata_fts_data"} {
-			var rows, nonNull int
+			var nonNull int
 			require.NoError(st.DB().QueryRowContext(t.Context(),
-				"SELECT COUNT(*), COUNT(stat) FROM sqlite_stat1 WHERE tbl = ?", table,
-			).Scan(&rows, &nonNull))
-			assert.Equal(1, rows, table+" retains its statistics row after "+phase)
-			assert.Zero(nonNull, table+" has NULL statistics after "+phase)
+				"SELECT COUNT(stat) FROM sqlite_stat1 WHERE tbl = ?", table,
+			).Scan(&nonNull))
+			assert.Zero(nonNull, table+" has no planner statistics after "+phase)
 		}
 	}
 	st, err := OpenForTest(t.Context(), path)
