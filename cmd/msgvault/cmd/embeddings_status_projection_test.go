@@ -214,7 +214,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	}
 	eligible := func(cache *embeddingCoverageCache, ctx context.Context, sourceIDs []int64) int64 {
 		t.Helper()
-		got, err := cache.counts(ctx, st, 1, nil, sourceIDs, nil)
+		got, err := cache.counts(ctx, st, 1, nil, sourceIDs)
 		require.NoError(err)
 		return got.eligible
 	}
@@ -245,7 +245,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	slow := newEmbeddingCoverageCache(t.Context(), nil)
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = slow.counts(cancelled, st, 1, nil, nil, nil)
+	_, err = slow.counts(cancelled, st, 1, nil, nil)
 	require.ErrorIs(err, context.Canceled)
 	require.Eventually(func() bool {
 		slow.mu.Lock()
@@ -255,33 +255,20 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	addMessage("fourth")
 	assert.Equal(int64(3), eligible(slow, t.Context(), nil))
 
-	// Finishing a recovery refreshes even a count sampled within the TTL.
-	f := newEmbeddingProjectionFixture(t)
-	f.fail(t)
-	before, err := f.source.read(t.Context(), 0)
-	require.NoError(err)
-	require.Equal(int64(1), before.Pending)
-	f.provider.err = nil
-	_, err = f.worker.RunBackstop(t.Context(), f.generation, operations.PassScope{Key: "synthetic-recovery-pass", Trigger: operations.TriggerManual, StartedAt: time.Now().UTC()})
-	require.NoError(err)
-	after, err := f.source.read(t.Context(), 0)
-	require.NoError(err)
-	assert.Zero(after.Pending, "a completed recovery refreshes pending work before the TTL expires")
-
 	// A failed refresh serves cached counts only within the stale limit.
 	broken, err := store.Open(filepath.Join(dir, "msgvault.db"))
 	require.NoError(err)
 	failing := newEmbeddingCoverageCache(t.Context(), slog.New(slog.DiscardHandler))
-	cached, err := failing.counts(t.Context(), broken, 1, nil, nil, nil)
+	cached, err := failing.counts(t.Context(), broken, 1, nil, nil)
 	require.NoError(err)
 	require.NoError(broken.Close())
 	expire(failing, embeddingCoverageStaleLimit-10*time.Second)
-	stale, err := failing.counts(t.Context(), broken, 1, nil, nil, nil)
+	stale, err := failing.counts(t.Context(), broken, 1, nil, nil)
 	require.NoError(err, "a failed refresh can serve counts within the stale limit")
 	assert.Equal(cached.eligible, stale.eligible)
 	assert.Equal(cached.current, stale.current)
 	assert.Equal(cached.pending, stale.pending)
 	expire(failing, embeddingCoverageStaleLimit+time.Second)
-	_, err = failing.counts(t.Context(), broken, 1, nil, nil, nil)
+	_, err = failing.counts(t.Context(), broken, 1, nil, nil)
 	require.Error(err, "counts beyond the stale limit cannot hide a refresh failure")
 }

@@ -3287,7 +3287,7 @@ See the [Configuration](/docs/configuration/) page for the full config file refe
 
 ## Local embedding setup
 
-`GET /api/v1/embeddings/local` reports the selected provider, download size, and setup progress. `host` names the daemon host for remote browsers and is empty for loopback addresses. `running` identifies an active setup; `phase` is `idle`, `downloading`, or `indexing`. `done_bytes` and `total_bytes` describe download progress, and `error` preserves a failed setup's explanation.
+`GET /api/v1/embeddings/local` reports the selected provider, download size, and setup progress. `host` names the daemon host for remote browsers and is empty for loopback addresses. `running` identifies an active setup; `phase` is `idle`, `downloading`, or `indexing`. `done_bytes` and `total_bytes` describe download progress, and `error` shows a failed setup's explanation for the current daemon session.
 
 `POST /api/v1/embeddings/local` takes no body and turns on local message search, reusing Ollama when it already serves `nomic-embed-text`. Otherwise, setup downloads the local model when needed, saves the message-search configuration, publishes it to the running daemon, and builds the message index. Poll `GET` for completion; setup continues after its HTTP connection closes. Existing configured providers require a configuration change before activation. Document and people consent remain separate from message activation.
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -724,18 +723,20 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 	fingerprint := vectorCfg.GenerationFingerprint()
 	matching := vector.Generation{ID: 7, Fingerprint: fingerprint, State: vector.GenerationActive}
 	tests := []struct {
-		name         string
-		status       VectorStatus
-		backend      *filteredCoverageBackend
-		wantStatus   SearchCoverageStatus
-		wantAction   []SearchCoverageAction
-		setupFailed  bool
-		pending      int64
-		runError     string
-		activeRunID  int64
-		setupRunning bool
-		wantError    string
+		name       string
+		status     VectorStatus
+		backend    *filteredCoverageBackend
+		wantStatus SearchCoverageStatus
+		wantAction []SearchCoverageAction
 	}{
+		{
+			name: "matching first build", status: VectorStatusReady,
+			backend: &filteredCoverageBackend{
+				activeErr: vector.ErrNoActiveGeneration,
+				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
+			},
+			wantStatus: SearchCoverageInitializing,
+		},
 		{
 			name: "no generation", status: VectorStatusReady,
 			backend: &filteredCoverageBackend{
@@ -745,15 +746,6 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			wantAction: []SearchCoverageAction{SearchCoverageActionRetry, SearchCoverageActionBuildIndex},
 		},
 		{
-			name: "matching first build", status: VectorStatusInitializing,
-			backend: &filteredCoverageBackend{
-				activeErr: vector.ErrNoActiveGeneration,
-				building:  &vector.Generation{ID: 8, Fingerprint: fingerprint, State: vector.GenerationBuilding},
-			},
-			wantStatus: SearchCoverageInitializing,
-			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
-		},
-		{
 			name: "different first build", status: VectorStatusReady,
 			backend: &filteredCoverageBackend{
 				activeErr: vector.ErrNoActiveGeneration,
@@ -761,66 +753,6 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			},
 			wantStatus: SearchCoverageUnavailable,
 			wantAction: []SearchCoverageAction{SearchCoverageActionRetry},
-		},
-		{
-			name: "incomplete after setup failure", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			setupFailed: true, pending: 1, runError: "Upstream operation failed.",
-			wantError:  "build interrupted",
-			wantStatus: SearchCoverageIncomplete,
-			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
-		},
-		{
-			name: "incomplete after restart", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			pending: 1, runError: "Upstream operation failed.",
-			wantStatus: SearchCoverageIncomplete,
-			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
-			wantError:  "Upstream operation failed.",
-		},
-		{
-			name: "stored error cleared after recovery", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}, 3: {}},
-			},
-			runError:   "Upstream operation failed.",
-			wantStatus: SearchCoverageReady,
-		},
-		{
-			name: "stored error hidden during scheduled recovery", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			pending: 1, runError: "Upstream operation failed.", activeRunID: 12,
-			wantStatus: SearchCoverageIncomplete,
-		},
-		{
-			name: "stored error hidden during setup recovery", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			pending: 1, runError: "Upstream operation failed.", setupRunning: true,
-			wantStatus: SearchCoverageIncomplete,
-		},
-		{
-			name: "incomplete after successful pass", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			pending:    1,
-			wantStatus: SearchCoverageIncomplete,
-		},
-		{
-			name: "setup error cleared after recovery", status: VectorStatusReady,
-			backend: &filteredCoverageBackend{
-				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
-			},
-			setupFailed: true,
-			wantStatus:  SearchCoverageIncomplete,
 		},
 		{
 			name: "latched stale refreshed", status: VectorStatusStale,
@@ -873,20 +805,12 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Vector: vectorCfg}
-			// Local setup publishes the enabled recipe while startup settings stay pending.
+			// Local setup publishes enabled settings while startup settings stay pending.
 			cfg.Vector.Enabled = false
 			srv := NewServerWithOptions(ServerOptions{
 				Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Engine: newExploreDuckDBFixture(t),
 				Backend: tt.backend, VectorCfg: vectorCfg, VectorStatus: tt.status, Logger: testLogger(),
 			})
-			if tt.setupFailed {
-				srv.localSetup.Error = "build interrupted"
-			}
-			srv.localSetup.Running = tt.setupRunning
-			srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
-				return vector.EmbeddingStatus{Eligible: 3, Current: 2, Pending: tt.pending, LatestRunError: tt.runError, ActiveRunID: tt.activeRunID}, nil
-			}, 0)
-			srv.SetLocalEmbeddings(&localSetupTestController{})
 			if tt.status == VectorStatusStale {
 				srv.SetVectorStale("old status")
 			}
@@ -894,12 +818,6 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			body := getSearchCoverage(t, srv, `{}`)
 			assert.Equal(tt.wantStatus, body.Status)
 			assert.ElementsMatch(tt.wantAction, body.Actions)
-			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil))
-			require.Equal(t, http.StatusOK, response.Code)
-			var local LocalEmbeddingsStatus
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &local))
-			assert.Equal(tt.wantError, local.Error)
 		})
 	}
 }

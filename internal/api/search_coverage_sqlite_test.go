@@ -62,10 +62,19 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 		wantActions  []SearchCoverageAction
 	}{
 		{
+			name: "no generation", wantStatus: SearchCoverageUnavailable,
+			wantActions: []SearchCoverageAction{SearchCoverageActionRetry, SearchCoverageActionBuildIndex},
+		},
+		{
 			name: "matching first build", generation: "building-matching",
 			vectorStatus: VectorStatusInitializing,
 			wantStatus:   SearchCoverageInitializing,
-			wantActions:  []SearchCoverageAction{SearchCoverageActionBuildIndex},
+		},
+		{
+			name: "different first build", generation: "building-different",
+			vectorStatus: VectorStatusInitializing,
+			wantStatus:   SearchCoverageUnavailable,
+			wantActions:  []SearchCoverageAction{SearchCoverageActionRetry},
 		},
 		{
 			name: "matching active", generation: "active-matching",
@@ -127,13 +136,16 @@ func newRealCoverageBackend(t *testing.T, cfg vector.Config, generationState str
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close() })
+	if generationState == "" {
+		return backend
+	}
 	fingerprint := cfg.GenerationFingerprint()
-	if generationState == "active-different" {
+	if generationState == "building-different" || generationState == "active-different" {
 		fingerprint = "different"
 	}
 	generationID, err := backend.CreateGeneration(ctx, "test-model", 2, fingerprint)
 	require.NoError(t, err)
-	if generationState == "building-matching" {
+	if generationState == "building-matching" || generationState == "building-different" {
 		return backend
 	}
 	require.NoError(t, backend.Upsert(ctx, generationID, []vector.Chunk{

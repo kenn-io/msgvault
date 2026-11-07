@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 type localSetupTestController struct {
@@ -39,7 +38,7 @@ func (c *localSetupTestController) Enable(ctx context.Context, report func(Local
 }
 
 func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
-	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "error after turning on", "shutdown join"} {
+	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "shutdown join"} {
 		t.Run(behavior, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				checks, must := assert.New(t), require.New(t)
@@ -74,23 +73,6 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					must.Equal(http.StatusAccepted, post(t.Context()).Code)
 					checks.Equal(int32(1), controller.calls.Load())
 					checks.True(status().Running)
-				case "error after turning on":
-					close(controller.release)
-					synctest.Wait()
-					cfg := vector.Config{Enabled: true}
-					backend := &filteredCoverageBackend{activeErr: vector.ErrNoActiveGeneration}
-					srv.SetVectorFeatures(nil, nil, backend, cfg)
-					pending := int64(1)
-					srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
-						return vector.EmbeddingStatus{Pending: pending}, nil
-					}, 0)
-					checks.Equal("build interrupted", status().Error)
-					backend.activeErr = nil
-					backend.active = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: cfg.GenerationFingerprint()}
-					pending = 0
-					checks.Empty(status().Error)
-					pending = 1
-					checks.Empty(status().Error, "later imports must not revive a resolved setup failure")
 				case "retry after failure":
 					close(controller.release)
 					synctest.Wait()

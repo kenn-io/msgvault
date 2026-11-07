@@ -88,21 +88,8 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	if provider == "" && status.OllamaAvailable {
 		provider = "ollama"
 	}
-	var startupError string
-	select {
-	case <-c.handle.done:
-		if missingRuntime && provider == "builtin" {
-			if state, detail := c.server.VectorStatus(); state == api.VectorStatusError {
-				startupError = strings.Replace(detail, "local embeddings need setup: run msgvault setup providers --local-embeddings", "Local model files need setup. Turn on to retry.", 1)
-				if startupError == detail {
-					startupError = fmt.Sprintf("Search by meaning couldn't start: %s. Turn on to retry.", strings.TrimRight(detail, "."))
-				}
-			}
-		}
-	default:
-	}
 	return api.LocalEmbeddingsStatus{Enabled: cfg.Enabled, Provider: provider,
-		DownloadBytes: status.DownloadBytes, Phase: "idle", Error: startupError}, nil
+		DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 
 func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
@@ -111,7 +98,7 @@ func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.LocalEmbeddingsStatus)) (result error) {
-	// Large archives may take hours; Build index resumes an unfinished build.
+	// Bound accepted setup work independently of the HTTP request.
 	runtimeCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
 	defer cancel()

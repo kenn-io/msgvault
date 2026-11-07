@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 const localEmbeddingsEndpointPath = "/api/v1/embeddings/local"
@@ -61,7 +60,6 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	progress.Error = s.localSetupError(r.Context())
 	if running || progress.Error != "" {
 		status.Error = progress.Error
 	}
@@ -75,36 +73,6 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		status.Host = (&url.URL{Host: r.Host}).Hostname()
 	}
 	writeJSON(w, http.StatusOK, status)
-}
-
-func (s *Server) localSetupError(ctx context.Context) string {
-	s.importMu.Lock()
-	progress := s.localSetup
-	s.importMu.Unlock()
-	if !progress.Running {
-		_, backend, cfg := s.vectorComponents()
-		if backend != nil && cfg.Enabled {
-			if coverage, _, err := s.loadEmbeddingStatus(ctx, 0); err == nil {
-				if progress.Error == "" {
-					if coverage.Pending > 0 && coverage.ActiveRunID == 0 {
-						return coverage.LatestRunError
-					}
-					return ""
-				}
-				if coverage.Pending == 0 {
-					if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err == nil {
-						s.importMu.Lock()
-						if s.localSetup == progress {
-							s.localSetup.Error = ""
-						}
-						progress = s.localSetup
-						s.importMu.Unlock()
-					}
-				}
-			}
-		}
-	}
-	return progress.Error
 }
 
 func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Request) {

@@ -92,7 +92,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		// the state immediately instead of scanning the archive (the UI polls
 		// this endpoint while semantic search is disabled or initializing).
 		response.Status, response.Detail = coverage.status, coverage.detail
-		response.Actions = s.searchCoverageActions(r.Context(), coverage.status, coverage.fullBuildAvailable)
+		response.Actions = s.searchCoverageActions(coverage.status, coverage.fullBuildAvailable)
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 	if entry, found := state.getCoverage(searchCoverageCacheKey(contextHash, probe.CacheRevision, *generation)); found {
 		response.EligibleCount, response.EmbeddedCount = entry.EligibleCount, entry.EmbeddedCount
 		response.CacheRevision = probe.CacheRevision
-		s.writeSearchCoverageCounts(r.Context(), w, response, coverage)
+		s.writeSearchCoverageCounts(w, response, coverage)
 		return
 	}
 
@@ -138,7 +138,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 			response.EmbeddedCount = 0
 			response.Status = SearchCoverageUnavailable
 			response.Detail = "Filtered semantic coverage could not be read"
-			response.Actions = s.searchCoverageActions(r.Context(), SearchCoverageUnavailable, false)
+			response.Actions = s.searchCoverageActions(SearchCoverageUnavailable, false)
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
@@ -159,7 +159,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		searchCoverageCacheKey(contextHash, result.CacheRevision, *generation),
 		result.EligibleCount, response.EmbeddedCount,
 	)
-	s.writeSearchCoverageCounts(r.Context(), w, response, coverage)
+	s.writeSearchCoverageCounts(w, response, coverage)
 }
 
 // searchCoverageState is the resolved vector-side half of one coverage
@@ -206,7 +206,6 @@ func (s *Server) resolveSearchCoverageState(
 // writeSearchCoverageCounts finalizes and writes a coverage response that
 // was computed (or served from cache) against a usable vector generation.
 func (s *Server) writeSearchCoverageCounts(
-	ctx context.Context,
 	w http.ResponseWriter,
 	response SearchCoverageResponse,
 	coverage searchCoverageState,
@@ -218,7 +217,7 @@ func (s *Server) writeSearchCoverageCounts(
 	} else if coverage.status != SearchCoverageStale {
 		response.Status = SearchCoverageReady
 	}
-	response.Actions = s.searchCoverageActions(ctx, response.Status, coverage.fullBuildAvailable)
+	response.Actions = s.searchCoverageActions(response.Status, coverage.fullBuildAvailable)
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -297,7 +296,7 @@ func (s *Server) resolveSearchCoverageGeneration(
 		if expectedFingerprint != "" && building.Fingerprint != expectedFingerprint {
 			return SearchCoverageUnavailable, "A vector build is running for a different embedding configuration", nil, false
 		}
-		return SearchCoverageInitializing, "The first semantic index build is in progress", nil, true
+		return SearchCoverageInitializing, "The first semantic index build is in progress", nil, false
 	case errors.Is(err, vector.ErrNotEnabled):
 		return SearchCoverageUnavailable, "No vector generation has been initialized", nil, true
 	default:
@@ -397,7 +396,6 @@ func coverageStatusForVectorStatus(status VectorStatus) SearchCoverageStatus {
 }
 
 func (s *Server) searchCoverageActions(
-	ctx context.Context,
 	status SearchCoverageStatus,
 	fullBuildAvailable bool,
 ) []SearchCoverageAction {
@@ -405,8 +403,9 @@ func (s *Server) searchCoverageActions(
 	if status == SearchCoverageUnavailable || (status == SearchCoverageStale && !fullBuildAvailable) {
 		actions = append(actions, SearchCoverageActionRetry)
 	}
-	if _, _, cfg := s.vectorComponents(); (fullBuildAvailable || (status == SearchCoverageIncomplete && s.localSetupError(ctx) != "")) && cfg.Enabled && s.cfg != nil {
-		if _, ok := s.store.(CLIRunner); ok {
+	if fullBuildAvailable {
+		_, _, cfg := s.vectorComponents()
+		if _, ok := s.store.(CLIRunner); ok && s.cfg != nil && cfg.Enabled {
 			actions = append(actions, SearchCoverageActionBuildIndex)
 		}
 	}

@@ -243,18 +243,12 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 			f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
 			require.True(f.handle.WaitTimeout(5 * time.Second))
 			f.controller.handle = f.handle
-			var startupError string
-			if startupFailed {
-				startup, detail := f.server.VectorStatus()
-				require.Equal(api.VectorStatusError, startup)
-				require.Contains(detail, "local embeddings need setup")
-				startupError = "Local model files need setup. Turn on to retry."
-			}
+
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			require.Equal("builtin", status.Provider)
 			require.False(status.Enabled, "missing model files must leave Turn on available")
-			assert.Equal(startupError, status.Error)
+			assert.Empty(status.Error)
 			localEmbeddingEndpoint = fixtureEndpoint
 			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 			require.Equal(1, f.installs)
@@ -654,68 +648,4 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
-}
-
-func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
-	for _, existingIndex := range []bool{false, true} {
-		t.Run(fmt.Sprintf("existing_index=%t", existingIndex), func(t *testing.T) {
-			require := require.New(t)
-			model := ""
-			if existingIndex {
-				model = "nomic-embed-text"
-			}
-			f := newLocalActivationFixture(t, model)
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": "", "run_after_sync": false}}})
-			require.NoError(err)
-			f.cfg.Vector.Embed.Schedule.Cron = ""
-			f.cfg.Vector.Embed.Schedule.RunAfterSync = false
-			var previous vector.GenerationID
-			if existingIndex {
-				f.useBuiltin(t)
-				require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
-				backend, closeBackend, err := openEmbeddingsBackend(f.ctx)
-				require.NoError(err)
-				active, err := backend.ActiveGeneration(f.ctx)
-				closeBackend()
-				require.NoError(err)
-				previous = active.ID
-				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-				require.NoError(err)
-				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": false}}})
-				require.NoError(err)
-				f.cfg.Vector.Enabled = false
-				_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
-				require.NoError(err)
-			}
-			f.start(t)
-			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
-			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			require.ErrorContains(err, "embed endpoint returned 500 (unavailable)")
-			var status vector.EmbeddingStatus
-			require.NoError(setEmbeddingRunStatus(f.ctx, f.store, &status))
-			require.Equal("Upstream operation failed.", status.LatestRunError)
-			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
-			require.NoError(err)
-			if existingIndex {
-				active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-				require.NoError(err)
-				require.Equal(previous, active.ID, "failed activation must preserve the active index")
-			} else {
-				require.NotNil(building)
-			}
-			f.onEmbedding = nil
-			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
-			status = vector.EmbeddingStatus{}
-			require.NoError(setEmbeddingRunStatus(f.ctx, f.store, &status))
-			require.Empty(status.LatestRunError)
-			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			require.NoError(err)
-			if building != nil {
-				require.Equal(building.ID, active.ID)
-			}
-			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-		})
-	}
 }
