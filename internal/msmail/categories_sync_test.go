@@ -171,8 +171,15 @@ func TestSyncMicrosoftCategoriesUpgradeExistingCursors(t *testing.T) {
 			}
 			f.walkStarts.Store(0)
 			f.mimeCalls.Store(0)
-			_, err = f.sync(t, st)
+			summary, err := f.sync(t, st)
 			require.NoError(err)
+			assert.False(summary.Incomplete, "a completed legacy cursor upgrade must leave no migration marker")
+			last, err := st.GetLastSuccessfulSync(source.ID)
+			require.NoError(err)
+			var migrated map[string]string
+			require.NoError(json.Unmarshal([]byte(last.CursorAfter.String), &migrated))
+			assert.True(strings.HasPrefix(migrated["inbox"], stateDeltaPrefix), "inbox migration stores the enriched cursor")
+			assert.True(strings.HasPrefix(migrated["archive"], stateDeltaPrefix), "archive migration stores the enriched cursor")
 			msg, err := st.GetMessage(ids["m1"])
 			require.NoError(err)
 			assert.ElementsMatch([]string{"Inbox", "Category: Next"}, msg.Labels)

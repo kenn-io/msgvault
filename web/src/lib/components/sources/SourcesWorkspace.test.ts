@@ -64,6 +64,30 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('shortens only the scheduler detail beside a Failed chip', async () => {
+    const schedulerFailure = 'email acquisition failed; retry scheduled';
+    render(SourcesWorkspace, { client: createAPIClient(api([
+      source({ id: 1, display_name: 'Failed archive', latest_sync: run('failed', 0, {
+        errors_count: 1, error_message: 'Provider request timed out'
+      }), scheduler_last_error: schedulerFailure }),
+      source({ id: 2, display_name: 'Recovered archive', latest_sync: run('completed', 4),
+        scheduler_last_error: schedulerFailure })
+    ])) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Failed archive' }));
+    const failedPanel = screen.getByRole('dialog', { name: 'Failed archive' });
+    expect(within(failedPanel).getAllByText('Failed')).toHaveLength(2);
+    expect(within(failedPanel).getByText('Provider request timed out')).toBeDefined();
+    expect(within(failedPanel).getByText('Retry scheduled')).toBeDefined();
+    expect(within(failedPanel).queryByText(schedulerFailure)).toBeNull();
+
+    await fireEvent.click(within(failedPanel).getByRole('button', { name: 'Close' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Recovered archive' }));
+    const recoveredPanel = screen.getByRole('dialog', { name: 'Recovered archive' });
+    expect(within(recoveredPanel).getByText(schedulerFailure)).toBeDefined();
+    expect(within(recoveredPanel).queryByText('Retry scheduled')).toBeNull();
+  });
+
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,

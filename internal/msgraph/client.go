@@ -40,6 +40,7 @@ var ErrUnauthorized = errors.New("graph request unauthorized")
 // ThrottledError reports that Graph still answered 429 after every retry.
 // RetryAfter is the delay that Graph asked for last.
 type ThrottledError struct {
+	NotBefore  time.Time
 	RetryAfter time.Duration
 }
 
@@ -80,10 +81,12 @@ type TokenFunc func(context.Context) (string, error)
 // Client is a minimal Microsoft Graph REST client supporting paging and
 // Retry-After back-off.
 type Client struct {
-	baseURL string
-	token   TokenFunc
-	http    *http.Client
-	limiter *rate.Limiter
+	baseURL            string
+	token              TokenFunc
+	http               *http.Client
+	limiter            *rate.Limiter
+	quota              *providerQuota
+	deferProviderRetry bool
 
 	// Headers are extra request headers, for example the mail connector's
 	// Prefer header. They are set after the defaults and can replace them.
@@ -101,6 +104,7 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 		token:   token,
 		http:    &http.Client{Timeout: 60 * time.Second},
 		limiter: rate.NewLimiter(rate.Limit(qps), 1),
+		quota:   &providerQuota{},
 	}
 }
 
@@ -135,10 +139,27 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		return code >= 200 && code < 300
 	}
 	var lastErr error
-	var retryAfter string
+	var retryDelay time.Duration
+	var retryDelayAt time.Time
+	var retryDelayPending bool
 	for attempt := range maxRetries {
+		floor := c.RetryNotBefore()
+		delay := max(time.Duration(0), time.Until(floor))
+		if delay > 0 && c.deferProviderRetry {
+			return nil, notSent(&ThrottledError{RetryAfter: delay, NotBefore: floor}, attempt, mode)
+		}
 		if attempt > 0 {
-			delay := httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)
+			if retryDelayPending {
+				retryDelay = max(time.Duration(0), retryDelay-time.Since(retryDelayAt))
+			} else {
+				retryDelay = httpretry.RetryAfter("", attempt-1, maxRetryAfter)
+			}
+			delay = max(delay, retryDelay)
+		}
+		if delay > 0 {
+			if lastErr == nil {
+				lastErr = &ThrottledError{RetryAfter: delay, NotBefore: c.RetryNotBefore()}
+			}
 			// A wait that outlasts the caller's deadline would end as a
 			// cancellation and lose the throttling status.
 			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay {
@@ -148,7 +169,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 				return nil, notSent(err, attempt, mode)
 			}
 		}
-		retryAfter = ""
+		retryDelayPending = false
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for graph rate limit: %w", notSent(err, attempt, mode))
 		}
@@ -175,6 +196,15 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		if ifMatch != "" {
 			req.Header.Set("If-Match", ifMatch)
 		}
+		// Local rate admission and token acquisition can block while another
+		// MIME worker learns a provider prohibition. Recheck at the final
+		// unsent boundary; timeout clones share this quota evidence.
+		if c.deferProviderRetry {
+			floor := c.RetryNotBefore()
+			if delay := time.Until(floor); delay > 0 {
+				return nil, notSent(&ThrottledError{RetryAfter: delay, NotBefore: floor}, attempt, mode)
+			}
+		}
 		resp, err := c.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -191,6 +221,19 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			}
 			lastErr = err
 			continue
+		}
+		responseAt := time.Now()
+		retryableResponse := resp.StatusCode == http.StatusTooManyRequests || (!once && resp.StatusCode >= 500)
+		var providerDelay time.Duration
+		var providerThrottle error
+		if retryableResponse {
+			providerDelay = c.recordRetryFloor(resp.Header.Get("Retry-After"), attempt, responseAt)
+			retryDelay = providerDelay
+			retryDelayAt = responseAt
+			retryDelayPending = true
+			if resp.StatusCode == http.StatusTooManyRequests {
+				providerThrottle = &ThrottledError{RetryAfter: providerDelay, NotBefore: c.RetryNotBefore()}
+			}
 		}
 		if ok(resp.StatusCode) && maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
@@ -210,6 +253,12 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		if readErr != nil {
 			// A connection that breaks mid-body is transient, like a 5xx.
 			lastErr = fmt.Errorf("graph %s %s: read body: %w", method, reqURL, readErr)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, errors.Join(ctxErr, lastErr, providerThrottle)
+			}
+			if c.deferProviderRetry && retryableResponse {
+				return nil, errors.Join(lastErr, providerThrottle)
+			}
 			if once {
 				return nil, lastErr
 			}
@@ -247,14 +296,14 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
-			retryAfter = resp.Header.Get("Retry-After")
 			if resp.StatusCode == http.StatusTooManyRequests {
-				lastErr = fmt.Errorf("%w: %w", lastErr, &ThrottledError{
-					RetryAfter: httpretry.RetryAfter(retryAfter, attempt, maxRetryAfter),
-				})
+				lastErr = fmt.Errorf("%w: %w", lastErr, providerThrottle)
 				if mode == retryNone {
 					return nil, lastErr
 				}
+			}
+			if c.deferProviderRetry {
+				return nil, lastErr
 			}
 			continue
 		default:

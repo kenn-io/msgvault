@@ -38,12 +38,18 @@ type Folder struct {
 	Path             string `json:"-"`
 }
 
-// DeltaMessage is one item of a folder's message delta. Removed is set when the
-// message left the folder: it moved, or it was deleted.
+// FollowUpFlag preserves absence separately from an explicit provider status.
+type FollowUpFlag struct {
+	Status *string `json:"flagStatus"`
+}
+
+// DeltaMessage is one item of a folder delta, including optional observed state.
 type DeltaMessage struct {
-	ID               string    `json:"id"`
-	ReceivedDateTime time.Time `json:"receivedDateTime"`
-	Categories       *[]string `json:"categories"`
+	ID               string        `json:"id"`
+	ReceivedDateTime time.Time     `json:"receivedDateTime"`
+	Categories       *[]string     `json:"categories"`
+	IsRead           *bool         `json:"isRead"`
+	Flag             *FollowUpFlag `json:"flag"`
 	Removed          *struct {
 		Reason string `json:"reason"`
 	} `json:"@removed"`
@@ -90,7 +96,7 @@ func (c *Client) WellKnownFolderID(ctx context.Context, name string) (string, er
 // DeltaStartURL is the first delta request for a folder with no saved cursor.
 // It returns every message in the folder and ends with a deltaLink.
 func DeltaStartURL(folderID string) string {
-	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=receivedDateTime,categories"
+	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=receivedDateTime,categories,isRead,flag"
 }
 
 // DeltaPage fetches one page of a delta walk. The page carries a NextLink
@@ -110,16 +116,18 @@ func (c *Client) GetMIME(ctx context.Context, id string) ([]byte, error) {
 
 // MessageInfo is where a message is now and when it arrived.
 type MessageInfo struct {
-	ParentFolderID   string    `json:"parentFolderId"`
-	ReceivedDateTime time.Time `json:"receivedDateTime"`
-	Categories       *[]string `json:"categories"`
+	ParentFolderID   string        `json:"parentFolderId"`
+	ReceivedDateTime time.Time     `json:"receivedDateTime"`
+	Categories       *[]string     `json:"categories"`
+	IsRead           *bool         `json:"isRead"`
+	Flag             *FollowUpFlag `json:"flag"`
 }
 
 // LookupMessage returns a message's folder and receipt time. It returns
 // msgraph.ErrNotFound when the message no longer exists.
 func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, error) {
 	var m MessageInfo
-	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime,categories", &m)
+	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime,categories,isRead,flag", &m)
 	return m, err
 }
 

@@ -28,10 +28,19 @@ const SourceType = "msmail"
 // an interrupted walk starts over. Known messages are not downloaded again.
 const walkPrefix = "walk:"
 
+// migrationWalkPrefix retains known-MIME recovery after a pre-v2 stream is lost.
+const migrationWalkPrefix = walkPrefix + "migration-mime:"
+
+// migrationStreamPrefix records that the old stream was live before the new
+// provider-state walk. It survives an interrupted walk so a later expiry is
+// still treated as migration loss rather than ordinary cursor expiry.
+const migrationStreamPrefix = walkPrefix + "migration-stream:"
+
 // categoryDeltaPrefix identifies cursors created with categories in $select.
 // Old opaque cursors cannot gain fields, so their folders rewalk once. The old
 // cursor covers content changes until the replacement walk finishes.
 const categoryDeltaPrefix = "categories-v1:"
+const stateDeltaPrefix = "provider-state-v2:"
 
 // retryPrefix marks a saved-state key that names a message to download again.
 const retryPrefix = "retry:"
@@ -60,25 +69,43 @@ type Options struct {
 
 // Summary reports what one sync did.
 type Summary struct {
-	SourceID int64
-	Folders  int
-	Added    int
-	Updated  int
-	Moved    int
-	Deleted  int
-	Errors   int
-	Duration time.Duration
+	SourceID   int64
+	Folders    int
+	Added      int
+	Updated    int
+	Moved      int
+	Deleted    int
+	Errors     int
+	Duration   time.Duration
+	Incomplete bool // Durable retry/walk debt remains despite a nil import error.
 }
 
 // Import syncs every folder of the mailbox. A folder with no saved cursor is
 // walked from the start. A folder with a cursor fetches only the changes since
 // the last sync. Known messages are refreshed when delta reports an update.
-func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *slog.Logger) (sum *Summary, err error) {
-	start := time.Now()
+func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *slog.Logger) (*Summary, error) {
 	src, err := st.GetOrCreateSource(SourceType, opts.Email)
 	if err != nil {
 		return nil, err
 	}
+	return ImportSource(ctx, st, c, src, opts, log)
+}
+
+// ImportSource syncs only the selected existing active mailbox. It cannot create
+// an alternate source; authenticated profile verification belongs to its caller.
+func ImportSource(ctx context.Context, st *store.Store, c *Client, src *store.Source, opts Options, log *slog.Logger) (sum *Summary, err error) {
+	start := time.Now()
+	if src == nil || src.ID == 0 {
+		return nil, errors.New("selected mail source is required")
+	}
+	src, err = st.GetSourceByIDContext(ctx, src.ID)
+	if err != nil {
+		return nil, err
+	}
+	if src.SourceType != SourceType || src.MergedIntoSourceID != 0 || (opts.Email != "" && opts.Email != src.Identifier) {
+		return nil, errors.New("selected mail source is not an active canonical Microsoft mailbox")
+	}
+	opts.Email = src.Identifier
 	sum = &Summary{SourceID: src.ID}
 
 	// Cursors: the last completed run, then any checkpoint of an interrupted
@@ -113,7 +140,9 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		}
 	}()
 
-	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum, cursors: cursors}
+	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum, cursors: cursors, checkpoint: func() error {
+		return st.UpdateSyncCheckpoint(syncID, checkpoint())
+	}}
 	folders, err := c.ListFolders(ctx)
 	if err != nil {
 		return sum, fmt.Errorf("list mail folders: %w", err)
@@ -144,22 +173,75 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		restarted := false
 		oldCursor, replacementCursor := "", ""
 		freshRound := false
+		refreshKnown := false
+		migrationProven := false
+		drainingOldStream := false
+		var preflightPage *msgraph.ListResponse[DeltaMessage]
 		switch {
 		case link == "":
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
+		case strings.HasPrefix(link, migrationWalkPrefix):
+			link, seen, refreshKnown = DeltaStartURL(f.ID), map[string]bool{}, true
+		case strings.HasPrefix(link, migrationStreamPrefix):
+			oldCursor = strings.TrimPrefix(link, migrationStreamPrefix)
+			migrationProven = true
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, walkPrefix):
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
+		case strings.HasPrefix(link, stateDeltaPrefix):
+			link = strings.TrimPrefix(link, stateDeltaPrefix)
 		case strings.HasPrefix(link, categoryDeltaPrefix):
-			link = strings.TrimPrefix(link, categoryDeltaPrefix)
+			oldCursor = strings.TrimPrefix(link, categoryDeltaPrefix)
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		default:
 			oldCursor = link
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
+		if oldCursor != "" && !migrationProven {
+			// Check the old stream before starting the enrichment walk. An
+			// already-expired cursor gets the ordinary metadata-only walk; a
+			// successful check is persisted so expiry after interruption still
+			// triggers migration-only known-MIME recovery.
+			preflightPage, err = c.DeltaPage(ctx, oldCursor)
+			if errors.Is(err, msgraph.ErrGone) {
+				oldCursor = ""
+				preflightPage = nil
+				link, seen = DeltaStartURL(f.ID), map[string]bool{}
+				cursors[f.ID] = walkPrefix + link
+				if err = s.checkpoint(); err != nil {
+					return sum, err
+				}
+			} else if err != nil {
+				return sum, fmt.Errorf("folder %s: %w", f.Path, err)
+			} else {
+				migrationProven = true
+				cursors[f.ID] = migrationStreamPrefix + oldCursor
+				if err = s.checkpoint(); err != nil {
+					return sum, err
+				}
+			}
+		}
 		for {
-			page, perr := c.DeltaPage(ctx, link)
+			var page *msgraph.ListResponse[DeltaMessage]
+			var perr error
+			if preflightPage != nil && drainingOldStream {
+				page = preflightPage
+				preflightPage = nil
+				drainingOldStream = false
+			} else {
+				page, perr = c.DeltaPage(ctx, link)
+			}
 			if errors.Is(perr, msgraph.ErrGone) && replacementCursor != "" {
-				// The old cursor expired, but the replacement walk is complete.
-				link, replacementCursor = replacementCursor, ""
+				// This migration delayed the old stream until after the new
+				// selection walk. Losing that stream requires known-MIME recovery,
+				// unlike the inherited ordinary v2 expiry policy below.
+				link, seen = DeltaStartURL(f.ID), map[string]bool{}
+				replacementCursor, refreshKnown, restarted = "", true, true
+				migrationProven = false
+				cursors[f.ID] = migrationWalkPrefix + link
+				if err = s.checkpoint(); err != nil {
+					return sum, err
+				}
 				continue
 			}
 			if errors.Is(perr, msgraph.ErrGone) && !restarted {
@@ -172,7 +254,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 			if perr != nil {
 				return sum, fmt.Errorf("folder %s: %w", f.Path, perr)
 			}
-			if err = s.applyPage(ctx, f.ID, page.Value, seen); err != nil {
+			if err = s.applyPage(ctx, f.ID, page.Value, seen, refreshKnown); err != nil {
 				return sum, fmt.Errorf("folder %s: %w", f.Path, err)
 			}
 			if page.NextLink == "" && seen != nil {
@@ -190,19 +272,33 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				// refresh MIME before the replacement cursor becomes active.
 				replacementCursor = link
 				link, seen, oldCursor = oldCursor, nil, ""
+				drainingOldStream = true
 				continue
 			}
-			cursors[f.ID] = categoryDeltaPrefix + link
+			cursors[f.ID] = stateDeltaPrefix + link
 			switch {
+			case migrationProven:
+				if replacementCursor != "" && page.NextLink == "" && freshRound {
+					cursors[f.ID] = stateDeltaPrefix + replacementCursor
+				} else {
+					streamCursor := oldCursor
+					if streamCursor == "" && replacementCursor != "" {
+						streamCursor = link
+					}
+					cursors[f.ID] = migrationStreamPrefix + streamCursor
+				}
 			case oldCursor != "":
 				cursors[f.ID] = oldCursor
 			case replacementCursor != "":
 				cursors[f.ID] = link
 				if page.NextLink == "" && freshRound {
-					cursors[f.ID] = categoryDeltaPrefix + replacementCursor
+					cursors[f.ID] = stateDeltaPrefix + replacementCursor
 				}
 			case seen != nil && page.NextLink != "":
 				cursors[f.ID] = walkPrefix + link
+				if refreshKnown {
+					cursors[f.ID] = migrationWalkPrefix + link
+				}
 			}
 			if err = st.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
 				return sum, err
@@ -221,6 +317,11 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 
 	if err = st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
+	}
+	for key, cursor := range cursors {
+		if strings.HasPrefix(key, retryPrefix) || strings.HasPrefix(cursor, walkPrefix) {
+			sum.Incomplete = true
+		}
 	}
 	cp := checkpoint()
 	// Complete through the source so last_sync_at moves. The cursors live in
@@ -247,7 +348,8 @@ func mergeCursors(dst map[string]string, blob string) {
 type syncer struct {
 	// cursors is the saved state: folder ID -> delta link, and
 	// retryPrefix + message ID -> folder ID for messages to download again.
-	cursors map[string]string
+	cursors    map[string]string
+	checkpoint func() error // write-ahead acquisition intent before MIME persistence
 
 	st       *store.Store
 	c        *Client
@@ -321,15 +423,36 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 // (seen is not nil) returns every message, so it downloads again only drafts,
 // whose content can change under the same ID. Removed messages are looked up
 // with relocate. A walk collects the IDs of live messages in seen.
-func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMessage, seen map[string]bool) error {
+func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMessage, seen map[string]bool, refreshKnown bool) error {
 	folderLabel := s.labels[folderID]
 	var live []DeltaMessage
 	var liveIDs, removedIDs []string
+	positions := map[string]int{}
 	for _, m := range items {
 		if m.Removed != nil {
 			removedIDs = append(removedIDs, m.ID)
 			continue
 		}
+		if pos, duplicate := positions[m.ID]; duplicate {
+			// A repeated partial observation cannot erase a field that an
+			// earlier occurrence supplied. Contradictory explicit values use
+			// the last occurrence, without parallel duplicate MIME ingestion.
+			previous := &live[pos]
+			if m.Categories != nil {
+				previous.Categories = m.Categories
+			}
+			if m.IsRead != nil {
+				previous.IsRead = m.IsRead
+			}
+			if m.Flag != nil && m.Flag.Status != nil {
+				previous.Flag = m.Flag
+			}
+			if !m.ReceivedDateTime.IsZero() {
+				previous.ReceivedDateTime = m.ReceivedDateTime
+			}
+			continue
+		}
+		positions[m.ID] = len(live)
 		live = append(live, m)
 		liveIDs = append(liveIDs, m.ID)
 		if seen != nil {
@@ -353,10 +476,10 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 			continue
 		}
-		if err := s.setFolder(ctx, id, folderLabel, m.Categories); err != nil {
+		if err := s.setFolder(ctx, id, folderLabel, m.Categories, graphProviderState(m.IsRead, m.Flag)); err != nil {
 			return err
 		}
-		if seen == nil || (s.drafts != "" && folderID == s.drafts) {
+		if seen == nil || refreshKnown || (s.drafts != "" && folderID == s.drafts) {
 			m.archiveID = id
 			todo = append(todo, m)
 		}
@@ -387,8 +510,8 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		msgID = ids[m.ID]
 	}
 	// Known messages already saved their categories before the MIME download.
-	if m.archiveID == 0 && m.Categories != nil {
-		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
+	if m.archiveID == 0 && (m.Categories != nil || m.IsRead != nil || m.Flag != nil) {
+		if _, err := s.st.ReconcileMicrosoftMailStateContext(ctx, msgID, nil, m.Categories, graphProviderState(m.IsRead, m.Flag)); err != nil {
 			return fmt.Errorf("save Microsoft categories: %w", err)
 		}
 	}
@@ -473,15 +596,20 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 		}
 		if _, ok := s.labels[parent]; !ok {
 			s.cursors[key] = parent // a folder this run did not list
+			if messageID := known[id]; messageID != 0 {
+				if _, err := s.st.ReconcileMicrosoftMailStateContext(ctx, messageID, nil, info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if messageID := known[id]; messageID != 0 {
-			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories); err != nil {
+			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
 				return err
 			}
 		}
 		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, IsRead: info.IsRead, Flag: info.Flag, archiveID: known[id]}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -534,9 +662,15 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		if err != nil {
 			return fmt.Errorf("look up removed message: %w", err)
 		}
-		// A folder this run did not list is picked up on the next sync.
 		if label, ok := s.labels[parent]; ok {
-			if err := s.setFolder(ctx, msgID, label, info.Categories); err != nil {
+			if err := s.setFolder(ctx, msgID, label, info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
+				return err
+			}
+		} else {
+			// Preserve observations now and the unresolved folder/body work
+			// durably; a folder-list race is not proof of completion.
+			s.cursors[retryPrefix+id] = parent
+			if _, err := s.st.ReconcileMicrosoftMailStateContext(ctx, msgID, nil, info.Categories, graphProviderState(info.IsRead, info.Flag)); err != nil {
 				return err
 			}
 		}
@@ -546,12 +680,15 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 			return err
 		}
 		s.sum.Deleted += len(gone)
+		for _, id := range gone {
+			delete(s.cursors, retryPrefix+id)
+		}
 	}
 	return nil
 }
 
-func (s *syncer) setFolder(ctx context.Context, messageID, label int64, categories *[]string) error {
-	changed, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, messageID, &label, categories)
+func (s *syncer) setFolder(ctx context.Context, messageID, label int64, categories *[]string, state store.MicrosoftMailState) error {
+	changed, err := s.st.ReconcileMicrosoftMailStateContext(ctx, messageID, &label, categories, state)
 	if changed {
 		s.sum.Moved++
 	}
@@ -571,6 +708,16 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	folderLabel := s.labels[folderID]
 	if len(msgs) == 0 {
 		return nil
+	}
+	// Persist every prospective obligation before raw ingestion can commit.
+	// A restart therefore retries post-store work even if a walk skips known IDs.
+	for _, m := range msgs {
+		s.cursors[retryPrefix+m.ID] = folderID
+	}
+	if s.checkpoint != nil {
+		if err := s.checkpoint(); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -620,7 +767,6 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			continue
 		}
 		if errors.Is(r.err, msgraph.ErrNotFound) {
-			delete(s.cursors, retryPrefix+r.msg.ID)
 			if r.msg.archiveID != 0 {
 				vanished[r.msg.ID] = r.msg.archiveID
 			}
@@ -650,12 +796,13 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			cancel()
 			continue
 		}
-		delete(s.cursors, retryPrefix+r.msg.ID)
 		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
 			// A later walk skips stored messages, so incomplete processing needs a retry.
 			s.log.Warn("processing after message storage failed, retrying on the next sync", "id", r.msg.ID, "error", err)
 			s.sum.Errors++
 			s.cursors[retryPrefix+r.msg.ID] = folderID
+		} else {
+			delete(s.cursors, retryPrefix+r.msg.ID)
 		}
 		if r.msg.archiveID == 0 {
 			s.sum.Added++
@@ -675,4 +822,12 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	// A known message that delta reported but $value no longer finds moved or
 	// is gone since the page was read.
 	return s.relocate(ctx, vanished)
+}
+
+func graphProviderState(read *bool, flag *FollowUpFlag) store.MicrosoftMailState {
+	state := store.MicrosoftMailState{IsRead: read}
+	if flag != nil {
+		state.FlagStatus = flag.Status
+	}
+	return state
 }

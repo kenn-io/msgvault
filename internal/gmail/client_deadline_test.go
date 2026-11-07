@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -21,22 +22,303 @@ type deadlineTransport func(*http.Request) (*http.Response, error)
 
 func (f deadlineTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func setDeadlineBase(t *testing.T, c *Client, transport deadlineTransport) {
+	t.Helper()
+	oauthTransport, ok := c.httpClient.Transport.(*oauth2.Transport)
+	require.True(t, ok, "NewClient must install an oauth2.Transport")
+	if floorTransport, ok := oauthTransport.Base.(*providerFloorTransport); ok {
+		floorTransport.base = transport
+		return
+	}
+	oauthTransport.Base = transport
+}
+
 func newDeadlineClient(t *testing.T, transport deadlineTransport) *Client {
 	t.Helper()
 	c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}))
-	// Install the fake as the base of the production oauth2.Transport instead
-	// of replacing the transport, so the deadline budget is measured across
-	// the real OAuth round trip. The static token never expires, so token
-	// acquisition stays out of the request path; bounding a stalled token
-	// refresh is a separate OAuth concern (TokenSource.Token() is contextless).
-	oauthTransport, ok := c.httpClient.Transport.(*oauth2.Transport)
-	require.True(t, ok, "NewClient must install an oauth2.Transport")
-	oauthTransport.Base = transport
+	// Keep the production OAuth transport in place so deadline assertions cover
+	// the request path after token acquisition.
+	setDeadlineBase(t, c, transport)
 	return c
 }
 
 func deadlineResponse(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+}
+
+type delayedDeadlineBody struct {
+	reader     io.Reader
+	delay      time.Duration
+	beforeRead func()
+	read       bool
+}
+
+func (b *delayedDeadlineBody) Read(p []byte) (int, error) {
+	if !b.read {
+		b.read = true
+		if b.beforeRead != nil {
+			b.beforeRead()
+		}
+		if b.delay > 0 {
+			timer := time.NewTimer(b.delay)
+			defer timer.Stop()
+			<-timer.C
+		}
+	}
+	return b.reader.Read(p)
+}
+
+func (b *delayedDeadlineBody) Close() error { return nil }
+
+type canceledDeadlineBody struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (b canceledDeadlineBody) Read([]byte) (int, error) {
+	b.cancel()
+	return 0, b.err
+}
+
+func (canceledDeadlineBody) Close() error { return nil }
+
+type failedDeadlineBody struct{ err error }
+
+func (b failedDeadlineBody) Read([]byte) (int, error) { return 0, b.err }
+func (failedDeadlineBody) Close() error               { return nil }
+
+type waitingTokenSource struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (s waitingTokenSource) Token() (*oauth2.Token, error) {
+	close(s.started)
+	<-s.release
+	return &oauth2.Token{AccessToken: "fixture-token"}, nil
+}
+
+func TestGetProfileCaptures429RetryFloorBeforeReadingBody(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}))
+		c.DeferProviderRetries()
+		var responseAt, floorAtBodyRead time.Time
+		var requests atomic.Int32
+		setDeadlineBase(t, c, func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			responseAt = time.Now()
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Retry-After": []string{"60"}},
+				Body: &delayedDeadlineBody{
+					reader: strings.NewReader(`{"error":{"message":"slow fixture"}}`),
+					delay:  10 * time.Second,
+					beforeRead: func() {
+						floorAtBodyRead = c.RetryNotBefore()
+					},
+				},
+			}, nil
+		})
+
+		_, err := c.GetProfile(t.Context())
+		var throttled *ThrottledError
+		require.ErrorAs(err, &throttled)
+		assert.EqualValues(1, requests.Load())
+		assert.True(floorAtBodyRead.After(responseAt), "the 429 floor is captured before response decoding")
+		assert.Equal(floorAtBodyRead, c.RetryNotBefore())
+		assert.GreaterOrEqual(floorAtBodyRead.Sub(responseAt), 59*time.Second)
+		assert.LessOrEqual(floorAtBodyRead.Sub(responseAt), 61*time.Second,
+			"the absolute floor stays anchored to response receipt")
+		assert.GreaterOrEqual(time.Until(floorAtBodyRead), 49*time.Second)
+		assert.LessOrEqual(time.Until(floorAtBodyRead), 51*time.Second,
+			"a slow body consumes the original Retry-After interval")
+	})
+}
+
+func TestGetProfileCaptures403QuotaFloorFromResponseReceipt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}))
+		c.DeferProviderRetries()
+		var responseAt, floorAtBodyRead time.Time
+		var requests atomic.Int32
+		setDeadlineBase(t, c, func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			responseAt = time.Now()
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     http.Header{"Retry-After": []string{"60"}},
+				Body: &delayedDeadlineBody{
+					reader: strings.NewReader(`{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`),
+					delay:  10 * time.Second,
+					beforeRead: func() {
+						floorAtBodyRead = c.RetryNotBefore()
+					},
+				},
+			}, nil
+		})
+
+		_, err := c.GetProfile(t.Context())
+		var throttled *ThrottledError
+		require.ErrorAs(err, &throttled)
+		assert.Zero(floorAtBodyRead, "403 retry floors depend on the response body confirming quota exhaustion")
+		assert.EqualValues(1, requests.Load())
+		floor := c.RetryNotBefore()
+		assert.GreaterOrEqual(floor.Sub(responseAt), 59*time.Second)
+		assert.LessOrEqual(floor.Sub(responseAt), 61*time.Second,
+			"the confirmed quota floor stays anchored to response receipt")
+		assert.GreaterOrEqual(time.Until(floor), 49*time.Second)
+		assert.LessOrEqual(time.Until(floor), 51*time.Second,
+			"a slow body consumes the original quota Retry-After interval")
+	})
+}
+
+func TestGetProfilePreservesFloorAndCancellationForTruncated429(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var requests atomic.Int32
+	c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Retry-After": []string{"3600"}},
+			Body:       canceledDeadlineBody{cancel: cancel, err: io.ErrUnexpectedEOF},
+		}, nil
+	})
+	c.DeferProviderRetries()
+
+	_, err := c.GetProfile(ctx)
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.EqualValues(1, requests.Load())
+	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+		"a truncated 429 retains its header floor while preserving cancellation")
+}
+
+func TestGetProfilePreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       canceledDeadlineBody{cancel: cancel, err: io.ErrUnexpectedEOF},
+		}, nil
+	})
+
+	_, err := c.GetProfile(ctx)
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.NotEmpty(err.Error())
+	_, throttled := errors.AsType[*ThrottledError](err)
+	assert.False(throttled, "a successful response with a broken body is not a throttle")
+}
+
+func TestTruncated429MutationIsNotAutomaticallyRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var requests atomic.Int32
+		c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
+			if requests.Add(1) == 1 {
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     http.Header{"Retry-After": []string{"30"}},
+					Body:       failedDeadlineBody{err: io.ErrUnexpectedEOF},
+				}, nil
+			}
+			return deadlineResponse(http.StatusOK, `{}`), nil
+		})
+
+		_, err := c.request(t.Context(), OpMessagesModify, http.MethodPost, "/messages/fixture/modify", []byte(`{}`))
+		require.ErrorIs(err, errWriteOutcomeUnknown)
+		require.ErrorIs(err, io.ErrUnexpectedEOF)
+		assert.EqualValues(1, requests.Load(), "an ambiguous mutation is not retried after a truncated 429")
+		assert.True(c.RetryNotBefore().After(time.Now()), "the response floor remains recorded")
+		assert.NotEmpty(err.Error())
+	})
+}
+
+func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
+	for _, rapid := range []bool{true, false} {
+		name := "ordinary request retains existing admission"
+		if rapid {
+			name = "rapid mutation is not sent after a shared floor arrives"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			limiter := NewRateLimiter(1000)
+			release := make(chan struct{})
+			released := false
+			defer func() {
+				if !released {
+					close(release)
+				}
+			}()
+			source := waitingTokenSource{started: make(chan struct{}), release: release}
+			first := NewClient(source, WithRateLimiter(limiter))
+			if rapid {
+				first.DeferProviderRetries()
+			}
+			var firstSends atomic.Int32
+			setDeadlineBase(t, first, func(*http.Request) (*http.Response, error) {
+				firstSends.Add(1)
+				return deadlineResponse(http.StatusOK, `{}`), nil
+			})
+			firstDone := make(chan error, 1)
+			go func() {
+				_, err := first.request(ctx, OpMessagesModify, http.MethodPost, "/messages/fixture/modify", []byte(`{}`))
+				firstDone <- err
+			}()
+			select {
+			case <-source.started:
+			case <-ctx.Done():
+				require.NoError(ctx.Err(), "the first request never reached token acquisition")
+			}
+
+			second := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "second-token"}), WithRateLimiter(limiter))
+			second.DeferProviderRetries()
+			var secondSends atomic.Int32
+			setDeadlineBase(t, second, func(*http.Request) (*http.Response, error) {
+				secondSends.Add(1)
+				response := deadlineResponse(http.StatusTooManyRequests, `{}`)
+				response.Header.Set("Retry-After", "3600")
+				return response, nil
+			})
+			_, secondErr := second.GetProfile(ctx)
+			var throttle *ThrottledError
+			require.ErrorAs(secondErr, &throttle)
+			assert.EqualValues(1, secondSends.Load())
+
+			close(release)
+			released = true
+			var firstErr error
+			select {
+			case firstErr = <-firstDone:
+			case <-ctx.Done():
+				require.NoError(ctx.Err(), "the first request did not finish after token release")
+			}
+			if rapid {
+				var floorErr *ThrottledError
+				require.ErrorAs(firstErr, &floorErr)
+				require.NotErrorIs(firstErr, errWriteOutcomeUnknown, "a floor-blocked mutation was not sent")
+				assert.Zero(firstSends.Load())
+			} else {
+				require.NoError(firstErr)
+				assert.EqualValues(1, firstSends.Load())
+			}
+		})
+	}
 }
 
 func TestGetProfileRetryDeadline(t *testing.T) {
