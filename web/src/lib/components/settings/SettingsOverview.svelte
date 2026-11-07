@@ -131,8 +131,6 @@
   .row__chip-sizer { display: flex; flex-direction: column; grid-column: 2; grid-row: 1; height: 0; overflow: hidden; visibility: hidden; }
   .row__chip-sizer [data-label]::before { content: attr(data-label); }
   .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; justify-self: end; }
-  .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
-  .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
   .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { grid-column: 1; contain: inline-size; text-wrap: balance; }
   .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
   .row__recovery-copy { display: grid; grid-column: 1 / 3; gap: calc(var(--control-gap) / 2); }

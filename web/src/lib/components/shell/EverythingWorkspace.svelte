@@ -464,9 +464,9 @@
     startingLocalSearch = true;
     localSetupError = '';
     try {
-      const { response, error } = await enableLocalEmbeddings(client);
+      const { data, response, error } = await enableLocalEmbeddings(client);
       if (!response.ok) throw new Error(error?.message || 'Could not turn on search by meaning.');
-      commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
+      localSetup = data;
     } catch (cause) { localSetupError = cause instanceof Error ? cause.message : 'Could not turn on search by meaning.'; }
     finally { startingLocalSearch = false; }
   }
