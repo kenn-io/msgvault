@@ -24,6 +24,13 @@ textarea {
   font: inherit;
 }
 
+/* Typed text takes the field faces (tokens.css), so its letters center in the field. */
+input,
+select,
+textarea {
+  font-family: var(--font-field);
+}
+
 /* Kit has no CSS hook for MEDIA.touch. */
 @media (hover: none), (pointer: coarse) {
   .touch-controls button:not(.kit-popover-card *) {

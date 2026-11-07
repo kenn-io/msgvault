@@ -8,7 +8,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Notice, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Disclosure, Notice, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -607,7 +607,7 @@
   {/each}
 {/snippet}
 
-<main class="settings" bind:this={root} aria-label="Settings">
+<main class="settings" bind:this={root} aria-label="Settings" data-form>
   <div class="settings-header">
     <PageHeader title="Settings">
       {#snippet actions()}
@@ -708,17 +708,15 @@
           {#if layout.advanced.length > 0 || layout.config.length > 0}
           <div class="disclosures">
           {#if layout.advanced.length > 0}
-            <details class="disclosure">
-              <summary>Advanced</summary>
+            <Disclosure variant="plain" title="Advanced" class="disclosure">
               <div class="fields fields--list">
                 {#each layout.advanced as setting (setting.key)}{@render control(setting)}{/each}
               </div>
-            </details>
+            </Disclosure>
           {/if}
 
           {#if layout.config.length > 0}
-            <details class="disclosure">
-              <summary>Set in config.toml</summary>
+            <Disclosure variant="plain" title="Set in config.toml" class="disclosure">
               <dl class="config">
                 {#each layout.config as setting (setting.key)}
                   <div data-setting-key={setting.key}>
@@ -727,7 +725,7 @@
                   </div>
                 {/each}
               </dl>
-            </details>
+            </Disclosure>
           {/if}
           </div>
           {/if}
@@ -776,6 +774,11 @@
   .settings :global(.kit-settings__footer) {
     padding: var(--pane-pad-y) var(--pane-pad-x);
   }
+  /* The scroll pane reserves the 8px bar on its right edge (above), so the panel pads its right side by
+     the bar's width less than its left, and the content's inset reads the same on both sides. */
+  .settings :global(.kit-settings__scroll > .kit-settings__panel) {
+    padding-right: calc(var(--pane-pad-x) - var(--scrollbar-gutter-size));
+  }
   @media (max-width: 760px) {
     /* Title, category tabs, and fields share one left edge. */
     .settings-header {
@@ -784,6 +787,13 @@
     .settings :global(.kit-settings__sidebar) {
       padding-inline: calc(var(--pane-pad-x) - var(--space-4));
     }
+  }
+  .settings :global(.kit-settings__nav-item) {
+    line-height: var(--type-meta-line);
+  }
+  /* A picker's value is field text, Body on its own line height rather than the page's 1.45. */
+  .settings :global(.kit-typeahead__value-text) {
+    line-height: var(--type-body-line);
   }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
@@ -801,19 +811,20 @@
     display: grid;
     gap: var(--field-gap);
   }
+  /* A notice is padded 12 (L6) with Meta text. */
   .notices :global(.kit-notice) {
-    padding: var(--pane-pad-y) var(--pane-pad-x);
+    padding: var(--space-box);
     gap: var(--control-gap);
   }
   .notice {
     margin: 0;
-    padding: var(--pane-pad-y) var(--pane-pad-x);
+    padding: var(--space-box);
     border: 1px solid var(--status-warning-ink);
     border-radius: var(--radius-md);
     background: var(--status-warning-bg);
     color: var(--status-warning-ink);
-    font-size: var(--font-size-sm);
-    line-height: 1.45;
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
   .notice--error {
     border-color: var(--status-error-ink);
@@ -823,14 +834,15 @@
 
   h2 {
     margin: 0;
-    line-height: 1.2;
-    font-size: var(--font-size-xl);
+    line-height: var(--type-page-line);
+    font-size: var(--type-page-size);
     font-weight: var(--font-weight-semibold);
     letter-spacing: -0.01em;
   }
   h3 {
     margin: 0;
-    font-size: var(--font-size-md);
+    font-size: var(--type-heading-size);
+    line-height: var(--type-heading-line);
     font-weight: var(--font-weight-semibold);
   }
 
@@ -863,9 +875,10 @@
 
   /* A switch sits first, then its label and status. Other settings put the
      label above the field. */
+  /* Label, field, and hint are 4 apart. */
   .setting {
     display: grid;
-    gap: var(--control-gap);
+    gap: var(--space-tight);
     min-width: 0;
     border-radius: var(--radius-sm);
   }
@@ -881,14 +894,16 @@
   }
   .setting__label {
     color: var(--text-secondary);
-    font-size: var(--font-size-xs);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
   .setting--switch .setting__label {
     /* Centering the line box leaves the letters looking high beside the switch. */
     position: relative;
     top: 1px;
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line);
   }
   .setting--changed .setting__label::after {
     content: '';
@@ -909,38 +924,45 @@
   .setting__hint {
     margin: 0;
     color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-    line-height: 1.45;
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
   }
 
   .disclosures {
     display: grid;
     gap: var(--field-gap);
   }
-  .disclosure[open] {
+  .disclosures :global(.disclosure[open]) {
     padding-bottom: var(--space-5);
   }
-  .disclosure summary {
+  /* A fold row is 28: Meta text, centered by its padding. */
+  .disclosures :global(.disclosure.disclosure > .kit-disclosure__summary) {
+    padding-block: calc((var(--control-h) - var(--type-meta-line)) / 2);
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    cursor: pointer;
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
   .config {
     display: grid;
     gap: var(--field-gap);
     margin: var(--field-gap) 0 0;
   }
+  /* Label | value rows on the one label column, like Details. */
   .config div {
     display: grid;
-    grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
-    gap: var(--section-gap);
-    font-size: var(--font-size-sm);
+    grid-template-columns: var(--detail-label-width) minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--space-group);
   }
   .config dt {
     color: var(--text-secondary);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
   .config dd {
     margin: 0;
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line);
     overflow-wrap: anywhere;
     color: var(--text-primary);
   }
@@ -956,7 +978,7 @@
   .unsaved {
     margin-right: auto;
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    line-height: 1.45;
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
 </style>

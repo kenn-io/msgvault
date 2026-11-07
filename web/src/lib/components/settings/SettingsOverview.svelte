@@ -117,7 +117,8 @@
     grid-column: 1 / -1;
     grid-template-columns: subgrid;
     align-items: center;
-    gap: var(--control-gap) var(--section-gap);
+    /* Text stacked in a row sits closer than the row padding, so it reads as one group. */
+    gap: var(--space-3) var(--section-gap);
     min-height: var(--control-height);
     padding: var(--pane-pad-y) var(--pane-pad-x);
   }
@@ -125,7 +126,7 @@
     border-top: 1px solid var(--border-default);
   }
   .row__local { display: grid; grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; min-width: 0; }
-  .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; grid-template-rows: minmax(24px, auto); min-height: 24px; gap: var(--control-gap) var(--section-gap); }
+  .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-row: 1; grid-template-columns: subgrid; grid-template-rows: minmax(var(--control-h), auto); min-height: var(--control-h); gap: var(--control-gap) var(--section-gap); }
   .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
   /* Reserves the widest local status so activation never shifts the status column. */
   .row__chip-sizer { display: flex; flex-direction: column; grid-column: 2; grid-row: 1; height: 0; overflow: hidden; visibility: hidden; }
@@ -135,11 +136,11 @@
   .row__local :global(.kit-search-by-meaning:not(.kit-search-by-meaning--no-action) .kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { margin-top: calc(var(--control-gap) / -2); }
   .row__recovery-copy { display: grid; grid-column: 1 / 3; gap: calc(var(--control-gap) / 2); }
   .row__recovery { margin-top: var(--control-gap); display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; gap: var(--control-gap) var(--section-gap); }
-  .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: calc((var(--font-size-md) * 1.45 - 24px) / 2); }
+  .row:has(:global(.kit-search-by-meaning--no-action)) .row__recovery { margin-top: calc((var(--font-size-md) * 1.45 - var(--control-h)) / 2); }
   .row__coverage { display: flex; align-items: center; gap: var(--control-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .row__recovery .row__action { grid-column: 3; margin-top: calc((var(--font-size-xs) * 1.45 - 24px) / 2); }
+  .row__recovery .row__action { grid-column: 3; margin-top: calc((var(--font-size-xs) * 1.45 - var(--control-h)) / 2); }
   .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); contain: inline-size; }
-  .row > .row__error { margin-top: calc(var(--control-gap) / -2); }
+  .row > .row__error { margin-top: calc(var(--space-3) / -2); }
   .row__name {
     display: flex;
     align-items: center;

@@ -52,6 +52,26 @@
     if (open) return appShortcuts.pushScope('display-menu');
   });
 
+  $effect(() => {
+    if (!open) return;
+    let menu: HTMLElement | null = null;
+    const leave = (event: KeyboardEvent) => {
+      // Kit chooses Tab's destination before closing; exclude this region.
+      if (event.key === 'Tab' && menu) menu.tabIndex = -1;
+    };
+    const frame = requestAnimationFrame(() => {
+      menu = document.querySelector<HTMLElement>('.display-menu');
+      if (menu && menu.scrollHeight > menu.clientHeight) {
+        menu.tabIndex = 0;
+        menu.addEventListener('keydown', leave, true);
+      }
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      menu?.removeEventListener('keydown', leave, true);
+    };
+  });
+
   function toggleColumn(column: ExploreColumn): void {
     if (!columns || !onColumnsChange) return;
     const shown = columns.includes(column);
