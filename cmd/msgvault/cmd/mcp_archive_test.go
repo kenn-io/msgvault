@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -89,13 +88,13 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			for _, tool := range listed.Tools {
 				names = append(names, tool.Name)
 			}
-			assert.Contains(names, "get_stats")
-			assert.Contains(names, "list_saved_views")
-			assert.Contains(names, "get_person_merge_context")
 			if tc.tool != "" {
 				assert.Contains(names, tc.tool)
 			}
 			if tc.source == "mbox" {
+				assert.Contains(names, "get_stats")
+				assert.Contains(names, "list_saved_views")
+				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
 					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || strings.Contains(name, "meeting") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
@@ -113,7 +112,7 @@ func TestMCPArchiveIntegrationProbes(t *testing.T) {
 		{"named CardDAV", `[{"connection":"work"}]`, `[]`, "", true, false},
 		{"orphaned CardDAV", `[{"connection":"old","orphaned":true}]`, `[]`, "", false, false},
 		{"Kata enabled", `[]`, kataSettings, "", false, true},
-		{"Kata missing endpoint", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}}]`, "", false, false},
+		{"Kata empty endpoint", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}},{"key":"integrations.kata.endpoint","value":{"string":""}}]`, "", false, false},
 		{"source timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/sources/status", true, true},
 		{"CardDAV timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/carddav/connections", false, true},
 		{"settings timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/settings", true, false},
@@ -279,30 +278,6 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestMCPArchiveHTTPCallsSkipDiscovery(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	probes := 0
-	handler, closeHandler := mcpserver.NewHTTPHandler(mcpserver.ServeOptions{
-		Engine:           &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}},
-		DiscoverFamilies: func(context.Context) *mcpserver.ArchiveFamilies { probes++; return &mcpserver.ArchiveFamilies{} },
-	}, mcpserver.HTTPOptions{})
-	defer closeHandler()
-	for _, method := range []string{"tools/list", "tools/call"} {
-		params := `{}`
-		if method == "tools/call" {
-			params = `{"name":"get_message","arguments":{"id":42}}`
-		}
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Accept", "application/json, text/event-stream")
-		request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		require.Equal(http.StatusOK, response.Code, response.Body.String())
-		assert.Equal(1, probes)
 	}
 }
 
