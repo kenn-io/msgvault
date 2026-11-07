@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-02
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,14 @@ For a first archive, add only the sections required by your source. Optional
 provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
+
+### LinkedIn exports
+
+[LinkedIn import](usage/linkedin.md) reads a local ZIP or extracted folder.
+It needs no provider configuration or credentials. Supply an archive identifier
+and your profile URL with `msgvault import linkedin <identifier> <archive>
+--me <profile-url>`. This source is unreleased; repeat the command for newer
+exports.
 
 ### Validation
 

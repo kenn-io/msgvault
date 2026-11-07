@@ -95,6 +95,7 @@ var topLevelCommandGroups = map[string]string{
 	"find-chat":              helpGroupRead,
 	"gc":                     helpGroupDelete,
 	"identity":               helpGroupPeople,
+	"import":                 helpGroupImport,
 	"import-eml":             helpGroupImport,
 	"import-emlx":            helpGroupImport,
 	"import-gvoice":          helpGroupImport,

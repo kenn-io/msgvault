@@ -1,0 +1,5 @@
+CONVERSATION ID,CONVERSATION TITLE,FROM,SENDER PROFILE URL,TO,RECIPIENT PROFILE URLS,DATE,SUBJECT,CONTENT,FOLDER,ATTACHMENTS,IS MESSAGE DRAFT
+2-example,Project chat,Alex Example,https://www.linkedin.com/in/alex-example/,Morgan Example; Casey Example,https://www.linkedin.com/in/morgan-example/; https://www.linkedin.com/in/casey-example/,2026-10-01 12:00:00 UTC,Planning,"Hello, team
+Second line",INBOX,https://files.example.com/brief.pdf,No
+2-example,Project chat,Morgan Example,https://www.linkedin.com/in/morgan-example/,Alex Example,https://www.linkedin.com/in/alex-example/,2026-10-01 12:01:00 UTC,,Thanks,SENT,,false
+2-example,Project chat,Alex Example,https://www.linkedin.com/in/alex-example/,Morgan Example,https://www.linkedin.com/in/morgan-example/,2026-10-01 12:02:00 UTC,,Unsent draft,DRAFT,,Yes

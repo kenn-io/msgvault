@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: 2026-11-02
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -34,6 +34,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Your source | Start here | Scope |
 |---|---|---|
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
+| LinkedIn member export | [LinkedIn import](../usage/linkedin.md) | DMs, your own comments and posts, plus optional connection identities; unreleased |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |

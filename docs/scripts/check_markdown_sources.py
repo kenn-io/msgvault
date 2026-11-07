@@ -57,6 +57,7 @@ PUBLIC_MARKDOWN = {
     "usage/imap.md",
     "usage/importing.md",
     "usage/inline.md",
+    "usage/linkedin.md",
     "usage/meetings.md",
     "usage/multi-account.md",
     "usage/people-automation.md",
