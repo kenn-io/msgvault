@@ -924,6 +924,20 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 	return s.withTxOptionsContext(ctx, nil, fn)
 }
 
+// withSourceMaintenanceGateContext fences writers that acquire cascade-child
+// locks before parent FK checks or touch several maintenance tables in a
+// different order. Take sync_runs in ROW EXCLUSIVE mode before any such locks so
+// BeginExclusive waits without holding tables the writer still needs. SQLite
+// needs no extra lock; its ordinary transaction already serializes writers.
+func (s *Store) withSourceMaintenanceGateContext(ctx context.Context, fn func(tx *loggedTx) error) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
 // withReadSnapshotContext gives a multi-statement aggregate read one stable,
 // read-only database snapshot. PostgreSQL needs REPEATABLE READ because its
 // default READ COMMITTED isolation takes a new snapshot for each statement.
