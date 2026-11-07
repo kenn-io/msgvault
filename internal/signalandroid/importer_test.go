@@ -78,6 +78,26 @@ func expectedMessages() map[string]importedMessage {
 	}
 }
 
+func TestImportSearchByRecipientEmail(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+
+	phoneID, err := st.EnsureParticipantByPhone(signalfixture.AlicePhone, "Alice Example", SourceType)
+	require.NoError(t, err)
+	emailID, err := st.EnsureParticipant("alice@example.com", "Alice Example", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.MergeParticipants(emailID, phoneID))
+
+	runImport(t, st, dir, t.TempDir())
+
+	messages, total, err := st.SearchMessages(`"alice@example.com" Replying`, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply), messages[0].SourceMessageID)
+}
+
 func TestImportMapsSignalDatabase(t *testing.T) {
 	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v215": signalfixture.V215, "v185": signalfixture.V185} {
 		t.Run(name, func(t *testing.T) {

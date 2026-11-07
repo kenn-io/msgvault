@@ -710,10 +710,6 @@ func (r *run) writeMessage(
 	if err != nil {
 		return 0, err
 	}
-	senderAddr := r.recipients[p.senderID].E164
-	if p.senderID == r.selfRecipientID {
-		senderAddr = r.opts.Phone
-	}
 	if senderID.Valid {
 		conversation.Participants = []store.ConversationParticipantRef{{ParticipantID: senderID.Int64, Role: "member"}}
 	}
@@ -722,7 +718,6 @@ func (r *run) writeMessage(
 		Message:      &msg, BodyText: sql.NullString{String: body, Valid: body != ""},
 		RawMIME: raw, RawFormat: rawFormat, Edited: m.OriginalRowID.Valid,
 		Attachments: writes, PreserveLabels: true,
-		FTS: &store.FTSDoc{Body: body, FromAddr: senderAddr},
 	}
 	if senderID.Valid {
 		data.Recipients = append(data.Recipients, store.RecipientSet{
@@ -777,6 +772,9 @@ func (r *run) writeMessage(
 	}
 	messageID, err := st.PersistMessageContext(ctx, &data)
 	if err != nil {
+		return 0, err
+	}
+	if err := st.IndexStoredMessageContext(ctx, messageID); err != nil {
 		return 0, err
 	}
 	r.summary.AttachmentsFound += found + mediaFound
