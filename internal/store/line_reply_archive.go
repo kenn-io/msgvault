@@ -120,7 +120,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 				Snippet: sql.NullString{String: textutil.PrefixRunes(strings.TrimSpace(a.Body), 200), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
 			BodyText: sql.NullString{String: a.Body, Valid: true}, Metadata: &metadata, RawMIME: raw, RawFormat: "line_push_receipt_json",
 			Recipients:     recipients,
-			PreserveLabels: true, FTS: &FTSDoc{Body: a.Body},
+			PreserveLabels: true,
 		}
 	}
 	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
@@ -129,6 +129,16 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		}
 		if err := s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = ?", a.ConversationID); err != nil {
 			return err
+		}
+		if s.fts5Available {
+			row, err := s.loadDerivedEmailText(boundQuerier{ctx: ctx, q: tx}, messageID)
+			if err != nil {
+				return fmt.Errorf("load archived LINE reply for search: %w", err)
+			}
+			row.fts.Body = row.body
+			if err := s.dialect.FTSUpsert(boundQuerier{ctx: ctx, q: tx}, row.fts); err != nil {
+				return fmt.Errorf("index archived LINE reply: %w", err)
+			}
 		}
 		if err := s.resolveLineQuotesForMessages(tx, a.SourceID, a.SourceConversationID, []string{a.RemoteMessageID}); err != nil {
 			return fmt.Errorf("resolve LINE replies quoting archived send: %w", err)

@@ -689,3 +689,20 @@ func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
 		checks.Empty(receipt.SourceConversationID)
 	})
 }
+
+func TestLineReplyArchiveIndexesSenderAddressAfterBotMerge(t *testing.T) {
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	bot, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:"+replyBotID, "Example Bot")
+	require.NoError(err)
+	email, err := st.EnsureParticipantContext(t.Context(), "reply.sender@example.com", "Example Sender", "example.com")
+	require.NoError(err)
+	require.NoError(st.MergeParticipantsContext(t.Context(), bot, email))
+	acceptedReply(t, st, draft)
+	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assertFTSContains(t, st, "reply.sender@example.com", 1)
+}
