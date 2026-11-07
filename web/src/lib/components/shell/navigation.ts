@@ -1,6 +1,7 @@
 import type { Component } from 'svelte';
 import Inbox from '@lucide/svelte/icons/inbox';
 import Paperclip from '@lucide/svelte/icons/paperclip';
+import Star from '@lucide/svelte/icons/star';
 import Plug from '@lucide/svelte/icons/plug';
 import Settings from '@lucide/svelte/icons/settings';
 import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -22,6 +23,7 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
   { id: 'relationships', label: 'People', icon: Users },
   { id: 'files', label: 'Files', icon: Paperclip },
   { id: 'sources', label: 'Sources', icon: Plug },
+  { id: 'business-reviews', label: 'Business reviews', icon: Star },
 ];
 
 export const DELETIONS_ITEM: NavigationItem = { id: 'deletions', label: 'Staged deletions', icon: Trash2 };

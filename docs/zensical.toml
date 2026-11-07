@@ -60,6 +60,7 @@ nav = [
     {"Verify Integrity" = "guides/verification.md"},
     {"Deduplication" = "usage/deduplication.md"},
     {"Deleting Email" = "usage/deletion.md"},
+    {"Business Reviews" = "usage/business-reviews.md"},
     {"Remote Deployment" = "guides/remote-deployment.md"},
     {"Daemon Lifecycle" = "guides/daemon-migration.md"},
     {"Troubleshooting" = "troubleshooting.md"},

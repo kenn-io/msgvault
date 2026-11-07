@@ -195,6 +195,9 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	if opts.BusinessReviews != nil && !opts.DelegatedOnly {
+		definitions = append(definitions, businessReviewTools(opts.AllowBusinessReviewContent)...)
+	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
 	}

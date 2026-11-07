@@ -45,6 +45,13 @@ addresses and handles, maintain contacts, or set up optional profile automation.
 Use [accounts and collections](usage/multi-account.md) to organize sources and
 limit an archive view.
 
+## Manage live business reviews
+
+[Business reviews](usage/business-reviews.md) on `main` provides live Google
+Business Profile review reads and explicitly confirmed owner responses through
+your own approved project. Review content is not archived. The guide explains
+setup, retention boundaries, and the current Facebook capability limitation.
+
 ## Maintain and operate the archive
 
 | Your task | Guide |

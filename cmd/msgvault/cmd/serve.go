@@ -999,6 +999,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ShutdownFunc:                  cancel,
 		Scheduler:                     schedAdapter,
 		CardDAV:                       cardDAVController,
+		BusinessReviews:               newDaemonBusinessReviews(cfg),
 		Logger:                        logger,
 		DaemonVersion:                 Version,
 		AnalyticsMode:                 analyticsMode,

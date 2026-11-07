@@ -220,7 +220,7 @@ Output:
 				"level", inv.logResult.Level.String(),
 			)
 			inv.logger.Debug("msgvault startup args",
-				"args", sanitizeArgs(args),
+				"args", sanitizeCommandArgs(cmd, args),
 			)
 			// Restore the default so cobra's required-flag and
 			// mutually-exclusive-flag validators (steps 4/5 above) print
@@ -334,22 +334,40 @@ func agentDelegatedCommand(name string) bool {
 	return false
 }
 
+// Cobra passes leaf positionals to PersistentPreRunE, without the command
+// words that sanitizeArgs can recognize in full argv.
+func sanitizeCommandArgs(cmd *cobra.Command, args []string) []string {
+	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
+		if ancestor.Name() == "business-reviews" {
+			out := make([]string, len(args))
+			for i := range out {
+				out[i] = "<redacted>"
+			}
+			return out
+		}
+	}
+	return sanitizeArgs(args)
+}
+
 // sanitizeArgs removes anything that might carry a secret before
 // the argv hits the log file. Values for flags known to contain
 // credentials (--password, --token, --client-secret, ...) are
 // replaced with "<redacted>". Unknown flags pass through so the
 // log still captures the user's intent.
 func sanitizeArgs(args []string) []string {
+	args = sanitizeBusinessReviewArgs(args)
 	out := make([]string, 0, len(args))
 	redactNext := false
 	sensitive := map[string]bool{
-		"--password":       true,
-		"--token":          true,
-		"--client-secret":  true,
-		"--access-token":   true,
-		"--refresh-token":  true,
-		"--client-secrets": true,
-		"--body":           true,
+		"--password":           true,
+		"--token":              true,
+		"--client-secret":      true,
+		"--access-token":       true,
+		"--refresh-token":      true,
+		"--client-secrets":     true,
+		"--body":               true,
+		"--confirmation-token": true,
+		"--page-token":         true,
 	}
 	for _, a := range args {
 		if redactNext {
