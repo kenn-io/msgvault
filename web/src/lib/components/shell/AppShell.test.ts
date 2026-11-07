@@ -64,6 +64,8 @@ describe('AppShell', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Add source' }));
       expect(await screen.findByRole('dialog', { name: 'Add source' })).toBeDefined();
       expect(state.current.workspace).toBe('sources');
+      await fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources', exact: true })));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -71,6 +73,7 @@ describe('AppShell', () => {
   });
 
   it('keeps the no-match message for a source with no search results', async () => {
+    const start = vi.spyOn(ShellData.prototype, 'start');
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'missing mail' }))}`);
     const state = new ExploreState(window);
     const client = createAPIClient(async input => {
@@ -80,10 +83,12 @@ describe('AppShell', () => {
     });
     const rendered = render(AppShell, { client, state });
     try {
+      await waitFor(() => expect(start.mock.contexts[0]?.jobs.loaded).toBe(true));
       expect(await screen.findByText('No items match this view')).toBeDefined();
       expect(screen.queryByText('No mail yet')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
     } finally {
+      start.mockRestore();
       rendered.unmount();
       state.destroy();
     }

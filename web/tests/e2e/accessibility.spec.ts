@@ -573,12 +573,6 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByText('No mail yet')).toBeVisible();
       await assertNoViolations(page, `empty archive ${theme}/${density}`);
 
-      await page.getByRole('button', { name: 'Add source', exact: true }).focus();
-      await page.keyboard.press('Enter');
-      await expect(page.getByRole('dialog', { name: 'Add source' })).toBeVisible();
-      await page.keyboard.press('Escape');
-      await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
-
       sources = [sourceStatus({ scheduled: false })];
       await page.goto('/?workspace=everything');
       await expect(page.getByText('No items match this view')).toBeVisible();
