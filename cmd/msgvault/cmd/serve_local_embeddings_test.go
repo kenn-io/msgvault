@@ -68,8 +68,10 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
-	oldYes, oldRebuild, oldRetire := embedYes, embedFullRebuild, embeddingsRetireYes
-	defer func() { embedYes, embedFullRebuild, embeddingsRetireYes = oldYes, oldRebuild, oldRetire }()
+	oldYes, oldRebuild, oldRetire, oldBackstop := embedYes, embedFullRebuild, embeddingsRetireYes, embedBackstop
+	defer func() {
+		embedYes, embedFullRebuild, embeddingsRetireYes, embedBackstop = oldYes, oldRebuild, oldRetire, oldBackstop
+	}()
 	command := newEmbeddingsBuildCmd("build")
 	command.RunE = func(cmd *cobra.Command, _ []string) error { return runEmbeddingsBuildLocal(cmd) }
 	if req.Args[1] == "retire" {
@@ -334,7 +336,7 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 				require.Error(err)
 				if tc.wantError != "" {
-					assert.ErrorContains(err, tc.wantError)
+					require.ErrorContains(err, tc.wantError)
 				}
 				after, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
@@ -364,6 +366,11 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 			f.start(t)
 			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
 			require.NoError(t, err)
+			if tc.reuse {
+				// Leave a pending message below the saved watermark.
+				_, err = f.store.DB().ExecContext(t.Context(), "UPDATE messages SET embed_gen = NULL WHERE embed_gen = ?", old.ID)
+				require.NoError(t, err)
+			}
 			if tc.changedRecipe {
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(t, err)
@@ -387,7 +394,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 			require.NoError(t, err)
 			if tc.reuse {
 				assert.Equal(t, old.ID, active.ID)
-				assert.Equal(t, int32(1), f.inputs.Load()-before)
+				assert.Equal(t, int32(2), f.inputs.Load()-before)
 			} else {
 				assert.NotEqual(t, old.ID, active.ID)
 			}
@@ -489,6 +496,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 			name: "config conflict", wantError: "Settings changed during setup. Turn on to retry.",
 			wantConflict: true, suffix: "\n[web]\ntheme = \"dark\"\n", wantTheme: "dark",
 			arrange: func(t *testing.T, f *localActivationFixture, expected []byte) {
+				t.Helper()
 				install := f.controller.install
 				f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 					require.NoError(t, os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
@@ -557,7 +565,8 @@ func (f *localActivationFixture) useBuiltin(t *testing.T) {
 func TestLocalEmbeddingsPublishesScheduledBuildWithoutBlockingSyncDuringInstall(t *testing.T) {
 	f := newLocalActivationFixture(t, "")
 	f.start(t)
-	gate := f.controller.gate.(*api.SerialOperationGate)
+	gate, ok := f.controller.gate.(*api.SerialOperationGate)
+	require.True(t, ok)
 	install := f.controller.install
 	f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 		_, _, held := gate.Holder()

@@ -263,7 +263,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		}
 		building = nil
 	}
-	args := []string{"embeddings", "build", "--yes"}
+	args := []string{"embeddings", "build", "--backstop", "--yes"}
 	if building == nil {
 		active, err := vf.Backend.ActiveGeneration(ctx)
 		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
