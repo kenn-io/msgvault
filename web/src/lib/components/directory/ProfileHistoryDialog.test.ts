@@ -231,7 +231,8 @@ describe('ProfileHistoryDialog', () => {
       await waitFor(() => {
         expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 });
         expect(screen.getByText('Retained name')).toBeDefined();
-        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
+        for (const value of ['Moved alias', 'moved@example.com']) expect(screen.queryByText(value)).toBeNull();
+        expect(screen.queryByRole('heading', { name: 'Seen in services' })).toBeNull();
       });
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });

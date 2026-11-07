@@ -708,7 +708,7 @@ export async function installDirectoryReviewArchive(page: Page) {
   await page.route(/\/api\/v1\/participants\/(?:701|702|901)$/, (route) => {
     const id = Number(new URL(route.request().url()).pathname.split('/').at(-1));
     const profile = [...people.values()].find(person => person.participant_ids?.includes(id));
-    return route.fulfill({ json: { ...archivePerson, id, display_label: profile?.display_name, display_name: profile?.display_name, identifiers: [], profile } });
+    return route.fulfill({ json: { ...archivePerson, id, display_label: profile?.display_name, display_name: profile?.display_name, identifiers: [{ participant_id: id, type: 'email', value: `person${id}@example.org`, is_primary: true, provenance: 'archive' }], profile } });
   });
 
   await page.route(/\/api\/v1\/person-relationship-reviews(?:\?.*)?$/, (route) => {

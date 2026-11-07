@@ -5,6 +5,7 @@ import {
   listPersonMerges as generatedListPersonMerges,
   splitPersonMerge as generatedSplitPersonMerge,
 } from '../api/generated/api/api';
+import { loadMergeLabels } from './merge-labels';
 import { createBrowserRequestID } from '../api/request-id';
 import type { APIClient } from '../api/client';
 import type {
@@ -53,6 +54,7 @@ export class PersonMergeHistoryController {
   pendingHistoryOffset = $state<number | null>(null);
   selectedMergeID = $state<number | null>(null);
   detail = $state<MergeDetail | null>(null);
+  labels = $state<({ for: number } & Awaited<ReturnType<typeof loadMergeLabels>>) | null>(null);
   detailLoading = $state(false);
   detailError = $state<string | null>(null);
   snapshot = $state<MergeSnapshot | null>(null);
@@ -205,8 +207,13 @@ export class PersonMergeHistoryController {
         },
       );
       if (!this.ownsDetail(request, generation, context, mergeID)) return;
-      if (response.data) this.detail = response.data;
-      else {
+      if (response.data) {
+        this.detail = response.data;
+        this.detailLoading = false;
+        const detail = this.detail;
+        const labels = await loadMergeLabels(this.client, detail, request.signal);
+        if (this.ownsDetail(request, generation, context, mergeID) && this.detail === detail) this.labels = { for: mergeID, ...labels };
+      } else {
         this.detail = retainedDetail;
         this.detailError = failureMessage(response.error, response.response.status);
       }
@@ -446,6 +453,8 @@ export class PersonMergeHistoryController {
     context: number,
     owner: AbortController,
   ): Promise<boolean> {
+    const detailOwner = this.detailAbort;
+    if (!detailOwner) return false;
     try {
       const [source, merge] = await Promise.all([
         generatedGetPersonProfile(
@@ -481,6 +490,10 @@ export class PersonMergeHistoryController {
       this.sourcePerson = source.data;
       this.sourceETag = etag;
       this.detail = merge.data;
+      const detail = this.detail;
+      void loadMergeLabels(this.client, detail, detailOwner.signal).then(labels => {
+        if (this.detail === detail) this.labels = { for: target.mergeID, ...labels };
+      });
       this.selectedParticipantIDs = [];
       this.clearConfirmation();
       this.splitNeedsFreshState = false;
@@ -552,6 +565,7 @@ export class PersonMergeHistoryController {
   private clearMergeContext(): void {
     this.selectedMergeID = null;
     this.detail = null;
+    this.labels = null;
     this.detailLoading = false;
     this.detailError = null;
     this.snapshot = null;

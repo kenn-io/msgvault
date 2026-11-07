@@ -32,6 +32,7 @@ async function preparedController(fetchFn: typeof fetch, participants?: MergeDet
   const routedFetch = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname === '/api/v1/person-merges/41') return Response.json(value);
+    if (new URL(request.url).pathname.startsWith('/api/v1/participants/')) return Response.json({ identifiers: [] });
     return fetchFn(request);
   });
   const controller = new PersonMergeHistoryController(createAPIClient(routedFetch), 7);
@@ -99,6 +100,49 @@ function result(exactReversal: boolean) {
 }
 
 describe('PersonSplitModal', () => {
+  it('reuses Inspect labels with identity values, scopes, and fallbacks in split choices and confirmation', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail([
+        { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
+        { merge_id: 41, participant_id: 704, origin_side: 'absorbed' },
+        { merge_id: 41, participant_id: 705, origin_side: 'absorbed' },
+      ]));
+      if (path === '/api/v1/people/7') return Response.json(person(7));
+      if (path === '/api/v1/people/12') return sourceResponse();
+      if (path === '/api/v1/participants/705') return new Response(null, { status: 404 });
+      if (path === '/api/v1/participants/704') return Response.json({ identifiers: [{
+        participant_id: 704, type: 'email', value: 'user@example.org',
+      }] });
+      if (path === '/api/v1/participants/701') {
+        return Response.json({ identifiers: [{
+          participant_id: 701, type: 'beeper', service_label: 'Matrix',
+          participant_display_name: 'Matrix Member',
+          value: 'user-a', scope_kind: 'network', scope_value: 'example.org',
+        }] });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
+    try {
+      await controller.selectMerge(41);
+      fetchFn.mockClear();
+      await controller.openSplit();
+      render(PersonSplitModal, { controller, onClose: vi.fn(), onOpenPerson: vi.fn() });
+
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Matrix · Matrix Member · user-a · network: example.org' }));
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'user@example.org' }));
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Participant 705' }));
+      await fireEvent.click(screen.getByRole('checkbox', {
+        name: 'I confirm splitting Matrix · Matrix Member · user-a · network: example.org, user@example.org, Participant 705 from Synthetic Source (Person 12).',
+      }));
+      expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual(['/api/v1/people/12']);
+    } finally {
+      controller.destroy();
+    }
+  });
+
   it('names the actual source and selection in confirmation, then shows two fresh navigation actions with partial copy', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

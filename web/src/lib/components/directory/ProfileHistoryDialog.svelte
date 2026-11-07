@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
   import { Button, Modal } from '@kenn-io/kit-ui';
+  import HistorySection from './HistorySection.svelte';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
   import { historyProvenance } from './history-format';
@@ -76,6 +77,10 @@
       }));
   });
 
+  function historyRow(item: HistoryRow) {
+    return { id: item.id, value: item.value, detail: item.context, meta: `${historyProvenance(item.envelope)}${item.observedAt ? ` · ${historyTime(item.observedAt)}` : ''}` };
+  }
+
   function providerContext(point: { service_slug?: string; scope_kind?: string; scope_value?: string }): string | null {
     const scope =
       point.scope_kind && point.scope_value
@@ -110,27 +115,8 @@
     {:else if error}
       <p role="alert" class="history-error">{error}</p>
     {:else if history}
-      {#snippet row(item: HistoryRow)}
-        <li>
-          <span class="value">{item.value}{#if item.context}<small>{item.context}</small>{/if}</span>
-          <span class="meta">
-            {historyProvenance(item.envelope)}{#if item.observedAt} · {historyTime(item.observedAt)}{/if}
-          </span>
-        </li>
-      {/snippet}
       {#each sections as section (section.title)}
-        <section>
-          <h3>{section.title}</h3>
-          {#if section.current.length > 0}
-            <ul>{#each section.current as item (item.id)}{@render row(item)}{/each}</ul>
-          {/if}
-          {#if section.past.length > 0}
-            <details>
-              <summary>{section.past.length} earlier {section.past.length === 1 ? 'value' : 'values'}</summary>
-              <ul>{#each section.past as item (item.id)}{@render row(item)}{/each}</ul>
-            </details>
-          {/if}
-        </section>
+        <HistorySection title={section.title} rows={section.current.map(historyRow)} earlier={section.past.map(historyRow)} />
       {/each}
     {/if}
     {#if error}<Button label="Retry history" onclick={() => { loading = true; void load(); }} />{/if}
@@ -139,7 +125,7 @@
       <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
     {:else if controller}<AttributeSection {controller} />{/if}
     {#if !loading}
-      <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
+      <PersonMergeHistory {client} {personID} definitions={controller?.definitions} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
     {/if}
   </div>
   {#snippet footer()}
@@ -153,62 +139,8 @@
     gap: var(--space-6);
     min-width: min(42rem, calc(100vw - 64px));
   }
-  section {
-    display: grid;
-    gap: var(--space-2);
-  }
-  h3,
-  p,
-  ul {
-    margin: 0;
-  }
-  ul {
-    display: grid;
-    padding: 0;
-    list-style: none;
-  }
-  li {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--field-gap);
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border-muted);
-  }
-  .value {
-    display: grid;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .meta {
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  small {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  details summary {
-    padding: var(--space-2) 0;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-  }
-  details li {
-    flex-direction: column;
-    gap: var(--space-1);
-    color: var(--text-secondary);
-  }
+  p { margin: 0; }
   .history-error {
     color: var(--text-danger);
-  }
-  @media (max-width: 640px) {
-    li {
-      flex-direction: column;
-      gap: var(--space-1);
-    }
   }
 </style>
