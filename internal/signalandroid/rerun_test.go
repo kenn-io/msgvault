@@ -93,10 +93,12 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		changes                []string
 		added                  int64
 		checkNoSource          bool
+		layout                 signalfixture.Layout
 	}{
 		{name: "full backup of another number", phone: "+15555550199", wantError: "--phone does not match"},
 		{name: "incoming-only backup of another number", phone: "+15555550199", changes: []string{dropOutgoing}, wantError: "--phone does not match", checkNoSource: true},
 		{name: "incoming-only backup with formatted owner number", phone: "+1 555 555 0100", changes: []string{dropOutgoing}, added: 5},
+		{name: "migrated incoming-only backup", phone: signalfixture.OwnPhone, layout: signalfixture.V185, changes: []string{dropOutgoing, `UPDATE message SET to_recipient_id = from_recipient_id WHERE thread_id IN (10, 12)`}, added: 5},
 		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
 		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
 		{name: "owner account ID not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET aci = NULL WHERE _id = 1`}, added: 7},
@@ -105,7 +107,11 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dir := t.TempDir()
-			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			layout := tc.layout
+			if layout == (signalfixture.Layout{}) {
+				layout = signalfixture.Current
+			}
+			path := signalfixture.Write(t, dir, layout, 0)
 			changeFixture(t, dir, tc.changes...)
 			opts := DefaultOptions()
 			opts.Phone = tc.phone

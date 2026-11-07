@@ -77,6 +77,7 @@ func TestImportSignalRegistersDefaultIdentity(t *testing.T) {
 }
 
 func TestImportSignalRejectsRemoteLocalFiles(t *testing.T) {
+	t.Setenv(daemonCLISubprocessEnv, "")
 	server, requests := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, `{"type":"complete"}`)
 	command := newImportSignalCmd()
 	command.SetContext(configureRemoteDaemonForTest(t, server.URL))

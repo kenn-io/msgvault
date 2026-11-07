@@ -204,10 +204,6 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 func TestImportDirectChatRecipients(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir,
-		`INSERT INTO recipient (_id, pni) VALUES (7, '0f0f0f0f-0000-4000-8000-000000000007')`,
-		`INSERT INTO group_membership (group_id, recipient_id) SELECT group_id, 7 FROM group_membership WHERE recipient_id = 2`,
-	)
 	st := testutil.NewTestStore(t)
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
@@ -246,13 +242,6 @@ func TestImportDirectChatRecipients(t *testing.T) {
 			assert.ElementsMatch(tc.want, got)
 		})
 	}
-
-	t.Run("changed membership", func(t *testing.T) {
-		changeFixture(t, dir, `UPDATE group_membership SET recipient_id = 4 WHERE recipient_id = 2`)
-		runImport(t, st, dir, storage)
-		assert := assert.New(t)
-		assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
-	})
 }
 
 func TestImportSenderSharedName(t *testing.T) {
@@ -334,18 +323,6 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			},
 			want: "predates Signal Android database version 185",
 		},
-		{
-			// Missing authorship must fail schema validation before an import starts.
-			name: "damaged message authorship columns", version: 215,
-			ddl: []string{
-				`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, uuid TEXT, phone TEXT, group_id TEXT)`,
-				`CREATE TABLE thread (_id INTEGER PRIMARY KEY, recipient_id INTEGER)`,
-				`CREATE TABLE message (_id INTEGER PRIMARY KEY, date_sent INTEGER, date_received INTEGER,
-					thread_id INTEGER, recipient_id INTEGER, type INTEGER, body TEXT,
-					quote_id INTEGER, quote_author INTEGER)`,
-			},
-			want: "message details are missing; msgvault reads Signal Android database versions 185 through 330",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -365,6 +342,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 	// Each missing column guards its own schema check before creating a source.
 	for _, tc := range []struct{ name, change, want string }{
+		{"message authorship", `ALTER TABLE message DROP COLUMN from_recipient_id`, "message details are missing; msgvault reads Signal Android database versions 185 through 330"},
 		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
 		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
 		{"chat contacts", `ALTER TABLE thread DROP COLUMN recipient_id`, "chat contacts are missing"},

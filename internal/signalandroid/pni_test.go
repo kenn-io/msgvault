@@ -149,13 +149,19 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 
 func TestReimportPNIChatGainsACI(t *testing.T) {
 	for _, tc := range []struct {
-		name                  string
-		beforeUpdate, updates []string
+		name, messageKey             string
+		setup, beforeUpdate, updates []string
+		messagesUpdated              int64
 	}{
-		{name: "number changes after the ACI is learned",
+		{name: "number changes after the ACI is learned", messagesUpdated: 1, messageKey: "signal:pni:" + signalfixture.DanaPNI + ":self:1700000400000",
 			beforeUpdate: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
 			updates:      []string{`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`}},
-		{name: "merged into ACI recipient", updates: []string{
+		{name: "phone-only number changes after the ACI is learned", messageKey: "signal:tel:" + signalfixture.DanaPhone + ":peer:1700000410000",
+			setup: []string{`UPDATE recipient SET pni = NULL WHERE _id = 7`,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body) VALUES (601, 1700000410000, 1700000410001, 14, 7, 1, ` + ms(signalfixture.TypeIncoming) + `, 'hello owner')`},
+			beforeUpdate: []string{`UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`},
+			updates:      []string{`UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`}, messagesUpdated: 2},
+		{name: "merged into ACI recipient", messagesUpdated: 1, messageKey: "signal:pni:" + signalfixture.DanaPNI + ":self:1700000400000", updates: []string{
 			`INSERT INTO recipient (_id, aci) VALUES (8, '0f0f0f0f-0000-4000-8000-000000000006')`,
 			`UPDATE recipient SET pni = (SELECT pni FROM recipient WHERE _id = 7), e164 = (SELECT e164 FROM recipient WHERE _id = 7) WHERE _id = 8`,
 			`INSERT INTO thread (_id, recipient_id) VALUES (15, 8)`,
@@ -168,12 +174,13 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dir := t.TempDir()
 			signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
+			changeFixture(t, dir, tc.setup...)
 			st := testutil.NewTestStore(t)
 			attachments := t.TempDir()
 			runImport(t, st, dir, attachments)
 			before := importedMessages(t, st)
 			var messageID, participantID int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), tc.messageKey).Scan(&messageID))
 			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), signalfixture.DanaPhone).Scan(&participantID))
 
 			if len(tc.beforeUpdate) > 0 {
@@ -184,7 +191,7 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			summary := runImport(t, st, dir, attachments)
 
 			assert.Zero(summary.MessagesAdded)
-			assert.Equal(int64(1), summary.MessagesUpdated)
+			assert.Equal(tc.messagesUpdated, summary.MessagesUpdated)
 			assert.Equal(before, importedMessages(t, st))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
@@ -195,33 +202,6 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	dir := t.TempDir()
-	signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
-	changeFixture(t, dir, `UPDATE recipient SET pni = NULL WHERE _id = 7`,
-		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
-		 VALUES (601, 1700000410000, 1700000410001, 14, 7, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`)
-	st, attachments := testutil.NewTestStore(t), t.TempDir()
-	runImport(t, st, dir, attachments)
-	chatID := "signal:tel:" + signalfixture.DanaPhone
-	before := importedMessages(t, st)
-	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), chatID+":peer:1700000410000").Scan(&messageID))
-
-	changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
-	runImport(t, st, dir, attachments)
-
-	changeFixture(t, dir, `UPDATE recipient SET e164 = '+12025550107', pni = '0f0f0f0f-0000-4000-8000-000000000007' WHERE _id = 7`)
-	summary := runImport(t, st, dir, attachments)
-
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(int64(2), summary.MessagesUpdated)
-	assert.Equal(before, importedMessages(t, st))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
 }
 
 func TestReviewRecycledPhoneDoesNotReuseOldPhoneChat(t *testing.T) {

@@ -292,19 +292,6 @@ func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":peer:"+ms(signalfixture.TAlice1), parent)
 }
 
-func TestStatsFailureCannotCompleteImport(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`)
-	require.NoError(t, err)
-	opts := DefaultOptions()
-	opts.Phone = signalfixture.OwnPhone
-	_, err = NewImporter(st, nil).Import(t.Context(), path, opts)
-	require.ErrorContains(t, err, "stats failure")
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM sync_runs WHERE status = 'failed'`))
-}
-
 func TestNegativeLimit(t *testing.T) {
 	opts := DefaultOptions()
 	opts.Phone, opts.Limit = signalfixture.OwnPhone, -1

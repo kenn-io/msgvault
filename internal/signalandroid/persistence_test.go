@@ -84,7 +84,7 @@ func TestRerunCountsOnlyNewEdits(t *testing.T) {
 }
 
 func TestCheckpointWriteFailureFailsImport(t *testing.T) {
-	for _, stage := range []string{"batch", "final"} {
+	for _, stage := range []string{"batch", "final", "stats"} {
 		t.Run(stage, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
@@ -92,21 +92,27 @@ func TestCheckpointWriteFailureFailsImport(t *testing.T) {
 			if stage == "final" {
 				changeFixture(t, dir, `DELETE FROM reaction`, `DELETE FROM message`)
 			}
-			_, err := st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs WHEN NEW.messages_processed <= 1 BEGIN SELECT RAISE(ABORT, 'checkpoint failure'); END`)
+			wantError := "checkpoint failure"
+			trigger := `CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs WHEN NEW.messages_processed <= 1 BEGIN SELECT RAISE(ABORT, 'checkpoint failure'); END`
+			if stage == "stats" {
+				wantError = "stats failure"
+				trigger = `CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`
+			}
+			_, err := st.DB().Exec(trigger)
 			require.NoError(err)
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
 			opts.BatchSize = 1
 
 			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-			require.ErrorContains(err, "checkpoint failure")
+			require.ErrorContains(err, wantError)
 			if stage == "batch" {
 				assert.Equal(int64(1), summary.MessagesProcessed)
 			}
 			var status, errorMessage string
 			require.NoError(st.DB().QueryRow(`SELECT status, error_message FROM sync_runs`).Scan(&status, &errorMessage))
 			assert.Equal("failed", status)
-			assert.Contains(errorMessage, "checkpoint failure")
+			assert.Contains(errorMessage, wantError)
 		})
 	}
 }
@@ -122,48 +128,6 @@ func TestFailedWriteCounts(t *testing.T) {
 	assert.Equal(int64(1), summary.AttachmentsFound)
 	assert.Zero(summary.AttachmentsMissing)
 	assert.Equal(int64(1), summary.AttachmentsStored)
-}
-
-func TestRerunAfterGroupMemberWriteFailureRestoresRecipients(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir, storage := testutil.NewSQLiteTestStore(t), t.TempDir(), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	// Alice is only a group member, so her write failure reaches the to lookup.
-	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_group_member BEFORE INSERT ON participants WHEN NEW.phone_number = '+15555550101' BEGIN SELECT RAISE(ABORT, 'participant failure'); END`)
-	require.NoError(err)
-
-	summary := runImport(t, st, dir, storage)
-	assert.Positive(summary.Errors)
-	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the message unarchived until its recipients can be written")
-
-	_, err = st.DB().Exec(`DROP TRIGGER fail_group_member`)
-	require.NoError(err)
-	assert.Zero(runImport(t, st, dir, storage).Errors)
-	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
-}
-
-func TestRerunAfterGroupRosterReadFailureRestoresRecipients(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
-	opts := DefaultOptions()
-	opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-	summary, err := NewImporter(st, onStartProgress{onStart: func() {
-		// Make the roster unavailable after schema detection.
-		changeFixture(t, dir, `ALTER TABLE group_membership RENAME TO unreadable_membership`)
-	}}).Import(t.Context(), path, opts)
-	require.NoError(err)
-
-	assert.Equal(int64(1), summary.Errors)
-	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the chat's messages unarchived until its roster can be read")
-
-	changeFixture(t, dir, `ALTER TABLE unreadable_membership RENAME TO group_membership`)
-	summary = runImport(t, st, dir, storage)
-	assert.Zero(summary.Errors)
-	assert.Equal(int64(1), summary.MessagesAdded)
-	assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
 }
 
 func TestRerunKeepsDocumentOccurrences(t *testing.T) {
@@ -185,17 +149,6 @@ func TestRerunKeepsDocumentOccurrences(t *testing.T) {
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
 }
 
-func TestMigratedIncomingOnly(t *testing.T) {
-	// V185 copied the incoming author into both address columns. Counting
-	// those rows as owner evidence would reject this backup's own number.
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.V185, 0)
-	changeFixture(t, dir, `DELETE FROM message WHERE (type & 31) IN (21, 22, 23, 24)`, `UPDATE message SET to_recipient_id = from_recipient_id WHERE thread_id IN (10, 12)`)
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(5), summary.MessagesAdded)
-}
-
 func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
@@ -206,28 +159,45 @@ func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE snippet = 'Carol here'`))
 }
 
-func TestReactorConflictLeavesSnapshot(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	// Alice sends the group message; Bob is another group member.
-	changeFixture(t, dir, `UPDATE message SET from_recipient_id = 2 WHERE _id = 200`)
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	before := importedMessages(t, st)
-	// A new phone for an ACI-only reactor conflicts with two curated people.
-	aciPID, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
-	require.NoError(err)
-	_, _, err = st.CreatePersonFromParticipant(aciPID)
-	require.NoError(err)
-	phonePID, err := st.EnsureParticipantByPhone("+15555550102", "Other Example", SourceType)
-	require.NoError(err)
-	_, _, err = st.CreatePersonFromParticipant(phonePID)
-	require.NoError(err)
-	// Alice resolves normally; only the group message's reactor conflicts.
-	changeFixture(t, dir, `DELETE FROM group_membership WHERE recipient_id = 3`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 200`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (200, 3, 'x', 1700000300100, 1700000300101)`)
-	summary := runImport(t, st, dir, storage)
-	require.Positive(summary.Errors)
-	assert.Equal(before, importedMessages(t, st))
-	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))
+func TestRerunAfterGroupFailureRestoresRecipients(t *testing.T) {
+	for _, stage := range []string{"participant write", "roster read", "changed membership"} {
+		t.Run(stage, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir, storage := testutil.NewSQLiteTestStore(t), t.TempDir(), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, `DELETE FROM message WHERE _id <> 200`, `DELETE FROM reaction`)
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			switch stage {
+			case "participant write":
+				_, err := st.DB().Exec(`CREATE TRIGGER fail_group_member BEFORE INSERT ON participants WHEN NEW.phone_number = '+15555550101' BEGIN SELECT RAISE(ABORT, 'participant failure'); END`)
+				require.NoError(err)
+				summary := runImport(t, st, dir, storage)
+				assert.Positive(summary.Errors)
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the message unarchived until its recipients can be written")
+				_, err = st.DB().Exec(`DROP TRIGGER fail_group_member`)
+				require.NoError(err)
+			case "roster read":
+				summary, err := NewImporter(st, onStartProgress{onStart: func() {
+					changeFixture(t, dir, `ALTER TABLE group_membership RENAME TO unreadable_membership`)
+				}}).Import(t.Context(), path, opts)
+				require.NoError(err)
+				assert.Equal(int64(1), summary.Errors)
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the chat's messages unarchived until its roster can be read")
+				changeFixture(t, dir, `ALTER TABLE unreadable_membership RENAME TO group_membership`)
+			case "changed membership":
+				changeFixture(t, dir,
+					`INSERT INTO recipient (_id, pni) VALUES (7, '0f0f0f0f-0000-4000-8000-000000000007')`,
+					`INSERT INTO group_membership (group_id, recipient_id) SELECT group_id, 7 FROM group_membership WHERE recipient_id = 2`)
+				runImport(t, st, dir, storage)
+				changeFixture(t, dir, `UPDATE group_membership SET recipient_id = 4 WHERE recipient_id = 2`)
+			}
+			summary := runImport(t, st, dir, storage)
+			assert.Zero(summary.Errors)
+			if stage == "roster read" {
+				assert.Equal(int64(1), summary.MessagesAdded)
+			}
+			assert.ElementsMatch([]string{signalfixture.OwnPhone, signalfixture.AlicePhone}, groupRecipientPhones(t, st))
+		})
+	}
 }

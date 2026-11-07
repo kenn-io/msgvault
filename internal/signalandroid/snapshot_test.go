@@ -22,37 +22,6 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 	assert.Len(t, importedMessages(t, st), 8)
 }
 
-func TestBatchReadFailurePreservesArchivedText(t *testing.T) {
-	// Remove a source table after schema detection to exercise read failures.
-	for _, tc := range []struct{ name, change, wantError string }{
-		{"attachments", `DROP TABLE attachment`, "read Signal attachments"},
-		{"mentions", `DROP TABLE mention`, "read Signal mentions"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
-			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-			changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 200, 'text/x-signal-plain')`)
-			require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
-			storage := t.TempDir()
-			runImport(t, st, dir, storage)
-			before := importedMessages(t, st)
-			id := "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
-			require.Equal("Hi @Alice Example, look searchablesuffix\n\nBeach", before[id].body)
-
-			opts := DefaultOptions()
-			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
-			_, err := NewImporter(st, onStartProgress{onStart: func() {
-				changeFixture(t, dir, tc.change)
-			}}).Import(t.Context(), path, opts)
-			require.ErrorContains(err, tc.wantError)
-			assert.Equal(before, importedMessages(t, st))
-			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
-			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Alice'`))
-		})
-	}
-}
-
 func TestReplyQuotesLatestRevision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
@@ -110,33 +79,74 @@ func TestInterruptedImportKeepsConversationState(t *testing.T) {
 }
 
 func TestImportSnapshotReportsWriteFailures(t *testing.T) {
-	for _, tc := range []struct{ name, trigger string }{
-		{"body", `CREATE TRIGGER fail_body BEFORE UPDATE ON message_bodies WHEN NEW.body_text = 'Changed text' BEGIN SELECT RAISE(ABORT, 'body failure'); END`},
-		{"attachment", `CREATE TRIGGER fail_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'attachment failure'); END`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, stage := range []string{"attachment-read", "mention-read", "body-write", "attachment-write", "reactor-conflict"} {
+		t.Run(stage, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			st := testutil.NewSQLiteTestStore(t)
-			dir := t.TempDir()
-			signalfixture.Write(t, dir, signalfixture.Current, 0)
-			attachmentsDir := t.TempDir()
-			runImport(t, st, dir, attachmentsDir)
+			st, dir, storage := testutil.NewSQLiteTestStore(t), t.TempDir(), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			readFailure := stage == "attachment-read" || stage == "mention-read"
+			if readFailure {
+				changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 200, 'text/x-signal-plain')`)
+				require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
+			}
+			if stage == "reactor-conflict" {
+				// Alice sends the group message; Bob is another group member.
+				changeFixture(t, dir, `UPDATE message SET from_recipient_id = 2 WHERE _id = 200`)
+			}
+			runImport(t, st, dir, storage)
 			before := importedMessages(t, st)
-			if tc.name == "body" {
+			progress := onStartProgress{onStart: func() {}}
+			wantError := ""
+			switch stage {
+			case "attachment-read", "mention-read":
+				id := "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup)
+				require.Equal("Hi @Alice Example, look searchablesuffix\n\nBeach", before[id].body)
+				table := "attachment"
+				wantError = "read Signal attachments"
+				if stage == "mention-read" {
+					table = "mention"
+					wantError = "read Signal mentions"
+				}
+				progress.onStart = func() { changeFixture(t, dir, "DROP TABLE "+table) }
+			case "body-write":
 				changeFixture(t, dir, `UPDATE message SET body = 'Changed text' WHERE _id = 300`)
-			} else {
+				_, err := st.DB().Exec(`CREATE TRIGGER fail_body BEFORE UPDATE ON message_bodies WHEN NEW.body_text = 'Changed text' BEGIN SELECT RAISE(ABORT, 'body failure'); END`)
+				require.NoError(err)
+			case "attachment-write":
 				changeFixture(t, dir, `UPDATE message SET body = 'Changed group text' WHERE _id = 200`, `UPDATE reaction SET emoji = 'x' WHERE message_id = 200`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 200, 'image/jpeg')`)
 				require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("new photo"), 0o600))
+				_, err := st.DB().Exec(`CREATE TRIGGER fail_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'attachment failure'); END`)
+				require.NoError(err)
+			case "reactor-conflict":
+				// A new phone for an ACI-only reactor conflicts with two curated people.
+				aciPID, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
+				require.NoError(err)
+				_, _, err = st.CreatePersonFromParticipant(aciPID)
+				require.NoError(err)
+				phonePID, err := st.EnsureParticipantByPhone("+15555550102", "Other Example", SourceType)
+				require.NoError(err)
+				_, _, err = st.CreatePersonFromParticipant(phonePID)
+				require.NoError(err)
+				changeFixture(t, dir, `DELETE FROM group_membership WHERE recipient_id = 3`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 200`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (200, 3, 'x', 1700000300100, 1700000300101)`)
 			}
-			_, err := st.DB().Exec(tc.trigger)
-			require.NoError(err)
-			summary := runImport(t, st, dir, attachmentsDir)
-			assert.Equal(int64(1), summary.Errors)
-			assert.Equal(int64(6), summary.MessagesUpdated)
-			// Each failure must reach the importer summary. Store-level rollback
-			// tests don't catch an importer retry that drops the failing detail.
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			summary, err := NewImporter(st, progress).Import(t.Context(), path, opts)
+			if readFailure {
+				require.ErrorContains(err, wantError)
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Alice'`))
+			} else {
+				require.NoError(err)
+				if stage == "reactor-conflict" {
+					require.Positive(summary.Errors)
+				} else {
+					assert.Equal(int64(1), summary.Errors)
+					assert.Equal(int64(6), summary.MessagesUpdated)
+				}
+			}
 			assert.Equal(before, importedMessages(t, st))
-			if tc.name == "body" {
+			if stage == "body-write" {
 				var snippet string
 				require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id = ?`, "signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)).Scan(&snippet))
 				assert.Equal("Carol here", snippet)
