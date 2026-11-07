@@ -79,7 +79,7 @@ runs:
         # Go refreshes entry mtimes at most hourly; age them so every use is recorded.
         aged = time.time() - 2 * 60 * 60
         for entry in cache.glob("[0-9a-f][0-9a-f]/*"):
-            if entry.is_file() and entry.name.endswith(("-a", "-d")):
+            if entry.name.endswith(("-a", "-d")):
                 os.utime(entry, (aged, aged))
         (Path(os.environ["RUNNER_TEMP"]) / "go-cache-used-after").touch()
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:

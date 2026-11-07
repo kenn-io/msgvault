@@ -6,9 +6,7 @@ runs:
   using: composite
   steps:
     - name: Trim unused Go cache entries
-      if: >-
-        github.event_name == 'push' && github.ref == 'refs/heads/main'
-        && env.GO_CACHE_HIT != 'true' && env.GO_CACHE_TRIM == 'true'
+      if: env.GO_CACHE_TRIM == 'true'
       shell: bash
       run: |
         echo 'Go cache sizes before trimming:'
@@ -16,13 +14,17 @@ runs:
         python3 - <<'PY'
         import os
         from pathlib import Path
+        import shutil
         import subprocess
 
         cache = Path(subprocess.check_output(["go", "env", "GOCACHE"], text=True).strip())
         started = (Path(os.environ["RUNNER_TEMP"]) / "go-cache-used-after").stat().st_mtime_ns
         for entry in cache.glob("[0-9a-f][0-9a-f]/*"):
-            if entry.is_file() and entry.name.endswith(("-a", "-d")) and entry.stat().st_mtime_ns <= started:
-                entry.unlink()
+            if entry.name.endswith(("-a", "-d")) and entry.stat().st_mtime_ns <= started:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
         PY
         echo 'Go cache sizes after trimming:'
         du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)"
