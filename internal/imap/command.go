@@ -95,7 +95,24 @@ func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)
 		capture = value
 	}
 	var observedFloor time.Time
+	var deferredErr error
 	result, err := backoff.Retry(ctx, func() (T, error) {
+		// Yield a known provider floor before local pacing can hold the scheduler gate.
+		// The locked check after pacing still fences a floor learned after this peek.
+		if capture != nil {
+			if err := ctx.Err(); err != nil {
+				return zero, backoff.Permanent(err)
+			}
+			if floor := capture.RetryNotBefore(); time.Now().Before(floor) {
+				if err := ctx.Err(); err != nil {
+					return zero, backoff.Permanent(err)
+				}
+				return zero, backoff.Permanent(&retryFloorError{
+					err:       errors.New("IMAP command deferred by provider retry deadline"),
+					notBefore: floor,
+				})
+			}
+		}
 		if err := c.waitCommand(ctx); err != nil {
 			return zero, backoff.Permanent(err)
 		}
@@ -150,6 +167,17 @@ func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)
 		if !retry {
 			return zero, backoff.Permanent(err)
 		}
+		if capture != nil && delay > 0 {
+			// Rapid acquisition shares the scheduled-work gate, so a positive
+			// provider delay must yield to the scheduler instead of sleeping here.
+			floor := maxRetryFloor(observedFloor, capture.RetryNotBefore())
+			deferredErr = withRetryFloor(err, floor)
+			c.logger.Debug("IMAP command limited; deferring acquisition until provider retry deadline",
+				"delay", delay,
+				"retry_not_before", floor,
+			)
+			return zero, backoff.Permanent(deferredErr)
+		}
 		return zero, backoff.RetryAfter(delay, err)
 	}, backoff.WithMaxTries(4), backoff.WithMaxElapsedTime(0), backoff.WithNotify(func(_ error, delay time.Duration) {
 		c.logger.Debug("IMAP command limited; waiting to retry", "delay", delay)
@@ -160,6 +188,9 @@ func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)
 		}
 		if ctx.Err() != nil {
 			return zero, withRetryFloor(ctx.Err(), observedFloor)
+		}
+		if deferredErr != nil {
+			return zero, withRetryFloor(deferredErr, observedFloor)
 		}
 		return zero, withRetryFloor(backoff.AsRetryError(err).LastErr, observedFloor)
 	}

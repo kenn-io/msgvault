@@ -161,9 +161,6 @@ func runRapidEmailSync(ctx context.Context, identifier string, st *store.Store, 
 		client.DeferProviderRetries()
 		return runRapidGraphSource(ctx, src, st, client, state)
 	case sourceTypeIMAP:
-		if err := validateRapidIMAP(src, state.cfg); err != nil {
-			return rapidAcquisitionResult(ctx, err, false, time.Time{})
-		}
 		passCtx, retryFloor := imaplib.WithRetryFloorCapture(ctx)
 		summary, err := runScheduledIMAPSync(passCtx, src, st, state)
 		defer rapidRefreshCache(ctx, identifier, state)
