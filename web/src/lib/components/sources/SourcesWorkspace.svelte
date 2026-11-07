@@ -23,6 +23,7 @@
   import SourcePanel from './SourcePanel.svelte';
 
   type Source = SourceStatus;
+  type RequestError = { message: string; details?: string };
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
   const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
@@ -64,10 +65,9 @@
   const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
   let lockStatusStale = $state(false);
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
-  let statusError = $state('');
-  let contactsError = $state('');
-  let triggerError = $state('');
-  let triggerTimedOut = $state(false);
+  let statusError = $state<RequestError>();
+  let contactsError = $state<RequestError>();
+  let triggerError = $state<RequestError>();
   let triggerErrorSourceID = $state<number>();
   let triggering = $state<string>();
   $effect(() => {
@@ -148,9 +148,11 @@
         }
         void controller.refreshFromConnection(connection.status, statusRevisions.get(controller));
       }
-      contactsError = '';
+      contactsError = undefined;
     } catch (cause) {
-      if (!request.signal.aborted && !disposed) contactsError = cause instanceof Error && cause.message ? cause.message : "Can't load contacts.";
+      if (!request.signal.aborted && !disposed) contactsError = signal.aborted && signal.reason?.name === 'TimeoutError'
+        ? { message: 'Loading contact accounts timed out; retry in a moment.' }
+        : { message: "Couldn't load your contact accounts.", details: cause instanceof Error && cause.message ? cause.message : "Can't load contacts." };
     } finally {
       if (contactsRequest === request) {
         contactsRequest = undefined;
@@ -268,7 +270,7 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
-      statusError = '';
+      statusError = undefined;
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
         schedulePoll(nextDelay, false, lockHoldPoll);
@@ -277,11 +279,9 @@
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
-      if (signal.aborted && signal.reason?.name === 'TimeoutError') {
-        statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
-      } else {
-        statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
-      }
+      statusError = signal.aborted && signal.reason?.name === 'TimeoutError'
+        ? { message: 'Loading source status timed out; the server may be busy, so retry in a moment.' }
+        : { message: "Couldn't load your sources.", details: cause instanceof Error ? cause.message : 'Unable to load source status.' };
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
         !sources.some((source) => syncRunning(source) || source.scheduler_queued) && awaitingSourceID === undefined) {
@@ -315,8 +315,7 @@
   async function syncNow(source: Source): Promise<void> {
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
-    triggerError = '';
-    triggerTimedOut = false;
+    triggerError = undefined;
     triggerErrorSourceID = source.id;
     const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
@@ -340,10 +339,9 @@
       await load();
     } catch (cause) {
       if (disposed) return;
-      triggerTimedOut = signal.aborted;
-      triggerError = triggerTimedOut
-        ? 'Starting sync timed out. Check source status before trying again.'
-        : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
+      triggerError = signal.aborted
+        ? { message: 'Starting sync timed out. Check source status before trying again.' }
+        : { message: "Couldn't start the sync.", details: cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.` };
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;
@@ -375,7 +373,7 @@
     stopPolling(false);
     lockHoldPolls = 0;
     lockStatusStale = false;
-    statusError = '';
+    statusError = undefined;
     pollDelay = MIN_POLL_MS;
     void load();
     void loadContacts();
@@ -402,11 +400,11 @@
 {/snippet}
 
 {#snippet syncErrorNotice()}
-  <InlineNotice message={triggerTimedOut ? triggerError : "Couldn't start the sync."} details={triggerTimedOut ? undefined : triggerError} actionLabel="Refresh" onaction={refresh} />
+  {#if triggerError}<InlineNotice {...triggerError} actionLabel="Refresh" onaction={refresh} />{/if}
 {/snippet}
 
 {#snippet statusErrorNotice()}
-  <InlineNotice message="Couldn't load your sources." details={statusError} actionLabel="Retry" onaction={refresh} />
+  {#if statusError}<InlineNotice {...statusError} actionLabel="Retry" onaction={refresh} />{/if}
 {/snippet}
 
 <main class="sources" aria-label="Sources">
@@ -419,7 +417,7 @@
     {/snippet}
   </PageHeader>
   {#if statusError}{@render statusErrorNotice()}{/if}
-  {#if contactsError}<InlineNotice message="Couldn't load your contact accounts." details={contactsError} actionLabel="Retry" onaction={refresh} />{/if}
+  {#if contactsError}<InlineNotice {...contactsError} actionLabel="Retry" onaction={refresh} />{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}{@render syncErrorNotice()}{/if}

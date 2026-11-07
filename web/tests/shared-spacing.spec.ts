@@ -4,6 +4,7 @@ import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
 import { installOperations } from './e2e/fixtures/operations';
+import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 
 test.beforeEach(async ({ page }) => {
   await mockArchiveLayout(page);
@@ -508,6 +509,49 @@ for (const width of [1024, 1440]) {
 }
 
 for (const width of [1280, 390]) {
+  test.describe(`form picker focus at ${width}px`, () => {
+    test.use({ deviceScaleFactor: 2 });
+    for (const picker of ['Time zone', 'Organization']) {
+      test(`${picker} keeps keyboard focus visible in a form at ${width}px`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width, height: 844 });
+        if (picker === 'Time zone') {
+          await page.route('**/api/v1/settings', route => route.fulfill({ json: {
+            groups: [{ id: 'sources', label: 'Sources' }],
+            settings: [{ key: 'slack.schedule', group: 'sources', kind: 'string', label: 'Slack schedule', value: { string: '1 2 3 4 5' }, validation: { format: 'cron' }, restart_required: true }],
+            pending_restart: false
+          } }));
+          await page.goto('/?workspace=settings');
+          await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
+        } else {
+          await installDirectoryReviewArchive(page);
+          await page.route('**/api/v1/organizations**', route => route.fulfill({ json: { organizations: [], total: 0, limit: 50, offset: 0 } }));
+          await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+          await page.getByRole('radio', { name: 'Details', exact: true }).click();
+          await page.getByRole('button', { name: 'Add work', exact: true }).click();
+        }
+        const trigger = page.getByRole('button', { name: new RegExp(`^${picker}:`) });
+        const predecessor = picker === 'Time zone'
+          ? page.getByRole('textbox', { name: 'Slack schedule', exact: true })
+          : page.getByRole('button', { name: 'New organization', exact: true });
+        await predecessor.focus();
+        const restingBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
+        await page.keyboard.press(picker === 'Time zone' ? 'Tab' : 'Shift+Tab');
+        await expect(trigger).toBeFocused();
+        await expect.poll(() => trigger.evaluate(element => getComputedStyle(element).borderColor)).not.toBe(restingBorder);
+        const focusedBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
+        await page.screenshot({ path: testInfo.outputPath('focused-picker.png') });
+        await page.keyboard.press('ArrowDown');
+        const input = page.getByRole('combobox', { name: picker, exact: true });
+        await expect(input).toBeFocused();
+        await expect(input).toHaveCSS('border-color', focusedBorder);
+        await page.screenshot({ path: testInfo.outputPath('open-picker.png') });
+        await page.keyboard.press('Escape');
+        await expect(input).toHaveCount(0);
+        await expect(trigger).toBeFocused();
+      });
+    }
+  });
+
   test(`custom schedule keeps its caret and painted text aligned at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.route('**/api/v1/settings', route => route.fulfill({ json: {

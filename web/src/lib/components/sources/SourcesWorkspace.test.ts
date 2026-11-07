@@ -855,7 +855,9 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    const alert = await screen.findByRole('alert');
+    const guidance = within(alert).getByText('Loading source status timed out; the server may be busy, so retry in a moment.');
+    expect(guidance.closest('details')).toBeNull();
     expect(signals[0]!.aborted).toBe(true);
     expect(screen.queryByText('Loading…')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -1123,8 +1125,9 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
   try {
     const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText("Couldn't load your contact accounts.")).toBeDefined();
-    expect(alert.textContent).toContain(failure === 'error' ? 'Contacts upstream unavailable' : 'The operation was aborted due to timeout');
+    const message = failure === 'error' ? "Couldn't load your contact accounts." : 'Loading contact accounts timed out; retry in a moment.';
+    expect(within(alert).getByText(message).closest('details')).toBeNull();
+    if (failure === 'error') expect(alert.textContent).toContain('Contacts upstream unavailable');
     expect(screen.queryByText('No sources yet')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();

@@ -312,19 +312,26 @@ body {
   --typeahead-control-font-size: var(--field-text-size);
 }
 
-body :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger.kit-select-dropdown__trigger, .kit-typeahead__trigger.kit-typeahead__trigger, .kit-typeahead__input.kit-typeahead__input) {
+/* Typeahead takes its size from the variables above; the select has none. */
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) .kit-select-dropdown__trigger.kit-select-dropdown__trigger {
   height: var(--field-h);
   padding: 0 var(--field-pad-x);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-md);
   font-size: var(--field-text-size);
+}
+
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger.kit-select-dropdown__trigger, .kit-typeahead__trigger.kit-typeahead__trigger, .kit-typeahead__input.kit-typeahead__input) {
+  border-radius: var(--radius-md);
   font-weight: 400;
   line-height: var(--type-body-line);
 }
 
-:root:root :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger, .kit-typeahead__trigger) {
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sunken, none);
+/* A closed field rests as a text input does. These are the colors Kit's
+ * trigger rests in, so its focused, open, pressed, and disabled states still
+ * replace them, and the open search keeps its blue border. */
+:is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger, .kit-typeahead__trigger) {
+  --bg-raised: var(--bg-surface);
+  --border-muted: var(--border-default);
+  --shadow-raised: var(--shadow-sunken, none);
 }
 
 body :is(form:not([role='search']), .kit-modal-body, [data-form]) .kit-text-input.kit-text-input,
