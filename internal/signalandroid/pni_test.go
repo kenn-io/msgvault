@@ -223,3 +223,25 @@ func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
 }
+
+func TestReimportPhoneOnlyChatGainsACIAndChangesNumber(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `UPDATE recipient SET aci = NULL, pni = NULL WHERE _id = 2`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	first := runImport(t, st, dir, attachments)
+	require.Equal(int64(7), first.MessagesAdded)
+	before := importedMessages(t, st)
+	require.Contains(before, "signal:tel:"+signalfixture.AlicePhone+":peer:"+ms(signalfixture.TAlice1))
+	require.Equal(4, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+
+	// Both changes arrive in one newer backup, with no intervening import.
+	changeFixture(t, dir, `UPDATE recipient SET aci = '`+signalfixture.AliceACI+`', e164 = '+12025550107' WHERE _id = 2`)
+	summary := runImport(t, st, dir, attachments)
+
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(7), summary.MessagesUpdated)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(4, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+}
