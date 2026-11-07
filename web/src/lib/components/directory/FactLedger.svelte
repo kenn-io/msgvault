@@ -3,10 +3,32 @@
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
+  import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+  import { postalAddressText } from '../../directory/postal-review.svelte';
+  import StructuredProfileEditor from './StructuredProfileEditor.svelte';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
-  interface Props { controller: FactLedgerController }
-  let { controller }: Props = $props();
+  interface Props { controller: FactLedgerController; profileController?: DirectoryProfileController }
+  let { controller, profileController = undefined }: Props = $props();
+  $effect(() => {
+    const activeController = controller;
+    const activeProfile = profileController;
+    // A replacement profile controller starts a new review context, even for the same person.
+    return () => { void activeProfile; activeController.cancelPostalReview(); };
+  });
+  function openPostalDraft(rowToken: string): void {
+    const profile = profileController;
+    if (!profile) return;
+    void controller.openPostalReview(rowToken, () => {
+      const revision = profile.structuredProfile?.person.revision ?? 0;
+      return profile.person?.id === controller.personID && profile.person?.revision === revision &&
+        profile.structuredProfileETag === `"person-${controller.personID}-r${revision}"` ? revision : 0;
+    });
+  }
+  function closePostalDraft(): void {
+    if (profileController?.draft?.kind === 'profile' && !profileController.discardProfileDraft()) return;
+    controller.cancelPostalReview();
+  }
   let root: HTMLElement;
   let destroyed = false;
 
@@ -103,7 +125,35 @@
                 <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
               {:else if sensitivity === 'sensitive' && !controller.revealedClaims.has(row.rowToken)}
                 <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
-              {:else}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
+              {:else}
+                <dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>
+                {#if row.postalReview}
+                  {@const review = row.postalReview}
+                  <div class="postal-claim-review">
+                    <p>{review.eligible ? 'Address awaiting owner review' : 'Address unavailable for supported adoption'}</p>
+                    {#if review.reason_codes.length}<p>{review.reason_codes.map(code => code.replaceAll('_', ' ')).join(' · ')}</p>{/if}
+                    <p>Supporting evidence: {review.supporting_evidence_ids.join(', ') || 'None'}</p>
+                    {#if review.assessment}
+                      <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div><div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div><div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
+                      {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}
+                        <Button label="Review address" size="sm" disabled={!profileController.canWriteProfile || controller.postalReview?.loading === true || !!controller.postalReview?.candidate} onclick={() => openPostalDraft(row.rowToken)} />
+                        {#if controller.postalReview?.rowToken === row.rowToken}
+                          {#if controller.postalReview.loading}
+                            <p role="status">Refreshing address support…</p>
+                            <Button label="Cancel opening address review" size="sm" onclick={() => controller.cancelPostalReview()} />
+                          {:else if controller.postalReview.error}
+                            <p role="alert">{controller.postalReview.error}</p>
+                          {:else if controller.postalReview.candidate}
+                            {#key controller.postalReview}
+                              <StructuredProfileEditor controller={profileController} section="addresses" postalCandidate={controller.postalReview.candidate} onCancel={closePostalDraft} onDone={() => { controller.cancelPostalReview(); void controller.retrySection('claims'); }} />
+                            {/key}
+                          {/if}
+                        {/if}
+                      {/if}
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
               <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Validity</dt><dd>{row.validFrom ?? 'No start'} – {row.validUntil ?? 'No end'}</dd></div><div><dt>Confidence</dt><dd>Reported confidence {row.reportedScore}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
             </Card>
           {:else}<EmptyState title="No fact claims on this page." description="Choose another target or page." />{/each}

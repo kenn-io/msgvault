@@ -716,10 +716,11 @@ type DeletionConfig struct {
 // PeopleConfig keeps the existing archive sweep and external enrichment as
 // sibling, independently disabled subsystems.
 type PeopleConfig struct {
-	Sweep           peoplesweep.Config      `toml:"sweep"`
-	Enrichment      personenrichment.Config `toml:"enrichment"`
-	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
-	Tiers           persontiers.Config      `toml:"tiers"`
+	AddressValidation PostalAddressConfig     `toml:"address_validation"`
+	Sweep             peoplesweep.Config      `toml:"sweep"`
+	Enrichment        personenrichment.Config `toml:"enrichment"`
+	IdentityScoring   personmatch.Config      `toml:"identity_scoring"`
+	Tiers             persontiers.Config      `toml:"tiers"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -1303,6 +1304,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.People.AddressValidation.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.People.Sweep.Validate(); err != nil {

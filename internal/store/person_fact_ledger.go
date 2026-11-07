@@ -547,7 +547,10 @@ func (s *Store) ListPersonFactClaimsContext(
 	claims := make([]personfacts.Claim, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		claims, err = s.listPersonFactClaimsTx(ctx, tx, personID, filter, "", nil, limit, offset)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.attachPostalReviewsTx(ctx, tx, personID, claims)
 	})
 	if err != nil {
 		return nil, err

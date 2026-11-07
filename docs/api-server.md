@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-07"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -160,7 +160,12 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.48.0**.
+it is separate from the binary release version. The current schema is **3.49.0**.
+
+Schema 3.49.0 adds owner-only `POST /api/v1/people/{id}/addresses/assess`,
+optional postal `original_input` on structured profile writes, derived local
+address `assessment` on reads, and server-derived `postal_review` on postal
+fact claims. See [postal address assessment](#postal-address-assessment).
 
 Schema 3.48.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
 
@@ -712,6 +717,57 @@ are disabled. Both endpoints require daemon owner authentication; the original
 engine returns `503` without falling back to the privileged engine.
 
 ---
+
+### Postal address assessment
+
+**Endpoint:** `POST /api/v1/people/{id}/addresses/assess`
+
+Owner access is required; delegated and read-only clients cannot invoke this
+operation. Send one JSON object of at most 1 MiB. Unknown fields, trailing JSON,
+and non-postal kinds are rejected. An omitted `address_kind` defaults to
+`postal`.
+
+```json
+{
+  "address": {
+    "address_kind": "postal",
+    "street_address": "12 Example Street",
+    "extended_address": "Unit 7",
+    "locality": "Example City",
+    "country_code": "CA"
+  },
+  "allow_external": false
+}
+```
+
+The response is an assessment with `original`, `proposed`, `status`,
+`reason_codes`, and a full-input `fingerprint`. Local statuses are
+`normalized_unverified` and `needs_review`. Explicit external consent can
+produce `validated` or `unavailable`, and transient `provider` and `checked_at`
+fields. A configured provider is never called unless `allow_external` is true.
+Provider failure still returns a usable local proposal. The response is
+`200 OK` with `Cache-Control: no-store`; assessment never saves an address.
+See [configuration](configuration.md#postal-address-validation) for activation,
+transmission, and provider limits.
+
+To save an owner-reviewed value, use the existing
+`PATCH /api/v1/people/{id}/profile` address `add`/`supersede` fields with the
+`If-Match` ETag from `GET /api/v1/people/{id}/profile`. A postal address input
+can include `original_input`, the complete raw input before correction. It
+accepts only address fields, not provider verdicts or assessment metadata.
+Use `free_text` for the current free-form address; `original_input` preserves
+the initial input separately.
+Current structured profile and address history reads include a derived local
+`assessment`; `assessment.original` preserves the raw components and text,
+while `original_value` remains plain text for clients. MCP's selected postal
+address also carries its local assessment. External results are never a
+persistent validation flag.
+
+Postal fact claims include a server-derived `postal_review` containing
+`eligible`, `reason_codes`, `assessment`, `person_revision`, and
+`supporting_evidence_ids`. This uses complete current Store state rather than
+paginated client evidence. Adoption is an explicit profile write, with the
+[freshness limits described in the sweep guide](usage/people-automation.md#review-sweep-addresses).
 
 ### Curated person network {#get-apiv1peopleidnetwork}
 

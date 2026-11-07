@@ -38,6 +38,8 @@ func NormalizeClaimValue(
 	var canonical []byte
 	var err error
 	switch {
+	case target.Kind == TargetPostalAddress && target.ValueType == ValuePostalAddress:
+		canonical, err = normalizePostalAddressValue(submitted)
 	case target.Kind == TargetEmployment && target.ValueType == ValueEmployment:
 		canonical, err = normalizeEmploymentValue(submitted)
 	case target.Kind == TargetAttribute && supportedGenericValueType(target.ValueType):

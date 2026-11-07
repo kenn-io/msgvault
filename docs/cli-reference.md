@@ -3245,6 +3245,65 @@ current evidence before accepting a proposal. See the
 [people guide](usage/people.md#optional-identity-scoring) for the consent and
 provider boundaries.
 
+### person address
+
+Read, assess, and explicitly save postal addresses through the daemon. All three
+commands return JSON. `<person-id>` is a saved profile ID.
+
+| Command | Purpose |
+|---|---|
+| `person address list <person-id>` | List current postal rows with local assessments |
+| `person address assess <person-id> --input <path> [--external]` | Check one JSON draft without saving; external consent defaults to false |
+| `person address apply <person-id> --input <path> --revision <n> --add` | Add one address at the reviewed person revision |
+| `person address apply <person-id> --input <path> --revision <n> --supersede <address-id>` | Replace the explicitly selected address row while preserving history |
+
+Assessment accepts a raw address object, for example `address.json`:
+
+```json
+{
+  "address_kind": "postal",
+  "street_address": " 12 Example Street ",
+  "extended_address": "Unit 7",
+  "locality": "Example City",
+  "country_code": "CA",
+  "original_value": "Original multiline address\nUnit 7"
+}
+```
+
+```bash
+msgvault person address list 7
+msgvault person address assess 7 --input address.json
+# This flag explicitly permits transmission to the configured provider:
+msgvault person address assess 7 --input address.json --external
+```
+
+For apply, provide the address request object, not the assessment response. It
+accepts the same components plus optional `original_input` containing the full
+raw draft before any correction. Preserve this object from the first entry or
+from the existing row's `assessment.original` when replacing an address. Without
+it, the server snapshots the submitted components. `envelope` can carry
+`ordinal`, `pref`, `type_label`, and `type_tokens`. Apply creates a user-declared
+value, clears imported identity and confidence, and preserves only a
+`person-fact-claim:` source reference as claim origin.
+
+After reviewing the proposed components, save them in `reviewed-address.json`
+and supply the positive person revision from the structured profile you
+reviewed. For example, if that revision is 12:
+
+```bash
+msgvault person address apply 7 --input reviewed-address.json --revision 12 --add
+# Or explicitly replace address row 31:
+msgvault person address apply 7 --input reviewed-address.json --revision 12 --supersede 31
+```
+
+Choose exactly one of `--add` and `--supersede`; no address is selected
+implicitly. A revision conflict leaves the profile unchanged. Read and review
+again rather than retrying with an automatically refreshed revision. JSON
+inputs must contain one object with known fields. Birth and death places are
+not supported by these postal commands. See the
+[address workflow](usage/people.md#review-postal-addresses) and
+[assessment API](api-server.md#postal-address-assessment).
+
 ### person notes
 
 Read, replace, or append private Notes while retaining earlier values:

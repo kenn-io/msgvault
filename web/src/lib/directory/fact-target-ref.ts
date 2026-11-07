@@ -1,5 +1,5 @@
 export interface FactTargetRef {
-  kind: 'attribute' | 'employment';
+  kind: 'attribute' | 'employment' | 'postal_address';
   key: string;
   revision: string;
 }
@@ -11,7 +11,7 @@ export function encodeFactTargetRef(target: {
   key?: string;
   revision?: string;
 }): string | undefined {
-  if (target.kind !== 'attribute' && target.kind !== 'employment') return undefined;
+  if (target.kind !== 'attribute' && target.kind !== 'employment' && target.kind !== 'postal_address') return undefined;
   if (!target.key || target.key.trim() !== target.key) return undefined;
   if (!target.revision || !REVISION_PATTERN.test(target.revision)) return undefined;
   return `${target.kind}:${target.key}:${target.revision}`;

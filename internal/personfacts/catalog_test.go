@@ -166,6 +166,6 @@ func TestBuildCatalogSensitiveOption(t *testing.T) {
 
 	withSensitive, err := BuildCatalog(definitions, CatalogOptions{IncludeSensitive: true})
 	require.NoError(err)
-	require.Len(withSensitive.Targets, 2)
+	require.Len(withSensitive.Targets, 3)
 	assert.True(withSensitive.Targets[0].Sensitive)
 }

@@ -3,6 +3,7 @@ package peoplebrowser
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -91,6 +92,7 @@ type PersonContactPointSummary struct {
 // wrote it, which for a component-only source is the store's semicolon-joined
 // rendering; the components are empty when the source did not carry them.
 type PersonAddressSummary struct {
+	Assessment      *postaladdress.Assessment
 	Kind            string
 	Label           string
 	PostOfficeBox   string

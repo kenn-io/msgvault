@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-07"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -223,6 +223,44 @@ Notes are marked sensitive and
 excluded from semantic person search and MCP's general `get_person_profile`
 response. The separate MCP `get_person_notes` tool can read them. If you publish
 a profile to CardDAV, Notes map to the vCard `NOTE` property.
+
+## Review postal addresses
+
+In a saved person's **Details**, open the address editor to enter a street,
+unit, PO box, locality, region, postal code, country, and original text. Once
+the original input is captured, **Original text** becomes read-only.
+Use **Current address text** to edit a free-form address while keeping that
+provenance. Local cleanup preserves the entered components and text. It can trim surrounding
+whitespace and uppercase a country code; it cannot prove that an address exists
+or receives deliveries. Birth and death places are separate from postal checks.
+
+Choose **Check locally** to compare the entered address with a conservative
+proposal. An assessment is **Normalized, unverified** or **Needs review** until
+an external check supplies stronger evidence. You can save your entered value
+when a check needs review or the provider is unavailable.
+
+**Check with Google** sends only explicit postal components, including the unit
+and PO box, to the configured Google Address Validation service. It does not
+send the person's name, source messages, original free-form text, or other
+profile metadata. Google is disabled by default; see
+[address validation configuration](../configuration.md#postal-address-validation).
+Editing, saving, or viewing a sweep suggestion does not grant external consent.
+
+Review the original and suggested address, status, and reasons before choosing
+**Keep original** or **Confirm corrected address**. A validated result is an
+advisory provider assessment, not a deliverability guarantee. Checks do not save
+anything. Only your explicit save adds or replaces an address. The initial raw
+input remains available in history, including after a first-entry correction;
+a replaced row retains its original import provenance. Provider results are
+transient and are not recorded as durable validation flags.
+
+Editing any address field, closing the editor, or switching people discards its
+check result. A concurrent profile change causes a revision conflict; reload
+and review again before saving. The CLI offers the same explicit
+[assess and apply workflow](../cli-reference.md#person-address).
+
+Postal suggestions from a people sweep also require your review. See
+[review sweep addresses](people-automation.md#review-sweep-addresses).
 
 ## Record employment and relationships
 

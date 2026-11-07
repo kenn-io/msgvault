@@ -5,6 +5,11 @@ import { decodeFactTargetRef, encodeFactTargetRef } from './fact-target-ref';
 const revision = `sha256:${'a'.repeat(64)}`;
 
 describe('fact target references', () => {
+  it('round-trips postal review targets', () => {
+    const target = { kind: 'postal_address', key: 'system:postal_address', revision };
+    expect(decodeFactTargetRef(encodeFactTargetRef(target)!)).toEqual(target);
+  });
+
   it('round-trips colon-bearing keys using the revision suffix as the boundary', () => {
     const encoded = encodeFactTargetRef({ kind: 'attribute', key: 'work:email:primary', revision });
 

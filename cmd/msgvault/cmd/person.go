@@ -773,6 +773,7 @@ func init() {
 	personCmd.AddCommand(newPersonTiersCommand(defaultPersonTiersCommandDeps()))
 	personCmd.AddCommand(newPersonEnrichmentCommand(defaultPersonEnrichmentCommandDeps()))
 	personCmd.AddCommand(newPersonBriefCommand())
+	personCmd.AddCommand(newPersonAddressCommand())
 	personCmd.AddCommand(newPersonAgendaCommand())
 	personCmd.AddCommand(newPersonScoringCommand())
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,

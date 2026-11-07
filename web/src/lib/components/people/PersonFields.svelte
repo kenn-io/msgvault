@@ -10,6 +10,7 @@
     AttributeDefinition,
     PersonAttributeValue,
   } from '../../api/generated/models';
+  import { postalAddressText } from '../../directory/postal-review.svelte';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import AttributeEditor from '../directory/AttributeEditor.svelte';
@@ -39,6 +40,8 @@
   let confirming = $state<Row & { kind: 'profile' | 'attribute' }>();
   let editing = $state<Editing>();
   let revealed = $state<Record<string, boolean>>({});
+  let editorPersonID = $state<number>();
+  $effect(() => { if (editorPersonID !== undefined && controller.person?.id !== editorPersonID) { editing = undefined; confirming = undefined; editorPersonID = undefined; } });
 
   const profile = $derived(controller.structuredProfile);
   const groups = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []));
@@ -88,7 +91,7 @@
     }
     for (const point of points) if (point.address_kind !== 'phone' && point.address_kind !== 'email') result.push(pointRow(point));
     for (const address of profile?.addresses ?? []) {
-      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: [address.post_office_box, address.extended_address, address.street_address, address.locality, address.region, address.postal_code, address.country_name, address.extended_components].filter(Boolean).join(', ') || address.free_text || address.original_value, record: address });
+      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: postalAddressText(address) || postalAddressText(address.assessment?.original ?? {}), record: address });
     }
     result.push({ id: 'add:address', kind: 'add', label: 'Add address', target: { kind: 'profile', section: 'addresses' } });
     for (const date of profile?.dates ?? []) {
@@ -148,6 +151,7 @@
 
   function startAdd(target: Editing): void {
     confirming = undefined;
+    editorPersonID = controller.person?.id;
     editing = target;
   }
 
@@ -158,6 +162,7 @@
   }
 
   function startEdit(row: Row & { kind: 'profile' | 'attribute' }): void {
+    editorPersonID = controller.person?.id;
     confirming = undefined;
     editing =
       row.kind === 'profile'

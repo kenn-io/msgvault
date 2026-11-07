@@ -2,6 +2,7 @@
   import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
+  import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { APIClient } from '../../api/client';
   import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import FactLedger from '../directory/FactLedger.svelte';
@@ -10,11 +11,12 @@
     client: APIClient;
     personID: number;
     refreshKey?: unknown;
+    profileController?: DirectoryProfileController;
     /** Opens the setting that turns fact review on, while it is off. Stored facts stay readable. */
     onSetUp?: () => void;
   }
 
-  let { client, personID, refreshKey, onSetUp = undefined }: Props = $props();
+  let { client, personID, refreshKey, profileController = undefined, onSetUp = undefined }: Props = $props();
 
   const controller = new FactLedgerController(untrack(() => client));
   let open = $state(false);
@@ -35,7 +37,7 @@
     {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Facts" onclick={onSetUp} />{/if}
     <Button size="sm" label={open ? 'Hide' : 'Show'} ariaExpanded={open} onclick={() => (open = !open)} />
   </header>
-  {#if open}<FactLedger {controller} />{/if}
+  {#if open}<FactLedger {controller} {profileController} />{/if}
 </section>
 
 <style>

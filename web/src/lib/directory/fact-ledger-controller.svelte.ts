@@ -10,9 +10,11 @@ import { SvelteSet } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
 import type {
   PersonFactClaim as GeneratedPersonFactClaim,
+  PostalAddressReview,
   PersonFactDecision as GeneratedPersonFactDecision,
   PersonFactEvidence as GeneratedPersonFactEvidence,
 } from '../api/generated/models';
+import type { PostalCandidate } from './postal-review.svelte';
 import { encodeFactTargetRef } from './fact-target-ref';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
@@ -50,6 +52,8 @@ export interface FactEvidenceRow {
   readonly evidenceKey: string;
 }
 export interface FactClaimRow {
+  readonly claimKey?: string;
+  readonly postalReview?: PostalAddressReview;
   rowToken: string;
   submittedValue: string;
   normalizedValue: string | null;
@@ -134,6 +138,7 @@ export class FactLedgerController {
   decisions = $state<PageState<FactDecisionRow>>(pageState());
   pins = $state<SimpleState<FactPinRow>>({ rows: [], loading: false, error: null });
   history = $state<PageState<FactEvidenceStatusRow>>(pageState());
+  postalReview = $state<{ rowToken: string; claimKey: string; candidate?: PostalCandidate; loading: boolean; error?: string }>();
   historyOpen = $state(false);
   historyTriggerToken = $state<string | null>(null);
   focusRequest = $state<FactLedgerFocusRequest | null>(null);
@@ -145,13 +150,14 @@ export class FactLedgerController {
   private focusNonce = 0;
   private targetByOption = new Map<string, FactTargetOption>();
   private historyEvidenceKey: string | undefined;
-  private readonly lanes: Record<'catalog' | PagedSection | 'pins' | 'history', Lane> = {
+  private readonly lanes: Record<'catalog' | PagedSection | 'pins' | 'history' | 'postal', Lane> = {
     catalog: { generation: 0 },
     evidence: { generation: 0 },
     claims: { generation: 0 },
     decisions: { generation: 0 },
     pins: { generation: 0 },
     history: { generation: 0 },
+    postal: { generation: 0 },
   };
   constructor(client: APIClient) {
     this.client = client;
@@ -247,6 +253,48 @@ export class FactLedgerController {
     if (!target) return 'unknown';
     return target.sensitive ? 'sensitive' : 'non_sensitive';
   }
+  cancelPostalReview(): void {
+    this.abortLane('postal');
+    this.postalReview = undefined;
+  }
+  async openPostalReview(rowToken: string, getProfileRevision: () => number): Promise<void> {
+    if (this.postalReview?.loading) return;
+    const row = this.claims.rows.find(candidate => candidate.rowToken === rowToken);
+    const personID = this.personID;
+    if (!this.active || personID === null || this.selectedSection !== 'claims' || !row?.claimKey ||
+        !row.postalReview || !this.revealedClaims.has(rowToken) || this.claimSensitivity(row) !== 'sensitive') return;
+    const profileRevision = getProfileRevision();
+    const { abort, generation } = this.startLane('postal');
+    const context = this.contextGeneration;
+    this.postalReview = { rowToken, claimKey: row.claimKey, loading: true };
+    const entry = this.postalReview;
+    const current = () => this.owns('postal', abort, generation, context) &&
+      this.selectedSection === 'claims' && this.revealedClaims.has(rowToken) &&
+      this.claims.rows.includes(row);
+    try {
+      const response = await generatedListPersonFactClaims({ id: personID }, {
+        ...(this.selectedTarget ? { target: this.selectedTarget } : {}),
+        limit: FACT_LEDGER_PAGE_LIMIT, offset: this.claims.offset,
+      }, { ...this.client, signal: abort.signal });
+      if (!current()) return;
+      const fresh = response.data?.claims.find(claim => claim.claim_key === row.claimKey &&
+        claim.target.kind === 'postal_address' && encodeFactTargetRef(claim.target) === row.targetCanonical);
+      const review = fresh?.postal_review;
+      if (!review?.eligible || !review.assessment) {
+        entry.error = 'This address is no longer available for supported adoption. Refresh claims before reviewing again.';
+        return;
+      }
+      if (!Number.isSafeInteger(profileRevision) || profileRevision <= 0 || review.person_revision !== profileRevision || getProfileRevision() !== profileRevision) {
+        entry.error = 'The profile changed. Refresh the profile and claims before reviewing this address.';
+        return;
+      }
+      entry.candidate = { input: review.assessment.original, sourceRef: `person-fact-claim:${row.claimKey}`, personRevision: review.person_revision };
+    } catch {
+      if (current()) entry.error = 'Unable to refresh address support. Try reviewing again.';
+    } finally {
+      if (current()) entry.loading = false;
+    }
+  }
   async openEvidenceHistory(rowToken: string): Promise<void> {
     const row = this.evidence.rows.find((candidate) => candidate.rowToken === rowToken);
     if (!row || !this.active || this.personID === null) return;
@@ -300,6 +348,7 @@ export class FactLedgerController {
   private resetContext(): void {
     ++this.contextGeneration;
     for (const name of Object.keys(this.lanes) as Array<keyof typeof this.lanes>) this.abortLane(name);
+    this.postalReview = undefined;
     this.selectedSection = 'evidence';
     this.selectedTargetOption = 'all';
     this.targets = [];
@@ -319,6 +368,7 @@ export class FactLedgerController {
     this.revealedClaims.clear();
   }
   private clearDisclosureAndDialog(): void {
+    this.cancelPostalReview();
     this.revealedEvidence.clear();
     this.revealedClaims.clear();
     if (this.historyOpen) this.closeEvidenceHistory();
@@ -361,6 +411,7 @@ export class FactLedgerController {
     );
   }
   private async loadCatalog(context: number): Promise<void> {
+    this.cancelPostalReview();
     const { abort, generation } = this.startLane('catalog');
     this.catalogLoading = true;
     this.catalogError = null;
@@ -452,6 +503,7 @@ export class FactLedgerController {
     const personID = this.personID;
     if (personID === null) return;
     const page = this[section];
+    if (section === 'claims') this.cancelPostalReview();
     const { abort, generation } = this.startLane(section);
     page.loading = true;
     page.error = null;
@@ -601,6 +653,8 @@ function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
 function projectClaim(row: RawClaim, index: number): FactClaimRow {
   return {
     rowToken: `claim-${index}`,
+    claimKey: row.claim_key,
+    ...(row.target.kind === 'postal_address' ? { postalReview: row.postal_review } : {}),
     submittedValue: row.submitted_value,
     normalizedValue: row.normalized_value ?? null,
     relation: row.relation,

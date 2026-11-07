@@ -17,6 +17,9 @@ func (s *Store) SetPersonFactPinContext(
 	ctx context.Context, personID int64, target personfacts.TargetRef,
 	pinned bool, actor string,
 ) (*personfacts.PinWrite, error) {
+	if target.Kind == personfacts.TargetPostalAddress {
+		return nil, errors.New("postal address pins are unsupported")
+	}
 	actor = strings.TrimSpace(actor)
 	if actor == "" {
 		return nil, errors.New("person fact pin actor is required")

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -317,6 +318,7 @@ func applyStructuredProfile(profile *peoplebrowser.PersonProfile, structured gen
 			CountryCode:     stringValue(address.CountryCode),
 			FreeText:        stringValue(address.FreeText),
 			OriginalValue:   address.OriginalValue,
+			Assessment:      postalAssessmentFromGenerated(address.Assessment),
 			Preferred:       address.Envelope.Pref != nil && *address.Envelope.Pref == 1,
 			Source:          store.Provenance(address.Envelope.Source),
 		})
@@ -366,4 +368,14 @@ func partialDateString(date *generated.PartialDate) string {
 		converted.Day = &day
 	}
 	return converted.String()
+}
+
+func postalAssessmentFromGenerated(value *generated.Assessment) *postaladdress.Assessment {
+	if value == nil {
+		return nil
+	}
+	return &postaladdress.Assessment{Original: postalInputFromGenerated(value.Original), Proposed: postalInputFromGenerated(value.Proposed), Status: postaladdress.Status(value.Status), ReasonCodes: append([]string(nil), value.ReasonCodes...), Fingerprint: value.Fingerprint, Provider: stringValue(value.Provider), CheckedAt: value.CheckedAt}
+}
+func postalInputFromGenerated(value generated.Input) postaladdress.Input {
+	return postaladdress.Input{AddressKind: value.AddressKind, PostOfficeBox: stringValue(value.PostOfficeBox), ExtendedAddress: stringValue(value.ExtendedAddress), StreetAddress: stringValue(value.StreetAddress), Locality: stringValue(value.Locality), Region: stringValue(value.Region), PostalCode: stringValue(value.PostalCode), CountryName: stringValue(value.CountryName), ExtendedComponents: stringValue(value.ExtendedComponents), FreeText: stringValue(value.FreeText), Label: stringValue(value.Label), GeoURI: stringValue(value.GeoURI), Timezone: stringValue(value.Timezone), CountryCode: stringValue(value.CountryCode), PlaceURI: stringValue(value.PlaceURI), OriginalValue: stringValue(value.OriginalValue)}
 }

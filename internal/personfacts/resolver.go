@@ -111,19 +111,22 @@ func (r Resolver) Resolve(input ResolutionInput) (Resolution, error) {
 	if input.Pin.EventID != nil {
 		pinned = input.Pin.Pinned
 	}
-	if pinned {
-		for index := range candidates {
-			if candidates[index].eligible {
-				candidates[index].decision = resolverDecision(input.PersonID, candidates[index],
-					DecisionRetained, ReasonPinRetained, "")
+	// Postal claims remain review-only; only hard rejection decisions persist.
+	if input.Target.Kind != TargetPostalAddress {
+		if pinned {
+			for index := range candidates {
+				if candidates[index].eligible {
+					candidates[index].decision = resolverDecision(input.PersonID, candidates[index],
+						DecisionRetained, ReasonPinRetained, "")
+				}
 			}
-		}
-	} else {
-		switch input.Target.Cardinality {
-		case CardinalitySingle:
-			r.resolveSingle(input, candidates)
-		case CardinalityMulti:
-			r.resolveMulti(input, candidates)
+		} else {
+			switch input.Target.Cardinality {
+			case CardinalitySingle:
+				r.resolveSingle(input, candidates)
+			case CardinalityMulti:
+				r.resolveMulti(input, candidates)
+			}
 		}
 	}
 
@@ -134,6 +137,9 @@ func (r Resolver) Resolve(input ResolutionInput) (Resolution, error) {
 	}
 	for index := range candidates {
 		decision := candidates[index].decision
+		if input.Target.Kind == TargetPostalAddress && (decision.Action == "" || decision.Action == DecisionRetained) {
+			continue
+		}
 		if decision.Action == "" {
 			decision = resolverDecision(input.PersonID, candidates[index],
 				DecisionRetained, ReasonBelowThreshold, "")
@@ -939,17 +945,25 @@ func validateResolutionInput(input ResolutionInput) error {
 	if validUnsupportedTargetRejectionInput(input) {
 		return nil
 	}
-	if input.Target.Kind != TargetAttribute && input.Target.Kind != TargetEmployment {
+	if input.Target.Kind != TargetAttribute && input.Target.Kind != TargetEmployment && input.Target.Kind != TargetPostalAddress {
 		return fmt.Errorf("unsupported resolution target kind %q", input.Target.Kind)
 	}
 	if input.Target.Cardinality != CardinalitySingle && input.Target.Cardinality != CardinalityMulti {
 		return fmt.Errorf("unsupported resolution cardinality %q", input.Target.Cardinality)
 	}
-	if input.Target.Kind == TargetEmployment {
+	switch input.Target.Kind {
+	case TargetEmployment:
 		if input.Target.ValueType != ValueEmployment || input.Target.Cardinality != CardinalityMulti {
 			return errors.New("employment resolution target must be a multi-value employment target")
 		}
-	} else {
+	case TargetPostalAddress:
+		if input.Target.ValueType != ValuePostalAddress || input.Target.Cardinality != CardinalityMulti {
+			return errors.New("postal resolution target must be a multi-value postal target")
+		}
+		if input.Pin.Pinned || input.Pin.EventID != nil {
+			return errors.New("postal address pins are unsupported")
+		}
+	default:
 		switch input.Target.ValueType {
 		case ValueText, ValueInteger, ValueReal, ValueBoolean, ValueDate, ValueTimestamp:
 		default:

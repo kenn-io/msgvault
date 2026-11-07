@@ -288,7 +288,8 @@ func submittedEvidenceFingerprint(input EvidenceInput) (string, error) {
 }
 
 func supportedClaimTarget(target TargetDescriptor) bool {
-	return target.Kind == TargetEmployment && target.ValueType == ValueEmployment ||
+	return target.Kind == TargetPostalAddress && target.ValueType == ValuePostalAddress ||
+		target.Kind == TargetEmployment && target.ValueType == ValueEmployment ||
 		target.Kind == TargetAttribute && supportedGenericValueType(target.ValueType)
 }
 

@@ -9,10 +9,12 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -98,6 +100,7 @@ type PersonAddressPatchRequest struct {
 }
 
 type PersonAddressInputRequest struct {
+	OriginalInput      *postaladdress.Input    `json:"original_input,omitzero" nullable:"false"`
 	AddressKind        store.PersonAddressKind `json:"address_kind"`
 	PostOfficeBox      *string                 `json:"post_office_box,omitzero" nullable:"false"`
 	ExtendedAddress    *string                 `json:"extended_address,omitzero" nullable:"false"`
@@ -275,7 +278,9 @@ func (s *Server) handleGetPersonProfileHistory(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, history)
+	copyHistory := *history
+	copyHistory.Addresses = publicPersonAddresses(history.Addresses)
+	writeJSON(w, http.StatusOK, &copyHistory)
 }
 
 func (s *Server) handleGetPersonProfileMediaContent(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +403,9 @@ func writePersonStructuredProfile(
 ) {
 	w.Header().Set(etagHeaderName, personETag(profile.Person))
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, profile)
+	copyProfile := *profile
+	copyProfile.Addresses = publicPersonAddresses(profile.Addresses)
+	writeJSON(w, status, &copyProfile)
 }
 
 // A patch may contain one 8 MiB inline media value. Base64 expansion plus
@@ -440,5 +447,65 @@ func decodeProfilePatchRequest(
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person profile patch")
 		return patch, false
 	}
+	if err := capturePostalPatchOriginals(request, &patch); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address input")
+		return patch, false
+	}
 	return patch, true
+}
+
+func publicPersonAddresses(addresses []store.PersonAddress) []store.PersonAddress {
+	result := slices.Clone(addresses)
+	for i := range result {
+		result[i] = result[i].PublicAddress()
+	}
+	return result
+}
+
+func postalRequestInput(input PersonAddressInputRequest) postaladdress.Input {
+	value := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	return postaladdress.Input{AddressKind: string(input.AddressKind), PostOfficeBox: value(input.PostOfficeBox), ExtendedAddress: value(input.ExtendedAddress), StreetAddress: value(input.StreetAddress), Locality: value(input.Locality), Region: value(input.Region), PostalCode: value(input.PostalCode), CountryName: value(input.CountryName), ExtendedComponents: value(input.ExtendedComponents), FreeText: value(input.FreeText), Label: value(input.Label), GeoURI: value(input.GeoURI), Timezone: value(input.Timezone), CountryCode: value(input.CountryCode), PlaceURI: value(input.PlaceURI), OriginalValue: input.OriginalValue}
+}
+
+func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store.PersonProfilePatch) error {
+	if request.Addresses == nil {
+		return nil
+	}
+	for i, input := range request.Addresses.Add {
+		if input.AddressKind != store.PersonAddressPostal {
+			if input.OriginalInput != nil {
+				return errors.New("original_input is only available for postal addresses")
+			}
+			continue
+		}
+		current := postalRequestInput(input)
+		raw := current
+		if input.OriginalInput != nil {
+			raw = *input.OriginalInput
+			if raw.AddressKind == "" {
+				raw.AddressKind = "postal"
+			}
+			if raw.AddressKind != "postal" {
+				return errors.New("original_input must be postal")
+			}
+		}
+		encoded, err := postaladdress.EncodeOriginalInput(raw)
+		if err != nil {
+			return err
+		}
+		proposed := postaladdress.Assess(current).Proposed
+		output := &patch.Addresses.Add[i]
+		// Store preserves the remaining components and envelope. Normalization here
+		// adds only the shared two-letter country-code casing to its whitespace trim.
+		if input.CountryCode != nil {
+			output.CountryCode = new(proposed.CountryCode)
+		}
+		output.OriginalValue = encoded
+	}
+	return nil
 }

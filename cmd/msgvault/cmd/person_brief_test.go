@@ -26,6 +26,7 @@ type personBriefTestDaemon struct {
 	method   string
 	path     string
 	body     string
+	ifMatch  string
 	status   int
 	response string
 }
@@ -37,6 +38,7 @@ func newPersonBriefTestDaemon(t *testing.T, response string) *personBriefTestDae
 		daemon.requests.Add(1)
 		daemon.method = r.Method
 		daemon.path = r.URL.RequestURI()
+		daemon.ifMatch = r.Header.Get("If-Match")
 		payload, err := io.ReadAll(r.Body)
 		if !assert.NoError(t, err) {
 			w.WriteHeader(http.StatusBadRequest)

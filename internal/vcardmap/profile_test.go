@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -1282,4 +1283,65 @@ func mappedOccurrence(
 	t.Helper()
 	mapping := mappingByOwner(t, envelope.NativeMappings, table, rowID, field)
 	return projectOccurrenceByIdentity(t, envelope, mapping.Identity)
+}
+
+func TestPostalAddressSnapshotExportsRawTextAndComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		input     postaladdress.Input
+		wantValue string
+		wantLabel string
+	}{
+		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}, ";;;;;;", "12 Example; Unit 7\nRaw text"},
+		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}, ";Unit 7;12 Example Street;Example City;;;Canada", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := postaladdress.EncodeOriginalInput(tc.input)
+			require := require.New(t)
+			require.NoError(err)
+			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded})
+			require.NoError(err)
+			assert := assert.New(t)
+			assert.Equal(tc.wantValue, got)
+			if tc.wantLabel == "" {
+				assert.Nil(label)
+			} else {
+				require.NotNil(label)
+				assert.Equal(tc.wantLabel, *label)
+			}
+			assert.NotContains(got, "msgvault:postal-input:")
+		})
+	}
+}
+
+func TestNonPostalAddressSnapshotLikeTextRemainsLiteral(t *testing.T) {
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "birth_place", OriginalValue: "Example City"})
+	require := require.New(t)
+	require.NoError(err)
+	assert := assert.New(t)
+	for _, kind := range []store.PersonAddressKind{store.PersonAddressBirthPlace, store.PersonAddressDeathPlace} {
+		got, uri := addressPlaceValue(store.PersonAddress{AddressKind: kind, OriginalValue: encoded})
+		assert.Equal(vcard.EscapeText(encoded), got)
+		assert.False(uri)
+	}
+	legacy, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "legacy raw text"})
+	require.NoError(err)
+	assert.Equal(";;;;;;", legacy)
+	require.NotNil(label)
+	assert.Equal("legacy raw text", *label)
+}
+
+func TestPostalAddressSnapshotExportsCurrentFreeText(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := postaladdress.Input{AddressKind: "postal", OriginalValue: "  Original address\nUnit 7  "}
+	encoded, err := postaladdress.EncodeOriginalInput(raw)
+	require.NoError(err)
+	text := "  Current address\nUnit 8  "
+	got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, FreeText: &text})
+	require.NoError(err)
+	require.NotNil(label)
+	assert.Equal(";;;;;;", got)
+	assert.Equal(text, *label)
+	assert.NotContains(got, "msgvault:postal-input:")
 }

@@ -1,0 +1,108 @@
+import type { Assessment, Input } from '../api/generated/models';
+
+// Keep this order aligned with postaladdress.Input.fields. The fingerprint
+// includes every raw field, with UTF-8 byte lengths framed as uint64 big endian.
+export const postalInputFields = [
+  'address_kind', 'post_office_box', 'extended_address', 'street_address', 'locality',
+  'region', 'postal_code', 'country_name', 'extended_components', 'free_text',
+  'label', 'geo_uri', 'timezone', 'country_code', 'place_uri', 'original_value',
+] as const satisfies readonly (keyof Input)[];
+
+export function copyPostalInput(input: Partial<Input>): Input {
+  const copied: Input = { address_kind: input.address_kind ?? 'postal' };
+  for (const field of postalInputFields) {
+    const value = input[field];
+    if (value !== undefined && value !== '') copied[field] = value;
+  }
+  return copied;
+}
+
+export function postalInputKey(input: Input): string {
+  return JSON.stringify(postalInputFields.map(field => input[field] ?? ''));
+}
+
+export async function postalFingerprint(input: Input): Promise<string> {
+  const encoder = new TextEncoder();
+  const fields = postalInputFields.map(field => encoder.encode(input[field] ?? ''));
+  const bytes = new Uint8Array(fields.reduce((size, field) => size + 8 + field.length, 0));
+  const view = new DataView(bytes.buffer);
+  let offset = 0;
+  for (const field of fields) {
+    view.setBigUint64(offset, BigInt(field.length));
+    bytes.set(field, offset + 8);
+    offset += field.length + 8;
+  }
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export type PostalAssessmentCheck = (personID: number, input: Input, external: boolean, signal: AbortSignal) => Promise<Assessment>;
+export interface PostalCandidate { input: Input; sourceRef: string; personRevision: number }
+
+let editorGeneration = 0;
+
+/** Transient review state. Destroying or editing invalidates even A → B → A. */
+export class PostalReviewSession {
+  readonly editorGeneration = ++editorGeneration;
+  result = $state<Assessment | null>(null);
+  pending = $state(false);
+  error = $state<string | null>(null);
+  private live = true;
+  private draftGeneration = 0;
+  private requestID = 0;
+  private abort?: AbortController;
+  private resultKey: string | undefined;
+  private resultExternal: boolean | undefined;
+
+  constructor(readonly personID: number, private readonly assess: PostalAssessmentCheck) {}
+
+  invalidate(): void {
+    ++this.draftGeneration;
+    ++this.requestID;
+    this.abort?.abort();
+    this.pending = false;
+    this.result = null;
+    this.error = null;
+    this.resultKey = undefined;
+  }
+
+  destroy(): void { this.live = false; this.invalidate(); }
+
+  async check(input: Input, external: boolean): Promise<void> {
+    const key = postalInputKey(input);
+    if (!this.live || this.pending || (this.result && key === this.resultKey && external === this.resultExternal)) return;
+    const generation = this.draftGeneration;
+    const request = ++this.requestID;
+    const abort = new AbortController();
+    this.abort = abort;
+    const current = () => this.live && this.draftGeneration === generation && this.requestID === request;
+    this.pending = true;
+    this.result = null;
+    this.error = null;
+    try {
+      // Remote plain-HTTP origins lack SubtleCrypto. The echoed input and the
+      // request/draft generations still bind their result to this exact draft.
+      const fingerprint = globalThis.crypto?.subtle ? await postalFingerprint(input) : undefined;
+      if (!current()) return;
+      const result = await this.assess(this.personID, { ...input }, external, abort.signal);
+      if (!current()) return;
+      if (postalInputKey(result.original) !== key || (fingerprint !== undefined && result.fingerprint !== fingerprint)) {
+        throw new Error('mismatched postal assessment');
+      }
+      this.result = result;
+      this.resultKey = key;
+      this.resultExternal = external;
+    } catch {
+      if (current()) this.error = 'Address check unavailable. You can keep or save your address.';
+    } finally {
+      if (current()) this.pending = false;
+    }
+  }
+}
+
+/** Display components without exposing a private storage envelope. */
+export function postalAddressText(input: Partial<Input>): string {
+  return [input.post_office_box, input.extended_address, input.street_address, input.locality,
+    input.region, input.postal_code, input.country_name || input.country_code, input.extended_components]
+    .filter(Boolean).join(', ') || input.free_text || input.original_value || '';
+}

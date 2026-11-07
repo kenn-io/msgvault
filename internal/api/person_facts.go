@@ -75,23 +75,25 @@ type PersonFactEvidence struct {
 }
 
 type PersonFactClaim struct {
-	ID                 int64                        `json:"id"`
-	GenerationID       int64                        `json:"generation_id"`
-	ClaimKey           string                       `json:"claim_key"`
-	ProgramID          string                       `json:"program_id"`
-	ProgramVersion     string                       `json:"program_version"`
-	ProgramFingerprint string                       `json:"program_fingerprint"`
-	Target             personfacts.TargetRef        `json:"target"`
-	Relation           personfacts.ClaimRelation    `json:"relation"`
-	SubmittedValue     string                       `json:"submitted_value"`
-	NormalizedValue    *string                      `json:"normalized_value,omitzero" nullable:"true"`
-	ValueFingerprint   *string                      `json:"value_fingerprint,omitzero" nullable:"true"`
-	EvidenceIDs        []int64                      `json:"evidence_ids"`
-	ValidFrom          *time.Time                   `json:"valid_from,omitempty" nullable:"true"`
-	ValidUntil         *time.Time                   `json:"valid_until,omitempty" nullable:"true"`
-	Origin             personfacts.ClaimOrigin      `json:"origin"`
-	Confidence         personfacts.ConfidenceInputs `json:"confidence"`
-	CreatedAt          time.Time                    `json:"created_at"`
+	Failure            *personfacts.ValidationFailure   `json:"failure,omitzero" nullable:"false"`
+	PostalReview       *personfacts.PostalAddressReview `json:"postal_review,omitzero" nullable:"false"`
+	ID                 int64                            `json:"id"`
+	GenerationID       int64                            `json:"generation_id"`
+	ClaimKey           string                           `json:"claim_key"`
+	ProgramID          string                           `json:"program_id"`
+	ProgramVersion     string                           `json:"program_version"`
+	ProgramFingerprint string                           `json:"program_fingerprint"`
+	Target             personfacts.TargetRef            `json:"target"`
+	Relation           personfacts.ClaimRelation        `json:"relation"`
+	SubmittedValue     string                           `json:"submitted_value"`
+	NormalizedValue    *string                          `json:"normalized_value,omitzero" nullable:"true"`
+	ValueFingerprint   *string                          `json:"value_fingerprint,omitzero" nullable:"true"`
+	EvidenceIDs        []int64                          `json:"evidence_ids"`
+	ValidFrom          *time.Time                       `json:"valid_from,omitempty" nullable:"true"`
+	ValidUntil         *time.Time                       `json:"valid_until,omitempty" nullable:"true"`
+	Origin             personfacts.ClaimOrigin          `json:"origin"`
+	Confidence         personfacts.ConfidenceInputs     `json:"confidence"`
+	CreatedAt          time.Time                        `json:"created_at"`
 }
 
 type PersonFactDecision struct {
@@ -490,7 +492,7 @@ func personFactPageFilter(w http.ResponseWriter, r *http.Request) (personFactPag
 func parsePersonFactTargetKind(raw string) (personfacts.TargetKind, error) {
 	kind := personfacts.TargetKind(strings.TrimSpace(raw))
 	switch kind {
-	case personfacts.TargetAttribute, personfacts.TargetEmployment:
+	case personfacts.TargetAttribute, personfacts.TargetEmployment, personfacts.TargetPostalAddress:
 		return kind, nil
 	default:
 		return "", fmt.Errorf("unknown person fact target kind %q", raw)
@@ -597,7 +599,7 @@ func personFactClaimDTO(claim personfacts.Claim) PersonFactClaim {
 		Relation: claim.Relation, SubmittedValue: string(claim.SubmittedValue),
 		EvidenceIDs: append([]int64(nil), claim.EvidenceIDs...), ValidFrom: claim.ValidFrom,
 		ValidUntil: claim.ValidUntil, Origin: claim.Origin, Confidence: claim.Confidence,
-		CreatedAt: claim.CreatedAt,
+		CreatedAt: claim.CreatedAt, Failure: claim.Failure, PostalReview: claim.PostalReview,
 	}
 	if result.EvidenceIDs == nil {
 		result.EvidenceIDs = []int64{}

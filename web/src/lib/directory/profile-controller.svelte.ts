@@ -1,4 +1,5 @@
 import {
+  assessPersonPostalAddress as generatedAssessPersonPostalAddress,
   clearPersonAttribute as generatedClearPersonAttribute,
   createAttributeDefinition as generatedCreateAttributeDefinition,
   deletePerson as generatedDeletePerson,
@@ -12,6 +13,7 @@ import {
   setPersonAttribute as generatedSetPersonAttribute,
 } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
+import type { Assessment, Input } from '../api/generated/models';
 import type {
   AttributeDefinition,
   CreateAttributeDefinitionRequest,
@@ -248,15 +250,22 @@ export class DirectoryProfileController {
     }
     if (deleted) await this.options.onDeleted?.(this.personID);
   }
-  async patchProfile(body: PersonProfilePatchRequest): Promise<void | DirectoryProfileOperationBlocked> {
+  async assessPostalAddress(personID: number, address: Input, external: boolean, signal: AbortSignal): Promise<Assessment> {
+    if (this.disposed || personID !== this.personID) throw new Error('Address editor is no longer active');
+    const result = await generatedAssessPersonPostalAddress({ id: this.personID }, { address, allow_external: external }, { ...this.client, signal });
+    if (!result.data) throw new Error('Address check unavailable');
+    return result.data;
+  }
+  async patchProfile(body: PersonProfilePatchRequest, reviewedETag?: string): Promise<void | DirectoryProfileOperationBlocked> {
     const draftGeneration = this.prepareMutation({ kind: 'profile', body });
     if (typeof draftGeneration !== 'number') return draftGeneration;
-    if (!this.structuredProfileETag) return this.missingETag();
+    const etag = reviewedETag ?? this.structuredProfileETag;
+    if (!etag) return this.missingETag();
     this.beginMutation(draftGeneration);
     try {
       const response = await generatedPatchPersonStructuredProfile({ id: this.personID }, body, {
         ...this.client,
-        headers: { 'If-Match': this.structuredProfileETag },
+        headers: { 'If-Match': etag },
       });
       if (response.data) {
         this.structuredProfile = response.data;

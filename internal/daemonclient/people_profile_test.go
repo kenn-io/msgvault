@@ -1,6 +1,7 @@
 package daemonclient
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -295,4 +297,33 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 	require.Error(err)
 	assert.Contains(err.Error(), "daemon API schema 3.10.0 or newer")
 	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
+}
+
+func TestPeopleBrowserPostalAddressAssessmentPropagation(t *testing.T) {
+	assessment := postaladdress.Assessment{Original: postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: " Unit 7 ", CountryCode: " ca ", OriginalValue: " raw text "}, Proposed: postaladdress.Input{AddressKind: "postal", StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA", OriginalValue: " raw text "}, Status: postaladdress.StatusNormalizedUnverified, ReasonCodes: []string{"not_verified"}, Fingerprint: "wire-fingerprint"}
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assert.Equal(t, http.MethodGet, r.Method) {
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/people/7":
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"id":7,"participant_ids":[],"vcard_uid":"person-7","revision":2}`)
+		case "/api/v1/people/7/profile":
+			payload, err := json.Marshal(map[string]any{"person": map[string]any{"id": 7, "participant_ids": []int64{}, "vcard_uid": "person-7", "revision": 2}, "addresses": []any{map[string]any{"person_id": 7, "address_kind": "postal", "street_address": "12 Example St", "extended_address": "Unit 7", "country_code": "CA", "original_value": " raw text ", "assessment": assessment, "envelope": map[string]any{"id": 1, "ordinal": 0, "source": "user", "created_at": "2026-08-20T12:30:00Z", "updated_at": "2026-08-20T12:30:00Z"}}}, "contact_points": []any{}, "names": []any{}, "dates": []any{}, "categories": []any{}, "media": []any{}})
+			if !assert.NoError(t, err) {
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, err = w.Write(payload)
+			assert.NoError(t, err)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	profile, err := engine.GetPersonProfile(t.Context(), 7)
+	require := require.New(t)
+	require.NoError(err)
+	require.Len(profile.Addresses, 1)
+	require.NotNil(profile.Addresses[0].Assessment)
+	assert.Equal(t, assessment, *profile.Addresses[0].Assessment)
 }

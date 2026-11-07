@@ -2,6 +2,7 @@
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
   import { Disclosure, Button, Modal } from '@kenn-io/kit-ui';
   import AttributeSection from './AttributeSection.svelte';
+  import { postalAddressText } from '../../directory/postal-review.svelte';
   import { sentenceCase } from '../../explore/labels';
   import { historyProvenance } from './history-format';
   import { formatDateTime as historyTime } from '../../util/format';
@@ -53,7 +54,7 @@
   }
 
   type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; scope_kind?: string; scope_value?: string };
-  function rows(items: Item[], value: ((item: Item) => string) | null = null, context: ((item: Item) => string | null) | null = null): HistoryRow[] {
+  function rows<T extends Item>(items: T[], value: ((item: T) => string) | null = null, context: ((item: T) => string | null) | null = null): HistoryRow[] {
     return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
   }
 
@@ -62,7 +63,7 @@
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
       { title: 'Contact points', rows: rows(history.contact_points ?? [], null, providerContext) },
-      { title: 'Addresses', rows: rows(history.addresses ?? []) },
+      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.original_value || (row.address_kind === 'postal' ? postalAddressText(row.assessment?.original ?? row) : '')) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
       { title: 'Categories', rows: rows(history.categories ?? []) },
       { title: 'Media', rows: rows(history.media ?? []) },

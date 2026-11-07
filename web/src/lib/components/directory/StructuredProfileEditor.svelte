@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Button, TextInput } from '@kenn-io/kit-ui';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import type { Input } from '../../api/generated/models';
+  import { PostalReviewSession, postalAddressText, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
@@ -39,6 +41,7 @@
     current?: StructuredProfileRecord;
     contactKind?: string;
     nameKind?: string;
+    postalCandidate?: PostalCandidate;
     onDone?: () => void;
     onCancel?: () => void;
   }
@@ -49,6 +52,7 @@
     current = undefined,
     contactKind: presetContactKind,
     nameKind: presetNameKind,
+    postalCandidate = undefined,
     onDone = () => undefined,
     onCancel = () => undefined,
   }: Props = $props();
@@ -58,6 +62,13 @@
   // once instead of rebasing an in-progress draft under the user's cursor.
   const initialSection = untrack(() => section);
   const initialCurrent = untrack(() => current);
+  const initialCandidate = untrack(() => postalCandidate);
+  const initialController = untrack(() => controller);
+  const initialPersonID = untrack(() => controller.person?.id ?? 0);
+  const reviewedETag = initialCandidate ? `"person-${initialPersonID}-r${initialCandidate.personRevision}"` : untrack(() => controller.structuredProfileETag ?? undefined);
+  const review = new PostalReviewSession(initialPersonID, (id, input, external, signal) => initialController.assessPostalAddress(id, input, external, signal));
+  onDestroy(() => review.destroy());
+  $effect(() => { if (controller !== initialController || controller.person?.id !== initialPersonID) review.destroy(); });
   const currentName = initialCurrent as GeneratedPersonName | undefined;
   const currentContact = initialCurrent as GeneratedPersonContactPoint | undefined;
   const currentAddress = initialCurrent as GeneratedPersonAddress | undefined;
@@ -75,11 +86,20 @@
   let scopeKind = $state(currentContact?.scope_kind ?? '');
   let scopeValue = $state(currentContact?.scope_value ?? '');
   let addressKind = $state(currentAddress?.address_kind ?? 'postal');
-  let streetAddress = $state(currentAddress?.street_address ?? '');
-  let locality = $state(currentAddress?.locality ?? '');
-  let region = $state(currentAddress?.region ?? '');
-  let postalCode = $state(currentAddress?.postal_code ?? '');
-  let countryName = $state(currentAddress?.country_name ?? '');
+  const seedAddress = initialCandidate?.input ?? currentAddress;
+  let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
+  let addressTarget = $state('');
+  let addressEdited = $state(false);
+  let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
+  let extendedAddress = $state(seedAddress?.extended_address ?? '');
+  let countryCode = $state(seedAddress?.country_code ?? '');
+  let originalText = $state(untrack(() => originalInput?.original_value ?? seedAddress?.original_value ?? ''));
+  let currentText = $state(seedAddress?.free_text ?? (currentAddress?.address_kind === 'postal' && !postalAddressText({ ...currentAddress, original_value: '', free_text: '' }) ? currentAddress.original_value : '') ?? '');
+  let streetAddress = $state(seedAddress?.street_address ?? '');
+  let locality = $state(seedAddress?.locality ?? '');
+  let region = $state(seedAddress?.region ?? '');
+  let postalCode = $state(seedAddress?.postal_code ?? '');
+  let countryName = $state(seedAddress?.country_name ?? '');
   let dateKind = $state(currentDate?.date_kind ?? (untrack(() => controller.structuredProfile?.dates.some(date => date.date_kind === 'birthday')) ? 'anniversary' : 'birthday'));
   let dateValue = $state(
     formatDate(currentDate?.date) ??
@@ -113,6 +133,10 @@
   const envelope = (): GeneratedValueEnvelopeInput => ({
     source: 'user',
     ...(initialCurrent && sameDiscriminator() ? { ordinal } : {}),
+    ...(initialSection === 'addresses' ? {
+      ...keep(currentAddress?.envelope, ['pref', 'type_label', 'type_tokens']),
+      ...(initialCandidate ? { source_ref: initialCandidate.sourceRef } : currentAddress?.envelope.source_ref?.startsWith('person-fact-claim:') ? { source_ref: currentAddress.envelope.source_ref } : {}),
+    } : {}),
   });
 
   function dateParts(value: string): GeneratedPartialDate | undefined {
@@ -242,38 +266,9 @@
           },
         };
       case 'addresses': {
-        const street = streetAddress.trim();
-        return {
-          addresses: {
-            add: [
-              {
-                ...keep(currentAddress, [
-                  'post_office_box',
-                  'extended_address',
-                  'extended_components',
-                  'free_text',
-                  'label',
-                  'geo_uri',
-                  'timezone',
-                  'country_code',
-                  'place_uri',
-                ]),
-                address_kind: addressKind,
-                ...(street
-                  ? { original_value: street, street_address: street }
-                  : initialCurrent?.original_value.trim()
-                    ? { original_value: initialCurrent.original_value }
-                    : {}),
-                ...(locality.trim() ? { locality: locality.trim() } : {}),
-                ...(region.trim() ? { region: region.trim() } : {}),
-                ...(postalCode.trim() ? { postal_code: postalCode.trim() } : {}),
-                ...(countryName.trim() ? { country_name: countryName.trim() } : {}),
-                envelope: envelope(),
-              },
-            ],
-            supersede,
-          },
-        };
+        const input = addressDraft();
+        if (addressKind === 'postal') captureOriginal();
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -317,10 +312,38 @@
     }
   }
 
-  async function save(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    if (submitting || !controller.canWriteProfile) return;
+  function addressDraft(): Input {
+    return { ...keep(seedAddress, ['extended_components', 'label', 'geo_uri', 'timezone', 'place_uri']), address_kind: addressKind,
+      post_office_box: postOfficeBox, extended_address: extendedAddress, street_address: streetAddress,
+      locality, region, postal_code: postalCode, country_name: countryName, country_code: countryCode, original_value: originalText, free_text: currentText };
+  }
+  function captureOriginal(): void {
+    if (!originalInput) originalInput = copyPostalInput(addressDraft());
+  }
+  function edited(): void {
+    if (initialSection !== 'addresses') return;
+    addressEdited = true;
+    review.invalidate();
+  }
+  async function checkAddress(external: boolean): Promise<void> {
+    captureOriginal();
+    await review.check(addressDraft(), external);
+  }
+  async function chooseAddress(corrected: boolean): Promise<void> {
+    const result = review.result;
+    if (!result) return;
+    captureOriginal();
+    const input = corrected ? result.proposed : result.original;
+    streetAddress = input.street_address ?? ''; extendedAddress = input.extended_address ?? ''; postOfficeBox = input.post_office_box ?? '';
+    locality = input.locality ?? ''; region = input.region ?? ''; postalCode = input.postal_code ?? ''; countryName = input.country_name ?? ''; countryCode = input.country_code ?? ''; currentText = input.free_text ?? '';
+    review.invalidate();
+    await save();
+  }
+  async function save(event: SubmitEvent | undefined = undefined): Promise<void> {
+    event?.preventDefault();
+    if (submitting || !controller.canWriteProfile || controller !== initialController || controller.person?.id !== initialPersonID) return;
     validationError = null;
+    if (initialCandidate && !addressTarget) { validationError = 'Choose whether to add a new address or supersede a specific address.'; return; }
     const body = patch();
     if (initialSection === 'addresses') {
       const address = body.addresses?.add?.[0];
@@ -331,7 +354,7 @@
     }
     submitting = true;
     try {
-      const result = await controller.patchProfile(body);
+      const result = await controller.patchProfile(body, initialSection === 'addresses' ? reviewedETag : undefined);
       if (result === undefined && controller.draft === null) onDone();
     } finally {
       submitting = false;
@@ -346,7 +369,7 @@
   function conflictMessage(): string | null {
     if (!controller.conflict) return null;
     if (controller.conflict.code === 'person_revision_conflict')
-      return 'This person changed elsewhere. Reload and retry.';
+      return initialSection === 'addresses' ? 'This person changed elsewhere. Reload and review the address again.' : 'This person changed elsewhere. Reload and retry.';
     return controller.conflict.message;
   }
 </script>
@@ -357,7 +380,7 @@
     <div class="editor-actions"><Button label="Cancel" type="button" onclick={onCancel} /></div>
   </div>
 {:else}
-  <form class="profile-editor" bind:this={formElement} onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
+  <form class="profile-editor" bind:this={formElement} onsubmit={save} oninput={edited} onchange={edited} aria-label={`Edit ${section.replace('_', ' ')}`}>
     {#if section === 'names'}
       <label
         >Name kind
@@ -423,6 +446,15 @@
       >
       {/if}
     {:else if section === 'addresses'}
+      {#if initialCandidate}
+        <p class="postal-note">Review this source address, then choose where to save it. Edits retain the source as origin.</p>
+        <label>Save address as<select bind:value={addressTarget} disabled={submitting}>
+          <option value="">Choose an address target</option><option value="add">Add a new address</option>
+          {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
+            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText(address)}</option>
+          {/each}
+        </select></label>
+      {/if}
       <label
         >Address kind
         <select bind:value={addressKind} disabled={submitting}>
@@ -439,11 +471,46 @@
           disabled={submitting}
         /></label
       >
+      {#if addressKind === 'postal'}
+        <label>Unit or apartment<TextInput bind:value={extendedAddress} ariaLabel="Unit or apartment" block disabled={submitting} /></label>
+        <label>PO box<TextInput bind:value={postOfficeBox} ariaLabel="PO box" block disabled={submitting} /></label>
+        <label>Country code<TextInput bind:value={countryCode} ariaLabel="Country code" block disabled={submitting} /></label>
+        <label>Current address text<textarea aria-label="Current address text" bind:value={currentText} disabled={submitting}></textarea></label>
+        <label>Original text<textarea aria-label="Original text" bind:value={originalText} readonly={addressKind === 'postal' && !!originalInput} disabled={submitting}></textarea></label>
+      {/if}
       <label>Locality<TextInput bind:value={locality} ariaLabel="Locality" block disabled={submitting} /></label>
       <label>Region<TextInput bind:value={region} ariaLabel="Region" block disabled={submitting} /></label>
       <label>Postal code<TextInput bind:value={postalCode} ariaLabel="Postal code" block disabled={submitting} /></label
       >
       <label>Country<TextInput bind:value={countryName} ariaLabel="Country" block disabled={submitting} /></label>
+      {#if addressKind === 'postal'}
+        <div class="postal-review">
+          <p>Local cleanup does not verify that an address exists or is deliverable.</p>
+          <div class="editor-actions">
+            <Button label="Check locally" type="button" disabled={submitting || review.pending || !controller.canWriteProfile} onclick={() => void checkAddress(false)} />
+            <Button label="Check with Google" type="button" disabled={submitting || review.pending || !controller.canWriteProfile} onclick={() => void checkAddress(true)} />
+          </div>
+          <p>Checking with Google sends postal components, including unit and PO box, to Google.</p>
+          {#if review.pending}<p role="status">Checking address…</p>{/if}
+          {#if review.error}<p role="alert">{review.error}</p>{/if}
+          {#if review.result}
+            {@const result = review.result}
+            <dl class="postal-comparison">
+              <div><dt>Original address</dt><dd>{postalAddressText(result.original)}</dd></div>
+              <div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>
+            </dl>
+            <p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable — local entry is still available' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>
+            <p>{result.reason_codes.map(code => code.replaceAll('_', ' ')).join(' · ')}</p>
+            {#if result.provider === 'google'}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
+            <div class="editor-actions">
+              <Button label="Keep original" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(false)} />
+              <Button label="Confirm corrected address" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(true)} />
+            </div>
+          {:else if !addressEdited && currentAddress?.assessment}
+            <p role="status">Local assessment: {currentAddress.assessment.status.replaceAll('_', ' ')}</p>
+          {/if}
+        </div>
+      {/if}
     {:else if section === 'dates'}
       <label
         >Date kind
@@ -540,6 +607,10 @@
 {/if}
 
 <style>
+  .postal-review, .postal-note { width: 100%; }
+  .postal-comparison { display: grid; gap: var(--space-2); }
+  .postal-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  textarea { width: 100%; min-height: 5rem; }
   .profile-editor {
     display: flex;
     flex-wrap: wrap;

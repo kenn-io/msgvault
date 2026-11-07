@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -629,6 +630,30 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	}
 	if !allBlank(components) {
 		return vcard.JoinStructuredText(components), address.Label, nil
+	}
+	// A known postal snapshot is raw owner input, not an imported ADR wire
+	// value. Decode once and never parse its original text as another envelope
+	// or as semicolon-delimited vCard components.
+	if raw, ok := postaladdress.DecodeOriginalInput(address.OriginalValue); ok {
+		// Current free text is an explicit edit; the snapshot remains provenance.
+		if !isBlank(address.FreeText) {
+			return vcard.JoinStructuredText(components), address.FreeText, nil
+		}
+		originalComponents, err := postalComponents(store.PersonAddress{PostOfficeBox: new(raw.PostOfficeBox), ExtendedAddress: new(raw.ExtendedAddress), StreetAddress: new(raw.StreetAddress), Locality: new(raw.Locality), Region: new(raw.Region), PostalCode: new(raw.PostalCode), CountryName: new(raw.CountryName), ExtendedComponents: new(raw.ExtendedComponents)})
+		if err != nil {
+			return "", nil, err
+		}
+		var label *string
+		for _, text := range []string{raw.Label, raw.FreeText, raw.OriginalValue} {
+			if strings.TrimSpace(text) != "" {
+				label = new(text)
+				break
+			}
+		}
+		if !allBlank(originalComponents) || label != nil {
+			return vcard.JoinStructuredText(originalComponents), label, nil
+		}
+		return "", nil, nil
 	}
 	// SplitStructuredText decodes each component, so re-joining escapes
 	// each exactly once and a wire-form original re-renders unchanged.

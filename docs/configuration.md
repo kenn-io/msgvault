@@ -181,6 +181,62 @@ its timezone, and the large-audience cut uses its direct limit. After you change
 values and the commands warn until `msgvault activity build` rebuilds it. See
 [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
+## Postal address validation
+
+Local postal assessment needs no configuration or provider key. Optional Google
+checks use these independent settings:
+
+```toml
+[people.address_validation]
+enabled = false
+provider = "google"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Allow an explicitly requested external check; does not authorize automatic checks |
+| `provider` | `""` | `google` selects Google Address Validation; required when enabled |
+
+Provide the key to the daemon through
+`MSGVAULT_GOOGLE_ADDRESS_VALIDATION_API_KEY`, then restart it after changing
+configuration or the environment. No other Google or model-provider key is
+used as a fallback. A disabled provider, missing key, or failed request returns
+an unavailable assessment with a usable local proposal; address entry remains
+available. The Web UI's **Check with Google**, CLI `--external`, or API
+`allow_external: true` is required for each external check. Delegated and
+read-only clients cannot invoke assessment.
+
+Each check makes one request without automatic retry, with an eight-second
+request timeout. Only explicit postal fields are sent, with a total limit of
+280 Unicode characters; oversized input is retained locally rather than
+truncated. Raw original text, names, message excerpts, and opaque metadata stay
+local. Results use `Cache-Control: no-store` and remain in the current review.
+Only a deliberate owner-confirmed address is saved; no provider verdict cache
+is added to the archive.
+
+Activation requires a Google Cloud billing project, the Address Validation API,
+a suitable restricted key, and review of the applicable provider agreements and
+privacy disclosures. In particular, whether an archive owner's use meets the
+service's End User, account-linkage, and permitted-purpose requirements remains
+unresolved. The owner confirmation flow is an implementation assumption, not
+a determination that those terms permit a particular deployment. EEA billing
+accounts have separate terms. See Google's [service-specific terms](https://cloud.google.com/maps-platform/terms/maps-service-terms)
+and [policies and attribution](https://developers.google.com/maps/documentation/address-validation/policies).
+
+As checked on November 7, 2026, standalone Address Validation Pro includes 5,000
+free monthly requests, then USD 17 per 1,000 in the first paid band. Enterprise
+validation that terminates an autocomplete session has a separate 1,000-request
+free cap and USD 25 per 1,000 first paid band. Free usage is not a spending cap.
+Check current [pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+and [country coverage](https://developers.google.com/maps/documentation/address-validation/coverage)
+before activation. Unit confidence and available metadata vary by country;
+validation is not a delivery guarantee. Google's terms prohibit artificial
+US/PR live requests, so protocol tests use local HTTP mocks.
+
+See [review postal addresses](usage/people.md#review-postal-addresses) for the
+owner workflow and [the CLI reference](cli-reference.md#person-address) for
+explicit assessment and apply commands.
+
 ## People sweep inference
 
 People sweeps use one named protocol profile at a time. A profile records the

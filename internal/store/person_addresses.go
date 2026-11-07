@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/postaladdress"
 )
 
 type PersonAddressKind string
@@ -27,24 +29,25 @@ func (k PersonAddressKind) Valid() bool {
 }
 
 type PersonAddress struct {
-	Envelope           ValueEnvelope     `json:"envelope"`
-	PersonID           int64             `json:"person_id"`
-	AddressKind        PersonAddressKind `json:"address_kind"`
-	PostOfficeBox      *string           `json:"post_office_box,omitzero" nullable:"false"`
-	ExtendedAddress    *string           `json:"extended_address,omitzero" nullable:"false"`
-	StreetAddress      *string           `json:"street_address,omitzero" nullable:"false"`
-	Locality           *string           `json:"locality,omitzero" nullable:"false"`
-	Region             *string           `json:"region,omitzero" nullable:"false"`
-	PostalCode         *string           `json:"postal_code,omitzero" nullable:"false"`
-	CountryName        *string           `json:"country_name,omitzero" nullable:"false"`
-	ExtendedComponents *string           `json:"extended_components,omitzero" nullable:"false"`
-	FreeText           *string           `json:"free_text,omitzero" nullable:"false"`
-	Label              *string           `json:"label,omitzero" nullable:"false"`
-	GeoURI             *string           `json:"geo_uri,omitzero" nullable:"false"`
-	Timezone           *string           `json:"timezone,omitzero" nullable:"false"`
-	CountryCode        *string           `json:"country_code,omitzero" nullable:"false"`
-	PlaceURI           *string           `json:"place_uri,omitzero" nullable:"false"`
-	OriginalValue      string            `json:"original_value"`
+	Assessment         *postaladdress.Assessment `json:"assessment,omitzero" nullable:"false"`
+	Envelope           ValueEnvelope             `json:"envelope"`
+	PersonID           int64                     `json:"person_id"`
+	AddressKind        PersonAddressKind         `json:"address_kind"`
+	PostOfficeBox      *string                   `json:"post_office_box,omitzero" nullable:"false"`
+	ExtendedAddress    *string                   `json:"extended_address,omitzero" nullable:"false"`
+	StreetAddress      *string                   `json:"street_address,omitzero" nullable:"false"`
+	Locality           *string                   `json:"locality,omitzero" nullable:"false"`
+	Region             *string                   `json:"region,omitzero" nullable:"false"`
+	PostalCode         *string                   `json:"postal_code,omitzero" nullable:"false"`
+	CountryName        *string                   `json:"country_name,omitzero" nullable:"false"`
+	ExtendedComponents *string                   `json:"extended_components,omitzero" nullable:"false"`
+	FreeText           *string                   `json:"free_text,omitzero" nullable:"false"`
+	Label              *string                   `json:"label,omitzero" nullable:"false"`
+	GeoURI             *string                   `json:"geo_uri,omitzero" nullable:"false"`
+	Timezone           *string                   `json:"timezone,omitzero" nullable:"false"`
+	CountryCode        *string                   `json:"country_code,omitzero" nullable:"false"`
+	PlaceURI           *string                   `json:"place_uri,omitzero" nullable:"false"`
+	OriginalValue      string                    `json:"original_value"`
 }
 
 type PersonAddressInput struct {
@@ -218,7 +221,18 @@ func (s *Store) supersedePersonAddressTx(
 }
 
 func personAddressHasValue(input PersonAddressInput) bool {
-	if strings.TrimSpace(input.OriginalValue) != "" {
+	if input.AddressKind == PersonAddressPostal {
+		if raw, ok := postaladdress.DecodeOriginalInput(input.OriginalValue); ok {
+			// Interpret exactly one known storage envelope, never its literal raw text.
+			for _, value := range []string{raw.PostOfficeBox, raw.ExtendedAddress, raw.StreetAddress, raw.Locality, raw.Region, raw.PostalCode, raw.CountryName, raw.ExtendedComponents, raw.FreeText, raw.PlaceURI, raw.GeoURI, raw.Label, raw.CountryCode, raw.OriginalValue} {
+				if strings.TrimSpace(value) != "" {
+					return true
+				}
+			}
+		} else if strings.TrimSpace(input.OriginalValue) != "" {
+			return true
+		}
+	} else if strings.TrimSpace(input.OriginalValue) != "" {
 		return true
 	}
 	for _, value := range []*string{
@@ -293,5 +307,6 @@ func scanPersonAddress(row scanner) (*PersonAddress, error) {
 	if err := env.apply(&address.Envelope); err != nil {
 		return nil, err
 	}
+	address.Assessment = address.LocalPostalAssessment()
 	return &address, nil
 }

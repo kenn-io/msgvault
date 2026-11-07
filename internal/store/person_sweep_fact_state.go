@@ -103,18 +103,26 @@ func (s *Store) loadPersonSweepUnresolvedClaimsTx(
 	target personfacts.TargetDescriptor,
 	limit int,
 ) ([]personfacts.Claim, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT `+personFactClaimColumns+`
-		FROM person_fact_claims c
-		WHERE c.person_id = ?
-		  AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?
-		  AND c.rejection_action IS NULL
-		  AND NOT EXISTS (
-		      SELECT 1 FROM person_fact_decisions d
-		      WHERE d.claim_id = c.id AND d.action IN
-		          ('applied', 'superseded', 'invalid', 'identity-rejected',
-		           'policy-rejected', 'conflict-rejected'))
-		ORDER BY c.claim_key, c.id
-		LIMIT ?`, personID, target.Kind, target.Key, target.Revision, limit+1)
+	query := `SELECT ` + personFactClaimColumns + `
+  FROM person_fact_claims c
+  WHERE c.person_id = ?
+    AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?
+    AND c.rejection_action IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM person_fact_decisions d
+      WHERE d.claim_id = c.id AND d.action IN
+       ('applied','superseded','invalid','identity-rejected','policy-rejected','conflict-rejected'))`
+	queryLimit := limit + 1
+	if target.Kind == personfacts.TargetPostalAddress {
+		query += ` AND NOT EXISTS (SELECT 1 FROM person_addresses a
+    WHERE a.person_id = c.person_id AND a.source_ref = 'person-fact-claim:' || c.claim_key)
+    ORDER BY c.created_at DESC,c.claim_key DESC,c.id DESC`
+		queryLimit = min(limit, 100)
+	} else {
+		query += ` ORDER BY c.claim_key,c.id`
+	}
+	query += ` LIMIT ?`
+	rows, err := tx.QueryContext(ctx, query, personID, target.Kind, target.Key, target.Revision, queryLimit)
 	if err != nil {
 		return nil, fmt.Errorf("load unresolved person sweep claims for target %q: %w", target.Key, err)
 	}

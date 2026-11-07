@@ -16,6 +16,9 @@ const catalogVersion = "1"
 // definitions and fixed structured targets.
 func BuildCatalog(definitions []Definition, opts CatalogOptions) (Catalog, error) {
 	targets := []TargetDescriptor{employmentDescriptor()}
+	if opts.IncludeSensitive {
+		targets = append(targets, postalAddressDescriptor())
+	}
 	for _, definition := range definitions {
 		description, ok := inferenceDescription(definition.Description)
 		if !ok || !eligibleDefinition(definition, opts) {
