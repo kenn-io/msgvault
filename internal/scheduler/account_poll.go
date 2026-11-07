@@ -65,12 +65,20 @@ func (e *AcquisitionError) Error() string {
 func (e *AcquisitionError) Unwrap() error             { return e.Err }
 func (e *AcquisitionError) RetryNotBefore() time.Time { return e.NotBefore }
 
+// accountPollWake identifies one deadline callback. Its deadline never changes;
+// Scheduler.mu protects the timer reference and registration attachment.
+type accountPollWake struct {
+	timer    *time.Timer
+	deadline time.Time
+}
+
 // Pointer identity is the immutable registration generation. Old callbacks and
 // finishers retain their old pointer even after a key is removed and re-added.
 // Every field is protected by Scheduler.mu.
 type accountRegistration struct {
 	interval      time.Duration
 	entry         cron.EntryID
+	pollWake      *accountPollWake
 	pollPending   bool
 	pollOnly      bool
 	nextEligible  time.Time
@@ -81,9 +89,9 @@ type accountRegistration struct {
 	state         string
 }
 
-// SetAccountPollInterval adds a typed timer to an existing account lane.
+// SetAccountPollInterval adds a typed poll schedule to an existing account lane.
 // Daemon configuration calls this at registration; config changes take effect
-// on restart. Updating its cron schedule retains this registration and timer.
+// on restart. Updating its cron schedule retains this registration.
 func (s *Scheduler) SetAccountPollInterval(identifier string, interval time.Duration) error {
 	if err := config.ValidateAccountPollInterval(interval); err != nil {
 		return err
@@ -94,6 +102,7 @@ func (s *Scheduler) SetAccountPollInterval(identifier string, interval time.Dura
 	if r == nil {
 		return errors.New("account is not scheduled")
 	}
+	cancelAccountPollWakeLocked(r)
 	if r.entry != 0 {
 		s.cron.Remove(r.entry)
 		r.entry = 0
@@ -121,23 +130,42 @@ func (s *Scheduler) currentAccountLocked(email string, r *accountRegistration) b
 }
 
 func (s *Scheduler) onRegisteredAccountTick(email string, r *accountRegistration, poll bool) {
+	s.onRegisteredAccountTickFromWake(email, r, poll, nil)
+}
+
+func (s *Scheduler) onAccountPollWake(email string, r *accountRegistration, wake *accountPollWake) {
+	s.onRegisteredAccountTickFromWake(email, r, true, wake)
+}
+
+func (s *Scheduler) onRegisteredAccountTickFromWake(email string, r *accountRegistration, poll bool, wake *accountPollWake) {
 	s.mu.Lock()
-	if s.stopped || !s.currentAccountLocked(email, r) || (poll && r.interval == 0) {
+	if s.stopped || !s.currentAccountLocked(email, r) || (poll && r.interval == 0) ||
+		(wake != nil && (r.pollWake != wake || r.pollWake.timer != wake.timer ||
+			!r.pollWake.deadline.Equal(wake.deadline))) {
 		s.mu.Unlock()
 		return
+	}
+	if wake != nil {
+		r.pollWake = nil
 	}
 	now := time.Now()
 	if now.Before(r.providerFloor) {
 		if !poll {
 			s.pending[email] = true
+		} else {
+			s.armAccountPollWakeLocked(email, r, laterAccountPollDeadline(r))
 		}
 		r.state = "deferred"
 		s.mu.Unlock()
 		return
 	}
 	if poll && !s.pending[email] && now.Before(r.nextEligible) {
+		s.armAccountPollWakeLocked(email, r, laterAccountPollDeadline(r))
 		s.mu.Unlock()
 		return
+	}
+	if poll {
+		cancelAccountPollWakeLocked(r)
 	}
 	if s.running[email] {
 		if _, queued := s.queuedAt[email]; queued {
@@ -155,6 +183,40 @@ func (s *Scheduler) onRegisteredAccountTick(email string, r *accountRegistration
 	s.reserveAccountLocked(email, r, poll && !s.pending[email])
 	s.mu.Unlock()
 	s.runSync(email, r)
+}
+
+func laterAccountPollDeadline(r *accountRegistration) time.Time {
+	if r.providerFloor.After(r.nextEligible) {
+		return r.providerFloor
+	}
+	return r.nextEligible
+}
+
+func (s *Scheduler) armAccountPollWakeLocked(email string, r *accountRegistration, deadline time.Time) {
+	if s.stopped || !s.currentAccountLocked(email, r) || r.interval == 0 {
+		cancelAccountPollWakeLocked(r)
+		return
+	}
+	if r.pollWake != nil && r.pollWake.deadline.Equal(deadline) {
+		return
+	}
+	cancelAccountPollWakeLocked(r)
+	delay := time.Until(deadline)
+	if deadline.IsZero() || delay <= 0 {
+		return
+	}
+	wake := &accountPollWake{deadline: deadline}
+	wake.timer = time.AfterFunc(delay, func() {
+		s.onAccountPollWake(email, r, wake)
+	})
+	r.pollWake = wake
+}
+
+func cancelAccountPollWakeLocked(r *accountRegistration) {
+	if r.pollWake != nil {
+		r.pollWake.timer.Stop()
+		r.pollWake = nil
+	}
 }
 
 func (s *Scheduler) reserveAccountLocked(email string, r *accountRegistration, pollOnly bool) {

@@ -90,6 +90,153 @@ func TestAccountPollingRearmsEarlyCronTickAtEligibility(t *testing.T) {
 	})
 }
 
+func TestAccountPollingDeadlineWakeIsFencedByLifecycle(t *testing.T) {
+	for _, action := range []string{"disable", "change interval", "remove", "stop", "remove and re-add"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				gate := newSerialWorkTracker()
+				release, ok := gate.BeginWork()
+				require.True(ok)
+				var calls atomic.Int32
+				s := pollingSchedulerFixture(t, func(context.Context, string) error {
+					calls.Add(1)
+					return nil
+				}).WithWorkTracker(gate)
+				released, stopped := false, false
+				defer func() {
+					if !released {
+						release()
+					}
+					if !stopped {
+						<-s.Stop().Done()
+					}
+				}()
+
+				s.Start()
+				synctest.Wait()
+				require.True(s.Status()[0].Queued, "startup catchup waits for the shared gate")
+				time.Sleep(time.Second)
+				release()
+				released = true
+				synctest.Wait()
+				require.EqualValues(1, calls.Load())
+				nextEligible := s.Status()[0].NextEligiblePoll
+				time.Sleep(29 * time.Second)
+				synctest.Wait()
+
+				email := "sample@example.test"
+				s.mu.RLock()
+				registration := s.accounts[email]
+				var wake *accountPollWake
+				if registration != nil {
+					wake = registration.pollWake
+				}
+				s.mu.RUnlock()
+				require.NotNil(registration)
+				require.NotNil(wake, "the early cron tick arms a deadline wake")
+				require.NotNil(wake.timer)
+				require.True(wake.deadline.Equal(nextEligible), "the wake is anchored to the poll eligibility deadline")
+
+				switch action {
+				case "disable":
+					require.NoError(s.SetAccountPollInterval(email, 0))
+				case "change interval":
+					require.NoError(s.SetAccountPollInterval(email, time.Minute))
+				case "remove":
+					s.RemoveAccount(email)
+				case "stop":
+					<-s.Stop().Done()
+					stopped = true
+				case "remove and re-add":
+					s.RemoveAccount(email)
+					require.NoError(s.AddAccount(email, "0 0 1 1 *"))
+					require.NoError(s.SetAccountPollInterval(email, 30*time.Second))
+				}
+
+				// Simulate a callback already dispatched when its timer was cancelled.
+				s.onAccountPollWake(email, registration, wake)
+				synctest.Wait()
+				assert.EqualValues(1, calls.Load(), "obsolete deadline callbacks cannot run an account sync")
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.EqualValues(1, calls.Load(), "cancelled deadline wakes do not fire after lifecycle changes")
+
+				s.mu.RLock()
+				current := s.accounts[email]
+				wakeStillArmed := current != nil && current.pollWake != nil
+				s.mu.RUnlock()
+				assert.False(wakeStillArmed, "lifecycle changes leave no active one-shot wake")
+				if action == "remove and re-add" {
+					assert.False(registration == current, "re-adding the same identifier creates a new registration")
+				}
+			})
+		})
+	}
+}
+
+func TestAccountPollingDeadlineWakeHonorsProviderFloor(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := newSerialWorkTracker()
+		release, ok := gate.BeginWork()
+		require.True(ok)
+		floor := time.Now().Add(2 * time.Minute)
+		var calls atomic.Int32
+		s := pollingSchedulerFixture(t, func(context.Context, string) error {
+			if calls.Add(1) == 1 {
+				return &AcquisitionError{Outcome: AcquisitionIncomplete, NotBefore: floor}
+			}
+			return nil
+		}).WithWorkTracker(gate)
+		released, stopped := false, false
+		defer func() {
+			if !released {
+				release()
+			}
+			if !stopped {
+				<-s.Stop().Done()
+			}
+		}()
+
+		s.Start()
+		synctest.Wait()
+		require.True(s.Status()[0].Queued)
+		time.Sleep(time.Second)
+		release()
+		released = true
+		synctest.Wait()
+		require.EqualValues(1, calls.Load())
+		require.True(s.Status()[0].NextEligiblePoll.Equal(floor), "the provider floor extends the adaptive deadline")
+
+		time.Sleep(29 * time.Second)
+		synctest.Wait()
+		require.EqualValues(1, calls.Load())
+		email := "sample@example.test"
+		s.mu.RLock()
+		registration := s.accounts[email]
+		var firstWake *accountPollWake
+		if registration != nil {
+			firstWake = registration.pollWake
+		}
+		s.mu.RUnlock()
+		require.NotNil(firstWake)
+		require.True(firstWake.deadline.Equal(floor), "the one-shot timer waits through the provider floor")
+
+		time.Sleep(60 * time.Second)
+		synctest.Wait()
+		assert.EqualValues(1, calls.Load(), "repeated cron ticks cannot shorten the provider floor")
+		s.mu.RLock()
+		currentWake := registration.pollWake
+		s.mu.RUnlock()
+		require.NotNil(currentWake)
+		assert.True(currentWake == firstWake, "early ticks retain the timer for the same deadline")
+		assert.True(currentWake.deadline.Equal(floor))
+	})
+}
+
 func pollingSchedulerFixture(t *testing.T, run SyncFunc) *Scheduler {
 	t.Helper()
 	dir := t.TempDir()

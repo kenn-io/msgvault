@@ -447,8 +447,11 @@ func (s *Scheduler) RemoveAccount(email string) {
 		delete(s.schedules, email)
 		s.logger.Info("removed schedule", "email", email)
 	}
-	if r := s.accounts[email]; r != nil && r.entry != 0 {
-		s.cron.Remove(r.entry)
+	if r := s.accounts[email]; r != nil {
+		cancelAccountPollWakeLocked(r)
+		if r.entry != 0 {
+			s.cron.Remove(r.entry)
+		}
 	}
 	delete(s.accounts, email)
 	delete(s.pending, email)
@@ -571,6 +574,9 @@ func (s *Scheduler) Stop() context.Context {
 
 	s.mu.Lock()
 	s.stopped = true
+	for _, r := range s.accounts {
+		cancelAccountPollWakeLocked(r)
+	}
 	s.mu.Unlock()
 
 	cronCtx := s.cron.Stop()
