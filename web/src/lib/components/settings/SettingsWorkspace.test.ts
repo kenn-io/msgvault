@@ -840,7 +840,7 @@ it('retries setup while the message index is not current', async () => {
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
   });
   render(SettingsWorkspace, { client, operationsController });
-  expect((await screen.findByRole('alert')).textContent).toBe('invalid embed cron');
+  expect((await screen.findByRole('alert')).textContent).toBe('invalid embed cron.');
   await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
   await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
   expect(localPosts(seen)[0].body).toBeUndefined();
