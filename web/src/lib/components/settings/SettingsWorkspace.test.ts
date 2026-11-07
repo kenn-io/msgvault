@@ -323,14 +323,14 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
     await screen.findByRole('heading', { name: 'Server' });
     expect(screen.getByLabelText('Stop when idle after')).toBeDefined();
-    const advanced = screen.getByText('Advanced', { selector: 'summary span' }).closest('details')!;
+    const advanced = screen.getAllByRole('group').find(group => within(group).queryByText('Advanced'))!;
     expect(within(advanced).getByRole('switch', { name: 'Trace every SQL statement' })).toBeDefined();
     const config = screen.getByText('Set in config.toml').closest('details')!;
     expect(within(config).getByText('Bind address')).toBeDefined();
     expect(within(config).getByText('127.0.0.1')).toBeDefined();
     expect(within(config).getByText('The daemon picks a free port')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
-    const archiveTuning = screen.getByText('Advanced', { selector: 'summary span' }).closest('details')!;
+    const archiveTuning = screen.getAllByRole('group').find(group => within(group).queryByText('Advanced'))!;
     expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 

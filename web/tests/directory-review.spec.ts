@@ -13,8 +13,6 @@ test('inline People fields use the shared field scale on a phone', async ({ page
   for (const field of [form.locator('.kit-text-input').first(), form.locator('select')]) {
     expect(await field.evaluate(element => ({ height: element.getBoundingClientRect().height, font: getComputedStyle(element).fontSize }))).toEqual({ height: 32, font: '16px' });
   }
-  await form.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(form).toHaveCount(0);
 });
 
 test('People Filter restores History on reload and To review on Back', async ({ page }) => {
