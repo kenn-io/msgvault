@@ -53,6 +53,43 @@ poll_interval = "30s"
 	})
 }
 
+func TestAccountPollingRearmsEarlyCronTickAtEligibility(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := newSerialWorkTracker()
+		release, ok := gate.BeginWork()
+		require.True(ok)
+		var calls atomic.Int32
+		s := pollingSchedulerFixture(t, func(context.Context, string) error {
+			calls.Add(1)
+			return nil
+		}).WithWorkTracker(gate)
+		defer func() {
+			release()
+			<-s.Stop().Done()
+		}()
+
+		s.Start()
+		synctest.Wait()
+		require.True(s.Status()[0].Queued, "startup catchup is waiting for the shared gate")
+		time.Sleep(time.Second)
+		release()
+		synctest.Wait()
+		require.EqualValues(1, calls.Load(), "the first successful acquisition follows gate admission")
+		nextEligible := s.Status()[0].NextEligiblePoll
+		require.True(nextEligible.After(time.Now()))
+
+		time.Sleep(29 * time.Second) // the periodic timer reaches its original 30s phase
+		synctest.Wait()
+		assert.EqualValues(1, calls.Load(), "an early periodic tick must not acquire before eligibility")
+		time.Sleep(time.Second) // the 1s gate delay makes eligibility t31, just after that tick
+		synctest.Wait()
+		assert.EqualValues(2, calls.Load(), "the deferred tick wakes at eligibility instead of waiting until t60")
+		assert.True(time.Now().Before(nextEligible.Add(30 * time.Second)))
+	})
+}
+
 func pollingSchedulerFixture(t *testing.T, run SyncFunc) *Scheduler {
 	t.Helper()
 	dir := t.TempDir()

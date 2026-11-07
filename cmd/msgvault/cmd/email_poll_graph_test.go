@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +46,8 @@ func TestRapidEmailGraphProfileMismatchPrecedesArchiveMutation(t *testing.T) {
 }
 
 func TestRapidGraphAcquisitionRetainsFloorForTruncated503(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -60,15 +61,15 @@ func TestRapidGraphAcquisitionRetainsFloorForTruncated503(t *testing.T) {
 	client := msmail.NewClient(server.URL, func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
 	client.DeferProviderRetries()
 	_, err := client.GetRaw(t.Context(), "/messages")
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
 
 	acquisitionErr := rapidAcquisitionResult(t.Context(), err, false, client.RetryNotBefore())
 	var acquisition *scheduler.AcquisitionError
-	require.ErrorAs(t, acquisitionErr, &acquisition)
-	require.ErrorIs(t, acquisitionErr, io.ErrUnexpectedEOF)
-	assert.NotEmpty(t, acquisitionErr.Error())
-	assert.True(t, acquisition.NotBefore.After(time.Now()), "a truncated 503 retains its response retry floor")
+	require.ErrorAs(acquisitionErr, &acquisition)
+	require.ErrorIs(acquisitionErr, io.ErrUnexpectedEOF)
+	assert.NotEmpty(acquisitionErr.Error())
+	assert.True(acquisition.NotBefore.After(time.Now()), "a truncated 503 retains its response retry floor")
 	var throttled *msgraph.ThrottledError
-	assert.False(t, errors.As(acquisitionErr, &throttled), "a 503 body failure is not classified as a 429 throttle")
-	assert.EqualValues(t, 1, requests.Load(), "rapid acquisition returns after the truncated response")
+	assert.NotErrorAs(acquisitionErr, &throttled, "a 503 body failure is not classified as a 429 throttle")
+	assert.EqualValues(1, requests.Load(), "rapid acquisition returns after the truncated response")
 }

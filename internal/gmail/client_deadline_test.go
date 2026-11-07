@@ -60,7 +60,9 @@ func (b *delayedDeadlineBody) Read(p []byte) (int, error) {
 			b.beforeRead()
 		}
 		if b.delay > 0 {
-			time.Sleep(b.delay)
+			timer := time.NewTimer(b.delay)
+			defer timer.Stop()
+			<-timer.C
 		}
 	}
 	return b.reader.Read(p)
@@ -129,8 +131,8 @@ func TestGetProfileCaptures429RetryFloorBeforeReadingBody(t *testing.T) {
 		assert.GreaterOrEqual(floorAtBodyRead.Sub(responseAt), 59*time.Second)
 		assert.LessOrEqual(floorAtBodyRead.Sub(responseAt), 61*time.Second,
 			"the absolute floor stays anchored to response receipt")
-		assert.GreaterOrEqual(floorAtBodyRead.Sub(time.Now()), 49*time.Second)
-		assert.LessOrEqual(floorAtBodyRead.Sub(time.Now()), 51*time.Second,
+		assert.GreaterOrEqual(time.Until(floorAtBodyRead), 49*time.Second)
+		assert.LessOrEqual(time.Until(floorAtBodyRead), 51*time.Second,
 			"a slow body consumes the original Retry-After interval")
 	})
 }
@@ -168,13 +170,15 @@ func TestGetProfileCaptures403QuotaFloorFromResponseReceipt(t *testing.T) {
 		assert.GreaterOrEqual(floor.Sub(responseAt), 59*time.Second)
 		assert.LessOrEqual(floor.Sub(responseAt), 61*time.Second,
 			"the confirmed quota floor stays anchored to response receipt")
-		assert.GreaterOrEqual(floor.Sub(time.Now()), 49*time.Second)
-		assert.LessOrEqual(floor.Sub(time.Now()), 51*time.Second,
+		assert.GreaterOrEqual(time.Until(floor), 49*time.Second)
+		assert.LessOrEqual(time.Until(floor), 51*time.Second,
 			"a slow body consumes the original quota Retry-After interval")
 	})
 }
 
 func TestGetProfilePreservesFloorAndCancellationForTruncated429(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var requests atomic.Int32
@@ -189,14 +193,16 @@ func TestGetProfilePreservesFloorAndCancellationForTruncated429(t *testing.T) {
 	c.DeferProviderRetries()
 
 	_, err := c.GetProfile(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	assert.EqualValues(t, 1, requests.Load())
-	assert.True(t, c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.EqualValues(1, requests.Load())
+	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
 		"a truncated 429 retains its header floor while preserving cancellation")
 }
 
 func TestGetProfilePreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
@@ -208,11 +214,11 @@ func TestGetProfilePreservesCancellationForTruncatedSuccessResponse(t *testing.T
 	})
 
 	_, err := c.GetProfile(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	assert.NotEmpty(t, err.Error())
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.NotEmpty(err.Error())
 	_, throttled := errors.AsType[*ThrottledError](err)
-	assert.False(t, throttled, "a successful response with a broken body is not a throttle")
+	assert.False(throttled, "a successful response with a broken body is not a throttle")
 }
 
 func TestTruncated429MutationIsNotAutomaticallyRetried(t *testing.T) {
@@ -247,6 +253,8 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			name = "rapid mutation is not sent after a shared floor arrives"
 		}
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			limiter := NewRateLimiter(1000)
@@ -275,7 +283,7 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			select {
 			case <-source.started:
 			case <-ctx.Done():
-				require.NoError(t, ctx.Err(), "the first request never reached token acquisition")
+				require.NoError(ctx.Err(), "the first request never reached token acquisition")
 			}
 
 			second := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "second-token"}), WithRateLimiter(limiter))
@@ -289,8 +297,8 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			})
 			_, secondErr := second.GetProfile(ctx)
 			var throttle *ThrottledError
-			require.ErrorAs(t, secondErr, &throttle)
-			assert.EqualValues(t, 1, secondSends.Load())
+			require.ErrorAs(secondErr, &throttle)
+			assert.EqualValues(1, secondSends.Load())
 
 			close(release)
 			released = true
@@ -298,16 +306,16 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			select {
 			case firstErr = <-firstDone:
 			case <-ctx.Done():
-				require.NoError(t, ctx.Err(), "the first request did not finish after token release")
+				require.NoError(ctx.Err(), "the first request did not finish after token release")
 			}
 			if rapid {
 				var floorErr *ThrottledError
-				require.ErrorAs(t, firstErr, &floorErr)
-				assert.False(t, errors.Is(firstErr, errWriteOutcomeUnknown), "a floor-blocked mutation was not sent")
-				assert.Zero(t, firstSends.Load())
+				require.ErrorAs(firstErr, &floorErr)
+				assert.NotErrorIs(firstErr, errWriteOutcomeUnknown, "a floor-blocked mutation was not sent")
+				assert.Zero(firstSends.Load())
 			} else {
-				require.NoError(t, firstErr)
-				assert.EqualValues(t, 1, firstSends.Load())
+				require.NoError(firstErr)
+				assert.EqualValues(1, firstSends.Load())
 			}
 		})
 	}

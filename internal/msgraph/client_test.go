@@ -39,7 +39,9 @@ func (b *delayedGraphResponseBody) Read(p []byte) (int, error) {
 			b.beforeRead()
 		}
 		if b.delay > 0 {
-			time.Sleep(b.delay)
+			timer := time.NewTimer(b.delay)
+			defer timer.Stop()
+			<-timer.C
 		}
 	}
 	return b.reader.Read(p)
@@ -92,13 +94,15 @@ func TestGetRawCapturesRetryFloorAtThrottledResponseHeaders(t *testing.T) {
 		assert.GreaterOrEqual(floorAtBodyRead.Sub(responseAt), 59*time.Second)
 		assert.LessOrEqual(floorAtBodyRead.Sub(responseAt), 61*time.Second,
 			"the absolute floor stays anchored to response receipt")
-		assert.GreaterOrEqual(floorAtBodyRead.Sub(time.Now()), 49*time.Second)
-		assert.LessOrEqual(floorAtBodyRead.Sub(time.Now()), 51*time.Second,
+		assert.GreaterOrEqual(time.Until(floorAtBodyRead), 49*time.Second)
+		assert.LessOrEqual(time.Until(floorAtBodyRead), 51*time.Second,
 			"a slow body consumes the original Retry-After interval")
 	})
 }
 
 func TestGetRawPreservesRetryFloorAndCancellationForTruncatedThrottledResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	c := NewClient("https://graph.example.test", func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
@@ -114,14 +118,16 @@ func TestGetRawPreservesRetryFloorAndCancellationForTruncatedThrottledResponse(t
 	})
 
 	_, err := c.GetRaw(ctx, "/messages")
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	assert.EqualValues(t, 1, requests.Load())
-	assert.True(t, c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.EqualValues(1, requests.Load())
+	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
 		"a truncated 429 retains its header floor even when body reading cancels the request")
 }
 
 func TestGetRawPreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	c := NewClient("https://graph.example.test", func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
@@ -136,12 +142,12 @@ func TestGetRawPreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
 	})
 
 	_, err := c.GetRaw(ctx, "/messages")
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	assert.NotEmpty(t, err.Error())
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.NotEmpty(err.Error())
 	_, throttled := errors.AsType[*ThrottledError](err)
-	assert.False(t, throttled, "a successful response with a broken body is not a throttle")
-	assert.EqualValues(t, 1, requests.Load())
+	assert.False(throttled, "a successful response with a broken body is not a throttle")
+	assert.EqualValues(1, requests.Load())
 }
 
 // GetRawMetered charges every response it reads, failed and broken ones
