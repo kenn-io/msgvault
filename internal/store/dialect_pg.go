@@ -2387,11 +2387,14 @@ var exclusiveLockTables = []string{
 	// sync_runs gate before child writes (including FK checks on messages).
 	// Publication commit writes publications then claims; generation cleanup
 	// uses the reverse order, so table ordering alone cannot fence both safely.
-	"recording_references", "visual_publications", "visual_work_claims",
+	"recording_references",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
+	// Ungated attachment updates invalidate publications through triggers.
+	// Drain attachments before fencing those trigger writes.
+	"visual_publications", "visual_work_claims",
 	"matrix_encrypted_events", "matrix_megolm_claims", "matrix_pending_edits",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
