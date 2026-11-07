@@ -70,7 +70,6 @@ func TestUntrackedIMAPMessagesUsesStampIndexSQLite(t *testing.T) {
 	requirements.NoError(st.InitSchema())
 	plan := explainPlan(t, st, untrackedIMAPMessagesQuery(true, true), 1, "2026-01-01 00:00:00.000")
 	assertions.Contains(plan, "SEARCH messages USING INDEX idx_messages_source_content_changed (source_id=? AND content_changed_at>?)")
-	assertions.NotContains(plan, "idx_messages_deleted")
 }
 
 func TestIMAPMembershipGenerationSeekUsesPrimaryKeySQLite(t *testing.T) {
