@@ -54,6 +54,29 @@ func (s *Store) ValidateSchemaContext(ctx context.Context) error {
 	if version != SchemaVersion {
 		return fmt.Errorf("archive schema version %d does not match %d; run setup with the matching release", version, SchemaVersion)
 	}
+	return s.validateArchiveUIDContext(ctx)
+}
+
+// InitSchemaUnlessCurrentContext prepares an archive for writes. Current
+// PostgreSQL archives validate identity and reconcile the default collection
+// without schema DDL. Other archives run the full initializer.
+func (s *Store) InitSchemaUnlessCurrentContext(ctx context.Context) error {
+	if s.IsPostgreSQL() {
+		version, err := s.SchemaVersionContext(ctx)
+		if err != nil {
+			return err
+		}
+		if version == SchemaVersion {
+			if err := s.validateArchiveUIDContext(ctx); err != nil {
+				return err
+			}
+			return s.EnsureDefaultCollectionContext(ctx)
+		}
+	}
+	return s.InitSchemaContext(ctx)
+}
+
+func (s *Store) validateArchiveUIDContext(ctx context.Context) error {
 	uid, err := s.ArchiveUIDContext(ctx)
 	if err != nil {
 		return err

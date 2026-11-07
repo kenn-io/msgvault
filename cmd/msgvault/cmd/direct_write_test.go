@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
@@ -23,17 +24,11 @@ func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
 	if os.Getenv("MSGVAULT_TEST_DB") == "" {
 		t.Skip("requires PostgreSQL")
 	}
-	st := testutil.NewTestStore(t)
+	f := storetest.New(t)
+	st := f.Store
 	cfg := lifecycleTestConfig(t.TempDir())
 	setMatrixTestDatabaseURL(t, st, cfg)
-	source, err := st.GetOrCreateSource("imap", "writer@example.test")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "held-thread", "Held write")
-	require.NoError(err)
-	messageID, err := st.UpsertMessageContext(t.Context(), &store.Message{
-		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "held", MessageType: "email",
-	})
-	require.NoError(err)
+	messageID := f.CreateMessage("held")
 
 	writer, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)

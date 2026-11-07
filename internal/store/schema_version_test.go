@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
@@ -17,6 +18,42 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestInitSchemaUnlessCurrentPostgreSQLWithOpenWriter(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	f := storetest.New(t)
+	messageID := f.CreateMessage("held")
+	writer, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Rollback()) }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx), "daemon schema startup completes while another session holds a message write")
+}
+
+func TestInitSchemaUnlessCurrentPostgreSQLRepairsDefaultCollection(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	f := storetest.New(t)
+	_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM collection_sources WHERE source_id = $1`, f.Source.ID)
+	require.NoError(err)
+	collection, err := f.Store.GetCollectionByNameContext(t.Context(), store.DefaultCollectionName)
+	require.NoError(err)
+	require.Empty(collection.SourceIDs)
+
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(t.Context()))
+	collection, err = f.Store.GetCollectionByNameContext(t.Context(), store.DefaultCollectionName)
+	require.NoError(err)
+	assert.Equal(t, []int64{f.Source.ID}, collection.SourceIDs)
+}
 
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	require := require.New(t)
