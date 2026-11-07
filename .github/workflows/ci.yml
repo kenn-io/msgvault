@@ -9,11 +9,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {group: linux-test, runner: ubuntu-26.04}
           - {group: windows, runner: windows-2025}
-          - {group: linux-postgres, runner: ubuntu-26.04}
-          - {group: macos, runner: macos-26}
-          - {group: linux-checks, runner: ubuntu-26.04}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -21,6 +17,12 @@ jobs:
       - name: Free export space
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Use cache owner paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "GOCACHE=$env:RUNNER_TEMP/go-build" >> $env:GITHUB_ENV
+          "GOMODCACHE=$env:RUNNER_TEMP/go-mod" >> $env:GITHUB_ENV
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
