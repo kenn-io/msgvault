@@ -20,7 +20,7 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
 
-test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
+test('pointer-free archive journey leaves an overflowing Display menu and preserves focus, announcements, and history', async ({ page }) => {
   await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [sourceStatus({ scheduled: false })] } }));
   const fixture = await loadMixedArchive();
