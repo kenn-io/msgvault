@@ -658,3 +658,20 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "exact vectors retained")
 }
+
+func TestLocalEmbeddingsOllamaRetriesUnfinishedInitialBuild(t *testing.T) {
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "")
+	f.ollamaTags = true
+	f.start(t)
+	f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
+	require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
+	require.NoError(err)
+	require.NotNil(building, "the first setup saved a generation that still needs its vectors")
+	f.onEmbedding = nil
+	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "Retry setup must resume the provider it just selected")
+	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(results, 1)
+}
