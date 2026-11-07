@@ -203,17 +203,6 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 	}
 }
 
-func TestImportDatabaseVersion331(t *testing.T) {
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	st := testutil.NewTestStore(t)
-
-	summary := runImport(t, st, dir, t.TempDir())
-
-	assert.Equal(t, expectedMessages(), importedMessages(t, st))
-	assert.Equal(t, int64(7), summary.MessagesAdded)
-}
-
 func TestImportDirectChatRecipients(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)

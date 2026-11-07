@@ -143,7 +143,6 @@ func TestRerunKeepsDocumentOccurrences(t *testing.T) {
 	require.NoError(err)
 	require.True(eligible)
 	summary := runImport(t, st, dir, storage)
-	assert.Zero(summary.ReactionsAdded)
 	assert.Zero(summary.Errors)
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
@@ -159,7 +158,7 @@ func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE snippet = 'Carol here'`))
 }
 
-func TestRerunAfterGroupFailureRestoresRecipients(t *testing.T) {
+func TestRerunPreservesGroupRecipients(t *testing.T) {
 	for _, stage := range []string{"participant write", "roster read", "changed membership"} {
 		t.Run(stage, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

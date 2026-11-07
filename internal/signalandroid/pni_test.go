@@ -9,90 +9,63 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
-func TestReimportRecycledPhoneKeepsSendersSeparate(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `DELETE FROM message WHERE _id <> 100`)
-	st, attachments := testutil.NewTestStore(t), t.TempDir()
-	runImport(t, st, dir, attachments)
-	original, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
-	require.NoError(err)
-	require.NotZero(original)
-
-	const newACI = "0f0f0f0f-0000-4000-8000-000000000008"
-	changeFixture(t, dir,
-		`UPDATE recipient SET aci = '`+newACI+`' WHERE _id = 2`,
-		`UPDATE message SET date_sent = 1700000500000, date_received = 1700000500001 WHERE _id = 100`)
-	runImport(t, st, dir, attachments)
-
-	replacement, hasPhone, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, newACI)
-	require.NoError(err)
-	require.NotZero(replacement)
-	assert.NotEqual(original, replacement)
-	assert.False(hasPhone)
-	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	for _, tc := range []struct {
-		message string
-		sender  int64
-	}{
-		{"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1), original},
-		{"signal:aci:" + newACI + ":peer:1700000500000", replacement},
-	} {
-		var sender int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
-		assert.Equal(tc.sender, sender)
-	}
-	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
-	require.NoError(err)
-	assert.Equal(original, owner)
-}
-
 func TestReimportRecycledPhoneKeepsUnnamedFormerOwner(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	first, second := t.TempDir(), t.TempDir()
-	signalfixture.Write(t, first, signalfixture.Current, 0)
-	changeFixture(t, first,
-		`DELETE FROM message WHERE _id <> 100`,
-		`UPDATE recipient SET system_joined_name = NULL, profile_joined_name = NULL WHERE _id = 2`)
-	st, attachments := testutil.NewTestStore(t), t.TempDir()
-	runImport(t, st, first, attachments)
-	original, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
-	require.NoError(err)
-	require.NotZero(original)
-	var name string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), original).Scan(&name))
-	require.Empty(name)
-
-	const newACI = "0f0f0f0f-0000-4000-8000-000000000008"
-	signalfixture.Write(t, second, signalfixture.Current, 0)
-	changeFixture(t, second,
-		`DELETE FROM message WHERE _id <> 100`,
-		`UPDATE recipient SET aci = '`+newACI+`', system_joined_name = 'Replacement Example', profile_joined_name = NULL WHERE _id = 2`,
-		`UPDATE message SET date_sent = 1700000500000, date_received = 1700000500001 WHERE _id = 100`)
-	runImport(t, st, second, attachments)
-
-	var phoneOwner int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id, COALESCE(display_name, '') FROM participants WHERE phone_number = ?`), signalfixture.AlicePhone).Scan(&phoneOwner, &name))
-	assert.Equal(original, phoneOwner)
-	assert.Empty(name, "the new account's name must leave the former owner's historical messages unnamed")
-	replacement, hasPhone, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, newACI)
-	require.NoError(err)
-	require.NotZero(replacement)
-	assert.NotEqual(original, replacement)
-	assert.False(hasPhone)
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), replacement).Scan(&name))
-	assert.Equal("Replacement Example", name)
-	for _, tc := range []struct {
-		message string
-		sender  int64
-	}{
-		{"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1), original},
-		{"signal:aci:" + newACI + ":peer:1700000500000", replacement},
+	for _, tc := range []struct{ name, formerName, replacementName string }{
+		{"named owner", "Alice Example", "Alice Example"},
+		{"unnamed owner", "", "Replacement Example"},
 	} {
-		var sender int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
-		assert.Equal(tc.sender, sender)
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			first, second := t.TempDir(), t.TempDir()
+			signalfixture.Write(t, first, signalfixture.Current, 0)
+			changeFixture(t, first, `DELETE FROM message WHERE _id <> 100`)
+			if tc.formerName == "" {
+				changeFixture(t, first, `UPDATE recipient SET system_joined_name = NULL, profile_joined_name = NULL WHERE _id = 2`)
+			}
+			st, attachments := testutil.NewTestStore(t), t.TempDir()
+			runImport(t, st, first, attachments)
+			original, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
+			require.NoError(err)
+			require.NotZero(original)
+			var name string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), original).Scan(&name))
+			require.Equal(tc.formerName, name)
+
+			const newACI = "0f0f0f0f-0000-4000-8000-000000000008"
+			signalfixture.Write(t, second, signalfixture.Current, 0)
+			changeFixture(t, second,
+				`DELETE FROM message WHERE _id <> 100`,
+				`UPDATE recipient SET aci = '`+newACI+`', system_joined_name = '`+tc.replacementName+`', profile_joined_name = NULL WHERE _id = 2`,
+				`UPDATE message SET date_sent = 1700000500000, date_received = 1700000500001 WHERE _id = 100`)
+			runImport(t, st, second, attachments)
+
+			var phoneOwner int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id, COALESCE(display_name, '') FROM participants WHERE phone_number = ?`), signalfixture.AlicePhone).Scan(&phoneOwner, &name))
+			assert.Equal(original, phoneOwner)
+			assert.Equal(tc.formerName, name, "the former owner keeps the name recorded before the number was recycled")
+			replacement, hasPhone, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, newACI)
+			require.NoError(err)
+			require.NotZero(replacement)
+			assert.NotEqual(original, replacement)
+			assert.False(hasPhone)
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), replacement).Scan(&name))
+			assert.Equal(tc.replacementName, name)
+			for _, tc := range []struct {
+				message string
+				sender  int64
+			}{
+				{"signal:aci:" + signalfixture.AliceACI + ":peer:" + ms(signalfixture.TAlice1), original},
+				{"signal:aci:" + newACI + ":peer:1700000500000", replacement},
+			} {
+				var sender int64
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
+				assert.Equal(tc.sender, sender)
+			}
+			assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+			owner, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
+			require.NoError(err)
+			assert.Equal(original, owner)
+		})
 	}
 }
 
@@ -252,7 +225,7 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 	}
 }
 
-func TestReviewRecycledPhoneDoesNotReuseOldPhoneChat(t *testing.T) {
+func TestRecycledPhoneStartsNewChat(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dir := t.TempDir()
 	signalfixture.WritePNIOnly(t, dir, signalfixture.Current)

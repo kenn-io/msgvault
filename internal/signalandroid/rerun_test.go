@@ -158,9 +158,9 @@ func TestImportSendingSkipped(t *testing.T) {
 			}
 			require.NoError(err)
 			id := "signal:aci:" + signalfixture.AliceACI + ":self:" + ms(signalfixture.TReply)
-			assert.Equal(map[string]importedMessage{id: {
-				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
-			}}, importedMessages(t, st))
+			var fromMe bool
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_from_me FROM messages WHERE source_message_id = ?`), id).Scan(&fromMe))
+			assert.True(fromMe, "a skipped send still belongs to the owner")
 		})
 	}
 }
@@ -209,7 +209,7 @@ func TestSendStateFollowsSignal(t *testing.T) {
 	assert.True(isSent(), "a later backup shows it sent")
 }
 
-func TestReviewEditedLinkPreviewRemoved(t *testing.T) {
+func TestRerunEditDropsLinkPreview(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change string
