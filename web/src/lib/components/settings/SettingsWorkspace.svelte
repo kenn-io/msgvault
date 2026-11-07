@@ -27,6 +27,7 @@
   import { runOperationAction } from '../../operations/actions';
   import type { OperationsController } from '../../operations/controller.svelte';
   import { pendingSecret } from '../../settings/secrets';
+  import { provideUnsavedForms } from '../../settings/unsaved-forms.svelte';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
     isChange,
@@ -173,10 +174,12 @@
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
+  const unsavedForms = provideUnsavedForms();
+  const unsaved = $derived(dirtyCount > 0 || unsavedForms.any);
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
   const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
   registerLeave?.(
-    (leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true),
+    (leave, stay) => unsaved && !saving && (pendingLeave = { leave, stay }, true),
     () => { pendingLeave = undefined; }
   );
   onDestroy(() => registerLeave?.(undefined));
@@ -191,6 +194,7 @@
     const leave = pendingLeave?.leave;
     pendingLeave = undefined;
     discardChanges();
+    unsavedForms.discard();
     leave?.();
   }
   // An emptied number field is a draft in progress, not a value: it keeps the
@@ -491,11 +495,11 @@
   }
 </script>
 
-<svelte:window onbeforeunload={(event) => { if (dirtyCount > 0) event.preventDefault(); }} />
+<svelte:window onbeforeunload={(event) => { if (unsaved) event.preventDefault(); }} />
 
 {#snippet settingsFooter()}
   {#if pendingLeave}
-    <span class="unsaved" role="status">Leave Settings and discard {dirtyCount} unsaved {dirtyCount === 1 ? 'change' : 'changes'}?</span>
+    <span class="unsaved" role="status">Leave Settings and discard unsaved changes?</span>
     <span use:focusStay>
       <Button label="Stay" tone="neutral" surface="outline" onclick={stay} />
     </span>
