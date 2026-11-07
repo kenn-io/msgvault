@@ -268,7 +268,7 @@ func TestPostgreSQLPolicySetupReadiness(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, admin.Close()) })
 	schema := "archive_" + strings.ToLower(rand.Text())
 	t.Cleanup(func() {
-		_, err := admin.ExecContext(t.Context(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		assert.NoError(t, err)
 	})
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
