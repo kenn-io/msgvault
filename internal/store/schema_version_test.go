@@ -22,6 +22,7 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
 	for _, repair := range []string{"default collection", "account identity keys", "system seeds"} {
 		t.Run(repair, func(t *testing.T) {
 			require := require.New(t)
+			assert := assert.New(t)
 			f := storetest.New(t)
 			if !f.Store.IsPostgreSQL() {
 				t.Skip("requires PostgreSQL")
@@ -35,7 +36,7 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
 				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
 				collection, err := f.Store.GetCollectionByNameContext(ctx, store.DefaultCollectionName)
 				require.NoError(err)
-				assert.Equal(t, []int64{f.Source.ID}, collection.SourceIDs)
+				assert.Equal([]int64{f.Source.ID}, collection.SourceIDs)
 			case "account identity keys":
 				require.NoError(f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "Alice@Example.com", "manual"))
 				// A previous-release writer omits address_key, leaving its default ''.
@@ -46,7 +47,7 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
 				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
 				identities, err := f.Store.ListAccountIdentitiesContext(ctx, f.Source.ID)
 				require.NoError(err)
-				assert.Len(t, identities, 1, "current archives repair case variants left by previous-release writers")
+				assert.Len(identities, 1, "current archives repair case variants left by previous-release writers")
 			case "system seeds":
 				definition, err := f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
 				require.NoError(err)
@@ -60,10 +61,10 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
 				definition, err = f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
 				require.NoError(err)
 				require.NotNil(definition.Options)
-				assert.Equal(t, 280, definition.Options.MaxLength)
+				assert.Equal(280, definition.Options.MaxLength)
 				repaired, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "neighbor")
 				require.NoError(err)
-				assert.True(t, repaired.IsSymmetric)
+				assert.True(repaired.IsSymmetric)
 			}
 		})
 	}
