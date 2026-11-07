@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -21,15 +22,20 @@ type MediaAttachmentResult struct {
 }
 
 type MediaAttachmentSearch struct {
-	Results   []MediaAttachmentResult `json:"results"`
-	Truncated bool                    `json:"truncated"`
-	Error     *ErrorResponse          `json:"error,omitempty"`
+	RequestedMode string                      `json:"requested_mode"`
+	ActualMode    string                      `json:"actual_mode"`
+	Coverage      docbankmedia.SearchCoverage `json:"coverage" doc:"Coverage of delivered mirrored versions, excluding files awaiting upload"`
+	Partial       bool                        `json:"partial"`
+	Degradations  []string                    `json:"degradations"`
+	Results       []MediaAttachmentResult     `json:"results"`
+	Truncated     bool                        `json:"truncated"`
+	Error         *ErrorResponse              `json:"error,omitempty"`
 }
 
 // SearchAttachments searches delivered attachment versions within the scope limit.
 // It keeps Docbank's ranking and maps only to currently visible messages.
-func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
-	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
+func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query, mode string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
+	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}, RequestedMode: mode, ActualMode: "unavailable", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Degradations: []string{}}
 	fail := func(err error) (MediaAttachmentSearch, error) {
 		response.Error = attachmentSearchError(err)
 		return response, err
@@ -42,9 +48,26 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 	if scopeExceeded {
 		return fail(errMediaSearchScope)
 	}
-	// Docbank lexical search spans profiles but requires a registered name.
-	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile, Limit: limit}
+	profile := reader.SearchProfile
+	if mode == "lexical" {
+		profile = suppliedTranscriptProfile
+	}
+	actual := mode
+	if profile == "" {
+		// Lexical spans profiles but still requires a registered profile name.
+		profile = suppliedTranscriptProfile
+		if mode == "semantic" {
+			return fail(errMediaSearchMode)
+		}
+		if mode == "hybrid" {
+			actual = "lexical"
+			response.Partial = true
+			response.Degradations = append(response.Degradations, "semantic_unconfigured")
+		}
+	}
+	request := docbankmedia.SearchRequest{Query: query, Mode: actual, ContentFirst: true, Profile: profile, Limit: limit}
 	if len(versions) == 0 {
+		response.Partial = response.Partial || mode != "lexical"
 		return response, nil
 	}
 	fence, err := reader.Client.VaultFence(remoteCtx, versions)
@@ -57,6 +80,10 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		return fail(err)
 	}
 	response.Truncated = report.Truncated
+	response.ActualMode, response.Coverage = report.ActualMode, report.Coverage
+	response.Degradations = append(response.Degradations, report.Degradations...)
+	response.Partial = response.Partial || mode != report.ActualMode || len(response.Degradations) > 0 ||
+		(report.ActualMode != "lexical" && report.Coverage.State != "complete")
 	if err := reader.visible(ctx, &response, report.Results, limit, resolve); err != nil {
 		response.Error = &ErrorResponse{Error: "server_error", Message: "Attachment search is unavailable."}
 		return response, err
@@ -100,8 +127,20 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 // Other failures keep Docbank's code.
 func attachmentSearchError(err error) *ErrorResponse {
 	_, failure := mediaSearchFailure(err)
+	if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {
+		switch remote.Reason {
+		case "processing_profile_unavailable":
+			failure.Error = remote.Reason
+		case "processing_consent_required":
+			return &ErrorResponse{Error: remote.Reason, Message: "Attachment search is unavailable."}
+		}
+	}
+	if failure.Error == "media_search_mode_unavailable" || failure.Error == "processing_profile_unavailable" {
+		failure.Message = "Set integrations.docbank.attachment_search_profile to an existing Docbank processing profile with embeddings for semantic attachment search."
+		return &failure
+	}
 	if failure.Error == "media_search_scope_limit" {
-		failure.Message = "Attachment search supports at most 4096 mirrored files excluding images, audio, and video; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"
+		failure.Message = "Attachment search supports at most 4096 mirrored files excluding audio and video; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"
 		return &failure
 	}
 	if failure.Error == "invalid_media_search" {

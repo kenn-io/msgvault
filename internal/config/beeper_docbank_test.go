@@ -28,6 +28,7 @@ api_key_env = "DOCBANK_TEST_KEY"
 all_sources_upload_consent = true
 attachment_upload_consent = true
 attachment_folder = "/msgvault/files"
+attachment_search_profile = "existing-profile"
 asr_profile = "voice-asr"
 reference_consent = true
 reference_origins = ["https://cap.example.test"]
@@ -39,7 +40,7 @@ reference_origins = ["https://cap.example.test"]
 	assert.Equal(DocbankIntegrationConfig{
 		Enabled: true, URL: "http://127.0.0.1:8080",
 		APIKeyEnv: "DOCBANK_TEST_KEY", AllSourcesUploadConsent: true, ASRProfile: "voice-asr",
-		AttachmentUploadConsent: true, AttachmentFolder: "/msgvault/files",
+		AttachmentUploadConsent: true, AttachmentFolder: "/msgvault/files", AttachmentSearchProfile: "existing-profile",
 		ReferenceConsent: true, ReferenceOrigins: []string{"https://cap.example.test"},
 	}, cfg.Integrations.Docbank)
 	require.NoError(os.WriteFile(path, []byte("[integrations.docbank]\nreference_origins = [\"https://cap.example.test\", \"https://example.test/s/private-token\"]\n"), 0o600))

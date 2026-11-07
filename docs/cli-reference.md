@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: 2026-11-07
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2845,11 +2845,11 @@ msgvault media search "quarterly numbers"
 msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
 ```
 
-`--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+`--mode lexical` is the default. On newer `main` builds, `--mode semantic` and `--mode hybrid` retrieve mirrored attachment content through Docbank; recordings return `recordings_error=media_search_mode_unavailable`. v0.23.0 supports lexical mode only. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
 The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
-Media search also prints a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
+Media search also prints a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by actual attachment mode, coverage, partial status, degradations, truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. Semantic/hybrid retrieval uses the configured `attachment_search_profile`; see [attachment modes and formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
 ## documents
 

@@ -240,7 +240,7 @@ func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config
 	if err != nil {
 		return nil, err
 	}
-	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder(), SearchProfile: cfg.AttachmentSearchProfile}, nil
 }
 
 func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {

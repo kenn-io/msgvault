@@ -7803,8 +7803,21 @@ components:
       type: object
     MediaAttachmentSearch:
       properties:
+        actual_mode:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+          description: Coverage of delivered mirrored versions, excluding files awaiting upload
+        degradations:
+          items:
+            type: string
+          type: array
         error:
           $ref: "#/components/schemas/ErrorResponse"
+        partial:
+          type: boolean
+        requested_mode:
+          type: string
         results:
           items:
             $ref: "#/components/schemas/MediaAttachmentResult"
@@ -7812,6 +7825,11 @@ components:
         truncated:
           type: boolean
       required:
+        - requested_mode
+        - actual_mode
+        - coverage
+        - partial
+        - degradations
         - results
         - truncated
       type: object
@@ -17002,7 +17020,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.46.0
+  version: 3.47.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24678,7 +24696,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Lexical mode; semantic and hybrid are unavailable
+        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
           in: query
           name: mode
           schema:

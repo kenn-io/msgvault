@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: 2026-11-07
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -341,11 +341,21 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. On newer `main` builds, semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 
-Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as audio or video. Docbank searches the text it can extract from those files, including image OCR and generated image-understanding renditions. Generated descriptions and possible meme meaning remain model interpretations; they do not establish the sender's beliefs, endorsement, or intent. Configure and consent to the appropriate image processing profile in Docbank first. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding audio and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+
+On newer `main` builds, use `msgvault media search "project approval" --mode semantic`
+for meaning or `--mode hybrid` for meaning and keywords. Set
+[`attachment_search_profile`](../configuration.md#mirror-stored-attachments-to-docbank)
+to an existing Docbank profile with processed and embedded files. Docbank owns
+conversion, embeddings, ranking, and query-provider consent; msgvault's local
+document extraction can stay off. v0.23.0 supports only lexical retrieval.
+Matches found only by semantic retrieval can have an empty excerpt; their message and file IDs still identify the carrying attachment.
+
+See the [API contract](../api-server.md#media-transcript-search) for attachment mode, delivered-version coverage, fallback, errors and the unchanged 4,096-file limit.
 
 Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
 
