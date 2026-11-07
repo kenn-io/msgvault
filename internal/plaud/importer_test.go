@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -50,7 +51,7 @@ func (f *fakeSource) Recording(_ context.Context, id string) (Recording, error) 
 }
 
 func fixture(id string) Recording {
-	return Recording{File: File{ID: id, Name: "Planning", StartedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), DurationMS: 90000}, Notes: []Note{{ID: "summary", Type: "auto_sum_note", Content: "Release summary"}}, Segments: []Segment{{Speaker: "Speaker 1", Text: "Ship the searchable release", StartSeconds: 2}}, TranscriptBlock: "transaction_polish"}
+	return Recording{File: File{ID: id, Name: "Planning", StartedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), DurationMS: 90000}, Notes: []Note{{ID: "summary", Type: "auto_sum_note", Content: "Release summary"}}, Segments: []Segment{{Speaker: "Speaker 1", Text: "Ship the searchable release", StartSeconds: new(2.0)}}, TranscriptBlock: "transaction_polish"}
 }
 
 func sourceFixture(ids ...string) *fakeSource {
@@ -95,7 +96,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	st, src := registered(t)
 	f := sourceFixture("f")
 	r := f.recordings["f"]
-	r.Segments[0].StartSeconds, r.Segments[0].EndSeconds = 1.25, 2.75
+	r.Segments[0].StartSeconds, r.Segments[0].EndSeconds = new(1.25), 2.75
 	f.recordings["f"] = r
 	imp := NewImporter(st, f)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
@@ -152,6 +153,38 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	assert.Equal(int64(1), hits)
 	assert.NotContains(string(raw), "presigned")
 	assert.NotContains(string(raw), "data_link")
+	var legacy evidence
+	require.NoError(json.Unmarshal(raw, &legacy))
+	legacy.Version, legacy.Segments[0].StartSeconds = 1, new(0.0)
+	snapshot, err := legacy.snapshot(src.ID, "user@example.com")
+	require.NoError(err)
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	raw, err = st.GetMessageRaw(mid)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(raw, &legacy))
+	assert.Equal(1, legacy.Version)
+	body, err = st.GetMessageBodyText(t.Context(), mid)
+	require.NoError(err)
+	assert.NotContains(body, "[00:00] Alex Example")
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		_, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: meetingcontent.Decode("plaud_json", raw, nil)}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+	}
+	r.Segments = []Segment{{Speaker: "Alex Example", Text: "Ship the searchable release", StartSeconds: new(0.0), EndSeconds: 2.75}}
+	f.recordings["f"] = r
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	raw, err = st.GetMessageRaw(mid)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(raw, &legacy))
+	assert.Equal(2, legacy.Version)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		_, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: meetingcontent.Decode("plaud_json", raw, nil)}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.NoError(err)
+	}
 	f.pages = nil
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)

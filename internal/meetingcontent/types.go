@@ -69,10 +69,11 @@ type Segment struct {
 }
 
 type Transcript struct {
-	State    State     `json:"state"`
-	Reason   string    `json:"reason,omitempty"`
-	Text     string    `json:"text,omitempty"`
-	Segments []Segment `json:"segments,omitempty"`
+	recordingOrigin *time.Time
+	State           State     `json:"state"`
+	Reason          string    `json:"reason,omitempty"`
+	Text            string    `json:"text,omitempty"`
+	Segments        []Segment `json:"segments,omitempty"`
 }
 
 type Action struct {

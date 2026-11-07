@@ -20,6 +20,7 @@ func TestSubtitleParserDisplayText(t *testing.T) {
 	}
 	for _, format := range []string{"srt", "vtt"} {
 		t.Run(format, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			entry := subtitleEntry()
 			entry.Content.Transcript.Segments[0].Speaker = "R&D"
 			entry.Content.Transcript.Segments[0].Text = "Hello --> 世界\nnext & done"
@@ -30,8 +31,17 @@ func TestSubtitleParserDisplayText(t *testing.T) {
 				display = `A<&>: Hello --> 世界\Nnext & <b>`
 			}
 			rendered, err := renderSubtitles(entry, format)
-			require.NoError(t, err)
-			assert.Equal(t, []string{"0:00:00.00,0:00:01.50," + display}, subtitleDisplay(t, ffmpeg, format, rendered))
+			require.NoError(err)
+			assert.Equal([]string{"0:00:00.00,0:00:01.50," + display}, subtitleDisplay(t, ffmpeg, format, rendered))
+			indented := Decode("omi_json", []byte(`{"transcript_segments":[{"speaker_name":"Example","text":"First\n  indented","start":1,"end":2}]}`), nil)
+			result, err := Render("synthetic", []Entry{{Content: indented}}, PacketOptions{Format: Format(format), MaxBytes: 4096})
+			if format == "srt" {
+				require.ErrorContains(err, "use --format vtt")
+				assert.Nil(result)
+			} else {
+				require.NoError(err)
+				assert.Equal([]string{`0:00:01.00,0:00:02.00,Example: First\N  indented`}, subtitleDisplay(t, ffmpeg, format, result.Content))
+			}
 		})
 	}
 }

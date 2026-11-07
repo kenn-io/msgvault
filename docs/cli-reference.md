@@ -94,8 +94,8 @@ The byte budget covers subtitle output alone; overflow fails without partial
 cues. Timing and formatting errors, including NUL text or labels, leave an existing
 output file untouched.
 Both formats show speaker prefixes. WebVTT escapes text and labels; SRT emits
-plain text and refuses `<`, braces, backslashes, and complete timing headers
-at the start of a payload line. Use VTT for those payloads. See
+plain text and refuses `<`, braces, backslashes, complete timing headers at the
+start of a payload line, and leading/trailing ASCII whitespace. Use VTT for those payloads. See
 [subtitle timing and source limits](usage/meetings.md#export-subtitles).
 
 ### meetings actions and meetings metrics

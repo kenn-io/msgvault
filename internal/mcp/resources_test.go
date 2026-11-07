@@ -773,18 +773,19 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			checks.NotContains(raw, privateMessage)
 		})
 	}
+	assert, require := assert.New(t), require.New(t)
 	oldDaemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/health", r.URL.Path)
+		assert.Equal("/api/v1/health", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": "3.46.0"}))
+		assert.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": "3.46.0"}))
 	}))
 	t.Cleanup(oldDaemon.Close)
 	oldClient, err := daemonclient.New(daemonclient.Config{URL: oldDaemon.URL, AllowInsecure: true, HTTPClient: oldDaemon.Client()})
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, oldClient.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(oldClient.Close()) })
 	format := generated.MeetingContextRequestFormat("srt")
 	_, capabilityError := oldClient.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
-	require.Error(t, capabilityError)
+	require.Error(capabilityError)
 	for _, test := range []struct {
 		err  error
 		want string
@@ -796,12 +797,12 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 		result, _, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 			return nil, newInternalError("meeting context", test.err)
 		})(t.Context(), &sdkmcp.CallToolRequest{}, nil)
-		require.NoError(t, err)
-		require.True(t, result.IsError)
-		require.Len(t, result.Content, 1)
+		require.NoError(err)
+		require.True(result.IsError)
+		require.Len(result.Content, 1)
 		message, ok := result.Content[0].(*sdkmcp.TextContent)
-		require.True(t, ok)
-		assert.Equal(t, test.want, message.Text)
+		require.True(ok)
+		assert.Equal(test.want, message.Text)
 	}
 }
 

@@ -21,9 +21,9 @@ var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*
 func renderSubtitles(entry Entry, format string) (string, error) {
 	transcript := entry.Content.Transcript
 	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
-		return "", fmt.Errorf("subtitle timing unavailable: complete structured transcript required (state %s, reason %s)", transcript.State, transcript.Reason)
+		return "", errors.New("Cannot export subtitles: a complete timed transcript is unavailable")
 	}
-	var origin *time.Time
+	origin := transcript.recordingOrigin
 	relative, absolute := false, false
 	for i, s := range transcript.Segments {
 		if strings.ContainsRune(s.Text, 0) || strings.ContainsRune(s.Speaker, 0) {
@@ -36,19 +36,19 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 			relative = true
 		} else {
 			absolute = true
-			if s.StartedAt != nil && (origin == nil || s.StartedAt.Before(*origin)) {
+			if transcript.recordingOrigin == nil && s.StartedAt != nil && (origin == nil || s.StartedAt.Before(*origin)) {
 				origin = s.StartedAt
 			}
 		}
 	}
-	if relative && absolute {
+	if relative && absolute && transcript.recordingOrigin == nil {
 		origin = nil
 		for _, s := range transcript.Segments {
 			if strings.TrimSpace(s.Text) == "" || s.OffsetSeconds == nil && s.EndOffsetSeconds == nil {
 				continue
 			}
 			if s.OffsetSeconds == nil || s.EndOffsetSeconds == nil || s.StartedAt == nil || s.EndedAt == nil {
-				return "", errors.New("subtitle timing insufficient: mixed coordinates have no proven recording origin")
+				return "", errors.New("Cannot align timestamps: the recording start is unknown")
 			}
 			startOrigin, err := subtitleOrigin(*s.StartedAt, *s.OffsetSeconds)
 			if err != nil {
@@ -59,7 +59,7 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 				return "", err
 			}
 			if !startOrigin.Equal(endOrigin) || origin != nil && !origin.Equal(startOrigin) {
-				return "", errors.New("subtitle timing insufficient: contradictory recording origins")
+				return "", errors.New("Transcript timestamps disagree about when recording began")
 			}
 			origin = &startOrigin
 		}
@@ -87,6 +87,17 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 		switch {
 		case s.OffsetSeconds != nil && s.EndOffsetSeconds != nil:
 			start, end = *s.OffsetSeconds, *s.EndOffsetSeconds
+		case transcript.recordingOrigin != nil && (s.OffsetSeconds != nil || s.StartedAt != nil) && (s.EndOffsetSeconds != nil || s.EndedAt != nil):
+			if s.OffsetSeconds != nil {
+				start = *s.OffsetSeconds
+			} else {
+				start, err = subtitleSeconds(*origin, *s.StartedAt)
+			}
+			if s.EndOffsetSeconds != nil {
+				end = *s.EndOffsetSeconds
+			} else if err == nil {
+				end, err = subtitleSeconds(*origin, *s.EndedAt)
+			}
 		case s.OffsetSeconds != nil && s.EndOffsetSeconds == nil && s.StartedAt == nil && s.EndedAt != nil && entry.Meeting.SourceType == "hex" && entry.Meeting.OccurredAt != nil:
 			// Hex1850 retains end = recording origin + end_ms and start_ms as offset.
 			start = *s.OffsetSeconds
@@ -97,7 +108,7 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 				end, err = subtitleSeconds(*origin, *s.EndedAt)
 			}
 		default:
-			return "", fmt.Errorf("subtitle timing insufficient at segment %d: complete bounds in one timing coordinate system required", i+1)
+			return "", fmt.Errorf("Segment %d needs start and end times measured from the same starting point", i+1)
 		}
 		if err != nil {
 			return "", fmt.Errorf("subtitle timing at segment %d: %w", i+1, err)
@@ -117,10 +128,10 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 		} else {
 			unsafe := strings.ContainsAny(text, "<{}\\")
 			for line := range strings.SplitSeq(text, "\n") {
-				unsafe = unsafe || srtTimingHeader.MatchString(line)
+				unsafe = unsafe || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line
 			}
 			if unsafe {
-				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve literal markup or timing/control syntax; use --format vtt", i+1)
+				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve markup, timing syntax, or leading/trailing whitespace; use --format vtt", i+1)
 			}
 		}
 		cues = append(cues, cue{startMS, endMS, text})
@@ -162,12 +173,12 @@ func subtitleTimestamp(ms int64, separator string) string {
 func subtitleOrigin(stamp time.Time, offset float64) (time.Time, error) {
 	nanos := math.Round(offset * float64(time.Second))
 	if !finite(nanos) || nanos < 0 || nanos >= float64(math.MaxInt64) {
-		return time.Time{}, errors.New("subtitle timing invalid: recording origin offset overflows")
+		return time.Time{}, errors.New("Recording start offset exceeds the supported range")
 	}
 	elapsed := time.Duration(nanos)
 	// One division preserves the encoded float coordinate without split rounding.
 	if float64(elapsed)/float64(time.Second) != offset {
-		return time.Time{}, errors.New("subtitle timing insufficient: recording origin is not exact")
+		return time.Time{}, errors.New("Cannot determine the recording's precise start time")
 	}
 	return stamp.Add(-elapsed), nil
 }

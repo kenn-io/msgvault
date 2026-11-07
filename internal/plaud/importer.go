@@ -229,7 +229,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			raw, err = scoped.GetMessageRawContext(ctx, existing[f.ID])
 			if err == nil {
 				var old evidence
-				if json.Unmarshal(raw, &old) != nil || old.Version != 1 || old.FileID != f.ID {
+				if json.Unmarshal(raw, &old) != nil || (old.Version != 1 && old.Version != 2) || old.FileID != f.ID {
 					err = errors.New("invalid archived plaud evidence")
 				} else {
 					e.preserve(old)

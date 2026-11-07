@@ -56,6 +56,10 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		}
 	}
 	start, startOK := rawTime(recording["startedAt"], false)
+	if startOK {
+		recordingStart := start
+		c.Transcript.recordingOrigin = &recordingStart
+	}
 	end, endOK := rawTime(recording["endedAt"], false)
 	if startOK && endOK && end.After(start) {
 		setDuration(&c, end.Sub(start).Seconds(), DurationProvider)

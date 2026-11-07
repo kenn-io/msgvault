@@ -213,34 +213,35 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 func TestMeetingSubtitleCapabilityIsSharedAndFormatSpecific(t *testing.T) {
 	for _, version := range []string{"3.46.0", "", "broken", "3.47.0"} {
 		t.Run(version, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			posts := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/api/v1/health" {
 					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
-					assert.NoError(t, err)
+					assert.NoError(err)
 					return
 				}
 				posts++
 				_, err := w.Write([]byte(`{"schema_version":1,"format":"json","content":"","content_bytes":0,"truncated":false,"omitted_message_ids":[]}`))
-				assert.NoError(t, err)
+				assert.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, client.Close()) })
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(client.Close()) })
 			for _, format := range []generated.MeetingContextRequestFormat{"json", "markdown", "srt", "vtt"} {
 				before := posts
 				_, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
 				if (format == "srt" || format == "vtt") && version != "3.47.0" {
-					require.EqualError(t, err, "meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon")
+					require.EqualError(err, "meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon")
 					var coded interface{ APIErrorCode() string }
-					require.ErrorAs(t, err, &coded)
-					assert.Equal(t, "meeting_subtitles_unsupported", coded.APIErrorCode())
-					assert.Equal(t, before, posts)
+					require.ErrorAs(err, &coded)
+					assert.Equal("meeting_subtitles_unsupported", coded.APIErrorCode())
+					assert.Equal(before, posts)
 				} else {
-					require.NoError(t, err)
-					assert.Equal(t, before+1, posts)
+					require.NoError(err)
+					assert.Equal(before+1, posts)
 				}
 			}
 		})
