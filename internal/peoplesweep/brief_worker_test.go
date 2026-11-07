@@ -23,14 +23,15 @@ var briefLaneOff = false
 
 // briefFakeStore is the durable brief state a worker run reads.
 type briefFakeStore struct {
-	enrolled       bool
-	eligibility    BriefEligibility
-	highWater      int64
-	changedAfter   int64
-	cadenceDueAt   *time.Time
-	ensuredWork    []int64
-	trackedWork    bool
-	eligibilityErr error
+	enrolled        bool
+	eligibility     BriefEligibility
+	highWater       int64
+	changedAfter    int64
+	cadenceDueAt    *time.Time
+	ensuredWork     []int64
+	trackedWork     bool
+	eligibilityErr  error
+	retiredVersions []int
 }
 
 func (s *briefFakeStore) PersonSweepBriefEligibility(
@@ -226,7 +227,7 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 	require.NotNil(applied.Brief)
 	assert.Equal(BriefProgramID, applied.Brief.ProgramID)
 	assert.Equal(BriefProgramFingerprint(), applied.Brief.ProgramFingerprint)
-	assert.Equal(BriefRendererPolicyV1, applied.Brief.Rendered.Policy)
+	assert.Equal(BriefRendererPolicyV2, applied.Brief.Rendered.Policy)
 	assert.NotEmpty(applied.Brief.Rendered.Text)
 	assert.Equal(int64(90), applied.Brief.Boundary.ThroughSequence,
 		"the boundary records the archive high water the plan captured")
@@ -1097,4 +1098,9 @@ func TestPersonSweepWorkerCapsTheRenderedBrief(t *testing.T) {
 	assert.Empty(stored.FollowUps)
 	assert.NotNil(stored.LastMeaningfulInteraction)
 	assert.Len(trimmed.Evidence, 1, "the pointers cover only the kept item")
+}
+
+func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, _ Lease, version int, _ time.Time) error {
+	s.retiredVersions = append(s.retiredVersions, version)
+	return nil
 }

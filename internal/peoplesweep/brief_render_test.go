@@ -12,7 +12,7 @@ func TestRenderBriefMatchesTheFrozenRenderedForm(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("person-brief-render-v1", BriefRendererPolicyV1)
+	assert.Equal("person-brief-render-v2", BriefRendererPolicyV2)
 
 	archive := &briefFakeArchive{
 		items: []EvidenceItem{
@@ -54,7 +54,7 @@ func TestRenderBriefMatchesTheFrozenRenderedForm(t *testing.T) {
 
 	rendered, err := RenderBrief(parsed, window)
 	require.NoError(err)
-	assert.Equal(BriefRendererPolicyV1, rendered.Policy)
+	assert.Equal(BriefRendererPolicyV2, rendered.Policy)
 	assert.Equal(
 		"Last time you talked (Aug 29, chat): they were preparing for a role change and "+
 			"spending weekends learning to cook. "+

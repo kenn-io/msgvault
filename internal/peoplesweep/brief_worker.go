@@ -84,9 +84,11 @@ var (
 
 // BriefEligibility is one enrolled and tracked person's current brief state, in
 // the sweep's own vocabulary. Version is zero when the person has no brief yet;
-// otherwise the fields describe the latest version, whose status is current
-// unless the owner rejected it.
+// otherwise the fields describe the latest version, whose status is current,
+// rejected by the owner, or superseded after automatic event-evidence retirement.
 type BriefEligibility struct {
+	ProgramVersion string
+
 	PersonID    int64
 	EnabledAt   time.Time
 	Version     int
@@ -114,6 +116,7 @@ type BriefStore interface {
 	// LatestPersonSweepChangeSequence is the archive's commit high water, which
 	// the brief records as its window's through_sequence.
 	LatestPersonSweepChangeSequence(ctx context.Context) (int64, error)
+	RetirePersonSweepBrief(ctx context.Context, lease Lease, expectedVersion int, at time.Time) error
 	// EnsurePersonSweepWork publishes work even when extraction is caught up.
 	// forceAvailable clears retry backoff for an explicit generation request;
 	// automatic scheduling preserves it. Untracked people return false.
@@ -127,9 +130,16 @@ type BriefResult struct {
 	ProgramID          string
 	ProgramVersion     string
 	ProgramFingerprint string
-	Boundary           BriefBoundary
-	Structured         jsontext.Value
-	Rendered           RenderedBrief
+	// EventMemorySourceVersion names the prior brief whose retained events
+	// informed this result. Apply refuses to supersede that version if it is no
+	// longer current, so a concurrent owner rejection cannot restore its events.
+	EventMemorySourceVersion int
+	Boundary                 BriefBoundary
+	Structured               jsontext.Value
+	Rendered                 RenderedBrief
+	// CurrentEventEvidenceRefs remain mandatory at final source alignment even
+	// when capacity retires a resolved event from the future boundary memory.
+	CurrentEventEvidenceRefs []EvidenceRef
 	// Evidence is the archive evidence the structure cites, in citation order.
 	// The store aligns each input and writes the surviving rows as the brief's
 	// evidence pointers.
@@ -140,9 +150,16 @@ type BriefResult struct {
 
 // briefPlan is the decision the worker made before spending anything.
 type briefPlan struct {
-	run             bool
-	previous        *BriefBoundary
-	throughSequence int64
+	preflightFailure        error
+	preflightWindow         *BriefWindow
+	bootstrap               bool
+	run                     bool
+	previous                *BriefBoundary
+	throughSequence         int64
+	asOf                    time.Time
+	retireVersion           int
+	priorEventMemoryVersion int
+	retireOnly              bool
 }
 
 // planPersonBrief decides whether this attempt should append a brief call. It
@@ -159,17 +176,6 @@ func (w *Worker) planPersonBrief(
 	// A brief packet always carries verbatim archive text, so a profile without
 	// allow_sensitive refuses it exactly as it refuses real extraction. Deciding
 	// that here keeps the refusal free instead of paying for a window first.
-	if !profile.AllowSensitive {
-		return briefPlan{}, nil
-	}
-	// The window reads only the brief lanes. A profile whose allowed_sources
-	// miss all of them, such as document_text or meeting_text alone, would plan a brief that
-	// BuildBriefWindow then refuses, so the attempt would record an internal
-	// failure for a condition that is plain configuration. Decide it here, for
-	// free, and let a scheduled run skip the step cleanly.
-	if len(briefWindowLanes(profile.AllowedSources)) == 0 {
-		return briefPlan{}, nil
-	}
 	eligibility, enrolled, err := w.Brief.PersonSweepBriefEligibility(ctx, personID)
 	if err != nil {
 		return briefPlan{}, err
@@ -177,12 +183,31 @@ func (w *Worker) planPersonBrief(
 	if !enrolled {
 		return briefPlan{}, nil
 	}
+	profileAllowed := profile.AllowSensitive && len(briefWindowLanes(profile.AllowedSources)) > 0
+	if !profileAllowed {
+		if eligibility.Status != BriefStatusCurrent || eligibility.Boundary == nil || len(eligibility.Boundary.EventMemory) == 0 {
+			return briefPlan{}, nil
+		}
+		return briefPlan{previous: eligibility.Boundary, asOf: now.UTC(), run: true,
+			retireVersion: eligibility.Version, retireOnly: true}, nil
+	}
 	through, err := w.Brief.LatestPersonSweepChangeSequence(ctx)
 	if err != nil {
 		return briefPlan{}, err
 	}
-	plan := briefPlan{previous: eligibility.Boundary, throughSequence: through}
-	if mode.normalized() == BriefModeForce {
+	plan := briefPlan{previous: eligibility.Boundary, throughSequence: through, asOf: now.UTC()}
+	plan.bootstrap = eligibility.Status == BriefStatusCurrent && eligibility.ProgramVersion == "v1"
+	if eligibility.Status == BriefStatusCurrent && eligibility.Boundary != nil && len(eligibility.Boundary.EventMemory) > 0 {
+		plan.retireVersion = eligibility.Version
+		plan.priorEventMemoryVersion = eligibility.Version
+	}
+	if (eligibility.Status == BriefStatusSuperseded || eligibility.Status == BriefStatusRejected) && plan.previous != nil {
+		previous := *plan.previous
+		previous.EventMemory = nil
+		previous.NextEventAt = nil
+		plan.previous = &previous
+	}
+	if mode.normalized() == BriefModeForce || plan.bootstrap {
 		plan.run = true
 		return plan, nil
 	}
@@ -195,12 +220,21 @@ func (w *Worker) planPersonBrief(
 		plan.run = true
 		return plan, nil
 	}
+	if eligibility.Status == BriefStatusCurrent && eligibility.Boundary.NextEventAt != nil &&
+		!eligibility.Boundary.NextEventAt.After(now) {
+		plan.run = true
+		return plan, nil
+	}
 	fresh, err := w.Brief.HasPersonSweepChangesAfter(
 		ctx, personID, eligibility.Boundary.ThroughSequence)
 	if err != nil {
 		return briefPlan{}, err
 	}
 	if !fresh {
+		return plan, nil
+	}
+	if eligibility.Status == BriefStatusSuperseded || len(eligibility.Boundary.EventMemory) > 0 {
+		plan.run = true
 		return plan, nil
 	}
 	if eligibility.GeneratedAt == nil ||
@@ -227,7 +261,9 @@ func (w *Worker) briefWindowRequest(
 	plan briefPlan, batchOrdinal int,
 ) BriefWindowRequest {
 	return BriefWindowRequest{
-		PersonID: personID, Catalog: catalog, Profile: profile,
+		initialWindow:           plan.bootstrap,
+		priorEventMemoryVersion: plan.priorEventMemoryVersion,
+		PersonID:                personID, Catalog: catalog, Profile: profile, AsOf: plan.asOf,
 		MaxItems: w.Config.Brief.MaxItems, MaxBytes: w.Config.Brief.MaxBytes,
 		OverlapItems:     w.Config.Brief.OverlapItems,
 		MaxOutputTokens:  w.Config.Brief.MaxOutputTokens,
@@ -244,6 +280,39 @@ func briefEvidenceInputs(parsed ParsedBrief) []personfacts.EvidenceInput {
 	inputs := make([]personfacts.EvidenceInput, len(parsed.Evidence))
 	copy(inputs, parsed.Evidence)
 	return inputs
+}
+
+// briefCurrentEventEvidenceRefs captures the source refs behind event
+// highlights that remain in the current structure. Future memory may retire a
+// resolved event for capacity, but its current rendered statement still needs
+// every cited source revalidated before storage.
+func briefCurrentEventEvidenceRefs(parsed ParsedBrief, window BriefWindow) ([]EvidenceRef, error) {
+	itemsByID := make(map[string]EvidenceItem, len(window.Items))
+	for _, item := range window.Items {
+		id := packetEvidenceID(item)
+		if id != "" {
+			itemsByID[id] = item
+		}
+	}
+	refs := make([]EvidenceRef, 0)
+	seen := make(map[EvidenceRef]struct{})
+	for _, highlight := range parsed.Output.Highlights {
+		if highlight.LifeEvent == nil {
+			continue
+		}
+		for _, id := range highlight.EvidenceIDs {
+			item, ok := itemsByID[id]
+			if !ok {
+				return nil, fmt.Errorf("person brief event evidence %q is missing from its window", id)
+			}
+			if _, exists := seen[item.Ref]; exists {
+				continue
+			}
+			seen[item.Ref] = struct{}{}
+			refs = append(refs, item.Ref)
+		}
+	}
+	return refs, nil
 }
 
 // renderBriefResult renders, trims, and freezes one validated brief. The
@@ -266,6 +335,14 @@ func renderBriefResult(
 func newBriefResult(
 	parsed ParsedBrief, rendered RenderedBrief, window BriefWindow, generatedAt time.Time,
 ) (BriefResult, error) {
+	eventMemory, err := validateBriefEventMemoryCapacity(parsed, window)
+	if err != nil {
+		return BriefResult{}, err
+	}
+	currentEventEvidenceRefs, err := briefCurrentEventEvidenceRefs(parsed, window)
+	if err != nil {
+		return BriefResult{}, err
+	}
 	structured, err := json.Marshal(parsed.Output, json.Deterministic(true))
 	if err != nil {
 		return BriefResult{}, fmt.Errorf("encode person brief structure: %w", err)
@@ -275,9 +352,11 @@ func newBriefResult(
 	}
 	return BriefResult{
 		ProgramID: BriefProgramID, ProgramVersion: BriefProgramVersion,
-		ProgramFingerprint: BriefProgramFingerprint(),
-		Boundary:           window.Boundary.Canonical(), Structured: structured, Rendered: rendered,
-		Evidence: briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
+		ProgramFingerprint:       BriefProgramFingerprint(),
+		EventMemorySourceVersion: window.Request.retainedEventMemoryVersion,
+		Boundary:                 freezeBriefEventMemory(window, eventMemory), Structured: structured, Rendered: rendered,
+		CurrentEventEvidenceRefs: currentEventEvidenceRefs,
+		Evidence:                 briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
 		GeneratedAt: generatedAt.UTC(),
 	}, nil
 }
@@ -293,23 +372,39 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 		result.ProgramFingerprint != BriefProgramFingerprint() {
 		return errors.New("person brief result does not use the frozen brief program")
 	}
-	if result.Rendered.Policy != BriefRendererPolicyV1 || result.Rendered.Text == "" ||
+	if result.Rendered.Policy != BriefRendererPolicyV2 || result.Rendered.Text == "" ||
 		len(result.Rendered.Sentences) == 0 {
 		return errors.New("person brief result has no rendered paragraph")
 	}
 	if !result.Structured.IsValid() {
 		return errors.New("person brief result structure is not JSON")
 	}
-	if result.DroppedItemCount < 0 || result.GeneratedAt.IsZero() {
+	if result.DroppedItemCount < 0 || result.EventMemorySourceVersion < 0 || result.GeneratedAt.IsZero() {
 		return errors.New("person brief result has an invalid drop count or generation time")
 	}
 	if result.Boundary.PacketSHA256 == "" || result.Boundary.ItemCount <= 0 {
 		return errors.New("person brief result has an incomplete input boundary")
 	}
+	evidenceRefs := make(map[string]struct{}, len(result.Evidence))
 	for _, evidence := range result.Evidence {
 		if evidence.PersonID != personID {
 			return errors.New("person brief evidence belongs to another person")
 		}
+		evidenceRefs[evidence.SourceRef] = struct{}{}
+	}
+	seenEventRefs := make(map[string]struct{}, len(result.CurrentEventEvidenceRefs))
+	for _, ref := range result.CurrentEventEvidenceRefs {
+		encoded, err := EncodePersonSweepEvidenceRef(ref)
+		if err != nil {
+			return fmt.Errorf("person brief current event evidence ref: %w", err)
+		}
+		if _, exists := evidenceRefs[encoded]; !exists {
+			return errors.New("person brief current event source is absent from its evidence")
+		}
+		if _, duplicate := seenEventRefs[encoded]; duplicate {
+			return errors.New("person brief current event evidence ref is duplicated")
+		}
+		seenEventRefs[encoded] = struct{}{}
 	}
 	return nil
 }
@@ -343,8 +438,21 @@ func (w *Worker) runBriefCall(
 	reservations *[]BudgetReservation,
 ) (*BriefResult, FailureClass, Lease, error) {
 	lease := call.lease
-	window, err := BuildBriefWindow(ctx, w.Archive, w.briefWindowRequest(
-		lease.PersonID, call.catalog, call.profile, call.plan, call.batchOrdinal))
+	if err := call.plan.preflightFailure; err != nil {
+		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+	}
+	var window BriefWindow
+	var err error
+	if call.plan.preflightWindow != nil {
+		// The preflight already froze this attempt's bounded packet. Only the
+		// call coordinate becomes known after extraction; it is not wire data.
+		window = *call.plan.preflightWindow
+		window.Request.BatchOrdinal = call.batchOrdinal
+		window.Batch.Ordinal = call.batchOrdinal
+	} else {
+		window, err = BuildBriefWindow(ctx, w.Archive, w.briefWindowRequest(
+			lease.PersonID, call.catalog, call.profile, call.plan, call.batchOrdinal))
+	}
 	if err != nil {
 		if errors.Is(err, ErrNoBriefEvidence) {
 			// Nothing to summarize is not a failure: the person is enrolled but

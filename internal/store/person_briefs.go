@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 var (
@@ -98,6 +100,7 @@ type PersonBriefInsert struct {
 	Model                     string
 	ModelVersion              string
 	ProviderPolicyFingerprint string
+	EventMemorySourceVersion  int
 	Boundary                  jsontext.Value
 	Structured                jsontext.Value
 	RenderedText              string
@@ -505,7 +508,23 @@ func (s *Store) insertPersonBriefTx(
 		input.PersonID).Scan(&nextVersion); err != nil {
 		return PersonBrief{}, fmt.Errorf("read next person %d brief version: %w", input.PersonID, err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE person_briefs
+	if input.EventMemorySourceVersion > 0 {
+		result, err := tx.ExecContext(ctx, `UPDATE person_briefs
+			SET status = ?, superseded_at = ?
+			WHERE person_id = ? AND version = ? AND status = ?`,
+			PersonBriefStatusSuperseded, generatedAt, input.PersonID,
+			input.EventMemorySourceVersion, PersonBriefStatusCurrent)
+		if err != nil {
+			return PersonBrief{}, fmt.Errorf("supersede event memory source brief for person %d: %w", input.PersonID, err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return PersonBrief{}, fmt.Errorf("supersede event memory source brief for person %d: %w", input.PersonID, err)
+		}
+		if changed != 1 {
+			return PersonBrief{}, peoplesweep.ErrBriefEventMemoryChanged
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE person_briefs
 		SET status = ?, superseded_at = ?
 		WHERE person_id = ? AND status = ?`,
 		PersonBriefStatusSuperseded, generatedAt, input.PersonID,
@@ -593,6 +612,9 @@ func (s *Store) getPersonBriefEnrollmentTx(
 func validatePersonBriefInsert(input PersonBriefInsert) error {
 	if input.PersonID <= 0 || input.GenerationID <= 0 {
 		return errors.New("apply person brief: person and generation are required")
+	}
+	if input.EventMemorySourceVersion < 0 {
+		return errors.New("apply person brief: event memory source version must not be negative")
 	}
 	if strings.TrimSpace(input.ProgramID) == "" || strings.TrimSpace(input.ProgramVersion) == "" ||
 		strings.TrimSpace(input.ProgramFingerprint) == "" {

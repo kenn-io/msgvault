@@ -394,6 +394,13 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	}
 	for index := range output.Highlights {
 		output.Highlights[index].Text = textutil.SanitizeTerminal(output.Highlights[index].Text)
+		if event := output.Highlights[index].LifeEvent; event != nil {
+			event.Quote = textutil.SanitizeTerminal(event.Quote)
+			event.Question = textutil.SanitizeTerminal(event.Question)
+			if event.Resolution != nil {
+				event.Resolution.Quote = textutil.SanitizeTerminal(event.Resolution.Quote)
+			}
+		}
 	}
 	for index := range output.FollowUps {
 		output.FollowUps[index].Question = textutil.SanitizeTerminal(output.FollowUps[index].Question)
@@ -443,7 +450,7 @@ func (s *Server) personBriefSentences(
 	brief store.PersonBrief, pointerCount int,
 ) []PersonBriefSentence {
 	empty := []PersonBriefSentence{}
-	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 {
+	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 && brief.RendererPolicy != peoplesweep.BriefRendererPolicyV2 {
 		return empty
 	}
 	var output peoplesweep.BriefOutput
@@ -451,6 +458,13 @@ func (s *Server) personBriefSentences(
 		s.logger.Error("person brief structure could not be decoded",
 			"person_id", brief.PersonID, "version", brief.Version)
 		return empty
+	}
+	if brief.RendererPolicy == peoplesweep.BriefRendererPolicyV1 {
+		for _, highlight := range output.Highlights {
+			if highlight.LifeEvent != nil {
+				return empty
+			}
+		}
 	}
 	rendered, err := peoplesweep.RenderBrief(
 		peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})

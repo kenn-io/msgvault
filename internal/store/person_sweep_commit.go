@@ -991,6 +991,23 @@ func preparePersonSweepBriefEvidence(
 	if aligner == nil {
 		return nil, errors.New("apply person sweep brief: archive evidence aligner is required")
 	}
+	mandatory := make(map[string]bool)
+	for _, memory := range request.Brief.Boundary.EventMemory {
+		for _, ref := range memory.Sources {
+			encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(ref)
+			if err != nil {
+				return nil, err
+			}
+			mandatory[encoded] = true
+		}
+	}
+	for _, ref := range request.Brief.CurrentEventEvidenceRefs {
+		encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(ref)
+		if err != nil {
+			return nil, err
+		}
+		mandatory[encoded] = true
+	}
 	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
 	seen := make(map[string]struct{}, len(request.Brief.Evidence))
 	for _, input := range request.Brief.Evidence {
@@ -1001,11 +1018,27 @@ func preparePersonSweepBriefEvidence(
 		input.RecordedTime = personFactPortableTime(input.RecordedTime)
 		result, err := aligner.Align(ctx, input)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if errors.Is(err, peoplesweep.ErrLeaseLost) {
+				return nil, err
+			}
 			if errors.Is(err, peoplesweep.ErrSourceTextUnavailable) {
+				if mandatory[input.SourceRef] {
+					return nil, peoplesweep.ErrBriefEventEvidenceChanged
+				}
 				continue
+			}
+			if mandatory[input.SourceRef] {
+				return nil, fmt.Errorf("%w: %w", peoplesweep.ErrBriefEventEvidenceChanged, err)
 			}
 			return nil, fmt.Errorf("align person brief evidence: %w", err)
 		}
+		if mandatory[input.SourceRef] && (!result.Accepted || result.SourceVersion != input.SourceVersion || result.ContentSHA256 != input.ContentSHA256) {
+			return nil, peoplesweep.ErrBriefEventEvidenceChanged
+		}
+		delete(mandatory, input.SourceRef)
 		if !result.Accepted {
 			continue
 		}
@@ -1020,6 +1053,9 @@ func preparePersonSweepBriefEvidence(
 		}
 		seen[key] = struct{}{}
 		prepared = append(prepared, preparedBriefEvidence{key: key, input: input})
+	}
+	if len(mandatory) != 0 {
+		return nil, peoplesweep.ErrBriefEventEvidenceChanged
 	}
 	return prepared, nil
 }
@@ -1054,6 +1090,7 @@ func personBriefInsertFromResult(
 		Model:                     request.Generation.Model,
 		ModelVersion:              request.Generation.ModelVersion,
 		ProviderPolicyFingerprint: request.Generation.Policy.ProviderPolicyFingerprint,
+		EventMemorySourceVersion:  brief.EventMemorySourceVersion,
 		Boundary:                  personBriefBoundaryJSON(brief.Boundary),
 		Structured:                brief.Structured,
 		RenderedText:              brief.Rendered.Text,
