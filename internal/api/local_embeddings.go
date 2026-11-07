@@ -60,7 +60,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if progress.Error != "" || running {
+	if running || (progress.Error != "" && !status.Enabled) {
 		status.Error = progress.Error
 	}
 	status.Running = running

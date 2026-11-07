@@ -17,12 +17,13 @@ import (
 
 type localSetupTestController struct {
 	calls   atomic.Int32
+	enabled atomic.Bool
 	started chan context.Context
 	release chan struct{}
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Host: "system.example.test", Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Host: "system.example.test", Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
@@ -38,7 +39,7 @@ func (c *localSetupTestController) Enable(ctx context.Context, report func(Local
 }
 
 func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
-	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "shutdown join"} {
+	for _, behavior := range []string{"request lifetime", "admission", "retry after failure", "error after turning on", "shutdown join"} {
 		t.Run(behavior, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				checks, must := assert.New(t), require.New(t)
@@ -73,6 +74,11 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					must.Equal(http.StatusAccepted, post(t.Context()).Code)
 					checks.Equal(int32(1), controller.calls.Load())
 					checks.True(status().Running)
+				case "error after turning on":
+					close(controller.release)
+					synctest.Wait()
+					controller.enabled.Store(true)
+					checks.Empty(status().Error)
 				case "retry after failure":
 					close(controller.release)
 					synctest.Wait()
