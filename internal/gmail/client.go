@@ -283,7 +283,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
 			retryAfter = httpretry.RetryAfterAt(resp.Header.Get("Retry-After"), 0, math.MaxInt64, responseAt)
 		}
-		var responseThrottle *ThrottledError
+		var responseThrottle error
 		var responsePause time.Duration
 		if resp.StatusCode == http.StatusTooManyRequests {
 			responsePause = max(30*time.Second, retryAfter)
@@ -296,7 +296,11 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 		if err != nil {
 			readErr := fmt.Errorf("read response: %w", err)
 			if remoteMutation {
-				return nil, errors.Join(fmt.Errorf("%w: %w", errWriteOutcomeUnknown, readErr), responseThrottle)
+				mutationErr := fmt.Errorf("%w: %w", errWriteOutcomeUnknown, readErr)
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					mutationErr = errors.Join(ctxErr, mutationErr)
+				}
+				return nil, mutationErr
 			}
 			if ctx.Err() != nil {
 				return nil, errors.Join(retryBudgetError(ctx.Err(), attempt+1, errors.Join(lastErr, responseThrottle)), readErr)

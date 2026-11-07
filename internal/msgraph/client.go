@@ -225,7 +225,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		responseAt := time.Now()
 		retryableResponse := resp.StatusCode == http.StatusTooManyRequests || (!once && resp.StatusCode >= 500)
 		var providerDelay time.Duration
-		var providerThrottle *ThrottledError
+		var providerThrottle error
 		if retryableResponse {
 			providerDelay = c.recordRetryFloor(resp.Header.Get("Retry-After"), attempt, responseAt)
 			retryDelay = providerDelay

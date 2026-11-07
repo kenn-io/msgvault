@@ -45,12 +45,16 @@ export function sourceFailure(
   return message || undefined;
 }
 
-/** The scheduler detail is shorter when the source status already says Failed. */
+/** The generic scheduler detail is shorter when the source status conveys the outcome. */
 export function sourceSchedulerErrorDetail(
   source: StateSource & Pick<SourceStatus, 'scheduler_last_error'>,
 ): string | undefined {
   const message = source.scheduler_last_error;
-  if (message === 'email acquisition failed; retry scheduled' && sourceRunState(source) === 'failed') {
+  const state = sourceRunState(source);
+  if (
+    (message === 'email acquisition failed; retry scheduled' && state === 'failed') ||
+    (message === 'email acquisition incomplete; retry scheduled' && state === 'partial')
+  ) {
     return 'Retry scheduled';
   }
   return message || undefined;

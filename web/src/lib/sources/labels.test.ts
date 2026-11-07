@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import {
+  syncCommand,
+  sourceFailure,
+  sourceRunState,
+  sourceSchedulerErrorDetail,
+  sourceTypeLabel,
+  syncUnavailableLabel,
+} from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -51,6 +58,15 @@ describe('source labels', () => {
 
 it('prefers the run error over the scheduler error', () => {
   expect(sourceFailure({ latest_sync: { ...run('paused'), error_message: 'Rate limit reached' }, scheduler_last_error: 'Scheduler stopped' })).toBe('Rate limit reached');
+});
+
+it.each([
+  [{ active_sync: null, latest_sync: run('failed'), scheduler_last_error: 'email acquisition failed; retry scheduled' }, 'Retry scheduled'],
+  [{ active_sync: null, latest_sync: run('completed', 1), scheduler_last_error: 'email acquisition incomplete; retry scheduled' }, 'Retry scheduled'],
+  [{ active_sync: null, latest_sync: run('completed', 1), scheduler_last_error: 'Graph request failed: 503' }, 'Graph request failed: 503'],
+  [{ active_sync: null, latest_sync: run('completed'), scheduler_last_error: 'email acquisition incomplete; retry scheduled' }, 'email acquisition incomplete; retry scheduled'],
+])('shows scheduler detail appropriate to source outcome %#', (source, want) => {
+  expect(sourceSchedulerErrorDetail(source)).toBe(want);
 });
 
 

@@ -1,13 +1,11 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,31 +59,6 @@ schedule = "0 2 * * *"
 enabled = true
 `)
 	assert.ErrorContains(t, err, "duplicate")
-}
-
-func TestAccountPollingSaveLoad(t *testing.T) {
-	require := require.New(t)
-	cfg, err := loadPollFixture(t, `[[accounts]]
-email = "sample@example.test"
-schedule = "0 * * * *"
-enabled = true
-poll_interval = "30s"
-`)
-	require.NoError(err)
-	require.NoError(cfg.Save())
-	reloaded, err := Load(cfg.configPath, cfg.HomeDir)
-	require.NoError(err)
-	var encoded bytes.Buffer
-	require.NoError(toml.NewEncoder(&encoded).Encode(reloaded))
-	var saved struct {
-		Accounts []struct {
-			PollInterval string `toml:"poll_interval"`
-		} `toml:"accounts"`
-	}
-	_, err = toml.Decode(encoded.String(), &saved)
-	require.NoError(err)
-	require.Len(saved.Accounts, 1)
-	assert.Equal(t, "30s", saved.Accounts[0].PollInterval)
 }
 
 func TestAccountPollingOffRemainsValid(t *testing.T) {

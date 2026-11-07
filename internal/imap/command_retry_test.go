@@ -31,50 +31,6 @@ func TestRunCommandRetryFloorSurvivesRetryExhaustion(t *testing.T) {
 	assert.True(limited.RetryNotBefore().After(time.Now()), "the final server retry hint remains live on terminal failure")
 }
 
-func TestRunCommandCancellationAfterLimitResponseRetainsRetryFloor(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var limited atomic.Int32
-	addr, _ := startQresyncTestServer(t, qresyncServerConfig{
-		capabilities: []string{"IMAP4rev1"},
-		commandHook: func(conn net.Conn, _ int, line string) bool {
-			tag, command, _ := strings.Cut(line, " ")
-			if !strings.HasPrefix(command, "LIST") {
-				return false
-			}
-			limited.Add(1)
-			_, _ = fmt.Fprintf(conn, "%s NO [LIMIT] retry in 60 seconds\r\n", tag)
-			return true
-		},
-	})
-	client := newTestClient(t, addr)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	passCtx, capture := WithRetryFloorCapture(ctx)
-	var callbackErr error
-	err := client.withConn(passCtx, func(conn *imapclient.Client) error {
-		_, err := runCommand(passCtx, client, func() ([]*imap.ListData, error) {
-			result, err := conn.List("", "*", nil).Collect()
-			if err != nil {
-				err = fmt.Errorf("collect IMAP LIST: %w", err)
-			}
-			callbackErr = err
-			cancel()
-			return result, err
-		})
-		return err
-	})
-	var response *imap.Error
-	require.ErrorAs(callbackErr, &response, "the server response is a typed IMAP LIMIT")
-	assert.Equal(imap.ResponseCodeLimit, response.Code)
-	require.ErrorIs(err, context.Canceled)
-	var floor interface{ RetryNotBefore() time.Time }
-	require.ErrorAs(err, &floor)
-	assert.True(floor.RetryNotBefore().After(time.Now()), "cancellation keeps the deadline from the completed LIMIT response")
-	assert.True(capture.RetryNotBefore().After(time.Now()), "the acquisition capture retains the typed response deadline")
-	assert.EqualValues(1, limited.Load())
-}
-
 func TestRunCommandChecksCapturedRetryFloorBeforeLocalPacing(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

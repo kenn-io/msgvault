@@ -117,8 +117,31 @@ func TestGetRawPreservesRetryFloorAndCancellationForTruncatedThrottledResponse(t
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	assert.EqualValues(t, 1, requests.Load())
-	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+	assert.True(t, c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
 		"a truncated 429 retains its header floor even when body reading cancels the request")
+}
+
+func TestGetRawPreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := NewClient("https://graph.example.test", func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
+	var requests atomic.Int32
+	c.http.Transport = graphTestRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       canceledGraphResponseBody{cancel: cancel, err: io.ErrUnexpectedEOF},
+		}, nil
+	})
+
+	_, err := c.GetRaw(ctx, "/messages")
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.NotEmpty(t, err.Error())
+	_, throttled := errors.AsType[*ThrottledError](err)
+	assert.False(t, throttled, "a successful response with a broken body is not a throttle")
+	assert.EqualValues(t, 1, requests.Load())
 }
 
 // GetRawMetered charges every response it reads, failed and broken ones

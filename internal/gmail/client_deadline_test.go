@@ -80,6 +80,11 @@ func (b canceledDeadlineBody) Read([]byte) (int, error) {
 
 func (canceledDeadlineBody) Close() error { return nil }
 
+type failedDeadlineBody struct{ err error }
+
+func (b failedDeadlineBody) Read([]byte) (int, error) { return 0, b.err }
+func (failedDeadlineBody) Close() error               { return nil }
+
 type waitingTokenSource struct {
 	started chan struct{}
 	release <-chan struct{}
@@ -187,8 +192,52 @@ func TestGetProfilePreservesFloorAndCancellationForTruncated429(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	assert.EqualValues(t, 1, requests.Load())
-	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+	assert.True(t, c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
 		"a truncated 429 retains its header floor while preserving cancellation")
+}
+
+func TestGetProfilePreservesCancellationForTruncatedSuccessResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       canceledDeadlineBody{cancel: cancel, err: io.ErrUnexpectedEOF},
+		}, nil
+	})
+
+	_, err := c.GetProfile(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.NotEmpty(t, err.Error())
+	_, throttled := errors.AsType[*ThrottledError](err)
+	assert.False(t, throttled, "a successful response with a broken body is not a throttle")
+}
+
+func TestTruncated429MutationIsNotAutomaticallyRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var requests atomic.Int32
+		c := newDeadlineClient(t, func(*http.Request) (*http.Response, error) {
+			if requests.Add(1) == 1 {
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     http.Header{"Retry-After": []string{"30"}},
+					Body:       failedDeadlineBody{err: io.ErrUnexpectedEOF},
+				}, nil
+			}
+			return deadlineResponse(http.StatusOK, `{}`), nil
+		})
+
+		_, err := c.request(t.Context(), OpMessagesModify, http.MethodPost, "/messages/fixture/modify", []byte(`{}`))
+		require.ErrorIs(err, errWriteOutcomeUnknown)
+		require.ErrorIs(err, io.ErrUnexpectedEOF)
+		assert.EqualValues(1, requests.Load(), "an ambiguous mutation is not retried after a truncated 429")
+		assert.True(c.RetryNotBefore().After(time.Now()), "the response floor remains recorded")
+		assert.NotEmpty(err.Error())
+	})
 }
 
 func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
@@ -255,7 +304,7 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 				var floorErr *ThrottledError
 				require.ErrorAs(t, firstErr, &floorErr)
 				assert.False(t, errors.Is(firstErr, errWriteOutcomeUnknown), "a floor-blocked mutation was not sent")
-				assert.Zero(firstSends.Load())
+				assert.Zero(t, firstSends.Load())
 			} else {
 				require.NoError(t, firstErr)
 				assert.EqualValues(t, 1, firstSends.Load())
