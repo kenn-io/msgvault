@@ -37,6 +37,8 @@ All notable changes to msgvault, grouped by release.
 - A saved person's Details tab in People shows that person's open loops in a
   read-only card, with a Check more action when coverage is incomplete.
 
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+
 ## 0.23.0
 <small>2026-11-04</small>
 
