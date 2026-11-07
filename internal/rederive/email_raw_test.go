@@ -40,6 +40,8 @@ func TestEmailUnusableRawPreservesDerivedText(t *testing.T) {
 				if rawState != "absent" {
 					r.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT raw_data, compression FROM message_raw WHERE message_id = ?"), id).Scan(&rawBefore, &compressionBefore))
 				}
+				// Archive setup may advance the revision; rederive must not.
+				revisionBefore := derivedDataRevision(t, st)
 				var sum *Summary
 				if mode == "manual" {
 					sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
@@ -61,7 +63,7 @@ func TestEmailUnusableRawPreservesDerivedText(t *testing.T) {
 				a.Len(matches, 1, "the last searchable content must survive")
 				a.Zero(sum.BodiesRewritten)
 				a.Zero(sum.Errors)
-				a.Zero(derivedDataRevision(t, st))
+				a.Equal(revisionBefore, derivedDataRevision(t, st))
 				if rawState == "absent" {
 					a.Zero(sum.MessagesScanned, "only retained MIME is scanned")
 					a.Zero(sum.Undecodable)

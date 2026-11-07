@@ -194,7 +194,7 @@ func (s *Store) PersonDaysContext(
 				SELECT aep.local_date, aep.message_id,
 				       MAX(CASE WHEN aep.evidence = 'direct' THEN 1 ELSE 0 END) AS is_direct
 				FROM activity_event_persons aep
-				WHERE ` + strings.Join(eventWhere, " AND ") + `
+				WHERE ` + strings.Join(eventWhere, " AND ") + ` AND ` + FullActivityEventWhere("aep") + `
 				GROUP BY aep.local_date, aep.message_id
 			),
 			event_days AS (
@@ -333,7 +333,7 @@ func listPersonDayActivityTx(
 			       CASE WHEN MAX(CASE WHEN aep.evidence = 'direct' THEN 1 ELSE 0 END) = 1
 			            THEN 'direct' ELSE 'co_presence' END AS evidence
 			FROM activity_event_persons aep
-			WHERE aep.person_id = ? AND aep.local_date = ?
+			WHERE aep.person_id = ? AND aep.local_date = ? AND `+FullActivityEventWhere("aep")+`
 			GROUP BY aep.message_id
 		),
 		base AS (
@@ -500,7 +500,7 @@ func listDayPersonsTx(
 			       CASE WHEN MAX(CASE WHEN aep.evidence = 'direct' THEN 1 ELSE 0 END) = 1
 			            THEN 'direct' ELSE 'co_presence' END AS evidence
 			FROM activity_event_persons aep
-			WHERE aep.local_date = ?
+			WHERE aep.local_date = ? AND `+FullActivityEventWhere("aep")+`
 			GROUP BY aep.person_id, aep.message_id
 		),
 		aggregated AS (
@@ -687,14 +687,14 @@ func (s *Store) contactStateTxContext(
 		       last_outbound_at, last_outbound_message_id,
 		       interaction_count, identity_revision, account_identity_revision,
 		       dirty_at, computed_at,
-		       (SELECT ref_kind FROM activity_events
-		        WHERE message_id = first_contact_message_id),
-		       (SELECT ref_kind FROM activity_events
-		        WHERE message_id = last_contact_message_id),
-		       (SELECT ref_kind FROM activity_events
-		        WHERE message_id = last_inbound_message_id),
-		       (SELECT ref_kind FROM activity_events
-		        WHERE message_id = last_outbound_message_id)
+		       (SELECT ae.ref_kind FROM activity_events ae JOIN messages m ON m.id=ae.message_id
+		        WHERE ae.message_id = first_contact_message_id AND `+FullMessageWhere("m")+`),
+		       (SELECT ae.ref_kind FROM activity_events ae JOIN messages m ON m.id=ae.message_id
+		        WHERE ae.message_id = last_contact_message_id AND `+FullMessageWhere("m")+`),
+		       (SELECT ae.ref_kind FROM activity_events ae JOIN messages m ON m.id=ae.message_id
+		        WHERE ae.message_id = last_inbound_message_id AND `+FullMessageWhere("m")+`),
+		       (SELECT ae.ref_kind FROM activity_events ae JOIN messages m ON m.id=ae.message_id
+		        WHERE ae.message_id = last_outbound_message_id AND `+FullMessageWhere("m")+`)
 		FROM person_contact_state
 		WHERE person_id = ?
 	`, personID).Scan(
@@ -739,8 +739,8 @@ func (s *Store) contactStateTxContext(
 			SELECT 1
 			WHERE EXISTS (
 				SELECT 1
-				FROM activity_event_persons
-				WHERE person_id = ? AND evidence = 'direct'
+				FROM activity_event_persons aep
+				WHERE aep.person_id = ? AND aep.evidence = 'direct' AND `+FullActivityEventWhere("aep")+`
 			)
 		`, personID).Scan(&hasDirect)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -753,13 +753,14 @@ func (s *Store) contactStateTxContext(
 	err = tx.QueryRowContext(ctx, `
 		SELECT ae.channel
 		FROM activity_events ae
+		JOIN messages m ON m.id = ae.message_id
 		WHERE EXISTS (
 			SELECT 1
 			FROM activity_event_persons aep
 			WHERE aep.message_id = ae.message_id
 			  AND aep.person_id = ?
 			  AND aep.evidence = 'direct'
-		)
+		) AND `+FullMessageWhere("m")+`
 		GROUP BY ae.channel
 		ORDER BY COUNT(*) DESC,
 		         CASE ae.channel
@@ -777,6 +778,11 @@ func (s *Store) contactStateTxContext(
 	if err == nil {
 		state.InferredChannel = ActivityChannel(inferred)
 	}
+	if state.Stale {
+		if err := s.refreshContactActivityViewTx(ctx, tx, personID, &state); err != nil {
+			return ContactState{}, err
+		}
+	}
 
 	values, err := listCurrentContactFrequencyTx(ctx, tx, personID)
 	if err != nil {
@@ -784,6 +790,106 @@ func (s *Store) contactStateTxContext(
 	}
 	deriveContactCadence(&state, values, now)
 	return state, nil
+}
+
+type contactStateActivityRow struct {
+	occurredAt time.Time
+	messageID  int64
+	refKind    sql.NullString
+	channel    string
+	direction  string
+	sourceID   sql.NullInt64
+	owner      sql.NullString
+}
+
+// Stale contact summaries are served from the current Full-only event set while
+// the durable projection queue catches up. This prevents a policy demotion from
+// exposing cached timestamps or counts sourced only by the newly Cold room.
+func (s *Store) refreshContactActivityViewTx(ctx context.Context, tx *loggedTx, personID int64, state *ContactState) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT ae.occurred_at, ae.message_id, ae.ref_kind, ae.channel,
+		       ae.direction, ae.owner_source_id, ae.owner_address
+		FROM activity_events ae
+		JOIN messages m ON m.id=ae.message_id
+		WHERE EXISTS (
+			SELECT 1 FROM activity_event_persons aep
+			WHERE aep.message_id=ae.message_id AND aep.person_id=? AND aep.evidence='direct'
+		) AND `+FullMessageWhere("m")+`
+		ORDER BY ae.occurred_at, ae.message_id`, personID)
+	if err != nil {
+		return fmt.Errorf("read Full contact activity for person %d: %w", personID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var evidence []contactStateActivityRow
+	for rows.Next() {
+		var row contactStateActivityRow
+		if err := rows.Scan(&row.occurredAt, &row.messageID, &row.refKind, &row.channel,
+			&row.direction, &row.sourceID, &row.owner); err != nil {
+			return fmt.Errorf("scan Full contact activity for person %d: %w", personID, err)
+		}
+		evidence = append(evidence, row)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate Full contact activity for person %d: %w", personID, err)
+	}
+	if len(evidence) == 0 {
+		state.FirstContactAt, state.LastContactAt = nil, nil
+		state.FirstContactRef, state.LastContactRef = "", ""
+		state.LastContactChannel = ""
+		state.LastContactSourceID = nil
+		state.LastContactOwner = ""
+		state.LastInboundAt, state.LastOutboundAt = nil, nil
+		state.LastInboundRef, state.LastOutboundRef = "", ""
+		state.InteractionCount = 0
+		state.InferredChannel = ""
+		return nil
+	}
+	state.LastInboundAt, state.LastOutboundAt = nil, nil
+	state.LastInboundRef, state.LastOutboundRef = "", ""
+	first, last := evidence[0], evidence[len(evidence)-1]
+	state.FirstContactAt = timePointerUTC(first.occurredAt)
+	state.FirstContactRef = activityStoredRef(first.refKind, sql.NullInt64{Int64: first.messageID, Valid: true})
+	state.LastContactAt = timePointerUTC(last.occurredAt)
+	state.LastContactRef = activityStoredRef(last.refKind, sql.NullInt64{Int64: last.messageID, Valid: true})
+	state.LastContactChannel = ActivityChannel(last.channel)
+	state.LastContactSourceID = nullInt64Pointer(last.sourceID)
+	state.LastContactOwner = last.owner.String
+	state.InteractionCount = int64(len(evidence))
+	channelCounts := make(map[string]int)
+	for _, row := range evidence {
+		channelCounts[row.channel]++
+		if row.direction == string(DirectionInbound) {
+			state.LastInboundAt = timePointerUTC(row.occurredAt)
+			state.LastInboundRef = activityStoredRef(row.refKind, sql.NullInt64{Int64: row.messageID, Valid: true})
+		}
+		if row.direction == string(DirectionOutbound) {
+			state.LastOutboundAt = timePointerUTC(row.occurredAt)
+			state.LastOutboundRef = activityStoredRef(row.refKind, sql.NullInt64{Int64: row.messageID, Valid: true})
+		}
+	}
+	state.InferredChannel = ActivityChannel(selectMostCommonActivityChannel(channelCounts))
+	return nil
+}
+
+func timePointerUTC(value time.Time) *time.Time {
+	result := value.UTC()
+	return &result
+}
+
+func selectMostCommonActivityChannel(counts map[string]int) string {
+	order := map[string]int{"email": 1, "chat": 2, "meeting": 3, "other": 4}
+	selected := ""
+	selectedCount, selectedOrder := 0, int(^uint(0)>>1)
+	for channel, count := range counts {
+		priority, ok := order[channel]
+		if !ok {
+			priority = 5
+		}
+		if count > selectedCount || (count == selectedCount && priority < selectedOrder) {
+			selected, selectedCount, selectedOrder = channel, count, priority
+		}
+	}
+	return selected
 }
 
 // contactStateFreshnessTxContext returns the current identity epoch and the

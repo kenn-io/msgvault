@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestCachePublicationCommitsDatasetsBeforeMarker(t *testing.T) {
@@ -222,7 +223,7 @@ func TestCacheLocksAllowReadersDuringStagingAndMaintenanceWhileExcludingBuilders
 	})
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
-	unlockCache, err := lockCacheAndInvalidateSyncState(analyticsDir)
+	unlockCache, err := lockCacheAndInvalidateSyncState(testutil.NewSQLiteTestStore(t), analyticsDir)
 	requirements.NoError(err, "destructive maintenance locks")
 	defer func() { requirements.NoError(unlockCache()) }()
 	release, err = query.AcquireCacheReadLock(readCtx, analyticsDir)

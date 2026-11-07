@@ -44,6 +44,9 @@ const (
 	accountScopeMinAPISchemaVersion = "3.11.0"
 	// filenameMinAPISchemaVersion is the first daemon contract with filename: filters.
 	filenameMinAPISchemaVersion = "3.14.0"
+	// includeColdMinAPISchemaVersion is the first daemon contract that parses
+	// include:cold. Older daemons read it as a text term and return no rows.
+	includeColdMinAPISchemaVersion = "3.49.0"
 	// boundedDeletionSearchMinAPISchemaVersion adds one-request bounded MCP staging.
 	boundedDeletionSearchMinAPISchemaVersion = "3.26.0"
 )
@@ -123,6 +126,9 @@ func (e *Engine) SearchSemanticMessages(
 	}
 
 	parsedQuery := search.Parse(transportQuery)
+	if parsedQuery.IncludeCold {
+		return nil, errors.New("use Fast or Deep search with include:cold")
+	}
 	parseErr := parsedQuery.Err()
 	queryMessageTypes := parsedQuery.MessageTypes
 	if parseErr != nil {
@@ -1449,6 +1455,15 @@ func (c *Client) requireListIDCapability(
 		if !supported {
 			return fmt.Errorf("account: and received: filters require daemon API schema %s or newer",
 				accountAttributionMinAPISchemaVersion)
+		}
+	}
+	if q != nil && q.IncludeCold {
+		supported, err := c.SupportsAPISchemaVersion(ctx, includeColdMinAPISchemaVersion)
+		if err != nil {
+			return fmt.Errorf("check daemon include:cold capability: %w", err)
+		}
+		if !supported {
+			return fmt.Errorf("include:cold requires daemon API schema %s or newer", includeColdMinAPISchemaVersion)
 		}
 	}
 	if q != nil && len(q.Filenames) > 0 {

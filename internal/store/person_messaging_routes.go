@@ -18,20 +18,21 @@ var ErrPersonUIDGone = errors.New("person UID retired without a surviving person
 // MessagingRouteEvidence is captured by provider sync, never by discovery.
 // The roster IDs bind route metadata to the exact persisted roster snapshot.
 type MessagingRouteEvidence struct {
-	ChatID             string    `json:"chat_id"`
-	AccountID          string    `json:"account_id"`
-	Network            string    `json:"network"`
-	NetworkLabel       string    `json:"network_label"`
-	ProviderType       string    `json:"provider_type"`
-	ObservedAt         time.Time `json:"observed_at"`
-	MembershipComplete bool      `json:"membership_complete"`
-	ParticipantIDs     []int64   `json:"participant_ids"`
-	SelfParticipantIDs []int64   `json:"self_participant_ids"`
-	MemberChatIDs      []string  `json:"member_chat_ids"`
-	MergedIntoChatID   string    `json:"merged_into_chat_id"`
-	Merged             bool      `json:"merged"`
-	Truncated          bool      `json:"truncated"`
-	Failure            string    `json:"failure"`
+	ChatID                     string    `json:"chat_id"`
+	AccountID                  string    `json:"account_id"`
+	Network                    string    `json:"network"`
+	NetworkLabel               string    `json:"network_label"`
+	ProviderType               string    `json:"provider_type"`
+	ObservedAt                 time.Time `json:"observed_at"`
+	MembershipComplete         bool      `json:"membership_complete"`
+	ParticipantIDs             []int64   `json:"participant_ids"`
+	SelfParticipantIDs         []int64   `json:"self_participant_ids"`
+	SelfParticipantIDsComplete bool      `json:"self_participant_ids_complete,omitzero"`
+	MemberChatIDs              []string  `json:"member_chat_ids"`
+	MergedIntoChatID           string    `json:"merged_into_chat_id"`
+	Merged                     bool      `json:"merged"`
+	Truncated                  bool      `json:"truncated"`
+	Failure                    string    `json:"failure"`
 }
 
 type PersonMessagingRouteQuery struct {

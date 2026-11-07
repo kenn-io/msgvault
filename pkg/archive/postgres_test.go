@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 	"go.kenn.io/msgvault/pkg/client"
@@ -65,6 +66,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(err)
 	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "Announcements")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "CEXAMPLE", conversationpolicy.Full))
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "1704110400.000001",
 		MessageType: "slack", SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true},
@@ -149,6 +151,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(err)
 	require.Len(accounts.Accounts, 1)
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "CEXAMPLE", ""))
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
 	_, err = admin.ExecContext(t.Context(), "UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))
@@ -253,6 +256,30 @@ func archiveAPI(t *testing.T, runtime *archive.Archive) *archive.Server {
 	server := archive.NewServer(archive.ServerOptions{Store: runtime.Store(), Engine: runtime.QueryEngine()})
 	t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
 	return server
+}
+
+func TestPostgreSQLPolicySetupReadiness(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires a disposable PostgreSQL database")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, admin.Close()) })
+	schema := "archive_" + strings.ToLower(rand.Text())
+	t.Cleanup(func() {
+		_, err := admin.ExecContext(t.Context(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		assert.NoError(t, err)
+	})
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
+	setup := func() error { return archive.Setup(t.Context(), opts) }
+	require.NoError(t, setup())
+	seed, err := archive.Open(t.Context(), opts)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, seed.Close()) })
+	exercisePolicySetup(t, seed.Store(), setup, func() (*archive.Archive, error) {
+		return archive.Open(t.Context(), opts)
+	})
 }
 
 func TestPostgreSQLSetupUsesProvisionedSchema(t *testing.T) {

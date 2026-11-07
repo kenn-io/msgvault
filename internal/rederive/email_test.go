@@ -179,16 +179,18 @@ func TestEmailCurrentTextKeepsCache(t *testing.T) {
 	src, err := st.GetOrCreateSource("outlook", "archive@example.net")
 	require.NoError(t, err)
 	archiveCurrentEmail(t, st, src, "current")
+	beforeRevision := derivedDataRevision(t, st)
 	var logs bytes.Buffer
 	Heal(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), st, src)
 	assert.Contains(t, logs.String(), "checked archived message text")
-	assert.Zero(t, derivedDataRevision(t, st))
+	assert.Equal(t, beforeRevision, derivedDataRevision(t, st))
 }
 
 func TestEmailRetryPublishesRevisionAfterRevisionWriteFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, src, id := archiveEmailSource(t, "outlook", "HeizkÃ¶rper")
+	beforeRevision := derivedDataRevision(t, st)
 	fault := `CREATE TRIGGER fail_email_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
 	drop := `DROP TRIGGER fail_email_revision`
 	if st.IsPostgreSQL() {
@@ -204,12 +206,12 @@ func TestEmailRetryPublishesRevisionAfterRevisionWriteFails(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("Heizkörper", body, "the failed revision publication follows a committed text repair")
-	assert.Zero(derivedDataRevision(t, st))
+	assert.Equal(beforeRevision, derivedDataRevision(t, st))
 	_, err = st.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
-	assert.Positive(derivedDataRevision(t, st), "completion must publish the earlier committed repair to analytics caches")
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st), "completion must publish the earlier committed repair to analytics caches")
 }
 
 func TestEmailCorruptCompressionDoesNotStopLaterRows(t *testing.T) {
@@ -244,6 +246,7 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	require := require.New(t)
 	st, src, repaired := archiveEmailSource(t, "outlook", "stale")
 	failed := archiveEmail(t, st, src, "failed", "stale")
+	beforeRevision := derivedDataRevision(t, st)
 	revisionFault := `CREATE TRIGGER fail_pending_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
 	rowFault := fmt.Sprintf(`CREATE TRIGGER fail_pending_row BEFORE UPDATE OF snippet ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'snippet failure'); END`, failed)
 	dropRevision := `DROP TRIGGER fail_pending_revision`
@@ -266,7 +269,7 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	body, err := st.GetMessageBodyText(t.Context(), repaired)
 	require.NoError(err)
 	require.Equal("Heizkörper", body)
-	require.Zero(derivedDataRevision(t, st))
+	require.Equal(beforeRevision, derivedDataRevision(t, st))
 	_, err = st.DB().ExecContext(t.Context(), dropRevision)
 	require.NoError(err)
 	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
@@ -274,7 +277,7 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	require.True(ran)
 	require.Equal(int64(1), sum.Errors, "the row failure remains active")
 	require.Zero(sum.BodiesRewritten, "the retry commits no new text")
-	assert.Positive(t, derivedDataRevision(t, st), "the earlier committed repair must reach analytics caches")
+	assert.Equal(t, beforeRevision+1, derivedDataRevision(t, st), "the earlier committed repair must reach analytics caches")
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion))
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")

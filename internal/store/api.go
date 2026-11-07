@@ -144,6 +144,7 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 		scope = " AND " + predicate
 	}
 	authorizedScope, authorizedArgs := sourceScopeClause(ctx, "m.source_id")
+	scope += " AND " + FullMessageWhere("m")
 	scope += authorizedScope
 	args = append(args, authorizedArgs...)
 	// Get total count. Use the canonical live-messages predicate so
@@ -596,7 +597,9 @@ func (s *Store) buildMessageSearchSQL(ctx context.Context, q *search.Query, ftsA
 func (s *Store) buildMessageSearchSQLWithVisibility(ctx context.Context, q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
 	plan := s.buildMessageSearchCriteria(q, ftsAvailable, false)
 	s.preferOperatorLookups(ctx, &plan)
-	plan.conditions = append([]string{visibility}, plan.conditions...)
+	// The policy condition binds no arguments; keep it after the operator
+	// conditions so each condition stays aligned with its arguments.
+	plan.conditions = append(append([]string{visibility}, plan.conditions...), LexicalMessageWhere("m", q.IncludeCold))
 	plan.where = strings.Join(plan.conditions, " AND ")
 	return plan
 }
@@ -1055,7 +1058,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		SELECT COUNT(*) FROM messages
 		WHERE %s
 		AND (LOWER(subject) LIKE ? ESCAPE '\' OR LOWER(snippet) LIKE ? ESCAPE '\')
-	`, LiveMessagesWhere("", true))
+	`, LiveMessagesWhere("", true)+" AND "+FullMessageWhere("messages"))
 	var total int64
 	if err := s.db.QueryRow(countQuery, likePattern, likePattern).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search results: %w", err)
@@ -1088,7 +1091,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))
 
 	rows, err := s.db.Query(searchQuery, likePattern, likePattern, limit, offset)
 	if err != nil {

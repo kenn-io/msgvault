@@ -219,9 +219,12 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	}
 }
 
+// aggregateBaselineConditions apply to every view, so they do not count as a
+// request filter. Room policy is always on and matches most of an archive.
 var aggregateBaselineConditions = map[string]struct{}{
 	store.LiveMessagesWhere("m", false): {},
 	store.LiveMessagesWhere("m", true):  {},
+	store.FullMessageWhere("m"):         {},
 	emailOnlyFilterM:                    {},
 	textMsgTypeFilter():                 {},
 }
@@ -293,7 +296,7 @@ func optsToFilterConditions(d Dialect, opts AggregateOptions, prefix string) ([]
 
 	// Always exclude rows soft-deleted by deduplicate; gate
 	// source-deleted on opts.HideDeletedFromSource via the helper.
-	conditions = append(conditions, store.LiveMessagesWhere(strings.TrimSuffix(prefix, "."), opts.HideDeletedFromSource))
+	conditions = append(conditions, store.LiveMessagesWhere(strings.TrimSuffix(prefix, "."), opts.HideDeletedFromSource), store.FullMessageWhere(strings.TrimSuffix(prefix, ".")))
 
 	conditions, args = appendSourceFilter(
 		conditions, args, prefix, opts.SourceID, opts.SourceIDs,
@@ -367,7 +370,10 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 
 	// Always exclude rows soft-deleted by deduplicate; gate
 	// source-deleted on filter.HideDeletedFromSource via the helper.
-	conditions = append(conditions, store.LiveMessagesWhere("m", filter.HideDeletedFromSource))
+	conditions = append(conditions,
+		store.LiveMessagesWhere("m", filter.HideDeletedFromSource),
+		store.LexicalMessageWhere("m", filter.includeCold),
+	)
 
 	conditions, args = appendIDFilter(
 		conditions, args, sourceColumn, filter.SourceID, filter.SourceIDs,
@@ -1425,7 +1431,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		if shouldDefaultStatsToEmail(opts) {
 			conditions = append(conditions, emailOnlyFilterM)
 		}
-		conditions = append(conditions, store.LiveMessagesWhere("m", opts.HideDeletedFromSource))
+		conditions = append(conditions, store.LiveMessagesWhere("m", opts.HideDeletedFromSource), store.FullMessageWhere("m"))
 		conditions, args = appendSourceFilter(
 			conditions, args, "m.", opts.SourceID, opts.SourceIDs,
 		)
@@ -1578,7 +1584,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// Exclude remote-deleted and dedup-soft-deleted messages.
 	// Always pass true: this surface feeds remote-deletion staging and
 	// must never honor an opt-in.
-	conditions = append(conditions, store.LiveMessagesWhere("m", true), archiveOnlyDeletionTargetGuard)
+	conditions = append(conditions, store.LiveMessagesWhere("m", true), store.FullMessageWhere("m"), archiveOnlyDeletionTargetGuard)
 	if filter.HasEmptyTargets() {
 		_, emptyConditions, emptyArgs := e.buildFilterJoinsAndConditions(MessageFilter{
 			EmptyValueTargets:     filter.EmptyValueTargets,
@@ -1793,6 +1799,9 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	if searchQuery == nil {
 		return nil, errors.New("deletion search query is required")
 	}
+	if searchQuery.IncludeCold {
+		return nil, errors.New("include:cold is for lexical search only; remove it before selecting provider deletion targets")
+	}
 	if err := searchQuery.Err(); err != nil {
 		return nil, fmt.Errorf("invalid search query: %w", err)
 	}
@@ -1809,9 +1818,8 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	var searchJoin string
 	switch mode {
 	case DeletionSearchFast:
-		// Reuse the visible fast-search composition so view filters remain
-		// exact, independent predicates rather than becoming fuzzy query
-		// operators. This also covers cc/bcc recipients consistently.
+		// Select the same full-only population as displayed lexical results,
+		// including candidate optimizations and structured scopes.
 		searchConditions, searchArgs, searchJoin = e.buildFilteredMetadataSearchQueryParts(ctx, &searchScope, filter)
 	case DeletionSearchDeep:
 		searchConditions, searchArgs, searchJoin = e.buildFilteredDeepSearchQueryParts(ctx, &searchScope, filter)
@@ -1877,6 +1885,9 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 
 	filter = filter.Clone()
 	filter.Pagination = Pagination{}
+	if parsed.IncludeCold {
+		return nil, errors.New("include:cold is for lexical search only; remove it before selecting provider deletion targets")
+	}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
 	conditions = append(conditions, archiveOnlyDeletionTargetGuard)
@@ -1988,7 +1999,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 	// Hide dedup losers (deleted_at) and source-deleted rows so this MCP-facing
 	// surface matches the visibility rules of Search/SearchFast.
 	conditions = append(conditions,
-		store.LiveMessagesWhere("m", true),
+		store.LiveMessagesWhere("m", true), store.FullMessageWhere("m"),
 		fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
@@ -2040,7 +2051,7 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 // two paths continue sharing every other structured predicate.
 func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, q *search.Query, visibility string) (conditions []string, args []any, ftsJoin string) {
 	conditions, args, ftsJoin = e.buildSearchCriteria(ctx, q, false)
-	return append([]string{visibility}, conditions...), args, ftsJoin
+	return append([]string{visibility, store.LexicalMessageWhere("m", q.IncludeCold)}, conditions...), args, ftsJoin
 }
 
 func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query, rowIDs bool) (conditions []string, args []any, ftsJoin string) {
@@ -2229,8 +2240,8 @@ const (
 )
 
 func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, bool, error) {
-	// Text-only means visibility plus the FTS match.
-	if ftsJoin == "" || len(conditions) != 2 || q.DeletionScope == search.DeletionScopeDeleted || limit <= 0 || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
+	// Text-only means visibility, room policy, and the FTS match.
+	if ftsJoin == "" || len(conditions) != 3 || q.DeletionScope == search.DeletionScopeDeleted || limit <= 0 || limit+offset <= 0 || limit+offset > searchWalkMaxResults {
 		return nil, false, nil
 	}
 	window := searchWalkWindow * (limit + offset)
@@ -2246,10 +2257,13 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 	}
 	// A full page from this date prefix is also the full archive's page.
 	// Exclude cutoff ties to keep the prefix within the window bound.
+	// The policy condition binds no arguments, so the cutoff argument still
+	// precedes the FTS match argument.
 	conditions = []string{
 		conditions[0],
+		conditions[1],
 		"m.sent_at > (SELECT sent_at FROM messages ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
-		store.SQLiteFTSRowIDCondition(conditions[1]),
+		store.SQLiteFTSRowIDCondition(conditions[2]),
 	}
 	args = append([]any{window - 1}, args...)
 	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
@@ -2312,7 +2326,7 @@ func metadataContainsExpression(d Dialect, column string) string {
 
 func (e *SQLiteEngine) buildMetadataSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
 	conditions, args, ftsJoin = e.buildMetadataSearchCriteria(ctx, q)
-	return append([]string{store.LiveMessagesWhere("m", q.HideDeleted)}, conditions...), args, ftsJoin
+	return append([]string{store.LiveMessagesWhere("m", q.HideDeleted), store.LexicalMessageWhere("m", q.IncludeCold)}, conditions...), args, ftsJoin
 }
 
 func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
@@ -2379,6 +2393,7 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 func (e *SQLiteEngine) buildFilteredMetadataSearchQueryParts(
 	ctx context.Context, q *search.Query, filter MessageFilter,
 ) ([]string, []any, string) {
+	filter.includeCold = q.IncludeCold
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, q)
 	if len(q.TextTerms) > 0 && !metadataSearchScoped(q, filter) && e.hasMetadataFTS(ctx) {
 		for _, term := range q.TextTerms {
@@ -2404,6 +2419,7 @@ func (e *SQLiteEngine) buildFilteredDeepSearchQueryParts(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter,
 ) ([]string, []any, string) {
 	filter = filter.Clone()
+	filter.includeCold = searchQuery.IncludeCold
 	filter.Pagination = Pagination{}
 	_, filterConditions, filterArgs := e.buildFilterJoinsAndConditions(filter)
 	searchConditions, searchArgs, searchJoin := e.buildSearchQueryParts(ctx, searchQuery)
