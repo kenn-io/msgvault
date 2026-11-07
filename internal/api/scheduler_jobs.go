@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/feeds"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
@@ -58,6 +59,9 @@ const SlackJobName = sourceTypeSlack
 
 // InlineJobName drives every configured Inline account and its chat selection.
 const InlineJobName = sourceTypeInline
+
+// FeedsJobName drives every followed feed; all feeds share one source.
+const FeedsJobName = "feeds"
 
 // IMessageJobName drives the selected Apple Messages source.
 const IMessageJobName = "apple-messages"
@@ -166,6 +170,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return BeeperJobName, true
 	case sourceTypeInline:
 		return InlineJobName, true
+	case feeds.SourceType:
+		return FeedsJobName, true
 	case sourceTypeMatrix:
 		return MatrixJobName, true
 	case sourceTypeSlack:

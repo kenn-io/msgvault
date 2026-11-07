@@ -56,7 +56,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
-- [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive feed items and other messages through the import API
+- [RSS, Atom and JSON Feeds](https://msgvault.io/docs/usage/feeds.md): follow feeds and archive each item once
+- [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive other messages through the import API
 
 ## People and Accounts
 

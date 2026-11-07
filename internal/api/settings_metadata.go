@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/feeds"
 )
 
 // settingMetadata is the user-facing copy for one setting. The label names
@@ -66,12 +67,13 @@ var settingsGroups = []SettingGroup{
 	},
 	{
 		ID: settingsGroupSources, Label: "Sources",
-		Description: "Sync schedules and filters for chat and contact sources.",
+		Description: "Sync schedules and filters for chat, feed and contact sources.",
 		Sections: []SettingSection{
 			{ID: "shared", Label: "All sources"},
 			{ID: sourceTypeBeeper, Label: "Beeper"},
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
+			{ID: feeds.SourceType, Label: "Feeds", Description: "Follow feeds with msgvault add-feed."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -199,6 +201,8 @@ var settingsMetadata = map[string]settingMetadata{
 	"beeper.rate_limit_qps":         {"Beeper requests per second", "Request rate limit for Beeper.", sourceTypeBeeper},
 	"inline.enabled":                {"Scheduled Inline sync", "Sync configured Inline accounts on the schedule below.", sourceTypeInline},
 	"inline.schedule":               {"Inline schedule", "When Inline sync runs.", sourceTypeInline},
+	"feeds.enabled":                 {"Scheduled feed sync", "Fetch followed RSS, Atom and JSON feeds on the schedule below.", feeds.SourceType},
+	"feeds.schedule":                {"Feed schedule", "When followed feeds are fetched.", feeds.SourceType},
 	"inline.media":                  {"Download Inline attachments", "Download attachments from future Inline syncs.", sourceTypeInline},
 	"inline.media_scope":            {"Inline conversations", "Which Inline conversations to download attachments from.", sourceTypeInline},
 	"inline.media_max_participants": {"Inline participant limit", "Skip Inline conversations with more people than this or an unknown roster. Zero allows unknown rosters.", sourceTypeInline},
@@ -296,6 +300,7 @@ var settingsValidation = map[string]SettingValidation{
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),
 	"inline.schedule": cronValidation(false),
+	"feeds.schedule":  cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
 	// rate is raised to 0.1 on save rather than rejected; zero stays off.

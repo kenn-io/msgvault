@@ -52,9 +52,9 @@ func (i *Importer) WithLogger(logger *slog.Logger) *Importer {
 	return i
 }
 
-// writeResult reports what persisting one snapshot did. Changed means the
+// WriteResult reports what writing one message did. Changed means the
 // message write committed, even when a later step returned an error.
-type writeResult struct {
+type WriteResult struct {
 	MessageID int64
 	Created   bool
 	Changed   bool
@@ -170,19 +170,19 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 // persist writes the snapshot unless the archive already holds the same
 // evidence. The write refreshes conversation stats in its own transaction,
 // so an unchanged retry has nothing to repair.
-func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (writeResult, error) {
+func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (WriteResult, error) {
 	existing, err := st.MessageMetadataBatch(ctx, sourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
-		return writeResult{}, fmt.Errorf("lookup existing message: %w", err)
+		return WriteResult{}, fmt.Errorf("lookup existing message: %w", err)
 	}
 	prior, existed := existing[snapshot.SourceMessageID]
 	if existed && storedMatches(ctx, st, prior, snapshot) {
-		return writeResult{MessageID: prior.ID}, nil
+		return WriteResult{MessageID: prior.ID}, nil
 	}
 
 	senderID, err := resolveSender(ctx, st, snapshot)
 	if err != nil {
-		return writeResult{}, err
+		return WriteResult{}, err
 	}
 	sender := snapshot.Sender
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
@@ -226,9 +226,9 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		RecomputeConversationStats: true,
 	})
 	if err != nil {
-		return writeResult{}, fmt.Errorf("persist message: %w", err)
+		return WriteResult{}, fmt.Errorf("persist message: %w", err)
 	}
-	return writeResult{MessageID: messageID, Created: !existed, Changed: true}, nil
+	return WriteResult{MessageID: messageID, Created: !existed, Changed: true}, nil
 }
 
 // storedMatches treats an unreadable stored copy as changed so the write

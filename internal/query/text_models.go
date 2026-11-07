@@ -179,4 +179,5 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"feed_item",
 }

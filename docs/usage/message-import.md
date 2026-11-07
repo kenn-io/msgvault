@@ -7,7 +7,9 @@ description: Archive messages from a source msgvault has no connector for, such 
 Archive messages that msgvault has no connector for, next to your mail and
 chats: the items of the feeds you follow, notifications from internal tools,
 or another app's messages. A small script sends each message to the daemon,
-and msgvault keeps it searchable after the source deletes it.
+and msgvault keeps it searchable after the source deletes it. For RSS, Atom,
+and JSON feeds you need no script: msgvault can [follow them](feeds.md)
+itself.
 
 ## Import a message
 
