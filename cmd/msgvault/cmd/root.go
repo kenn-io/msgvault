@@ -299,7 +299,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 	case "schema-version":
 		database, _ := cmd.Flags().GetBool("database")
 		return !database
-	case "version", "update", "quickstart", "openapi", "completion",
+	case "version", "update", "quickstart", "agent-instructions", "openapi", "completion",
 		embeddingsOptimizeWorkerName,
 		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return true
