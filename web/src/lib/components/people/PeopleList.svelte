@@ -294,7 +294,8 @@
 </aside>
 
 <style>
-  .selection-bar { display: flex; align-items: center; gap: var(--control-gap); flex-wrap: wrap; padding: var(--space-3); }
+  /* The count starts 16 in, where the rows' content does. */
+  .selection-bar { display: flex; align-items: center; gap: var(--control-gap); flex-wrap: wrap; padding: var(--space-3) var(--space-pane); }
   .people-list {
     display: flex;
     min-width: 0;

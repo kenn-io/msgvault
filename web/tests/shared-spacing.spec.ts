@@ -115,6 +115,13 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
   await people.getByRole('checkbox', { name: 'Select Alex Example' }).check();
   const peopleBar = page.locator('.selection-bar[data-toolbar]');
   await expect(peopleBar).toBeVisible();
+  // The count starts where the rows' content does.
+  const peopleInset = await peopleBar.evaluate((element) => {
+    const cell = element.closest('.people-list')!.querySelector('.row [role="gridcell"]')!;
+    const content = cell.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(cell).paddingLeft);
+    return element.querySelector(':scope > span')!.getBoundingClientRect().left - content;
+  });
+  expect(peopleInset).toBe(0);
   for (const button of await peopleBar.locator('.kit-button').all()) {
     await expect(button).toHaveCSS('padding-left', '8px');
     await expect(button).toHaveCSS('padding-right', '8px');
@@ -420,6 +427,16 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   }));
   expect(wrapping).toEqual({ clipped: false, wrapped: true });
   await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
+  // In dark mode the untoned search chip gets the same 1px edge as a neutral chip, and no shadow.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+  await expect(queryChip).toHaveCSS('border-top-width', '1px');
+  await expect(queryChip).toHaveCSS('border-top-style', 'solid');
+  await expect(queryChip).toHaveCSS('box-shadow', 'none');
+  // The grouping chip keeps its own teal edge.
+  const edges = await chips.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).borderTopColor));
+  expect(new Set(edges).size).toBe(2);
+  await page.emulateMedia({ colorScheme: 'light' });
   await selectWorkspace(page, 'People');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByText('Profile filters', { exact: true }).click();

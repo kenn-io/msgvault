@@ -634,10 +634,10 @@
           {#if plainHTTPWarning && activeId === 'server'}
             <InlineNotice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
-          {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
-          {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
+          {#if error}<p class="notice" role="alert">{error}</p>{/if}
+          {#if buildError && activeId === 'overview'}<p class="notice" role="alert">{buildError}</p>{/if}
           {#if pendingRestart}
-            <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
+            <InlineNotice tone="info" message="Saved. Restart msgvault to apply these changes." />
           {/if}
         </div>
 
@@ -815,17 +815,12 @@
   .notice {
     margin: 0;
     padding: var(--space-box);
-    border: 1px solid var(--status-warning-ink);
+    border: 1px solid var(--status-error-ink);
     border-radius: var(--radius-md);
-    background: var(--status-warning-bg);
-    color: var(--status-warning-ink);
-    font-size: var(--type-meta-size);
-    line-height: var(--type-meta-line);
-  }
-  .notice--error {
-    border-color: var(--status-error-ink);
     background: var(--status-error-bg);
     color: var(--status-error-ink);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
 
   h2 {

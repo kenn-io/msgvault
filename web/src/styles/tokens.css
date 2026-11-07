@@ -471,9 +471,19 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
   align-items: center;
 }
 
-/* In dark mode a chip on the inset fill gets a 1px edge one step lighter,
- * so it stands apart on the page, on a surface, and on a hovered row whose
- * fill matches its own. */
+/* In dark mode a shadow under a chip reads as the chip running downward.
+ * Chips and their remove buttons draw none; a chip on the inset fill, whether
+ * untoned or neutral or muted, gets a 1px edge one step lighter, so it stands
+ * apart on the page, on a surface, and on a hovered row whose fill matches
+ * its own. The untoned rule is one class weaker, so a component that gives
+ * an untoned chip its own colored edge (the Messages filter and grouping
+ * chips) keeps it. */
+:root.dark .kit-chip,
+:root.dark .kit-chip .kit-icon-button {
+  box-shadow: none;
+}
+
+:root.dark .kit-chip:where(:not([class*="kit-chip--tone-"])),
 :root.dark .kit-chip:is(.kit-chip--tone-neutral, .kit-chip--tone-muted) {
   border: var(--border-width, 1px) solid var(--border-muted);
 }

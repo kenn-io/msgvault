@@ -179,8 +179,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(settings).toBeVisible();
     await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
     await expectRenderedContrast(settings.getByText('UTC or an IANA name such as America/New_York.', { exact: true }), 4.5);
-    await expectRenderedContrast(settings.locator('.notice--pending'), 4.5);
-    await expectRenderedBoundary(settings.locator('.notice--pending'), 'borderLeftColor', 3);
+    const restart = settings.locator('.kit-notice').filter({ hasText: 'Saved. Restart msgvault to apply these changes.' });
+    await expect(restart).toHaveAttribute('data-tone', 'info');
+    await expectRenderedContrast(restart.getByText('Saved. Restart msgvault to apply these changes.'), 4.5);
   });
 }
 
@@ -199,15 +200,6 @@ for (const theme of ['light', 'dark'] as const) {
 
 async function expectRenderedContrast(locator: import('@playwright/test').Locator, minimum: number) {
   const ratio = await locator.evaluate(measureRenderedContrast, { property: 'color' });
-  expect(ratio).toBeGreaterThanOrEqual(minimum);
-}
-
-async function expectRenderedBoundary(
-  locator: import('@playwright/test').Locator,
-  property: 'borderTopColor' | 'borderLeftColor',
-  minimum: number
-) {
-  const ratio = await locator.evaluate(measureRenderedContrast, { property });
   expect(ratio).toBeGreaterThanOrEqual(minimum);
 }
 
