@@ -127,6 +127,10 @@ type ClientInterface interface {
 	EndBackupFreeze(ctx context.Context, options *EndBackupFreezeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EndBackupFreezeResponse, error)
 	EndBackupFreezeWithResponse(ctx context.Context, options *EndBackupFreezeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EndBackupFreezeResp, error)
 
+	// ControlBusinessReviews Inspect live business reviews or confirm an exact owner reply
+	ControlBusinessReviews(ctx context.Context, options *ControlBusinessReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlBusinessReviewsResponse, error)
+	ControlBusinessReviewsWithResponse(ctx context.Context, options *ControlBusinessReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlBusinessReviewsResp, error)
+
 	// GetCacheBuildStatus Get analytics cache build status
 	GetCacheBuildStatus(ctx context.Context, options *GetCacheBuildStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCacheBuildStatusResponse, error)
 	GetCacheBuildStatusWithResponse(ctx context.Context, options *GetCacheBuildStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCacheBuildStatusResp, error)
@@ -2682,6 +2686,70 @@ func (c *Client) EndBackupFreeze(ctx context.Context, options *EndBackupFreezeRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/freeze/end")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ControlBusinessReviews Inspect live business reviews or confirm an exact owner reply
+func (c *Client) ControlBusinessReviews(ctx context.Context, options *ControlBusinessReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlBusinessReviewsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/business-reviews/control",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ControlBusinessReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ControlBusinessReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ControlBusinessReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ControlBusinessReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ControlBusinessReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/business-reviews/control")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
