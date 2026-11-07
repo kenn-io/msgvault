@@ -18,13 +18,12 @@ import (
 
 type localSetupTestController struct {
 	calls   atomic.Int32
-	enabled atomic.Bool
 	started chan context.Context
 	release chan struct{}
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
@@ -78,7 +77,6 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 				case "error after turning on":
 					close(controller.release)
 					synctest.Wait()
-					controller.enabled.Store(true)
 					cfg := vector.Config{Enabled: true}
 					backend := &filteredCoverageBackend{activeErr: vector.ErrNoActiveGeneration}
 					srv.SetVectorFeatures(nil, nil, backend, cfg)
@@ -91,6 +89,8 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					backend.active = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: cfg.GenerationFingerprint()}
 					pending = 0
 					checks.Empty(status().Error)
+					pending = 1
+					checks.Empty(status().Error, "later imports must not revive a resolved setup failure")
 				case "retry after failure":
 					close(controller.release)
 					synctest.Wait()

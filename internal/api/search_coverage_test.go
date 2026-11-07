@@ -723,11 +723,13 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 	fingerprint := vectorCfg.GenerationFingerprint()
 	matching := vector.Generation{ID: 7, Fingerprint: fingerprint, State: vector.GenerationActive}
 	tests := []struct {
-		name       string
-		status     VectorStatus
-		backend    *filteredCoverageBackend
-		wantStatus SearchCoverageStatus
-		wantAction []SearchCoverageAction
+		name        string
+		status      VectorStatus
+		backend     *filteredCoverageBackend
+		wantStatus  SearchCoverageStatus
+		wantAction  []SearchCoverageAction
+		setupFailed bool
+		pending     int64
 	}{
 		{
 			name: "no generation", status: VectorStatusReady,
@@ -745,6 +747,23 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			},
 			wantStatus: SearchCoverageUnavailable,
 			wantAction: []SearchCoverageAction{SearchCoverageActionRetry},
+		},
+		{
+			name: "incomplete after setup failure", status: VectorStatusReady,
+			backend: &filteredCoverageBackend{
+				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
+			},
+			setupFailed: true, pending: 1,
+			wantStatus: SearchCoverageIncomplete,
+			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
+		},
+		{
+			name: "skipped message after recovery", status: VectorStatusReady,
+			backend: &filteredCoverageBackend{
+				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
+			},
+			setupFailed: true,
+			wantStatus:  SearchCoverageIncomplete,
 		},
 		{
 			name: "latched stale refreshed", status: VectorStatusStale,
@@ -803,6 +822,12 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 				Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Engine: newExploreDuckDBFixture(t),
 				Backend: tt.backend, VectorCfg: vectorCfg, VectorStatus: tt.status, Logger: testLogger(),
 			})
+			if tt.setupFailed {
+				srv.localSetup.Error = "build interrupted"
+				srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
+					return vector.EmbeddingStatus{Eligible: 3, Current: 2, Pending: tt.pending}, nil
+				}, 0)
+			}
 			if tt.status == VectorStatusStale {
 				srv.SetVectorStale("old status")
 			}

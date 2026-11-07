@@ -446,7 +446,7 @@ func TestNativeMCPStartup(t *testing.T) {
 			response := catalog(server)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 			assert.Contains(t, response.Body.String(), `"get_stats"`)
-			assert.Contains(t, response.Body.String(), `"find_similar_messages"`)
+			assert.NotContains(t, response.Body.String(), `"search_visual_attachments"`)
 
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 			request.Header.Set("Authorization", "Bearer owner")

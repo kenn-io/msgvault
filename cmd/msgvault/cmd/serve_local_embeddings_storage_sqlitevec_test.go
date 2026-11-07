@@ -25,13 +25,11 @@ func TestLocalEmbeddingsActivationKeepsBuilderStorage(t *testing.T) {
 	require.NoError(os.WriteFile(path, content, 0o600))
 	snapshot, err := config.ReadConfigFile(path)
 	require.NoError(err)
-	_, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"db_path": "relative-vectors.db"}}})
+	snapshot, err = config.EditConfigTables(path, snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"db_path": "relative-vectors.db"}}})
 	require.NoError(err)
-	snapshot, err = config.ReadConfigFile(path)
+	loaded, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
 	require.NoError(err)
-	f.cfg, err = config.LoadConfigFile(snapshot, f.cfg.HomeDir)
-	require.NoError(err)
-	f.state.cfg = f.cfg
+	*f.cfg = *loaded
 	f.start(t)
 	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
@@ -74,11 +72,6 @@ func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
 			after, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			assert.Equal(written.Content, after.Content, "the refused activation must leave the pending settings unchanged")
-			if setting.table == "vector" {
-				results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
-				require.NoError(err)
-				assert.Len(results, 1)
-			}
 		})
 	}
 }

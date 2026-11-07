@@ -255,6 +255,28 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	addMessage("fourth")
 	assert.Equal(int64(3), eligible(slow, t.Context(), nil))
 
+	// Finishing a recovery refreshes even a count sampled within the TTL.
+	f := newEmbeddingProjectionFixture(t)
+	f.fail(t)
+	blankConversation, err := f.source.st.EnsureConversation(t.Context(), f.sourceID, "blank-thread", "")
+	require.NoError(err)
+	blankID, err := f.source.st.UpsertMessage(&store.Message{SourceID: f.sourceID, ConversationID: blankConversation, SourceMessageID: "blank", MessageType: "email"})
+	require.NoError(err)
+	before, err := f.source.read(t.Context(), 0)
+	require.NoError(err)
+	require.Equal(int64(2), before.Pending)
+	f.provider.err = nil
+	_, err = f.worker.RunBackstop(t.Context(), f.generation, operations.PassScope{Key: "synthetic-recovery-pass", Trigger: operations.TriggerManual, StartedAt: time.Now().UTC()})
+	require.NoError(err)
+	after, err := f.source.read(t.Context(), 0)
+	require.NoError(err)
+	assert.Equal(int64(2), after.Eligible)
+	assert.Equal(int64(2), after.Current, "skipped messages count as completed work")
+	assert.Zero(after.Pending, "a completed recovery refreshes pending work before the TTL expires")
+	embedded, err := f.source.backend.(vector.FilteredCoverageBackend).EmbeddedMessageCountForIDs(t.Context(), f.generation, []int64{f.messageID, blankID})
+	require.NoError(err)
+	assert.Equal(int64(1), embedded, "the blank message is skipped rather than indexed")
+
 	// A failed refresh serves cached counts only within the stale limit.
 	broken, err := store.Open(filepath.Join(dir, "msgvault.db"))
 	require.NoError(err)

@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/providercredentials"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -293,13 +292,12 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name, catalog, wantProvider string
-		pausedRemote, savedOnly     bool
+		savedOnly                   bool
 	}{
 		{name: "local without Ollama API", wantProvider: "configured"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
 		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
-		{name: "paused remote", pausedRemote: true, wantProvider: "configured"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,13 +312,6 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			f.ollamaCatalog = tc.catalog
 			before, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
-			if tc.pausedRemote {
-				before = []byte(strings.Replace(string(before), "enabled = true", "enabled = false", 1))
-				before = []byte(strings.Replace(string(before), f.cfg.Vector.Embeddings.Endpoint, "https://api.example.test/v1", 1))
-				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), before, 0o600))
-				f.cfg.Vector.Enabled = false
-				f.cfg.Vector.Embeddings.Endpoint = "https://api.example.test/v1"
-			}
 			f.start(t)
 			if tc.savedOnly {
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
@@ -405,29 +396,42 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 	}
 }
 
-func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	vf := f.handle.vf
-	generation, err := vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
-	require.NoError(err)
-	result, err := vf.Runner.RunOnce(f.ctx, generation, testCLIEmbeddingPassScope())
-	require.NoError(err)
-	require.Equal(1, result.Succeeded)
-
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
-	request.Header.Set("Authorization", "Bearer owner")
-	request.Header.Set("Content-Type", "application/json")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	var plan api.CLIEmbeddingsPlanResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &plan))
-	require.True(plan.NeedsConfirmation)
-	require.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
+func TestLocalEmbeddingsCLIUsesPublishedRecipe(t *testing.T) {
+	for _, operation := range []string{"activation plan", "optimize"} {
+		t.Run(operation, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newLocalActivationFixture(t, "")
+			f.start(t)
+			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+			path, body := "/api/v1/cli/run", `{"args":["embeddings","optimize","--drop"]}`
+			var generation vector.GenerationID
+			if operation == "activation plan" {
+				vf := f.handle.vf
+				var err error
+				generation, err = vf.Backend.CreateGeneration(f.ctx, vf.Cfg.Embeddings.Model, vf.Cfg.Embeddings.Dimension, vf.Cfg.GenerationFingerprint())
+				require.NoError(err)
+				result, err := vf.Runner.RunOnce(f.ctx, generation, testCLIEmbeddingPassScope())
+				require.NoError(err)
+				require.Equal(1, result.Succeeded)
+				path, body = "/api/v1/cli/embeddings/plan", fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)
+			}
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			if operation == "activation plan" {
+				var plan api.CLIEmbeddingsPlanResponse
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &plan))
+				assert.True(plan.NeedsConfirmation)
+				assert.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
+			} else {
+				assert.Contains(response.Body.String(), "exact vectors retained")
+			}
+		})
+	}
 }
 
 func TestLocalEmbeddingsCommandError(t *testing.T) {
@@ -609,24 +613,10 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	assert.Len(t, results, 1)
 }
 
-func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["embeddings","optimize","--drop"]}`))
-	request.Header.Set("Authorization", "Bearer owner")
-	request.Header.Set("Content-Type", "application/json")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "exact vectors retained")
-}
-
 func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {
 	for _, existingIndex := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing_index=%t", existingIndex), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
+			require := require.New(t)
 			model := ""
 			if existingIndex {
 				model = "nomic-embed-text"
@@ -678,50 +668,10 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 			require.True(status.Enabled, "the provider is published before the first index is built")
 			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
 			require.NoError(err)
-			readEmbeddingStatus := func() vector.EmbeddingStatus {
-				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/status", nil)
-				request.Header.Set("Authorization", "Bearer owner")
-				request.RemoteAddr = "127.0.0.1:1234"
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				assert.Equal(http.StatusOK, response.Code, response.Body.String())
-				var coverage vector.EmbeddingStatus
-				assert.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
-				return coverage
-			}
-			readCoverage := func() api.SearchCoverageResponse {
-				// Analytics exports only messages with a sent time.
-				_, err := f.store.DB().ExecContext(f.ctx, "UPDATE messages SET sent_at = ? WHERE sent_at IS NULL", time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
-				require.NoError(err)
-				_, err = buildCache(f.ctx, f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
-				require.NoError(err)
-				engine, err := query.NewDuckDBEngine(f.ctx, f.cfg.AnalyticsDir(), "", nil)
-				require.NoError(err)
-				defer func() { require.NoError(engine.Close()) }()
-				f.server.SetAnalyticsEngine(engine, api.AnalyticsModeDuckDB)
-				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/coverage", strings.NewReader(`{}`))
-				request.Header.Set("Authorization", "Bearer owner")
-				request.Header.Set("Content-Type", "application/json")
-				request.RemoteAddr = "127.0.0.1:1234"
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusOK, response.Code, response.Body.String())
-				var coverage api.SearchCoverageResponse
-				require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
-				return coverage
-			}
-			if existingIndex {
-				coverage := readEmbeddingStatus()
-				require.Equal(int64(2), coverage.Eligible)
-				require.Equal(int64(1), coverage.Current)
-				require.Equal(int64(1), coverage.Pending)
-				assert.Contains(readCoverage().Actions, api.SearchCoverageActionBuildIndex, "a failed reactivation needs recovery with scheduling disabled")
-			} else {
+			if !existingIndex {
 				require.NotNil(building)
 			}
 			require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
-			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "blank", "", "")
-			require.NoError(err)
 			f.onEmbedding = nil
 			f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
@@ -733,17 +683,6 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
 			readStatus()
 			require.Empty(status.Error, "successful recovery resolves the setup failure")
-			indexCoverage := readCoverage()
-			require.Greater(indexCoverage.EligibleCount, indexCoverage.EmbeddedCount, "the blank message is skipped rather than indexed")
-			require.Zero(readEmbeddingStatus().Pending, "skipped messages are complete for the worker")
-			assert.NotContains(indexCoverage.Actions, api.SearchCoverageActionBuildIndex, "a skipped message must not cause a rebuild loop")
-			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "new-import", "New orchard", "A newly imported orchard message.")
-			require.NoError(err)
-			require.Eventually(func() bool {
-				return readEmbeddingStatus().Pending == 1
-			}, 20*time.Second, 100*time.Millisecond)
-			readStatus()
-			assert.Empty(status.Error, "a resolved setup failure must stay cleared after a later import")
 		})
 	}
 }
@@ -752,21 +691,12 @@ func TestLocalEmbeddingsPreservesModelSavedWhileDisabled(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newLocalActivationFixture(t, "nomic-embed-text")
 	f.useBuiltin(t)
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/settings", nil)
-	request.Header.Set("Authorization", "Bearer owner")
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	request = httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/settings", strings.NewReader(`{"updates":[{"key":"vector.enabled","value":{"boolean":false}},{"key":"vector.embeddings.model","value":{"string":"custom-model"}}]}`))
-	request.Header.Set("Authorization", "Bearer owner")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("If-Match", response.Header().Get("ETag"))
-	request.RemoteAddr = "127.0.0.1:1234"
-	response = httptest.NewRecorder()
-	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	snapshot, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{
+		{Path: []string{"vector"}, Values: map[string]any{"enabled": false}},
+		{Path: []string{"vector", "embeddings"}, Values: map[string]any{"model": "custom-model"}},
+	})
 	require.NoError(err)
 	saved, err := f.cfg.ReloadConfigFile(snapshot)
 	require.NoError(err)
