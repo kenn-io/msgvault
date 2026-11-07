@@ -26,10 +26,10 @@ func TestSearchRowsHiddenTextPresent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			id := f.CreateMessage(tc.name)
-			_, err := f.Store.DB().Exec(f.Store.Rebind(
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 				`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`), id, "hiddenneedle", tc.html)
 			require.NoError(err)
-			_, err = f.Store.DB().Exec(f.Store.Rebind(
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 				`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
 			require.NoError(err)
 			_, err = f.Store.BackfillFTS(nil)
@@ -77,10 +77,10 @@ func TestSQLiteTextHiddenTextRows(t *testing.T) {
 		{hiddenID, true},
 		{visibleID, false},
 	} {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET message_type = 'teams', snippet = 'hiddenneedle', hidden_text_present = ? WHERE id = ?`), tc.hidden, tc.id)
 		require.NoError(t, err)
-		_, err = f.Store.DB().Exec(f.Store.Rebind(
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), tc.id, "hiddenneedle")
 		require.NoError(t, err)
 	}

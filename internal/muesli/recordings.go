@@ -80,7 +80,7 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	if u.Size > maxBytes {
 		return false, ErrRecordingTooLarge
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, u.Source.Identifier)
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, u.Source.Identifier)
 	if err != nil {
 		return false, err
 	}

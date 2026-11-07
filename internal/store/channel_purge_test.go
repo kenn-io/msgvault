@@ -18,9 +18,9 @@ func TestPurgeChannelPreservesRepliesFromOtherChannels(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("discord", "guild-1")
 	require.NoError(err)
-	parent, err := st.EnsureConversation(source.ID, "channel-1", "Removed channel")
+	parent, err := st.EnsureConversation(t.Context(), source.ID, "channel-1", "Removed channel")
 	require.NoError(err)
-	retained, err := st.EnsureConversation(source.ID, "channel-2", "Retained channel")
+	retained, err := st.EnsureConversation(t.Context(), source.ID, "channel-2", "Retained channel")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: parent, SourceMessageID: "original", MessageType: "discord"})
 	require.NoError(err)
@@ -30,11 +30,11 @@ func TestPurgeChannelPreservesRepliesFromOtherChannels(t *testing.T) {
 
 	require.NoError(st.PurgeChannelContext(t.Context(), source.ID, "channel-1"))
 	var remaining int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM messages WHERE conversation_id = ?"), parent).Scan(&remaining))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE conversation_id = ?"), parent).Scan(&remaining))
 	assert.Zero(remaining)
 	var conversation int64
 	var replyTo sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id, reply_to_message_id FROM messages WHERE id = ?"), reply).Scan(&conversation, &replyTo))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT conversation_id, reply_to_message_id FROM messages WHERE id = ?"), reply).Scan(&conversation, &replyTo))
 	assert.Equal(retained, conversation)
 	assert.False(replyTo.Valid, "retained messages must no longer reference purged content")
 }
@@ -45,20 +45,21 @@ func TestPurgeChannelRemovesOnlyUnsharedPackedMappings(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "T01:U01")
 	require.NoError(err)
-	removed, err := st.EnsureConversation(source.ID, "C01", "Removed channel")
+	removed, err := st.EnsureConversation(t.Context(), source.ID, "C01", "Removed channel")
 	require.NoError(err)
-	retained, err := st.EnsureConversation(source.ID, "C02", "Retained channel")
+	retained, err := st.EnsureConversation(t.Context(), source.ID, "C02", "Retained channel")
 	require.NoError(err)
 	removedMsg, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: removed, SourceMessageID: "C01:1", MessageType: "slack"})
 	require.NoError(err)
 	retainedMsg, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: retained, SourceMessageID: "C02:1", MessageType: "slack"})
 	require.NoError(err)
 	unique, shared := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	require.NoError(st.UpsertAttachment(removedMsg, "unique.pdf", "application/pdf", unique[:2]+"/"+unique, unique, 10))
-	require.NoError(st.UpsertAttachment(removedMsg, "shared.pdf", "application/pdf", shared[:2]+"/"+shared, shared, 10))
-	require.NoError(st.UpsertAttachment(retainedMsg, "shared.pdf", "application/pdf", shared[:2]+"/"+shared, shared, 10))
+	require.NoError(st.UpsertAttachment(t.Context(), removedMsg, "unique.pdf", "application/pdf", unique[:2]+"/"+unique, unique, 10))
+	require.NoError(st.UpsertAttachment(t.Context(), removedMsg, "shared.pdf", "application/pdf", shared[:2]+"/"+shared, shared, 10))
+	require.NoError(st.UpsertAttachment(t.Context(), retainedMsg, "shared.pdf", "application/pdf", shared[:2]+"/"+shared, shared, 10))
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x5p1"
 	require.NoError(st.RecordPackedBlobs(
+		t.Context(),
 		store.PackRecord{PackID: packID, EntryCount: 2, StoredBytes: 20, CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)},
 		[]store.PackIndexEntry{
 			{BlobHash: unique, PackID: packID, StoredLen: 10, RawLen: 10},
@@ -67,10 +68,10 @@ func TestPurgeChannelRemovesOnlyUnsharedPackedMappings(t *testing.T) {
 
 	require.NoError(st.PurgeChannelContext(t.Context(), source.ID, "C01"))
 
-	entry, err := st.GetAttachmentPackEntry(unique)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), unique)
 	require.NoError(err)
 	assert.Nil(entry, "the purged channel's only reference removes its packed mapping")
-	entry, err = st.GetAttachmentPackEntry(shared)
+	entry, err = st.GetAttachmentPackEntry(t.Context(), shared)
 	require.NoError(err)
 	assert.NotNil(entry, "a blob still referenced by a retained channel keeps its mapping")
 }
@@ -81,24 +82,24 @@ func TestPurgeChannelToleratesMalformedSQLiteMetadata(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("discord", "guild-1")
 	require.NoError(err)
-	_, err = st.EnsureConversation(source.ID, "channel-1", "Removed channel")
+	_, err = st.EnsureConversation(t.Context(), source.ID, "channel-1", "Removed channel")
 	require.NoError(err)
-	thread, err := st.EnsureConversation(source.ID, "thread-1", "Removed thread")
+	thread, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Removed thread")
 	require.NoError(err)
-	malformed, err := st.EnsureConversation(source.ID, "thread-2", "Unreadable thread")
+	malformed, err := st.EnsureConversation(t.Context(), source.ID, "thread-2", "Unreadable thread")
 	require.NoError(err)
-	_, err = st.DB().Exec("UPDATE conversations SET metadata = ? WHERE id = ?", `{"parent_channel_id":"channel-1"}`, thread)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE conversations SET metadata = ? WHERE id = ?", `{"parent_channel_id":"channel-1"}`, thread)
 	require.NoError(err)
-	_, err = st.DB().Exec("UPDATE conversations SET metadata = ? WHERE id = ?", "not json", malformed)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE conversations SET metadata = ? WHERE id = ?", "not json", malformed)
 	require.NoError(err)
 
 	require.NoError(st.PurgeChannelContext(t.Context(), source.ID, "channel-1"))
 
 	var remaining int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM conversations WHERE source_id = ?", source.ID).Scan(&remaining))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_id = ?", source.ID).Scan(&remaining))
 	assert.Equal(1, remaining, "the parent and its thread are removed")
 	var kept int64
-	require.NoError(st.DB().QueryRow("SELECT id FROM conversations WHERE source_id = ?", source.ID).Scan(&kept))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM conversations WHERE source_id = ?", source.ID).Scan(&kept))
 	assert.Equal(malformed, kept, "the unreadable row stays")
 }
 
@@ -109,7 +110,7 @@ func TestPurgesAdvanceDerivedDataRevision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "T01:U01")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "C01", "Removed channel")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "C01", "Removed channel")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "C01:1", MessageType: "slack"})
 	require.NoError(err)
@@ -133,7 +134,7 @@ func TestPurgeChannelRefusesQueuedSyncOperation(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "T01:U01")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "C01", "Selected channel")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "C01", "Selected channel")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "C01:1", MessageType: "slack"})
 	require.NoError(err)
@@ -142,6 +143,6 @@ func TestPurgeChannelRefusesQueuedSyncOperation(t *testing.T) {
 
 	require.ErrorIs(st.PurgeChannelContext(t.Context(), source.ID, "C01"), store.ErrSyncAlreadyActive)
 	var remaining int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM messages WHERE conversation_id = ?"), conversation).Scan(&remaining))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE conversation_id = ?"), conversation).Scan(&remaining))
 	assert.Equal(t, 1, remaining, "a refused purge removes nothing")
 }

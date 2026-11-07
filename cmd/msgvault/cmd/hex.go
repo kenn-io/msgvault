@@ -92,7 +92,7 @@ Examples:
 		if err := probeHexMeetings(cmd.Context(), source.EffectiveMeetingsDir()); err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ Examples:
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nHex source %s registered.\n", source.Identifier)

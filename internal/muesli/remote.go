@@ -309,7 +309,7 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 	if r.Action == "register" {
 		source, err = imp.store.GetOrCreateSource(SourceType, r.Source.Identifier)
 	} else {
-		source, err = imp.store.GetSourceByTypeAndIdentifier(SourceType, r.Source.Identifier)
+		source, err = imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, r.Source.Identifier)
 	}
 	if err != nil {
 		return result, err
@@ -348,7 +348,7 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 	m := r.Meeting.toMeeting()
 	if m.ContactsState != ContactsOff {
 		key, _ := m.SourceMessageID()
-		previous, err := imp.previousParticipants(source.ID, key)
+		previous, err := imp.previousParticipants(ctx, source.ID, key)
 		if err != nil {
 			return result, err
 		}

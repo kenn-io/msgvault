@@ -68,7 +68,7 @@ func sourceFixture(ids ...string) *fakeSource {
 func registered(t *testing.T) (*store.Store, *store.Source) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
-	src, err := RegisterSource(st, "personal", "user@example.com")
+	src, err := RegisterSource(t.Context(), st, "personal", "user@example.com")
 	require.NoError(t, err)
 	return st, src
 }
@@ -77,13 +77,13 @@ func TestRegisterSourceSetsDisplayNameAndPreservesOwner(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	src, err := RegisterSource(st, " work ", "user@example.com")
+	src, err := RegisterSource(t.Context(), st, " work ", "user@example.com")
 	require.NoError(err)
 	assert.Equal("work", src.DisplayName.String)
 
-	_, err = RegisterSource(st, "work", "other@example.com")
+	_, err = RegisterSource(t.Context(), st, "work", "other@example.com")
 	require.Error(err)
-	src, err = st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	src, err = st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
 	require.NoError(err)
 	assert.Equal("work", src.DisplayName.String)
 	assert.NoError(ValidateOwner(src, "user@example.com"))
@@ -96,14 +96,14 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	f := sourceFixture("f")
 	imp := NewImporter(st, f)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	ids, err := st.MessageExistsBatch(src.ID, []string{"f"})
 	require.NoError(err)
 	mid := ids["f"]
 	require.NotZero(mid)
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsUpdated)
 	r := f.recordings["f"]
@@ -111,7 +111,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	r.Notes[0].ID = "regenerated-summary"
 	r.Notes[0].Content = "Updated summary"
 	f.recordings["f"] = r
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsUpdated)
 	ids, err = st.MessageExistsBatch(src.ID, []string{"f"})
@@ -120,7 +120,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	r.Segments = nil
 	r.Notes = []Note{{ID: "regenerated-summary", Type: "auto_sum_note", Content: ""}}
 	f.recordings["f"] = r
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	raw, err := st.GetMessageRaw(mid)
 	require.NoError(err)
@@ -130,7 +130,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	require.Len(c.Transcript.Segments, 1)
 	assert.Equal("Alex Example", c.Transcript.Segments[0].Speaker)
 	assert.Equal("Updated summary", c.Summary.Text)
-	body, err := st.GetMessageBodyText(mid)
+	body, err := st.GetMessageBodyText(t.Context(), mid)
 	require.NoError(err)
 	assert.Contains(body, "Ship the searchable release")
 	assert.NotContains(body, "Release summary")
@@ -140,7 +140,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	assert.NotContains(string(raw), "presigned")
 	assert.NotContains(string(raw), "data_link")
 	f.pages = nil
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	ids, err = st.MessageExistsBatch(src.ID, []string{"f"})
 	require.NoError(err)
@@ -159,7 +159,7 @@ func TestImporterEnumeratesShortPagesBeyondFiveHundred(t *testing.T) {
 		f.recordings[id] = r
 		f.pages = append(f.pages, []File{r.File})
 	}
-	sum, err := NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1})
+	sum, err := NewImporter(st, f).Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1})
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	// Enumeration cannot stop at a short page or the filtered-search cap.
@@ -176,7 +176,7 @@ func TestLimitedDateScopedRunsRotate(t *testing.T) {
 	after := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1, CreatedAfter: &after}
 	for range 4 {
-		_, err := imp.Import(context.Background(), opts)
+		_, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
 	}
 	assert.Equal([]string{"a", "b", "c", "a"}, f.read)
@@ -202,7 +202,7 @@ func TestLimitedRunsStartWithNewestUnseenRecordings(t *testing.T) {
 
 	imp := NewImporter(st, f)
 	for range 3 {
-		_, err := imp.Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1})
+		_, err := imp.Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1})
 		require.NoError(err)
 	}
 
@@ -286,7 +286,7 @@ func TestRotationStateDoesNotAccumulateInRunHistory(t *testing.T) {
 	assert.Equal(2, failures)
 	assert.Zero(cursorBytes, "run history must not retain recording inventory snapshots")
 
-	src, err = st.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	src, err = st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, opts.Identifier)
 	require.NoError(err)
 	var state syncState
 	require.NoError(json.Unmarshal([]byte(src.SyncCursor.String), &state))
@@ -301,7 +301,7 @@ func TestFailureKeepsLastSuccessfulRunAndPartialWrites(t *testing.T) {
 	f := sourceFixture("a", "b")
 	imp := NewImporter(st, f)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	before, err := st.GetLastSuccessfulSync(src.ID)
 	require.NoError(err)
@@ -309,7 +309,7 @@ func TestFailureKeepsLastSuccessfulRunAndPartialWrites(t *testing.T) {
 	r.Notes[0].Content = "A landed change"
 	f.recordings["a"] = r
 	f.fail["b"] = errors.New("upstream failed")
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err)
 	assert.Equal(int64(1), sum.MeetingsUpdated)
 	assert.Equal(int64(1), sum.Errors)
@@ -318,7 +318,7 @@ func TestFailureKeepsLastSuccessfulRunAndPartialWrites(t *testing.T) {
 	assert.Equal(before.ID, after.ID)
 	ids, err := st.MessageExistsBatch(src.ID, []string{"a"})
 	require.NoError(err)
-	body, err := st.GetMessageBodyText(ids["a"])
+	body, err := st.GetMessageBodyText(t.Context(), ids["a"])
 	require.NoError(err)
 	assert.Contains(body, "A landed change")
 }
@@ -328,17 +328,17 @@ func TestOwnerAndMissingSourceRefusedBeforeContent(t *testing.T) {
 	require := require.New(t)
 	st, src := registered(t)
 	f := sourceFixture("f")
-	_, err := RegisterSource(st, "personal", "other@example.com")
+	_, err := RegisterSource(t.Context(), st, "personal", "other@example.com")
 	require.Error(err)
-	_, err = NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "other@example.com"})
+	_, err = NewImporter(st, f).Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "other@example.com"})
 	require.Error(err)
 	assert.Empty(f.read)
 	f.email = "other@example.com"
-	_, err = NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
+	_, err = NewImporter(st, f).Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
 	require.Error(err)
 	assert.Empty(f.read)
 	require.NoError(st.RemoveSource(src.ID))
-	_, err = NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
+	_, err = NewImporter(st, f).Import(t.Context(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
 	require.Error(err)
 	assert.Contains(err.Error(), "add-plaud")
 }
@@ -348,11 +348,11 @@ func TestRepeatedListPageAndCancellationFailRun(t *testing.T) {
 	f := sourceFixture("f")
 	f.pages = append(f.pages, f.pages[0])
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
-	_, err := NewImporter(st, f).Import(context.Background(), opts)
+	_, err := NewImporter(st, f).Import(t.Context(), opts)
 	require.Error(t, err)
 	assert.Empty(t, f.read)
 	f = sourceFixture("a", "b")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f.onRead = func(string) { cancel() }
 	_, err = NewImporter(st, f).Import(ctx, opts)

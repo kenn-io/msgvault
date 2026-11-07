@@ -173,10 +173,10 @@ func TestScheduledSyncResolvesGmailAliasToCanonicalIdentifier(t *testing.T) {
 		"missing sources retain the token-first selector")
 	require.NoError(runScheduledSync(ctx, selector, st, nil, invocationFromContext(ctx)))
 	assert.Equal([]string{selector}, rebuiltSelectors, "cache rebuild logging keeps the supplied selector")
-	resolved, err := st.GetSourceByTypeAndIdentifier(sourceTypeGmail, canonicalEmail)
+	resolved, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeGmail, canonicalEmail)
 	require.NoError(err)
 	assert.Equal(source.ID, resolved.ID)
-	_, err = st.GetSourceByTypeAndIdentifier(sourceTypeGmail, selector)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeGmail, selector)
 	assert.ErrorIs(err, store.ErrSourceNotFound, "scheduled sync must not create a source under the alias")
 }
 
@@ -280,7 +280,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					err := runScheduledMSMailSync(ctx, sources[0], st, invocationFromContext(ctx))
 					require.ErrorContains(err, "no valid token")
 				} else {
-					confirmDefaultIdentity(io.Discard, st, sources[0].ID, email, email, "account-identifier", testDiscardLogger())
+					confirmDefaultIdentity(t.Context(), io.Discard, st, sources[0].ID, email, email, "account-identifier", testDiscardLogger())
 				}
 				ids, err := st.ListAccountIdentities(sources[0].ID)
 				require.NoError(err)

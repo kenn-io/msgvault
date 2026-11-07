@@ -3,7 +3,6 @@
 package backupapp_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -32,7 +31,7 @@ func TestRepackRetriesExternalWindowsSharingViolation(t *testing.T) {
 		}
 	})
 
-	_, err = f.maint.Repack(context.Background(), packstore.RepackOptions{})
+	_, err = f.maint.Repack(t.Context(), packstore.RepackOptions{})
 	require.Error(err, "an external handle without delete sharing must defer physical cleanup")
 	has, hasErr := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(hasErr)
@@ -41,7 +40,7 @@ func TestRepackRetriesExternalWindowsSharingViolation(t *testing.T) {
 	require.NoError(windows.CloseHandle(handle))
 	closed = true
 
-	repairStats, err := f.maint.Pack(context.Background(), packstore.PackOptions{})
+	repairStats, err := f.maint.Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(err)
 	assert.Equal(1, repairStats.PacksRemoved)
 	assert.NoFileExists(oldPath)

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net"
 	"os"
@@ -13,7 +14,8 @@ import (
 )
 
 func main() {
-	listener, err := net.Listen("tcp", "127.0.0.1:3128")
+	ctx := context.Background()
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:3128")
 	if err != nil {
 		os.Exit(1)
 	}
@@ -23,19 +25,19 @@ func main() {
 			if err != nil {
 				return
 			}
-			go relay(client)
+			go relay(ctx, client)
 		}
 	}()
-	command := exec.Command("/codex", os.Args[1:]...) //nolint:gosec // The launcher fixes /codex and validates the app-server arguments.
+	command := exec.CommandContext(ctx, "/codex", os.Args[1:]...) //nolint:gosec // The launcher fixes /codex and validates the app-server arguments.
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := command.Run(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func relay(client net.Conn) {
+func relay(ctx context.Context, client net.Conn) {
 	defer func() { _ = client.Close() }()
-	upstream, err := net.Dial("unix", "/work/.proxy.sock")
+	upstream, err := (&net.Dialer{}).DialContext(ctx, "unix", "/work/.proxy.sock")
 	if err != nil {
 		return
 	}

@@ -2,7 +2,6 @@ package importer
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"log/slog"
 	"path/filepath"
@@ -82,7 +81,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 	log := slog.Default()
 
 	err = IngestRawMessage(
-		context.Background(), st,
+		t.Context(), st,
 		src.ID, "test@example.com", "",
 		nil, "source-msg-1", "fakehash",
 		raw, time.Time{}, log,
@@ -91,7 +90,8 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 
 	// Verify all participant fields are valid UTF-8
 	db := st.DB()
-	rows, err := db.Query(
+	rows, err := db.QueryContext(
+		t.Context(),
 		"SELECT email_address, display_name, domain FROM participants",
 	)
 	require.NoError(err, "query participants")
@@ -114,7 +114,8 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 	require.NoError(rows.Err(), "participants rows")
 
 	// Verify conversation source_conversation_id is valid UTF-8
-	rows2, err := db.Query(
+	rows2, err := db.QueryContext(
+		t.Context(),
 		"SELECT source_conversation_id FROM conversations",
 	)
 	require.NoError(err, "query conversations")
@@ -148,7 +149,7 @@ func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 		"--outer--\r\n")
 
 	err = IngestRawMessage(
-		context.Background(), st,
+		t.Context(), st,
 		src.ID, "owner@example.test", "",
 		nil, "source-msg-recovery", "fakehash",
 		raw, time.Time{}, slog.Default(),
@@ -157,7 +158,8 @@ func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 
 	var subject, body, sender string
 	var sentAt time.Time
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT m.subject, mb.body_text, m.sent_at, p.email_address
 		 FROM messages m
 		 JOIN message_bodies mb ON mb.message_id = m.id
@@ -172,7 +174,8 @@ func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 	assert.Equal("sender@example.test", sender)
 
 	var recipients int
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*)
 		 FROM message_recipients mr
 		 JOIN messages m ON m.id = mr.message_id
@@ -205,7 +208,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		"test body\r\n")
 
 	err = IngestRawMessage(
-		context.Background(), st,
+		t.Context(), st,
 		src.ID, "test@example.com", "",
 		nil, "source-msg-linkage", "fakehash",
 		raw, time.Time{}, slog.Default(),
@@ -216,7 +219,8 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 
 	// Verify sender_id is set on the message.
 	var senderID sql.NullInt64
-	err = db.QueryRow(
+	err = db.QueryRowContext(
+		t.Context(),
 		`SELECT sender_id FROM messages
 		 WHERE source_message_id = ?`, "source-msg-linkage",
 	).Scan(&senderID)
@@ -226,7 +230,8 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 	// Verify message_recipients rows exist for from, to.
 	for _, rtype := range []string{"from", "to"} {
 		var count int
-		err = db.QueryRow(
+		err = db.QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM message_recipients mr
 			 JOIN messages m ON m.id = mr.message_id
 			 WHERE m.source_message_id = ?
@@ -238,7 +243,8 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 	}
 
 	// Verify display names are valid UTF-8 (sanitized).
-	rows, err := db.Query(
+	rows, err := db.QueryContext(
+		t.Context(),
 		`SELECT display_name FROM participants
 		 WHERE display_name IS NOT NULL`,
 	)
@@ -271,7 +277,7 @@ func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T)
 	fallback := time.Date(2015, 5, 5, 12, 0, 0, 0, time.UTC)
 
 	err = IngestRawMessage(
-		context.Background(), st,
+		t.Context(), st,
 		src.ID, "owner@example.com", "",
 		nil, "source-msg-date", "fakehash",
 		raw, fallback, slog.Default(),
@@ -279,7 +285,8 @@ func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T)
 	require.NoError(err, "IngestRawMessage")
 
 	var sentAt, internalDate time.Time
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sent_at, internal_date FROM messages
 		 WHERE source_message_id = ?`,
 		"source-msg-date",
@@ -306,7 +313,7 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
 	err = IngestRawMessage(
-		context.Background(), st,
+		t.Context(), st,
 		src.ID, "owner@example.com", "",
 		nil, "source-msg-no-date", "fakehash",
 		raw, fallback, log,
@@ -314,7 +321,8 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 	require.NoError(err, "IngestRawMessage")
 
 	var sentAt, internalDate sql.NullTime
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sent_at, internal_date FROM messages
 		 WHERE source_message_id = ?`,
 		"source-msg-no-date",

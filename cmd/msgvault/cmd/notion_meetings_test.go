@@ -75,7 +75,7 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 		Parent: notionmeetings.Parent{PageID: "private-page-id"},
 	}
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
 		block:  &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "private-page-id"}},
 	}, nil)
@@ -92,7 +92,7 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 
 func TestRunNotionMeetingsProbeResolvesParentFromMeetingBlock(t *testing.T) {
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1"}}},
 		block:  &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}},
 	}, nil)
@@ -102,7 +102,7 @@ func TestRunNotionMeetingsProbeResolvesParentFromMeetingBlock(t *testing.T) {
 
 func TestRunNotionMeetingsProbeChecksBlockWhenQueryHasParent(t *testing.T) {
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{
 			ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"},
 		}}},
@@ -115,7 +115,7 @@ func TestRunNotionMeetingsProbeChecksBlockWhenQueryHasParent(t *testing.T) {
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUserInformation,
 	}, nil)
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
 
 func TestRunNotionMeetingsProbeDegradesOnTransientUserListingFailure(t *testing.T) {
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{}, usersErr: &notionmeetings.APIError{
 			Kind: notionmeetings.ErrRateLimited, Status: 503, Code: "service_unavailable",
 		},
@@ -151,7 +151,7 @@ func TestRunNotionMeetingsProbeSurfacesSystemicUserListingFailures(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			err := runNotionMeetingsProbe(context.Background(), &out, fakeNotionProbe{
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 				result: &notionmeetings.QueryResult{}, usersErr: tt.err,
 			}, nil)
 			require.Error(t, err)
@@ -162,7 +162,7 @@ func TestRunNotionMeetingsProbeSurfacesSystemicUserListingFailures(t *testing.T)
 
 func TestRunConfiguredNotionMeetingsSyncRefusesRemovedSource(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	err := runConfiguredNotionMeetingsSync(context.Background(), st, config.NotionMeetingsSource{
+	err := runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{
 		Identifier: "removed", Token: "secret-token",
 	})
 	require.Error(t, err)

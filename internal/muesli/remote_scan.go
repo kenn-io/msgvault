@@ -106,7 +106,7 @@ type remotePush struct {
 // suggested phone identity may reach the archive after the last upload.
 func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	var noArchive *Importer
-	if err := noArchive.resolveParticipants(0, &meeting, p.contacts, p.opts.PhoneCountryCode, p.shared); err != nil {
+	if err := noArchive.resolveParticipants(ctx, 0, &meeting, p.contacts, p.opts.PhoneCountryCode, p.shared); err != nil {
 		return err
 	}
 	r := RemoteRequest{Action: "upsert", Source: meetingimport.Source{Identifier: p.opts.Identifier, AccountEmail: p.opts.AccountEmail}, Meeting: NewRemoteMeeting(meeting), Full: p.opts.Full}

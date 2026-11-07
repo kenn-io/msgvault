@@ -45,7 +45,7 @@ func TestEmailTagsRoutesAndValidation(t *testing.T) {
 	st := &tagsHTTPStore{}
 	srv := NewServer(&config.Config{}, st, newMockScheduler(), testLogger())
 	call := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -102,7 +102,7 @@ func TestEmailTagsPreviewRunsWhileGateHeld(t *testing.T) { //nolint:paralleltest
 	st := &tagsHTTPStore{}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate})
 	call := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/7/tags", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/messages/7/tags", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)

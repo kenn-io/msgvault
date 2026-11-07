@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,9 +12,9 @@ import (
 func TestPrimaryCurrentEmploymentProjectsCompanyAndTitle(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 
 	_, found, err := st.PrimaryCurrentEmploymentContext(ctx, person.ID)
@@ -49,9 +48,9 @@ func TestPrimaryCurrentEmploymentProjectsCompanyAndTitle(t *testing.T) {
 func TestEndingThePrimaryEmploymentClearsTheProjectionWithoutDeletingHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 
 	employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
@@ -78,9 +77,9 @@ func TestEndingThePrimaryEmploymentClearsTheProjectionWithoutDeletingHistory(t *
 func TestPrimaryCurrentEmploymentFollowsRotation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	dayJob := mustOrganization(t, st, "Example Org")
 	sideJob := mustOrganization(t, st, "Another Org")
 

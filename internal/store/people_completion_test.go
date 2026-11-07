@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +11,7 @@ import (
 
 func TestCompletePersonProfilesReturnsOnlyCurrentCuratedPrimitives(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storetest.New(t).Store
 	participantID, err := st.EnsureParticipant("alice@example.test", "Alice Observed", "example.test")
 	require.NoError(err)
@@ -101,7 +100,7 @@ func TestCompletePersonProfilesReturnsOnlyCurrentCuratedPrimitives(t *testing.T)
 func TestCompletePersonProfilesValidatesAndCapsResults(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storetest.New(t).Store
 	for index := range 25 {
 		participantID, err := st.EnsureParticipant(

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -131,7 +130,7 @@ func TestResolveExploreMeetingsUsesResolvedSearchCandidateAuthority(t *testing.T
 	generation := int64(17)
 	engine := b.BuildEngine()
 
-	result, err := engine.ResolveExploreMeetings(context.Background(), ExploreSelectionRequest{
+	result, err := engine.ResolveExploreMeetings(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{Search: SearchSpec{
 			Mode: SearchSemantic, Query: "launch", CandidateMessageIDs: []int64{second},
 			VectorGeneration: &generation,

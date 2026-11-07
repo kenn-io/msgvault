@@ -66,7 +66,7 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 	must.NoError(err)
 	check.Equal(int64(1), summary.MeetingsAdded)
 	check.Equal(int64(2), summary.RecordingsStored)
-	rows, err := st.MessageMetadataBatch(registered.SourceID, []string{"meeting:synthetic"})
+	rows, err := st.MessageMetadataBatch(t.Context(), registered.SourceID, []string{"meeting:synthetic"})
 	must.NoError(err)
 	id := rows["meeting:synthetic"].ID
 	must.Positive(id)

@@ -38,7 +38,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 			imp, opts := testImporter(t, f)
 			now := tsBase.Add(24 * time.Hour)
 			imp.now = func() time.Time { return now }
-			sum, err := imp.Import(context.Background(), opts)
+			sum, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
 
 			// All channels have new top-level activity and a first reply on
@@ -63,7 +63,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 			// in the store, not just in one process's in-memory rotation.
 			completed := false
 			for range 12 {
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				f.mu.Lock()
 				historyCalls := 0
 				f.onHistory = func(string) {
@@ -95,7 +95,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 
 			for _, channelID := range []string{"C01", "C02", "C03"} {
 				var count int
-				err = imp.store.DB().QueryRow(imp.store.Rebind(`
+				err = imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`
 					SELECT COUNT(*) FROM messages m
 					JOIN conversations c ON c.id = m.conversation_id
 					WHERE c.source_conversation_id = ?`), channelID).Scan(&count)
@@ -116,10 +116,10 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 				resumed := NewImporter(imp.store, imp.client, opts.TeamID)
 				resumed.checkpointMinInterval = 0
 				resumed.now = func() time.Time { return now }
-				_, err = resumed.Import(context.Background(), opts)
+				_, err = resumed.Import(t.Context(), opts)
 				require.NoError(err)
 				var count int
-				require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+				require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 					`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C_GONE:"+ts(2)).Scan(&count))
 				assert.Equal(1, count, "restored access must recover older history")
 			}

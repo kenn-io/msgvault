@@ -50,7 +50,7 @@ func TestImportEmlxPendingPartsPreserveNewerOccurrence(t *testing.T) {
 					r.NoError(os.WriteFile(brokenDir, []byte("a file where the part directory belongs"), 0600))
 				} else {
 					cacheAttachment(t, rootA, "1", "3", "two.bin", []byte("second sibling"))
-					_, err := st.DB().Exec(`CREATE TRIGGER fail_second_attachment BEFORE INSERT ON attachments
+					_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_attachment BEFORE INSERT ON attachments
  WHEN NEW.filename = 'two.bin' BEGIN SELECT RAISE(ABORT, 'synthetic attachment failure'); END`)
 					r.NoError(err)
 				}
@@ -59,7 +59,7 @@ func TestImportEmlxPendingPartsPreserveNewerOccurrence(t *testing.T) {
 				r.False(failed.HardErrors)
 				r.Positive(failed.Errors)
 				var messageID int64
-				r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+				r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 				committed, err := st.GetMessageRawContext(t.Context(), messageID)
 				r.NoError(err)
 				parsed, err := mime.Parse(committed)
@@ -67,7 +67,7 @@ func TestImportEmlxPendingPartsPreserveNewerOccurrence(t *testing.T) {
 				r.Len(parsed.Attachments, 2)
 				r.Equal(oldPart, parsed.Attachments[0].Content, "A must commit its contribution before failing")
 				if fault == "attachment storage" {
-					_, err := st.DB().Exec("DROP TRIGGER fail_second_attachment")
+					_, err := st.DB().ExecContext(t.Context(), "DROP TRIGGER fail_second_attachment")
 					r.NoError(err)
 				}
 				mkMailboxDir(t, rootB, map[string][]byte{"2.partial.emlx": raw})
@@ -153,7 +153,7 @@ func TestImportEmlxInterruptedIngestCreditsIntent(t *testing.T) {
 			_, err = importEmlxDir(t.Context(), st, rootA, opts, stopped)
 			r.NoError(err)
 			var messageID int64
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 			attachment := func() []byte {
 				t.Helper()
 				current, err := st.GetMessageRawContext(t.Context(), messageID)
@@ -225,7 +225,7 @@ func TestImportEmlxCreditReachesLaterFileInChunk(t *testing.T) {
 	r.NoError(err)
 	a.Zero(summary.Errors)
 	var messageID int64
-	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+	r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 	current, err := st.GetMessageRawContext(t.Context(), messageID)
 	r.NoError(err)
 	parsed, err := mime.Parse(current)
@@ -264,7 +264,7 @@ func TestImportEmlxCreditKeepsNewerReceiptForOtherMessage(t *testing.T) {
 	receiptFor := func() (emlxReceipt, string) {
 		t.Helper()
 		var checksum, status string
-		r.NoError(st.DB().QueryRow(`SELECT checksum, status FROM source_import_items
+		r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT checksum, status FROM source_import_items
  WHERE provider = 'emlx-occurrence'`).Scan(&checksum, &status))
 		var receipt emlxReceipt
 		r.NoError(json.Unmarshal([]byte(checksum), &receipt))
@@ -279,7 +279,7 @@ func TestImportEmlxCreditKeepsNewerReceiptForOtherMessage(t *testing.T) {
 	r.NoError(err)
 	var receipt emlxReceipt
 	var checksum string
-	r.NoError(st.DB().QueryRow(st.Rebind(`SELECT checksum, status FROM source_import_items
+	r.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT checksum, status FROM source_import_items
  WHERE provider = 'emlx-occurrence' AND provider_id = ?`), before.ID).Scan(&checksum, &status))
 	r.NoError(json.Unmarshal([]byte(checksum), &receipt))
 	a.Equal("imported", status, "the historical credit must not reopen the newer receipt")
@@ -305,7 +305,7 @@ func stoppedAfterCommit(t *testing.T, opts EmlxImportOptions) emlxImportIO {
 func messageAttachment(t *testing.T, st *store.Store, rfcID string) []byte {
 	t.Helper()
 	var messageID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE rfc822_message_id = ?`), rfcID).
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE rfc822_message_id = ?`), rfcID).
 		Scan(&messageID))
 	raw, err := st.GetMessageRawContext(t.Context(), messageID)
 	require.NoError(t, err)
@@ -366,8 +366,8 @@ func TestImportEmlxFailedReceiptSaveKeepsAttachmentRecord(t *testing.T) {
 	// A hex digest and a fixed path: safe to embed, since triggers cannot bind.
 	receiptA := emlxDigest(rootA) + "/Messages/1.partial.emlx"
 	for _, event := range []string{"INSERT", "UPDATE"} {
-		_, err = st.DB().Exec(`CREATE TRIGGER block_completed_receipt_` + event + ` BEFORE ` + event +
-			` ON source_import_items WHEN NEW.provider_id = '` + receiptA + `' AND NEW.status = 'imported'
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_completed_receipt_`+event+` BEFORE `+event+
+			` ON source_import_items WHEN NEW.provider_id = '`+receiptA+`' AND NEW.status = 'imported'
  BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END`)
 		r.NoError(err)
 	}
@@ -377,7 +377,7 @@ func TestImportEmlxFailedReceiptSaveKeepsAttachmentRecord(t *testing.T) {
 	r.NoError(err)
 	r.True(failed.HardErrors, "the blocked receipt save is a database failure")
 	for _, event := range []string{"INSERT", "UPDATE"} {
-		_, err = st.DB().Exec(`DROP TRIGGER block_completed_receipt_` + event)
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER block_completed_receipt_`+event)
 		r.NoError(err)
 	}
 
@@ -412,7 +412,7 @@ func TestImportEmlxLegacyArchiveKeepsStoredAttachment(t *testing.T) {
 	r.Equal(1, restored)
 	source, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
 	r.NoError(err)
-	label, err := st.EnsureLabel(source.ID, "Inbox", "Inbox", "user")
+	label, err := st.EnsureLabel(t.Context(), source.ID, "Inbox", "Inbox", "user")
 	r.NoError(err)
 	hash := emlxRawDigest(raw)
 	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
@@ -464,7 +464,7 @@ func TestImportEmlxLegacyOversizedCopyRecordsHash(t *testing.T) {
 	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
 	source, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
 	r.NoError(err)
-	label, err := st.EnsureLabel(source.ID, "Inbox", "Inbox", "user")
+	label, err := st.EnsureLabel(t.Context(), source.ID, "Inbox", "Inbox", "user")
 	r.NoError(err)
 	hash := emlxRawDigest(raw)
 	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
@@ -488,7 +488,7 @@ func TestImportEmlxLegacyOversizedCopyRecordsHash(t *testing.T) {
 	firstAttachment := func() []byte {
 		t.Helper()
 		var messageID int64
-		r.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+		r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 		archived, err := st.GetMessageRawContext(t.Context(), messageID)
 		r.NoError(err)
 		parsed, err := mime.Parse(archived)

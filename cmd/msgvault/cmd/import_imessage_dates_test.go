@@ -21,7 +21,7 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	tmp := t.TempDir()
 	chatPath, chat := testutil.NewIMessageChatDB(t)
-	_, err := chat.Exec(`
+	_, err := chat.ExecContext(t.Context(), `
  INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
  INSERT INTO chat_handle_join VALUES (1,1);
  `)
@@ -31,9 +31,9 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 		if i >= 2 {
 			body = "Synthetic message"
 		}
-		_, err = chat.Exec(`INSERT INTO message VALUES ('synthetic', ?, NULL, ?, ?, 'SMS', 0, 1)`, body, date, i%2)
+		_, err = chat.ExecContext(t.Context(), `INSERT INTO message VALUES ('synthetic', ?, NULL, ?, ?, 'SMS', 0, 1)`, body, date, i%2)
 		require.NoError(err)
-		_, err = chat.Exec(`INSERT INTO chat_message_join VALUES (1,?)`, i+1)
+		_, err = chat.ExecContext(t.Context(), `INSERT INTO chat_message_join VALUES (1,?)`, i+1)
 		require.NoError(err)
 	}
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -41,21 +41,21 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))
-	c, err := imessage.NewClient(chatPath, imessage.WithOwnerHandle("owner@example.test"))
+	c, err := imessage.NewClient(t.Context(), chatPath, imessage.WithOwnerHandle("owner@example.test"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = c.Close() })
-	summary, err := c.Import(context.Background(), st, src.ID)
+	summary, err := c.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(4, summary.MessagesImported)
 	assert.Zero(summary.Skipped)
 	var total, undated int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&total))
 	assert.Equal(4, total)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE sent_at IS NULL AND internal_date IS NULL`).Scan(&undated))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE sent_at IS NULL AND internal_date IS NULL`).Scan(&undated))
 	assert.Equal(2, undated)
 	require.NoError(st.Close())
 	analyticsDir := filepath.Join(tmp, "analytics")
-	result, err := buildCache(dbPath, analyticsDir, true)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "sentinel placeholders must not break identity validation")
 	assert.False(result.Skipped)
 
@@ -64,7 +64,7 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = analytics.Close() })
 	var exported int
-	require.NoError(analytics.QueryRow(`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`,
+	require.NoError(analytics.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`,
 		filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&exported))
 	assert.Equal(2, exported)
 }
@@ -73,7 +73,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	tmp := t.TempDir()
 	chatPath, chat := testutil.NewIMessageChatDB(t)
-	_, err := chat.Exec(`
+	_, err := chat.ExecContext(t.Context(), `
  INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
  INSERT INTO message VALUES ('synthetic-1', NULL, NULL, 725760000000000000, 0, 'SMS', 0, NULL);
  INSERT INTO message VALUES ('synthetic-2', NULL, NULL, 725846400000000000, 0, 'SMS', 0, NULL);
@@ -89,16 +89,16 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))
-	c, err := imessage.NewClient(chatPath)
+	c, err := imessage.NewClient(t.Context(), chatPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = c.Close() })
-	summary, err := c.Import(context.Background(), st, src.ID)
+	summary, err := c.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(2, summary.MessagesImported)
 	assert.Zero(summary.Skipped)
-	_ = retitleImessageChats(st)
+	_ = retitleImessageChats(t.Context(), st)
 	require.NoError(st.Close())
-	result, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
+	result, err := buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	assert.False(result.Skipped)
 
@@ -107,7 +107,7 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 		require.NoError(err)
 		defer func() { _ = analytics.Close() }()
 		var count int
-		require.NoError(analytics.QueryRow(`
+		require.NoError(analytics.QueryRowContext(t.Context(), `
  SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)
  WHERE source_message_id = ?`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet"), sourceMessageID).Scan(&count))
 		return count
@@ -117,20 +117,24 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	st, err = store.Open(dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
-	_, err = chat.Exec(`UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
+	_, err = chat.ExecContext(t.Context(), `UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
 	require.NoError(err)
-	summary, err = c.Import(context.Background(), st, src.ID)
+	summary, err = c.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(2, summary.MessagesImported)
 	var sentAt, internalDate sql.NullTime
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
  SELECT sent_at, internal_date FROM messages WHERE source_id = ? AND source_message_id = '1'`, src.ID).Scan(&sentAt, &internalDate))
 	assert.False(sentAt.Valid)
 	assert.False(internalDate.Valid)
 
 	state := &invocation{cfg: cfg}
 	require.Equal(1, summary.DatesCleared)
-	require.NoError(finishImessageImport(st, state, summary))
+	// An interrupted import reaches finishImessageImport with its context
+	// already cancelled; the cache refresh must still run.
+	interrupted, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.NoError(finishImessageImport(interrupted, st, state, summary))
 	assert.Equal(0, cachedMessages("1"), "the cache must drop the message whose date was cleared")
 }
 
@@ -150,9 +154,9 @@ func TestFinishImessageImportSkipsCacheBuildForPostgres(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DatabaseURL = "postgres://user:pass@example.test:5432/msgvault"
 	state := &invocation{cfg: cfg}
-	require.NoError(finishImessageImport(st, state, &imessage.ImportSummary{}))
+	require.NoError(finishImessageImport(t.Context(), st, state, &imessage.ImportSummary{}))
 	var title string
-	require.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id = ?`, conversationID).Scan(&title))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE id = ?`, conversationID).Scan(&title))
 	assert.Equal("Synthetic Person", title)
 }
 

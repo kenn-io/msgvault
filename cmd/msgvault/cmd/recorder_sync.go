@@ -32,7 +32,7 @@ func syncRecorderSources[S recorderCommandSource, R any](cmd *cobra.Command, arg
 		}
 	}
 
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func syncRecorderSources[S recorderCommandSource, R any](cmd *cobra.Command, arg
 // syncConfiguredRecorder keeps registration, attempt reporting and scheduled cache retries together.
 func syncConfiguredRecorder[S recorderCommandSource, R any](ctx context.Context, st *store.Store, source S, kind, identifier string, importSource func() (*R, error), writes func(*R) int64, refresh func(context.Context, string) error) error {
 	missing := fmt.Errorf("%s source %q is not registered; run msgvault add-%s %s first", kind, identifier, kind, identifier)
-	registered, err := requireRegisteredMeetingSource(st, kind, identifier, missing)
+	registered, err := requireRegisteredMeetingSource(ctx, st, kind, identifier, missing)
 	if err != nil {
 		return recordSyncAttempt(ctx, kind, identifier, err)
 	}

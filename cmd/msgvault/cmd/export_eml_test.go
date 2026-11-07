@@ -192,7 +192,7 @@ func TestExportEMLThreadWritesEveryOriginalInOrder(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("imap", "owner@example.com")
 	must.NoError(err)
-	convID, err := st.EnsureConversation(src.ID, "<root@example.com>", "Quarterly report")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "<root@example.com>", "Quarterly report")
 	must.NoError(err)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	persist := func(sourceMessageID string, sentAt time.Time, raw []byte) {
@@ -271,7 +271,7 @@ func TestExportEMLThreadResolvesNumericReferencesAndAccount(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "wanted-thread", "Wanted")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "wanted-thread", "Wanted")
 	require.NoError(err)
 	persist := func(source, conversation int64, provider, body string) int64 {
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{
@@ -283,7 +283,7 @@ func TestExportEMLThreadResolvesNumericReferencesAndAccount(t *testing.T) {
 	wantedID := persist(src.ID, conv, "999999", "wanted MIME")
 	other, err := st.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
-	otherConv, err := st.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConv, err := st.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	require.NoError(err)
 	persist(other.ID, otherConv, strconv.FormatInt(wantedID, 10), "unrelated MIME")
 	cmd, out, dataDir := emlArchiveCommand(t, st, nil)
@@ -312,7 +312,7 @@ func TestExportEMLThreadHandlesOriginalReadFailures(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 			require.NoError(err)
-			conv, err := st.EnsureConversation(src.ID, "partial-thread", "Partial")
+			conv, err := st.EnsureConversation(t.Context(), src.ID, "partial-thread", "Partial")
 			require.NoError(err)
 			var ids []int64
 			for _, name := range []string{"first", "middle", "last"} {
@@ -328,17 +328,17 @@ func TestExportEMLThreadHandlesOriginalReadFailures(t *testing.T) {
 				}
 				switch missing {
 				case "message":
-					_, err := st.MergeDuplicates(ids[0], []int64{ids[1]}, "test-dedup")
+					_, err := st.MergeDuplicates(t.Context(), ids[0], []int64{ids[1]}, "test-dedup")
 					if !assert.NoError(err) { //nolint:testifylint // HTTP callback cannot call FailNow on the test goroutine.
 						return
 					}
 				case "MIME":
-					_, err := st.DB().Exec(st.Rebind("DELETE FROM message_raw WHERE message_id = ?"), ids[1])
+					_, err := st.DB().ExecContext(t.Context(), st.Rebind("DELETE FROM message_raw WHERE message_id = ?"), ids[1])
 					if !assert.NoError(err) { //nolint:testifylint // HTTP callback cannot call FailNow on the test goroutine.
 						return
 					}
 				case "corrupt MIME":
-					_, err := st.DB().Exec(st.Rebind("UPDATE message_raw SET raw_data = ? WHERE message_id = ?"), []byte("invalid zlib data"), ids[1])
+					_, err := st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_raw SET raw_data = ? WHERE message_id = ?"), []byte("invalid zlib data"), ids[1])
 					assert.NoError(err)
 				}
 			})
@@ -369,7 +369,7 @@ func TestExportEMLThreadKeepsInitialMembershipDuringInsert(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "large-thread", "Large")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "large-thread", "Large")
 	require.NoError(err)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	persist := func(name string, sentAt time.Time) error {

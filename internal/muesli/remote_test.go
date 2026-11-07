@@ -52,7 +52,7 @@ func TestRemoteRegistrationUsesOptionalDisplayName(t *testing.T) {
 		result, err := f.imp.ImportRemote(t.Context(), r)
 		require.NoError(err)
 		assert.Equal("registered", result.Status)
-		source, err := f.st.GetSourceByTypeAndIdentifier(SourceType, identifier)
+		source, err := f.st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, identifier)
 		require.NoError(err)
 		return source
 	}
@@ -105,12 +105,12 @@ func TestRemoteRoundTripAndEdits(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(first.MessageID, updated.MessageID)
 	assert.Equal("updated", updated.Status)
-	body, err := f.st.GetMessageBodyText(first.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), first.MessageID)
 	require.NoError(err)
 	assert.Contains(body, "Late synthetic notes")
 	assert.Contains(body, "Edited synthetic transcript")
 	var attendees int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), first.MessageID).Scan(&attendees))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), first.MessageID).Scan(&attendees))
 	assert.Zero(attendees)
 	r.Source.AccountEmail = "another@example.com"
 	_, err = f.imp.ImportRemote(t.Context(), r)
@@ -177,7 +177,7 @@ func TestRemoteContactsAmbiguityAndCarry(t *testing.T) {
 	assert.Empty(sent.Meeting.Participants[0].Anchor)
 	assert.Empty(sent.Meeting.Participants[0].Phones)
 	// An explicit card reference can resolve; the raw Contacts ID never transfers.
-	_, err = f.muesli.Exec(`UPDATE meeting_participants SET participant_identifier = 'contact:CARD-A'`)
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meeting_participants SET participant_identifier = 'contact:CARD-A'`)
 	require.NoError(err)
 	_, err = ScanRemote(t.Context(), opts, send)
 	require.NoError(err)
@@ -190,7 +190,7 @@ func TestRemoteContactsAmbiguityAndCarry(t *testing.T) {
 	require.NoError(err)
 	key, err := sent.Meeting.toMeeting().SourceMessageID()
 	require.NoError(err)
-	prior, err := f.imp.previousParticipants(f.source.ID, key)
+	prior, err := f.imp.previousParticipants(t.Context(), f.source.ID, key)
 	require.NoError(err)
 	require.Len(prior, 1)
 	for _, p := range prior {
@@ -215,7 +215,7 @@ func TestRemoteScanContinuesAfterInvalidMeeting(t *testing.T) {
 func remotePushRuns(t *testing.T, f *importerFixture) int {
 	t.Helper()
 	var runs int
-	require.NoError(t, f.st.DB().QueryRow(`SELECT count(*) FROM sync_runs WHERE sync_type = 'muesli_push'`).Scan(&runs))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_runs WHERE sync_type = 'muesli_push'`).Scan(&runs))
 	return runs
 }
 
@@ -263,7 +263,7 @@ func TestRemoteScanUploadsOnlyNewOrEditedMeetings(t *testing.T) {
 	}
 	assert.Equal(1, scan(opts), "first scan uploads")
 	assert.Equal(0, scan(opts), "acknowledged meeting is not uploaded again")
-	_, err := f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, id)
+	_, err := f.muesli.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, id)
 	require.NoError(err)
 	assert.Equal(1, scan(opts), "an edit is uploaded")
 	assert.Equal(0, scan(opts))
@@ -349,7 +349,7 @@ func TestRemoteScanSerializesBeforeRead(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow("first scan did not reach send")
 	}
-	_, err := f.muesli.Exec(`UPDATE meetings SET manual_notes = 'Newest synthetic notes'`)
+	_, err := f.muesli.ExecContext(t.Context(), `UPDATE meetings SET manual_notes = 'Newest synthetic notes'`)
 	require.NoError(err)
 	waitCtx, stopWaiting := context.WithTimeout(t.Context(), time.Second)
 	defer stopWaiting()
@@ -433,7 +433,7 @@ func TestRemoteCanceledRegistrationDoesNotCreateSource(t *testing.T) {
 	cancel()
 	_, err := f.imp.ImportRemote(ctx, RemoteRequest{Action: "register", Source: meetingimport.Source{Identifier: "canceled-recorder", AccountEmail: "user@example.com"}})
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = f.imp.store.GetSourceByTypeAndIdentifier(SourceType, "canceled-recorder")
+	_, err = f.imp.store.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "canceled-recorder")
 	require.ErrorIs(t, err, store.ErrSourceNotFound)
 }
 

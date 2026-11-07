@@ -78,7 +78,7 @@ func (s *Store) recordEmailHeadersContext(
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
 			return err
 		}
-		return s.bumpDerivedDataRevision(tx)
+		return s.bumpDerivedDataRevisionContext(ctx, tx)
 	})
 }
 

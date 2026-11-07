@@ -32,17 +32,17 @@ func TestFilenameSuggestionSnapshot(t *testing.T) {
 	person, _, err := s.CreatePersonFromParticipant(first)
 	require.NoError(err)
 	var message int64
-	require.NoError(s.DB().QueryRow(s.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
+	require.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT message_id FROM attachments WHERE id=?`), ids[0]).Scan(&message))
 	require.NoError(s.ReplaceMessageRecipients(message, "to", []int64{first}, []string{"First Example"}))
 	// Recipient writes rederive account attribution. Set the synthetic known
 	// attribution only after that production write has completed.
-	_, err = s.DB().Exec(s.Rebind(`UPDATE messages SET account_address='first@example.test',account_path='inbound' WHERE id=?`), message)
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE messages SET account_address='first@example.test',account_path='inbound' WHERE id=?`), message)
 	require.NoError(err)
 	var account string
-	require.NoError(s.DB().QueryRow(s.Rebind(`SELECT account_address FROM messages WHERE id=?`), message).Scan(&account))
+	require.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT account_address FROM messages WHERE id=?`), message).Scan(&account))
 	require.Equal("first@example.test", account)
 	filenameReady(t, s)
-	writer, err := store.OpenForTest(filenameLocation(t, s))
+	writer, err := store.OpenForTest(t.Context(), filenameLocation(t, s))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(writer.Close()) })
 	s.DB().SetMaxOpenConns(1)

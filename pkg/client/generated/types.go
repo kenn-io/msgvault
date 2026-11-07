@@ -2859,6 +2859,8 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HasMore          *bool                    `json:"has_more,omitempty"`
+	Hints            []SearchHint             `json:"hints,omitempty"`
 	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
@@ -2870,6 +2872,13 @@ type CliSearchResponse struct {
 
 func (c CliSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range c.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(c.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
 	}
@@ -6678,18 +6687,20 @@ func (h HybridSearchMatch) Validate() error {
 }
 
 type HybridSearchResponse struct {
-	Accelerator      *string                 `json:"accelerator,omitzero"`
-	Generation       HybridGenerationSummary `json:"generation"`
-	HasMore          bool                    `json:"has_more"`
-	Mode             string                  `json:"mode" validate:"required"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Query            string                  `json:"query" validate:"required"`
-	Results          []HybridSearchItem      `json:"results" validate:"required"`
-	Returned         int64                   `json:"returned"`
-	ScopeLabel       *string                 `json:"scope_label,omitzero"`
-	ScopeSourceCount *int64                  `json:"scope_source_count,omitempty"`
-	Timings          HybridSearchTimings     `json:"timings"`
-	TookMs           int64                   `json:"took_ms"`
+	Accelerator           *string                 `json:"accelerator,omitzero"`
+	CandidateLimitReached *int64                  `json:"candidate_limit_reached,omitempty"`
+	Generation            HybridGenerationSummary `json:"generation"`
+	HasMore               bool                    `json:"has_more"`
+	Mode                  string                  `json:"mode" validate:"required"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Query                 string                  `json:"query" validate:"required"`
+	RankingLimitReached   *int64                  `json:"ranking_limit_reached,omitempty"`
+	Results               []HybridSearchItem      `json:"results" validate:"required"`
+	Returned              int64                   `json:"returned"`
+	ScopeLabel            *string                 `json:"scope_label,omitzero"`
+	ScopeSourceCount      *int64                  `json:"scope_source_count,omitempty"`
+	Timings               HybridSearchTimings     `json:"timings"`
+	TookMs                int64                   `json:"took_ms"`
 }
 
 func (h HybridSearchResponse) Validate() error {
@@ -7513,6 +7524,37 @@ func (l ListDeletionsResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Manifests[%d]", i), err)
 			}
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LocalEmbeddingsStatus struct {
+	DoneBytes     int64                      `json:"done_bytes"`
+	DownloadBytes int64                      `json:"download_bytes"`
+	Enabled       bool                       `json:"enabled"`
+	ErrorData     *string                    `json:"error,omitzero"`
+	Host          string                     `json:"host" validate:"required"`
+	Phase         LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
+	Provider      string                     `json:"provider" validate:"required"`
+	Running       *bool                      `json:"running,omitempty"`
+	TotalBytes    int64                      `json:"total_bytes"`
+}
+
+func (l LocalEmbeddingsStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Host, "required"); err != nil {
+		errors = errors.Append("Host", err)
+	}
+	if v, ok := any(l.Phase).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Phase", err)
+		}
+	}
+	if err := typesValidator.Var(l.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -15095,6 +15137,7 @@ func (s SearchCoverageResponse) Validate() error {
 
 type SearchFastResponse struct {
 	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []SearchHint        `json:"hints,omitempty"`
 	IndexState       *string             `json:"index_state,omitzero"`
 	Messages         []MessageSummary    `json:"messages" validate:"required"`
 	Query            string              `json:"query" validate:"required"`
@@ -15105,6 +15148,13 @@ type SearchFastResponse struct {
 
 func (s SearchFastResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range s.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Messages, "required"); err != nil {
 		errors = errors.Append("Messages", err)
 	}
@@ -15129,6 +15179,39 @@ func (s SearchFastResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SearchHint struct {
+	Code      string                    `json:"code" validate:"required"`
+	Message   string                    `json:"message" validate:"required"`
+	RetryWith SearchHintRetryWithStruct `json:"retry_with"`
+}
+
+func (s SearchHint) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Code, "required"); err != nil {
+		errors = errors.Append("Code", err)
+	}
+	if err := typesValidator.Var(s.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if v, ok := any(s.RetryWith).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RetryWith", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SearchHintRetryWithStruct struct {
+	Query string `json:"query" validate:"required"`
+}
+
+func (s SearchHintRetryWithStruct) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type SearchProvenance struct {

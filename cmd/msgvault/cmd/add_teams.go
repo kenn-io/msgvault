@@ -128,7 +128,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -142,13 +142,13 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("set display name: %w", err)
 	}
 
-	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddTeams); err != nil {
+	if err := setDefaultIdentityOptOut(cmd.Context(), cmd, s, source, noDefaultIdentityAddTeams); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddTeams {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
+		confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

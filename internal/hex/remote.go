@@ -76,7 +76,7 @@ func (imp *Importer) registeredSource(ctx context.Context, source meetingimport.
 	if register {
 		st, err = imp.store.GetOrCreateSource(SourceType, source.Identifier)
 	} else {
-		st, err = imp.store.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
+		st, err = imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, source.Identifier)
 	}
 	if err != nil {
 		return nil, err

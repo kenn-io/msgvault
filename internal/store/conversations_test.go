@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -20,7 +19,7 @@ func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "room-reply", "Declined: Planning")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "room-reply", "Declined: Planning")
 	requirements.NoError(err)
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	requirements.NoError(err)
@@ -69,7 +68,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "portable-thread", "Portable thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "portable-thread", "Portable thread")
 	require.NoError(err)
 	senderID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err)
@@ -81,8 +80,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(err)
 
 	var duplicateID, nameOnlyID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES ($1, 'Bob') RETURNING id`, "Bob@example.com").Scan(&duplicateID))
-	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES (NULL, 'Bob') RETURNING id`).Scan(&nameOnlyID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO participants (email_address, display_name) VALUES ($1, 'Bob') RETURNING id`, "Bob@example.com").Scan(&duplicateID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO participants (email_address, display_name) VALUES (NULL, 'Bob') RETURNING id`).Scan(&nameOnlyID))
 
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -104,10 +103,10 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{toID, duplicateID, nameOnlyID}, []string{"Bob", "Bob", "Bob"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "cc", []int64{ccID}, []string{"Carol"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "bcc", []int64{bccID}, []string{"Dave"}))
-	labelID, err := st.EnsureLabel(source.ID, "STARRED", "Starred", "system")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "STARRED", "Starred", "system")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
-	require.NoError(st.UpsertAttachment(messageID, "report.pdf", "application/pdf",
+	require.NoError(st.UpsertAttachment(t.Context(), messageID, "report.pdf", "application/pdf",
 		"", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 42))
 	require.NoError(st.RecomputeMessageAttachmentStats(messageID))
 
@@ -142,7 +141,7 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "nullable-attribution-thread", "Nullable attribution")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "nullable-attribution-thread", "Nullable attribution")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -151,7 +150,7 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 		MessageType:     "email",
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
 	require.NoError(err)
 
 	message, err := st.GetMessage(messageID)
@@ -170,7 +169,7 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "ranged-thread", "Ranged thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "ranged-thread", "Ranged thread")
 	require.NoError(err)
 
 	day1 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -192,13 +191,13 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 		ids = append(ids, id)
 	}
 
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ? WHERE id = ?`), day2.Add(time.Minute), ids[5])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ? WHERE id = ?`), day2.Add(time.Minute), ids[5])
 	require.NoError(err)
 
 	start := day2
 	end := day2.Add(2 * time.Minute)
 
-	window, err := st.GetConversationWindowContext(context.Background(), conversationID, ids[4], 25, 25, &start, &end)
+	window, err := st.GetConversationWindowContext(t.Context(), conversationID, ids[4], 25, 25, &start, &end)
 	require.NoError(err)
 	require.NotNil(window)
 	require.Len(window.Messages, 3)
@@ -208,7 +207,7 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	})
 	assert.Equal(int64(2), window.AnchorPosition)
 
-	_, err = st.GetConversationWindowContext(context.Background(), conversationID, ids[0], 25, 25, &start, &end)
+	_, err = st.GetConversationWindowContext(t.Context(), conversationID, ids[0], 25, 25, &start, &end)
 	require.ErrorIs(err, store.ErrConversationAnchorOutsideRange)
 }
 
@@ -220,7 +219,7 @@ func seedBudgetConversation(t *testing.T, bodySizes []int) (*store.Store, int64,
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, "budget-thread", "Budget thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "budget-thread", "Budget thread")
 	require.NoError(t, err)
 	ids := make([]int64, 0, len(bodySizes))
 	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -377,11 +376,11 @@ func TestConversationTitlesBatchContext(t *testing.T) {
 	require.NoError(err)
 	second, err := st.GetOrCreateSource("beeper", "second")
 	require.NoError(err)
-	_, err = st.EnsureConversation(first.ID, "shared", "First title")
+	_, err = st.EnsureConversation(t.Context(), first.ID, "shared", "First title")
 	require.NoError(err)
-	_, err = st.EnsureConversation(second.ID, "shared", "Second title")
+	_, err = st.EnsureConversation(t.Context(), second.ID, "shared", "Second title")
 	require.NoError(err)
-	_, err = st.EnsureConversation(first.ID, "empty", "")
+	_, err = st.EnsureConversation(t.Context(), first.ID, "empty", "")
 	require.NoError(err)
 	titles, err := st.ConversationTitlesBatchContext(t.Context(), first.ID, []string{"shared", "empty", "missing"})
 	require.NoError(err)
@@ -400,7 +399,7 @@ func TestConversationWindowOrderAndCounts(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "window@example.com")
 	requirements.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "window-order", "Window order")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "window-order", "Window order")
 	requirements.NoError(err)
 	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	ids := make([]int64, 9)
@@ -417,12 +416,12 @@ func TestConversationWindowOrderAndCounts(t *testing.T) {
 		ids[i], err = st.UpsertMessage(message)
 		requirements.NoError(err)
 	}
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), base, ids[5])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), base, ids[5])
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), base, ids[6])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), base, ids[6])
 	requirements.NoError(err)
 	// Importers can persist a zero timestamp as a non-NULL SQL value.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Time{}, ids[8])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Time{}, ids[8])
 	requirements.NoError(err)
 	// A second timestamp tie remains visible after the hidden message.
 	order := []int{3, 4, 8, 0, 1, 7, 2, 5}

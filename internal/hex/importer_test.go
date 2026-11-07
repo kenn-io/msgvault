@@ -34,7 +34,7 @@ func fixtureTranscript(t *testing.T, dir string) {
 }
 func messageID(t *testing.T, st *store.Store, sourceID int64, id string) int64 {
 	t.Helper()
-	rows, err := st.MessageMetadataBatch(sourceID, []string{"meeting:" + id})
+	rows, err := st.MessageMetadataBatch(t.Context(), sourceID, []string{"meeting:" + id})
 	require.NoError(t, err)
 	require.Contains(t, rows, "meeting:"+id)
 	return rows["meeting:"+id].ID
@@ -68,7 +68,7 @@ func TestImportPreservesRecordedMeetingPlatformVerbatim(t *testing.T) {
 
 	const app = "Google Meet Preview"
 	messageID := importMeeting("with-platform", "Synthetic call", app)
-	body, err := st.GetMessageBodyText(messageID)
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
 	must.NoError(err)
 	check.Contains(body, "Platform: "+app)
 	metadata, err := st.GetMessageMetadata(messageID)
@@ -97,7 +97,7 @@ func TestImportPreservesRecordedMeetingPlatformVerbatim(t *testing.T) {
 	check.Contains(markdown.Content, "Platform: "+app)
 
 	withoutAppID := importMeeting("without-platform", "FaceTime call", "")
-	withoutAppBody, err := st.GetMessageBodyText(withoutAppID)
+	withoutAppBody, err := st.GetMessageBodyText(t.Context(), withoutAppID)
 	must.NoError(err)
 	check.NotContains(withoutAppBody, "Platform:")
 	withoutAppMetadata, err := st.GetMessageMetadata(withoutAppID)

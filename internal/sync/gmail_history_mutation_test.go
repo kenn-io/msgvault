@@ -18,7 +18,7 @@ func TestGmailHistoryMutationFailureRetainsCursor(t *testing.T) {
 				e := acquisitionDurabilityEnv(t)
 				seedMessages(e, 1, 1000, "victim")
 				runFullSync(t, e)
-				source := gmailCoverageSource(t, e)
+				source := gmailCoverageSource(t.Context(), t, e)
 				ids, err := e.Store.MessageExistsBatch(source.ID, []string{"victim"})
 				require.NoError(err)
 				require.Len(ids, 1)
@@ -49,7 +49,7 @@ func TestGmailHistoryMutationFailureRetainsCursor(t *testing.T) {
 				}
 				require.ErrorContains(err, "synthetic acquisition write failure")
 				reopenAcquisitionStore(t, e)
-				assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				run, err := e.Store.GetLatestSync(source.ID)
 				require.NoError(err)
 				assert.Equal(store.SyncStatusFailed, run.Status)
@@ -68,13 +68,13 @@ func TestGmailHistoryMutationFailureRetainsCursor(t *testing.T) {
 				// A new owner must replay the failed event, including catch-up,
 				// without acquiring the already archived message again.
 				gets := len(e.Mock.GetMessageCalls)
-				summary, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+				summary, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 				require.NoError(err)
 				assert.Zero(summary.Errors)
 				assert.Zero(summary.MessagesAdded)
 				assert.Len(e.Mock.GetMessageCalls, gets)
 				reopenAcquisitionStore(t, e)
-				assert.Equal("1001", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("1001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				wantLabels := []int64{inbox}
 				switch mutation {
 				case "label-add":

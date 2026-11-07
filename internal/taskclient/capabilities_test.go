@@ -1,7 +1,6 @@
 package taskclient
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,12 +13,12 @@ import (
 
 func TestEvaluateStatusStates(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
-		status := Evaluate(context.Background(), IntegrationConfig{})
+		status := Evaluate(t.Context(), IntegrationConfig{})
 		assert.Equal(t, StateDisabled, status.State)
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			DescriptorPath: filepath.Join(t.TempDir(), "missing.json"),
 			DefaultProject: "test-project",
@@ -36,7 +35,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 			InstanceID:      "instance-test",
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			DescriptorPath: path,
 			DefaultProject: "test-project",
@@ -45,7 +44,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 	})
 
 	t.Run("unreachable", func(t *testing.T) {
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       "http://127.0.0.1:1",
 			APIKey:         "test-key",
@@ -58,7 +57,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("Unix socket discovery is covered by Unix test lanes")
 		}
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			DescriptorPath: writeStaleUnixDescriptor(t),
 			DefaultProject: "test-project",
@@ -76,7 +75,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 			ConflictResponses:   true,
 			IdempotentCreation:  false,
 		}, http.StatusOK)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -87,7 +86,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 
 	t.Run("reachable without capability protocol is incompatible", func(t *testing.T) {
 		server := capabilityServer(t, Capabilities{}, http.StatusNotFound)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -99,7 +98,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 	for _, responseStatus := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented} {
 		t.Run("reached unsupported "+http.StatusText(responseStatus), func(t *testing.T) {
 			server := capabilityServer(t, Capabilities{}, responseStatus)
-			status := Evaluate(context.Background(), IntegrationConfig{
+			status := Evaluate(t.Context(), IntegrationConfig{
 				Enabled:        true,
 				Endpoint:       server.URL,
 				APIKey:         "test-key",
@@ -113,7 +112,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 		capabilities := compatibleCapabilities()
 		capabilities.ConditionalMutation = false
 		server := capabilityServer(t, capabilities, http.StatusOK)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -124,7 +123,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 
 	t.Run("wrong project", func(t *testing.T) {
 		server := taskProtocolServer(t, compatibleCapabilities(), http.StatusNotFound)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -145,7 +144,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 			}
 		}))
 		t.Cleanup(server.Close)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -157,7 +156,7 @@ func TestEvaluateStatusStates(t *testing.T) {
 
 	t.Run("ready", func(t *testing.T) {
 		server := taskProtocolServer(t, compatibleCapabilities(), http.StatusOK)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			Endpoint:       server.URL,
 			APIKey:         "test-key",
@@ -245,7 +244,7 @@ func TestEvaluateClientPropagatesSecurityNote(t *testing.T) {
 		client := newLoopbackClient(t, server.URL, "note-test-key", nil)
 		client.securityNote = note
 
-		status := evaluateClient(context.Background(), client, "missing-project")
+		status := evaluateClient(t.Context(), client, "missing-project")
 
 		assert.Equal(t, StateWrongProject, status.State)
 		assert.Equal(t, note, status.SecurityNote)
@@ -256,7 +255,7 @@ func TestEvaluateClientPropagatesSecurityNote(t *testing.T) {
 		client := newLoopbackClient(t, server.URL, "note-test-key", nil)
 		client.securityNote = note
 
-		status := evaluateClient(context.Background(), client, "test-project")
+		status := evaluateClient(t.Context(), client, "test-project")
 
 		assert.Equal(t, StateAuthenticationRequired, status.State)
 		assert.Equal(t, note, status.SecurityNote)
@@ -271,7 +270,7 @@ func TestPlatformSecurityLimitStatusContext(t *testing.T) {
 			InstanceID:      "instance-test",
 			Endpoint:        "http://127.0.0.1:32145",
 		}, 0o600)
-		status := Evaluate(context.Background(), IntegrationConfig{
+		status := Evaluate(t.Context(), IntegrationConfig{
 			Enabled:        true,
 			APIKey:         "must-not-leak-test-key",
 			DefaultProject: "test-project",

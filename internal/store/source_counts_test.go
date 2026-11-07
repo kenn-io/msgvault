@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,7 @@ import (
 func TestCountMessagesBySourceMatchesPerSourceCounts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	a, err := st.GetOrCreateSource("gmail", "a@example.com")
 	require.NoError(err)
@@ -24,13 +23,13 @@ func TestCountMessagesBySourceMatchesPerSourceCounts(t *testing.T) {
 
 	insert := func(sourceID int64, key string, deleted, sourceDeleted bool) {
 		t.Helper()
-		_, err := st.DB().Exec(st.Rebind(`
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO conversations (source_id, source_conversation_id, conversation_type) VALUES (?, ?, 'email_thread')`), sourceID, key)
 		require.NoError(err)
 		var convID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, key).Scan(&convID))
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO messages (source_id, source_message_id, conversation_id, message_type,
 				deleted_at, deleted_from_source_at)
 			VALUES (?, ?, ?, 'email',

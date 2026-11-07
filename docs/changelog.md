@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-07"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,6 +9,11 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Archive stopped [Hex meetings](usage/meetings.md#hex) from a local folder or a remote recorder, including transcripts, notes, available participant evidence and optional separate audio tracks. Schedule capture before Hex expires unsynced meetings; partial replacements preserve previously readable evidence.
+- Plaud syncs wait longer and slow down when Plaud reports too many requests,
+  so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
+  how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
+- CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
+- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
   decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
@@ -27,6 +32,10 @@ All notable changes to msgvault, grouped by release.
 - A Gmail incremental sync that cannot save a label change or deletion now
   fails and keeps its History position, so the next sync retries the change
   instead of skipping it.
+- [`import-imessage`](usage/text-messages.md#import-imessage) keeps the full text of messages of 256 bytes or more that macOS stores only in `attributedBody`. Before, it archived just part of that text. Rerun the import to repair messages still in `chat.db`. The import summary counts messages whose text can't be decoded under `Unreadable text`; their archived text is kept.
+- MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
+- A saved person's Details tab in People shows that person's open loops in a
+  read-only card, with a Check more action when coverage is incomplete.
 
 ## 0.23.0
 <small>2026-11-04</small>

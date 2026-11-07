@@ -47,7 +47,7 @@ func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
 			}},
 		}, nil
 	}
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/documents/search?q=shipping+damage&source_id=4,9&message_type=email,mms&attachment_id=41&message_id=42&limit=7&cursor=opaque&mode=lexical&candidate_limit=1001",
 		nil)
 	response := httptest.NewRecorder()
@@ -81,7 +81,7 @@ func TestDocumentSearchHTTPResolvesDurablePersonScope(t *testing.T) {
 		assertions.Equal("2026-08-20", request.Before.Format("2006-01-02"))
 		return store.DocumentSearchResponse{}, nil
 	}
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/documents/search?q=inspection&person_id=40&direction=from_person,group&after=2026-08-01&before=2026-08-20", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -96,7 +96,7 @@ func TestDocumentSearchHTTPExplicitSemanticUnavailableDoesNotFallBack(t *testing
 		calls++
 		return store.DocumentSearchResponse{}, nil
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence&mode=semantic&candidate_limit=25", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence&mode=semantic&candidate_limit=25", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
@@ -113,7 +113,7 @@ func TestDocumentSearchHTTPMapsCursorRevisionConflict(t *testing.T) {
 	) (store.DocumentSearchResponse, error) {
 		return store.DocumentSearchResponse{}, store.ErrDocumentSearchCursorStale
 	}
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/documents/search?q=evidence&cursor=stale", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -130,7 +130,7 @@ func TestDocumentSearchHTTPMapsUnavailableFTS(t *testing.T) {
 	) (store.DocumentSearchResponse, error) {
 		return store.DocumentSearchResponse{}, store.ErrDocumentSearchUnavailable
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
@@ -148,7 +148,7 @@ func TestDocumentSearchHTTPRejectsCrossOriginKeylessRequest(t *testing.T) {
 		calls++
 		return store.DocumentSearchResponse{}, nil
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("Origin", "https://cross-origin.example")
 	response := httptest.NewRecorder()
@@ -171,7 +171,7 @@ func TestDocumentStatusHTTPExplicitAndCurrentRoutesRejectCrossOriginKeylessReque
 				calls++
 				return "private-profile", []string{"application/pdf"}, nil
 			}
-			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 			request.RemoteAddr = "127.0.0.1:1234"
 			request.Header.Set("Origin", "https://cross-origin.example")
 			response := httptest.NewRecorder()
@@ -201,11 +201,11 @@ func TestDocumentStatusHTTPExplicitAndCurrentRoutesRequireConfiguredAPIKey(t *te
 			}
 
 			unauthenticated := httptest.NewRecorder()
-			server.Router().ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, path, nil))
+			server.Router().ServeHTTP(unauthenticated, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 			require.Equal(http.StatusUnauthorized, unauthenticated.Code, unauthenticated.Body.String())
 			assert.Zero(resolverCalls)
 
-			authenticatedRequest := httptest.NewRequest(http.MethodGet, path, nil)
+			authenticatedRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 			authenticatedRequest.Header.Set("X-Api-Key", "synthetic-document-status-key")
 			authenticated := httptest.NewRecorder()
 			server.Router().ServeHTTP(authenticated, authenticatedRequest)
@@ -234,7 +234,7 @@ func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
 	}
 
 	for _, wantStatus := range []int{http.StatusOK, http.StatusTooManyRequests} {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 		request.RemoteAddr = "127.0.0.1:1234"
 		response := httptest.NewRecorder()
 		server.Router().ServeHTTP(response, request)
@@ -265,7 +265,7 @@ func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) { //nolint:paralle
 		return store.DocumentSearchResponse{}, nil
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
@@ -288,7 +288,7 @@ func TestDocumentSearchHTTPLeavesReconciliationToSearchStore(t *testing.T) {
 		return store.DocumentSearchResponse{}, nil
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -301,7 +301,7 @@ func TestDocumentSearchHTTPDoesNotRegisterUnconsentedJournalConsumer(t *testing.
 	server := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{}, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/search?q=evidence", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -332,7 +332,7 @@ func TestDocumentVectorStatusHTTPIsUsefulBeforeTargetConfiguration(t *testing.T)
 	c.Vector.Enabled = true
 	c.Attachments.Documents.Index.Embeddings.Enabled = true
 	server := NewServerWithOptions(ServerOptions{Config: c, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler)})
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/vectors/status", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/vectors/status", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -404,7 +404,7 @@ func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
 		assert.Equal([]string{"email", "mms"}, messageTypes)
 		return 2, nil
 	}
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/documents/status?profile_id=profile&input_key=original&"+
 			"media_type=application%2Fpdf&media_type=application%2Fepub%2Bzip&"+
 			"message_type=email&message_type=mms", nil)
@@ -442,7 +442,7 @@ func TestDocumentStatusHTTPResolvesCurrentDurableScopeWithoutPublishingIdentifie
 		return store.DocumentIndexStatus{ProfileExists: true, ProfileEnabled: true, ReadyOwners: 4}, nil
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/status/current", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/status/current", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 
@@ -460,14 +460,15 @@ func TestDocumentStatusHTTPRejectsPartialScopeAndFixesUnavailableCurrentScope(t 
 	}
 
 	partial := httptest.NewRecorder()
-	server.Router().ServeHTTP(partial, httptest.NewRequest(
+	server.Router().ServeHTTP(partial, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, "/api/v1/documents/status?profile_id=private-profile", nil,
 	))
 	assert.Equal(http.StatusBadRequest, partial.Code)
 	assert.NotContains(partial.Body.String(), "private-profile")
 
 	missingExplicit := httptest.NewRecorder()
-	server.Router().ServeHTTP(missingExplicit, httptest.NewRequest(http.MethodGet, "/api/v1/documents/status", nil))
+	server.Router().ServeHTTP(missingExplicit, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/status", nil))
 	assert.Equal(http.StatusBadRequest, missingExplicit.Code)
 
 	unavailableServer, unavailableCatalog := newTestServerWithMockStore(t)
@@ -475,7 +476,7 @@ func TestDocumentStatusHTTPRejectsPartialScopeAndFixesUnavailableCurrentScope(t 
 		return "", nil, store.ErrDocumentIndexStatusScopeUnavailable
 	}
 	unavailable := httptest.NewRecorder()
-	unavailableServer.Router().ServeHTTP(unavailable, httptest.NewRequest(http.MethodGet, "/api/v1/documents/status/current", nil))
+	unavailableServer.Router().ServeHTTP(unavailable, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/documents/status/current", nil))
 	assert.Equal(http.StatusServiceUnavailable, unavailable.Code)
 	assert.Contains(unavailable.Body.String(), "document_status_scope_unavailable")
 	assert.NotContains(unavailable.Body.String(), "target_profile_id")
@@ -515,14 +516,14 @@ func TestDocumentStatusHTTPCorruptDurableScopeRemainsRetryableAndPrivate(t *test
 		Config: cfg, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler),
 	})
 
-	current := doGet(server, "/api/v1/documents/status/current")
+	current := doGet(t.Context(), server, "/api/v1/documents/status/current")
 	requirements.Equal(http.StatusServiceUnavailable, current.Code, current.Body.String())
 	assertions.Contains(current.Body.String(), "document_status_scope_unavailable")
 	assertions.NotContains(current.Body.String(), profileID)
 	assertions.NotContains(current.Body.String(), corruptScopeRecord)
 	assertions.NotContains(current.Body.String(), "current document index status scope is invalid")
 
-	operationsStatus := doGet(server, "/api/v1/operations/status")
+	operationsStatus := doGet(t.Context(), server, "/api/v1/operations/status")
 	requirements.Equal(http.StatusOK, operationsStatus.Code, operationsStatus.Body.String())
 	var status OperationStatusResponse
 	requirements.NoError(json.Unmarshal(operationsStatus.Body.Bytes(), &status))

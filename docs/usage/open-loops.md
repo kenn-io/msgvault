@@ -18,7 +18,9 @@ msgvault loops list --limit 10
 ```
 
 Each row shows its age, the person, the subject, and the message ID that
-started the wait. Read that message with `msgvault show-message <id>`.
+started the wait. Read that message with `msgvault show-message <id>`. A
+saved person's **Details** tab in **People** shows the same loops for that
+person in a read-only Open loops card.
 
 ## What counts as a loop
 
@@ -152,7 +154,7 @@ question. Deleting a question removes only that question's decision.
   that account's conversation, and the loop stays until you run
   `msgvault loops done`.
 - Each request checks up to 1,000 uncached messages, starting with the eligible conversation whose latest activity is oldest. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
-- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Run `msgvault loops list` or issue another API request to continue.
+- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Run `msgvault loops list` or issue another API request to continue; the Details card has a Check more button.
 - A request that reaches its time limit returns the conversations it checked in full and sets `coverage_incomplete`, as when the 1,000-message budget runs out. Run the list again to continue.
 - Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
 - A direct chat has no stored original to check, so the automatic-reply and

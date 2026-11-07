@@ -45,7 +45,8 @@ func TestPrepareAcceleratorRejectsDimensionOutsideVec1Range(t *testing.T) {
 			assert.Contains(plan.Reason, "dimension")
 
 			var accelerators int
-			require.NoError(backend.db.QueryRow(
+			require.NoError(backend.db.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM vector_accelerators`).Scan(&accelerators))
 			assert.Zero(accelerators)
 			exists, err := acceleratorTableExists(
@@ -72,13 +73,13 @@ func TestPrepareAcceleratorCopiesExistingVectors(t *testing.T) {
 	assert.Equal(t, acceleratorTableName(generationID), plan.TableName)
 
 	var count int64
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM `+plan.TableName).Scan(&count))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+plan.TableName).Scan(&count))
 	assert.Equal(t, int64(512), count)
 
 	var authoritative, copied []byte
-	require.NoError(t, backend.db.QueryRow(`SELECT embedding FROM vectors_vec_d32
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT embedding FROM vectors_vec_d32
 		WHERE generation_id = ? AND embedding_id = 257`, int64(generationID)).Scan(&authoritative))
-	require.NoError(t, backend.db.QueryRow(`SELECT embedding FROM `+plan.TableName+
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT embedding FROM `+plan.TableName+
 		` WHERE rowid = 257`).Scan(&copied))
 	assert.Equal(t, authoritative, copied)
 }
@@ -93,7 +94,7 @@ func TestPrepareAcceleratorLeavesSmallGenerationExact(t *testing.T) {
 	assert.Contains(t, plan.Reason, "512")
 
 	var count int
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vector_accelerators`).Scan(&count))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_accelerators`).Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -108,7 +109,7 @@ func TestPrepareAcceleratorLeavesEmptyGenerationExact(t *testing.T) {
 	assert.Contains(t, plan.Reason, "512")
 
 	var count int
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vector_accelerators`).Scan(&count))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_accelerators`).Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -116,7 +117,7 @@ func TestPrepareAcceleratorRestartsWhenSourceChangedBetweenRuns(t *testing.T) {
 	backend := openOptimizeBackend(t, 32)
 	generationID := seedOptimizeVectors(t, backend, 512, 32)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	_, err := backend.PrepareAccelerator(ctx, generationID, OptimizeOptions{
 		BatchSize: 100,
 		Progress: func(progress OptimizeProgress) {
@@ -140,13 +141,13 @@ func TestPrepareAcceleratorRestartsWhenSourceChangedBetweenRuns(t *testing.T) {
 	assert.Equal(t, int64(512), plan.IndexedCount)
 
 	var authoritative, copied []byte
-	require.NoError(t, backend.db.QueryRow(`SELECT v.embedding
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT v.embedding
 		FROM vectors_vec_d32 v JOIN embeddings e ON e.embedding_id = v.embedding_id
 		WHERE v.generation_id = ? AND e.message_id = 1`, int64(generationID)).Scan(&authoritative))
 	var embeddingID int64
-	require.NoError(t, backend.db.QueryRow(`SELECT embedding_id FROM embeddings
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT embedding_id FROM embeddings
 		WHERE generation_id = ? AND message_id = 1`, int64(generationID)).Scan(&embeddingID))
-	require.NoError(t, backend.db.QueryRow(`SELECT embedding FROM `+plan.TableName+
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT embedding FROM `+plan.TableName+
 		` WHERE rowid = ?`, embeddingID).Scan(&copied))
 	assert.Equal(t, authoritative, copied)
 }
@@ -180,9 +181,9 @@ func TestAcceleratorWorkerSamplesSparseRowIDs(t *testing.T) {
 	}
 	configJSON, err := json.Marshal(config)
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`CREATE VIRTUAL TABLE ` + tableName + ` USING vec1(embedding)`)
+	_, err = backend.db.ExecContext(t.Context(), `CREATE VIRTUAL TABLE `+tableName+` USING vec1(embedding)`)
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`INSERT INTO vector_accelerators
+	_, err = backend.db.ExecContext(t.Context(), `INSERT INTO vector_accelerators
 		(generation_id, kind, state, table_name, dimension, indexed_count,
 		 last_embedding_id, source_revision, started_at, model_config, vec1_version)
 		VALUES (?, ?, 'building', ?, 32, 1536, 4606, 0, 1, ?, ?)`,
@@ -190,11 +191,11 @@ func TestAcceleratorWorkerSamplesSparseRowIDs(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := backend.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	stmt, err := tx.Prepare(`INSERT INTO ` + tableName + `(rowid, embedding) VALUES (?, ?) `)
+	stmt, err := tx.PrepareContext(t.Context(), `INSERT INTO `+tableName+`(rowid, embedding) VALUES (?, ?) `)
 	require.NoError(t, err)
 	defer func() { _ = stmt.Close() }()
 	for i := range 1536 {
-		_, err = stmt.Exec(3*i+1, float32SliceBlob(unitVec(32, i%32)))
+		_, err = stmt.ExecContext(t.Context(), 3*i+1, float32SliceBlob(unitVec(32, i%32)))
 		require.NoError(t, err)
 	}
 	require.NoError(t, stmt.Close())
@@ -211,7 +212,7 @@ func TestPrepareAcceleratorRepairsMissingReadyTable(t *testing.T) {
 	require.NoError(t, RunAcceleratorWorker(t.Context(), backend.path, generationID, 1))
 	_, err = backend.PublishAccelerator(t.Context(), generationID)
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`DROP TABLE ` + plan.TableName)
+	_, err = backend.db.ExecContext(t.Context(), `DROP TABLE `+plan.TableName)
 	require.NoError(t, err)
 
 	plan, err = backend.PrepareAccelerator(t.Context(), generationID, OptimizeOptions{Threads: 1})
@@ -233,7 +234,7 @@ func TestPrepareAcceleratorRepairsReadyTableWithMissingModel(t *testing.T) {
 	require.NoError(t, RunAcceleratorWorker(t.Context(), backend.path, generationID, 1))
 	_, err = backend.PublishAccelerator(t.Context(), generationID)
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`DROP TABLE ` + plan.TableName + `_model`)
+	_, err = backend.db.ExecContext(t.Context(), `DROP TABLE `+plan.TableName+`_model`)
 	require.NoError(t, err)
 
 	plan, err = backend.PrepareAccelerator(t.Context(), generationID, OptimizeOptions{Threads: 1})
@@ -246,7 +247,7 @@ func TestPrepareAcceleratorRepairsReadyTableWithMissingModel(t *testing.T) {
 func TestPrepareAcceleratorRestartsWhenBuildingTableMissing(t *testing.T) {
 	backend := openOptimizeBackend(t, 32)
 	generationID := seedOptimizeVectors(t, backend, 512, 32)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	_, err := backend.PrepareAccelerator(ctx, generationID, OptimizeOptions{
 		BatchSize: 100,
 		Progress: func(progress OptimizeProgress) {
@@ -256,7 +257,7 @@ func TestPrepareAcceleratorRestartsWhenBuildingTableMissing(t *testing.T) {
 		},
 	})
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = backend.db.Exec(`DROP TABLE ` + acceleratorTableName(generationID))
+	_, err = backend.db.ExecContext(t.Context(), `DROP TABLE `+acceleratorTableName(generationID))
 	require.NoError(t, err)
 
 	plan, err := backend.PrepareAccelerator(t.Context(), generationID, OptimizeOptions{BatchSize: 100})
@@ -277,7 +278,7 @@ func TestPrepareAcceleratorDetectsConcurrentSourceChange(t *testing.T) {
 				return
 			}
 			changed = true
-			require.NoError(t, backend.Upsert(context.Background(), generationID, []vector.Chunk{
+			require.NoError(t, backend.Upsert(t.Context(), generationID, []vector.Chunk{
 				{MessageID: 1, Vector: unitVec(32, 1)},
 			}))
 		},
@@ -297,7 +298,7 @@ func TestAcceleratorWorkerCanBeKilledAndRetried(t *testing.T) {
 	require.NoError(t, backend.Close())
 
 	marker := filepath.Join(t.TempDir(), "worker-started")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	// #nosec G702 -- os.Args[0] is the current test binary, not external input.
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAcceleratorWorkerProcessHelper$")
 	command.Env = append(os.Environ(),
@@ -344,7 +345,7 @@ func TestAcceleratorWorkerProcessHelper(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(os.Getenv("MSGVAULT_TEST_ACCELERATOR_MARKER"), []byte("started"), 0o600))
 	require.NoError(t, RunAcceleratorWorker(
-		context.Background(),
+		t.Context(),
 		os.Getenv("MSGVAULT_TEST_ACCELERATOR_PATH"),
 		vector.GenerationID(generationID),
 		1,
@@ -429,7 +430,7 @@ func FuzzPrepareAcceleratorBatchPause(f *testing.F) {
 				require.NoError(t, err)
 				require.NotNil(t, status)
 				var copied int64
-				require.NoError(t, observer.db.QueryRow(`SELECT COUNT(*) FROM `+status.TableName).Scan(&copied))
+				require.NoError(t, observer.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+status.TableName).Scan(&copied))
 				require.Equal(t, int64(min(calls*effectiveBatch, 512)), copied)
 				require.Equal(t, copied, status.IndexedCount, "cursor metadata is committed before yielding")
 				if calls == pauseAfter {
@@ -444,7 +445,7 @@ func FuzzPrepareAcceleratorBatchPause(f *testing.F) {
 		assert.False(t, plan.Restarted, "unchanged vectors resume the committed copy")
 		assert.Equal(t, int64(512), plan.IndexedCount)
 		var mismatches int
-		require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vectors_vec_d4 v
+		require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vectors_vec_d4 v
    WHERE v.generation_id = ? AND NOT EXISTS (SELECT 1 FROM `+plan.TableName+`
    a WHERE a.rowid = v.embedding_id AND a.embedding = v.embedding)`, generation).Scan(&mismatches))
 		assert.Zero(t, mismatches, "the resumed copy contains every authoritative vector unchanged")

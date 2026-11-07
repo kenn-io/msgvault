@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
@@ -51,6 +52,7 @@ import (
 	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -60,6 +62,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"golang.org/x/oauth2"
 )
 
@@ -211,6 +214,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}
+	if runtime := findAnyDaemonRuntimeContext(cmd.Context(), cfg.Data.DataDir); runtime != nil {
+		return daemonOwnerLockHeldError{url: urlFromDaemonRuntime(runtime)}
+	}
 
 	// Missing provider credentials should not prevent the daemon from serving
 	// read-only HTTP requests against an import-only archive.
@@ -229,7 +235,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if bindAddr == "" {
 		bindAddr = defaultDaemonBindAddr
 	}
-	apiListener, err := listenServeAPI(bindAddr, cfg.Server.APIPort)
+	apiListener, err := listenServeAPI(cmd.Context(), bindAddr, cfg.Server.APIPort)
 	if err != nil {
 		return err
 	}
@@ -320,7 +326,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// remaining move is SIGKILL on a writing process. Cancelling here stops it
 	// at the next batch boundary, keeps every batch already committed, and
 	// leaves the migration unmarked so the next start resumes.
-	if err := s.InitSchemaContext(cmd.Context()); err != nil {
+	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
@@ -443,7 +449,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
-		return scheduledSyncPreemptible(s, identifier, logger)
+		return scheduledSyncPreemptible(ctx, s, identifier, logger)
 	})
 	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
@@ -965,7 +971,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
 		AfterSourceSetup: func() error {
-			return runPostSourceCreateMigrationsForInvocation(s, state)
+			return runPostSourceCreateMigrationsForInvocation(ctx, s, state)
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
@@ -1115,6 +1121,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
+		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
+			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
+			inspect: embedlocal.Inspect, install: embedlocal.Install,
+		})
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1345,7 +1356,7 @@ func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
 	options.VectorCfg = cfg.Vector
 }
 
-func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+func listenServeAPI(ctx context.Context, bindAddr string, port int) (net.Listener, error) {
 	resolved, err := resolveServeBind(bindAddr)
 	if err != nil {
 		return nil, err
@@ -1355,7 +1366,7 @@ func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
 		bindAddr = defaultDaemonBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		if port != 0 {
 			return nil, fmt.Errorf(
@@ -1528,7 +1539,7 @@ func runDaemonSQLQueryWithJobs(
 		defer func() { _ = duckEngine.Close() }()
 		querier = duckEngine
 	} else if !ok {
-		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		duckEngine, err := openDaemonDuckDBEngine(ctx, c, s)
 		if err != nil {
 			if errors.Is(err, query.ErrCacheUnavailable) {
 				return acceptUnavailableCacheQuery(c, jobs, options.fresh)
@@ -1737,7 +1748,7 @@ func openDaemonAnalyticsEngine(
 		if err := ctx.Err(); err != nil {
 			return nil, "", outcome, err
 		}
-		duckEngine, err := openDaemonDuckDBEngineForRun(c, s)
+		duckEngine, err := openDaemonDuckDBEngineForRun(ctx, c, s)
 		if err != nil {
 			if intent != startupCacheBuildIntentNone {
 				outcome = startupCacheBuildOutcomeFailed
@@ -1798,7 +1809,7 @@ func openDaemonAnalyticsEngine(
 
 var openDaemonDuckDBEngineForRun = openDaemonDuckDBEngine
 
-func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
+func openDaemonDuckDBEngine(ctx context.Context, c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
@@ -1806,7 +1817,7 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if err != nil {
 		return nil, err
 	}
-	return query.NewDuckDBEngine(c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
+	return query.NewDuckDBEngine(ctx, c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
 }
 
 func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
@@ -1897,12 +1908,24 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+// publishedConfig applies a live vector activation without adopting other
+// saved edits that remain pending until their runtime is activated.
+func (a *storeAPIAdapter) publishedConfig(ctx context.Context) *config.Config {
+	vectorCfg, ok := api.PublishedVectorConfig(ctx)
+	if !ok || a.config == nil {
+		return a.config
+	}
+	cfg := *a.config
+	cfg.Vector = vectorCfg
+	return &cfg
+}
+
 func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
 	if a == nil {
 		return ctx
 	}
 	state := newInvocation()
-	state.cfg = a.config
+	state.cfg = a.publishedConfig(ctx)
 	state.options = a.options
 	if a.logger != nil {
 		state.logger = a.logger
@@ -2337,7 +2360,7 @@ func (a *storeAPIAdapter) GetArchivedMessageRaw(ctx context.Context, id int64) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return a.store.GetMessageRaw(id)
+	return a.store.GetMessageRawContext(ctx, id)
 }
 
 func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
@@ -2461,7 +2484,8 @@ func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
 		if err != nil {
 			status = "failed"
 		}
-		if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
+		// A canceled run still records its terminal state.
+		if finishErr := a.store.FinishSyncOperation(context.WithoutCancel(ctx), req.OperationID, status); finishErr != nil {
 			return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
 		}
 	}
@@ -4313,7 +4337,10 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	ctx = withInvocation(ctx, state)
 	logger.Info("starting scheduled sync", "identifier", identifier)
 
-	srcs, retiredMatch, srcErr := findScheduledSyncSources(s, identifier)
+	// The source lookup is a short local read. It ignores cancellation, as it
+	// did before, so a yielded run still reaches the importer, which reports
+	// the yield.
+	srcs, retiredMatch, srcErr := findScheduledSyncSources(context.WithoutCancel(ctx), s, identifier)
 	if srcErr != nil {
 		return fmt.Errorf("look up sources for %s: %w", identifier, srcErr)
 	}
@@ -4457,8 +4484,8 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 // registered row, which alone is eligible for the Gmail token-first fallback.
 //
 // Matches against both sources.identifier and sources.display_name.
-func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, bool, error) {
-	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
+func findScheduledSyncSources(ctx context.Context, s *store.Store, identifier string) ([]*store.Source, bool, error) {
+	rows, err := s.GetSourcesByIdentifierOrDisplayNameContext(ctx, identifier)
 	if err != nil {
 		return nil, false, err
 	}
@@ -4499,11 +4526,11 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 }
 
 // scheduledSyncPreemptible disables scheduler-job preemption when an account
-// dispatch includes a full IMAP pass, whose offset-based paging cannot resume
+// dispatch includes archive repair or a full IMAP pass, whose paging cannot resume
 // after the syncer stops. An unavailable source lookup also takes the safe
 // path and lets the current pass finish.
-func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Logger) bool {
-	sources, _, err := findScheduledSyncSources(s, identifier)
+func scheduledSyncPreemptible(ctx context.Context, s *store.Store, identifier string, logger *slog.Logger) bool {
+	sources, _, err := findScheduledSyncSources(ctx, s, identifier)
 	if err != nil {
 		logger.Warn("could not determine scheduled sync preemption safety; allowing current pass to finish",
 			"identifier", identifier,
@@ -4513,6 +4540,20 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 	}
 	for _, source := range sources {
 		if source.SourceType == sourceTypeIMAP {
+			return false
+		}
+		switch source.SourceType {
+		case sourceTypeGmail, sourceTypeMSMail, sourceTypeDiscord:
+			// These scheduled sync paths execute re-derivation passes.
+		default:
+			continue
+		}
+		pending, err := rederive.Pending(context.Background(), s, source.SourceType, source.Identifier)
+		if err != nil {
+			logger.Warn("could not determine archive repair state; allowing current pass to finish", "source_id", source.ID, "error", err)
+			return false
+		}
+		if pending {
 			return false
 		}
 	}
@@ -4632,8 +4673,8 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	// — see comment in account_identity.go. serve is a daemon, so the
 	// confirmation message has no terminal; discard it. Helper logs any
 	// failure path through its own logger.Warn.
-	confirmDefaultIdentity(io.Discard, s, source.ID, accountEmail, accountEmail, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, source.ID, accountEmail, accountEmail, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -4676,7 +4717,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
-	imapOpts = append(imapOpts, imapSyncFolderFilter(s, src.Identifier, state, nil, nil))
+	imapOpts = append(imapOpts, imapSyncFolderFilter(ctx, s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -4703,8 +4744,8 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	// row with NULL display_name skips the write rather than re-injecting
 	// the URL.
 	displayName := src.DisplayName.String
-	confirmDefaultIdentity(io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -4743,8 +4784,8 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	// "me" identity. Auto-default-identity must run BEFORE the legacy
 	// migration retry (see account_identity.go); serve is a daemon, so
 	// the confirmation message has no terminal and is discarded.
-	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, src.ID, email, email, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

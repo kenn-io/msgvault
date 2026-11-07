@@ -55,7 +55,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	started := time.Now()
 	defer func() { sum.Duration = time.Since(started) }()
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, strings.TrimSpace(opts.Identifier))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, strings.TrimSpace(opts.Identifier))
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
 			return sum, fmt.Errorf("%w; run msgvault add-hex %s first", err, opts.Identifier)

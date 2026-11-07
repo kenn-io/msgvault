@@ -26,7 +26,7 @@ func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 	require.NoError(t, err, "open sqlite fixture")
 	schema, err := os.ReadFile("../store/schema.sql")
 	require.NoError(t, err, "read schema")
-	_, err = db.Exec(string(schema))
+	_, err = db.ExecContext(t.Context(), string(schema))
 	require.NoError(t, err, "create schema")
 	seedMessageDetailSenderRows(t, db)
 	return dbPath, db
@@ -34,7 +34,7 @@ func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 
 func seedMessageDetailSenderRows(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES
 			(1, 'beeper', 'synthetic-network');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
@@ -62,7 +62,7 @@ func seedMessageDetailSenderRows(t *testing.T, db *sql.DB) {
 
 func assertMessageDetailSenderFallback(t *testing.T, reader messageDetailReader) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	byID, err := reader.GetMessage(ctx, 1)
 	require.NoError(t, err, "GetMessage sender-only")
@@ -103,7 +103,7 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 	dbPath, db := seedMessageDetailSenderFixture(t)
 	require.NoError(t, db.Close(), "close SQLite writer")
 
-	engine, err := NewDuckDBEngine("", dbPath, nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", dbPath, nil)
 	require.NoError(t, err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 	if !engine.hasSQLite() {
@@ -117,7 +117,7 @@ func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	db := dbtest.NewTestDB(t, "../store/schema.sql").DB
 	seedMessageDetailSenderRows(t, db)
-	_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
 	require.NoError(t, err)
 	for _, backend := range []string{"sqlite", "duckdb"} {
 		t.Run(backend, func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 			requirements := require.New(t)
 			var reader messageDetailReader = NewSQLiteEngine(db)
 			if backend == "duckdb" {
-				engine, err := NewDuckDBEngine("", "", db)
+				engine, err := NewDuckDBEngine(t.Context(), "", "", db)
 				requirements.NoError(err)
 				t.Cleanup(func() { _ = engine.Close() })
 				reader = engine

@@ -84,12 +84,12 @@ func testDocumentVectorOperationsState(t *testing.T) {
 	require.NoError(t, f.Store.InitSchema(), "the document-vector base schema is replay-safe")
 	if f.Store.IsPostgreSQL() {
 		var indexDefinition string
-		require.NoError(t, f.Store.DB().QueryRow(`
+		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `
 			SELECT indexdef FROM pg_indexes
 			WHERE schemaname = current_schema() AND indexname = 'idx_document_vector_generations_live_fingerprint'`).Scan(&indexDefinition))
 		assert.NotContains(t, indexDefinition, "UNIQUE")
 	} else {
-		rows, err := f.Store.DB().Query(`PRAGMA index_list(document_vector_generations)`)
+		rows, err := f.Store.DB().QueryContext(t.Context(), `PRAGMA index_list(document_vector_generations)`)
 		require.NoError(t, err)
 		defer func() { _ = rows.Close() }()
 		found := false
@@ -201,7 +201,7 @@ func testDocumentVectorOperationsState(t *testing.T) {
 			ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
 			RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
 		}))
-		_, err = rotatedFixture.Store.DB().Exec(rotatedFixture.Store.Rebind(`
+		_, err = rotatedFixture.Store.DB().ExecContext(t.Context(), rotatedFixture.Store.Rebind(`
 			UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
 		require.NoError(err)
 		desired := old.DocumentVectorGenerationSpec
@@ -230,7 +230,7 @@ func testDocumentVectorOperationsState(t *testing.T) {
 		profile := rotatedDocumentVectorProfile()
 		_, err := rotatedFixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
 		require.NoError(err)
-		_, err = rotatedFixture.Store.DB().Exec(rotatedFixture.Store.Rebind(
+		_, err = rotatedFixture.Store.DB().ExecContext(t.Context(), rotatedFixture.Store.Rebind(
 			`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
 		require.NoError(err)
 		err = rotatedFixture.Store.CheckpointDocumentVectorBuild(t.Context(), building.ID, 99, false,
@@ -274,9 +274,9 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 	require.Len(t, claims, 1)
 	claim := claims[0]
 	var messageID int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT message_id FROM document_occurrences WHERE canonical_blob_hash = ?`), claim.CanonicalBlobHash).Scan(&messageID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), now, messageID)
 	require.NoError(t, err)
 	page, err := f.Store.ParkObsoleteDocumentVectorTokens(t.Context(), generation.ID, "", 10, now.Add(time.Second))
@@ -286,7 +286,7 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 	assert.Zero(t, page.AfterGenerationID)
 	assert.Empty(t, page.AfterToken)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`), messageID)
 	require.NoError(t, err)
 	status, err := f.Store.GetDocumentVectorGenerationStatus(t.Context(), generation.ID, "", 10)
@@ -326,7 +326,7 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 		require.NoError(err)
 		assert.True(finalized)
 		var cleanedAt sql.NullTime
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 			SELECT backend_cleaned_at FROM document_vector_publications
 			WHERE generation_id = ? AND token = ?`), generation.ID, claims[0].Token).Scan(&cleanedAt))
 		assert.True(cleanedAt.Valid, "retired finalization preserves the ledger for purge")
@@ -364,15 +364,15 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 		require.Len(claims, 1)
 		require.NoError(f.Store.ActivateDocumentVectorGeneration(t.Context(), generation.ID, now.Add(time.Second)))
 		var messageID int64
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 			SELECT message_id FROM document_occurrences WHERE canonical_blob_hash = ?`), claims[0].CanonicalBlobHash).Scan(&messageID))
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), now, messageID)
 		require.NoError(err)
 		page, err := f.Store.ParkObsoleteDocumentVectorTokens(t.Context(), generation.ID, "", 10, now.Add(2*time.Second))
 		require.NoError(err)
 		assert.Equal([]store.DocumentVectorCleanupToken{{GenerationID: generation.ID, Token: claims[0].Token}}, page.Tokens)
-		_, err = f.Store.DB().Exec(f.Store.Rebind(
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`), messageID)
 		require.NoError(err)
 		live, err := f.Store.ResolveLiveDocumentVectorPublications(t.Context(), generation.ID, []string{claims[0].Token})
@@ -382,7 +382,7 @@ func testDocumentVectorObsoleteCleanup(t *testing.T) {
 		require.NoError(err)
 		assert.True(finalized)
 		var publications int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 			SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), generation.ID).Scan(&publications))
 		assert.Zero(publications)
 	})
@@ -397,16 +397,16 @@ func testDocumentVectorDerivativeGarbageCollection(t *testing.T) {
 	claim := claims[0]
 
 	var attachmentID, messageID int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT attachment_id, message_id FROM document_occurrences
 		WHERE canonical_blob_hash = ?`), claim.CanonicalBlobHash).Scan(&attachmentID, &messageID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(t, err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, claim.SourceSequence+1)
 	require.NoError(t, err)
 	assert.False(t, eligible)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_extractions SET updated_at = ? WHERE id = ?`), now.Add(-48*time.Hour), claim.ExtractionID)
 	require.NoError(t, err)
 
@@ -436,7 +436,7 @@ func assertDocumentVectorPublicationSurvivesSourceRemoval(
 	t.Helper()
 	var storedToken, state string
 	var cleanedAt sql.NullTime
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT token, state, backend_cleaned_at
 		FROM document_vector_publications
 		WHERE generation_id = ? AND token = ?`), generationID, token).Scan(
@@ -615,7 +615,7 @@ func testDocumentVectorLiveResolution(t *testing.T) {
 					Role: file.AttachmentRole, RoleSource: file.RoleSource, SourcePartKey: file.SourcePartKey,
 				}))
 			case "occurrence deletion":
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM document_occurrences WHERE attachment_id = ?`), attachmentID)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM document_occurrences WHERE attachment_id = ?`), attachmentID)
 				require.NoError(err)
 			case "role change":
 				require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), file.MessageID, store.AttachmentWrite{
@@ -640,7 +640,7 @@ func testDocumentVectorLiveResolution(t *testing.T) {
 			require.NoError(err)
 			assert.Empty(resolved)
 			var state string
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, claims[0].Token).Scan(&state))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT state FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, claims[0].Token).Scan(&state))
 			assert.Equal("ready", state, "source invalidation must hide without deleting the ledger row")
 		})
 	}
@@ -702,8 +702,8 @@ func testDocumentVectorCleanupAndPurge(t *testing.T) {
 	_, err = f.Store.PurgeRetiredDocumentVectorGeneration(t.Context(), generation.ID)
 	require.ErrorIs(t, err, store.ErrDocumentVectorCleanupIncomplete)
 	var generationCount, publicationCount int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM document_vector_generations WHERE id = ?`), generation.ID).Scan(&generationCount))
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), generation.ID).Scan(&publicationCount))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM document_vector_generations WHERE id = ?`), generation.ID).Scan(&generationCount))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), generation.ID).Scan(&publicationCount))
 	assert.Equal(t, 1, generationCount)
 	assert.Equal(t, 3, publicationCount)
 
@@ -714,7 +714,7 @@ func testDocumentVectorCleanupAndPurge(t *testing.T) {
 		assert.True(t, changed)
 	}
 	var cleanedAt time.Time
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT backend_cleaned_at FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, wantTokens[0]).Scan(&cleanedAt))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT backend_cleaned_at FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, wantTokens[0]).Scan(&cleanedAt))
 	assert.Equal(t, cleanTime.UTC().Truncate(time.Millisecond), cleanedAt.UTC())
 	changed, err = f.Store.MarkDocumentVectorTokenCleaned(t.Context(), generation.ID, wantTokens[0], cleanTime.Add(time.Second))
 	require.NoError(t, err)
@@ -811,7 +811,7 @@ func testDocumentVectorFailureStatusAndReset(t *testing.T) {
 	}, diagnostics[retryable.Token])
 	assert.True(t, status.FailuresExhausted)
 	assert.Empty(t, status.FailureAfterToken)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE document_vector_publications SET error_code = ?
 		WHERE generation_id = ? AND token = ?`), "Provider returned private response text", generation.ID, retryable.Token)
 	require.NoError(t, err)
@@ -868,7 +868,7 @@ func testDocumentVectorSourceChangedFailureStaysParked(t *testing.T) {
 	claim, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-a", now, time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claim)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), claim.CanonicalBlobHash)
 	require.NoError(t, err)
 	err = f.Store.CommitDocumentVectorPublication(
@@ -984,7 +984,7 @@ func testDocumentVectorReleaseAndTakeover(t *testing.T) {
 		"an expired owner of a retired generation still releases its outstanding submitted claim")
 	var owner sql.NullString
 	var attempts int
-	require.NoError(f.Store.DB().QueryRow(`SELECT lease_owner, attempt_count FROM document_vector_publications`).Scan(&owner, &attempts))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT lease_owner, attempt_count FROM document_vector_publications`).Scan(&owner, &attempts))
 	assert.False(owner.Valid)
 	assert.Equal(2, attempts, "retirement preserves the submitted attempt")
 }
@@ -1034,14 +1034,14 @@ func testDocumentVectorCommitLifecycle(t *testing.T) {
 	tracing, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, claim.ChunkID, 1, "worker-b", now, time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, tracing)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), tracing.CanonicalBlobHash)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), tracing.CanonicalBlobHash)
 	require.NoError(t, err)
 	err = f.Store.CommitDocumentVectorPublication(t.Context(), generation.ID, tracing.Token, tracing.LeaseOwner, tracing.LeaseFence, now.Add(time.Second))
 	require.ErrorIs(t, err, store.ErrDocumentVectorSourceChanged)
 
 	var state, errorCode string
 	var owner, leaseUntil, cleanedAt sql.NullString
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state, error_code, lease_owner, lease_until, backend_cleaned_at FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, tracing.Token).Scan(&state, &errorCode, &owner, &leaseUntil, &cleanedAt))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT state, error_code, lease_owner, lease_until, backend_cleaned_at FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generation.ID, tracing.Token).Scan(&state, &errorCode, &owner, &leaseUntil, &cleanedAt))
 	assert.Equal(t, "failed", state)
 	assert.Equal(t, "source_changed", errorCode)
 	assert.False(t, owner.Valid)
@@ -1052,7 +1052,7 @@ func testDocumentVectorCommitLifecycle(t *testing.T) {
 func testDocumentVectorInvalidGenerationState(t *testing.T) {
 	f, generation := seedDocumentVectorGenerationWithChunks(t, 1)
 	now := time.Date(2026, time.August, 20, 14, 15, 16, 0, time.UTC)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE id = ?`), generation.ID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE id = ?`), generation.ID)
 	require.NoError(t, err)
 	claim, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-a", now, time.Minute)
 	assert.Nil(t, claim)
@@ -1062,7 +1062,7 @@ func testDocumentVectorInvalidGenerationState(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrDocumentVectorInvalidGenerationState)
 
 	f, generation = seedDocumentVectorGenerationWithChunks(t, 1)
-	_, err = f.Store.DB().Exec(`UPDATE document_index_state SET target_profile_id = NULL WHERE singleton = 1`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE document_index_state SET target_profile_id = NULL WHERE singleton = 1`)
 	require.NoError(t, err)
 	claim, err = f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-a", now, time.Minute)
 	assert.Nil(t, claim)
@@ -1143,7 +1143,7 @@ func testDocumentVectorRejectsIneffectiveTimeBoundaries(t *testing.T) {
 func documentVectorLeaseUntil(t *testing.T, f *storetest.Fixture, generationID int64, token string) time.Time {
 	t.Helper()
 	var leaseUntil time.Time
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT lease_until FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generationID, token).Scan(&leaseUntil))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT lease_until FROM document_vector_publications WHERE generation_id = ? AND token = ?`), generationID, token).Scan(&leaseUntil))
 	return leaseUntil.UTC()
 }
 
@@ -1171,7 +1171,7 @@ func readyAllDocumentVectorChunks(
 func documentVectorAttachmentID(t *testing.T, f *storetest.Fixture, hash string) int64 {
 	t.Helper()
 	var attachmentID int64
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT id FROM attachments WHERE content_hash = ?`), hash).Scan(&attachmentID))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id FROM attachments WHERE content_hash = ?`), hash).Scan(&attachmentID))
 	return attachmentID
 }
 
@@ -1249,7 +1249,7 @@ func TestDocumentVectorGenerationRejectsNonCurrentTarget(t *testing.T) {
 		ProfileID: nonCurrent.ID, ProfileFingerprint: nonCurrent.Fingerprint,
 		RetentionPosture: nonCurrent.RetentionPosture, TrainingPosture: nonCurrent.TrainingPosture,
 	}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), current.ID)
 	require.NoError(err)
 
@@ -1259,7 +1259,7 @@ func TestDocumentVectorGenerationRejectsNonCurrentTarget(t *testing.T) {
 	})
 	require.ErrorIs(err, store.ErrDocumentVectorInvalidGenerationState)
 	var rows int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM document_vector_generations WHERE target_extraction_profile_id = ?`),
 		nonCurrent.ID).Scan(&rows))
 	assert.Zero(rows)
@@ -1278,7 +1278,7 @@ func TestDocumentVectorBaseSchemaPreservesCleanupAuthority(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
-		rows, err := f.Store.DB().Query(`
+		rows, err := f.Store.DB().QueryContext(t.Context(), `
 			SELECT confrelid::regclass::text
 			FROM pg_constraint
 			WHERE conrelid = 'document_vector_publications'::regclass
@@ -1295,13 +1295,13 @@ func TestDocumentVectorBaseSchemaPreservesCleanupAuthority(t *testing.T) {
 		require.NoError(rows.Err())
 		assert.Equal([]string{"document_vector_generations"}, references)
 		var definition string
-		require.NoError(f.Store.DB().QueryRow(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 			SELECT pg_get_indexdef('idx_document_vector_publications_cleanup'::regclass)`).Scan(&definition))
 		assert.Contains(definition, "(generation_id, backend_cleaned_at, token)")
 		return
 	}
 
-	rows, err := f.Store.DB().Query(`PRAGMA foreign_key_list('document_vector_publications')`)
+	rows, err := f.Store.DB().QueryContext(t.Context(), `PRAGMA foreign_key_list('document_vector_publications')`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	references := map[string]struct{}{}
@@ -1313,7 +1313,7 @@ func TestDocumentVectorBaseSchemaPreservesCleanupAuthority(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Equal(map[string]struct{}{"document_vector_generations": {}}, references)
-	indexRows, err := f.Store.DB().Query(`PRAGMA index_info('idx_document_vector_publications_cleanup')`)
+	indexRows, err := f.Store.DB().QueryContext(t.Context(), `PRAGMA index_info('idx_document_vector_publications_cleanup')`)
 	require.NoError(err)
 	defer func() { _ = indexRows.Close() }()
 	var columns []string
@@ -1335,16 +1335,16 @@ func TestDocumentVectorGenerationRetirementAndActiveConstraints(t *testing.T) {
 	spec := store.DocumentVectorGenerationSpec{Fingerprint: strings.Repeat("4", 64), TargetExtractionProfileID: profile.ID, EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 768}
 	first, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_vector_generations SET state = 'retired', retired_at = CURRENT_TIMESTAMP WHERE id = ?`), first.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_vector_generations SET state = 'retired', retired_at = CURRENT_TIMESTAMP WHERE id = ?`), first.ID)
 	require.NoError(err)
 	fresh, created, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
 	require.NoError(err)
 	assert.True(created)
 	assert.NotEqual(first.ID, fresh.ID)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE id = ?`), fresh.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE id = ?`), fresh.ID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state) VALUES (?, ?, ?, ?, ?, 'active')`), strings.Repeat("5", 64), profile.ID, "vector.embeddings", "embed-v1", 768)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state) VALUES (?, ?, ?, ?, ?, 'active')`), strings.Repeat("5", 64), profile.ID, "vector.embeddings", "embed-v1", 768)
 	require.Error(err)
 }
 
@@ -1352,9 +1352,9 @@ func TestDocumentVectorGenerationRejectsHistoricalSpecCollision(t *testing.T) {
 	f := storetest.New(t)
 	profile, _ := seedDocumentPublicationAuthority(t, f)
 	spec := store.DocumentVectorGenerationSpec{Fingerprint: strings.Repeat("c", 64), TargetExtractionProfileID: profile.ID, EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 768}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state, retired_at) VALUES (?, ?, ?, ?, ?, 'retired', CURRENT_TIMESTAMP)`), spec.Fingerprint, profile.ID, spec.EmbeddingProfile, "embed-old", spec.Dimension)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state, retired_at) VALUES (?, ?, ?, ?, ?, 'retired', CURRENT_TIMESTAMP)`), spec.Fingerprint, profile.ID, spec.EmbeddingProfile, "embed-old", spec.Dimension)
 	require.NoError(t, err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state) VALUES (?, ?, ?, ?, ?, 'building')`), spec.Fingerprint, profile.ID, spec.EmbeddingProfile, spec.Model, spec.Dimension)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO document_vector_generations (fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state) VALUES (?, ?, ?, ?, ?, 'building')`), spec.Fingerprint, profile.ID, spec.EmbeddingProfile, spec.Model, spec.Dimension)
 	require.NoError(t, err)
 	_, _, err = f.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
 	require.ErrorContains(t, err, "collides")
@@ -1376,8 +1376,8 @@ func TestDocumentVectorTargetRejectsLegacyNormalizedIdentity(t *testing.T) {
 	requirements := require.New(t)
 	f, _ := seedDocumentVectorGenerationWithChunks(t, 1)
 	var extractionID string
-	requirements.NoError(f.Store.DB().QueryRow(`SELECT extraction_id FROM document_extraction_heads LIMIT 1`).Scan(&extractionID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT extraction_id FROM document_extraction_heads LIMIT 1`).Scan(&extractionID))
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE document_extractions
 		SET normalization_version = NULL, document_family = NULL, unit_kind = NULL
 		WHERE id = ?`), extractionID)
@@ -1395,15 +1395,15 @@ func TestDocumentVectorTargetIgnoresDeadLegacyNormalizedIdentity(t *testing.T) {
 	requirements := require.New(t)
 	f, _ := seedDocumentVectorGenerationWithChunks(t, 1)
 	var extractionID, profileID, hash string
-	requirements.NoError(f.Store.DB().QueryRow(`
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT extraction_id, profile_id, canonical_blob_hash
 		FROM document_extraction_heads LIMIT 1`).Scan(&extractionID, &profileID, &hash))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE document_extractions
 		SET normalization_version = NULL, document_family = NULL, unit_kind = NULL
 		WHERE id = ?`), extractionID)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), hash)
 	requirements.NoError(err)
 
@@ -1418,10 +1418,10 @@ func TestDocumentVectorChunkCandidatesUseCurrentLiveAuthority(t *testing.T) {
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, "vector candidate evidence", "vector-candidate")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
@@ -1441,7 +1441,7 @@ func TestDocumentVectorChunkCandidatesUseCurrentLiveAuthority(t *testing.T) {
 	assert.NotEmpty(candidates[0].ChunkKey)
 	assert.NotEmpty(candidates[0].ChunkChecksum)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), hash)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM document_occurrences WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	candidates, err = f.Store.ListDocumentVectorChunkCandidates(t.Context(), generation.ID, 0, 10)
 	require.NoError(err)
@@ -1455,7 +1455,7 @@ func TestDocumentVectorChunkCandidatesHideAfterTargetProfileRotation(t *testing.
 	publishSearchDocument(t, f, profile, hash, "rotation candidate evidence", "vector-rotation")
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{Fingerprint: strings.Repeat("8", 64), TargetExtractionProfileID: profile.ID, EmbeddingProfile: "vector.embeddings", Model: "embed-v1", Dimension: 768})
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), "rotated-profile")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), "rotated-profile")
 	require.NoError(err)
 	candidates, err := f.Store.ListDocumentVectorChunkCandidates(t.Context(), generation.ID, 0, 10)
 	require.NoError(err)
@@ -1474,7 +1474,7 @@ func TestDocumentVectorPublicationCommitRejectsInconsistentImmutableSnapshot(t *
 	claim, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "integrity-worker", now, time.Minute)
 	require.NoError(err)
 	require.NotNil(claim)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE document_vector_publications SET canonical_blob_hash = ?
 		WHERE generation_id = ? AND token = ?`), strings.Repeat("f", 64), generation.ID, claim.Token)
 	require.NoError(err)
@@ -1482,7 +1482,7 @@ func TestDocumentVectorPublicationCommitRejectsInconsistentImmutableSnapshot(t *
 		t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, now.Add(time.Second))
 	require.ErrorIs(err, store.ErrDocumentVectorSourceChanged)
 	var state, errorCode string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT state, error_code FROM document_vector_publications
 		WHERE generation_id = ? AND token = ?`), generation.ID, claim.Token).Scan(&state, &errorCode))
 	assert.Equal("failed", state)
@@ -1500,9 +1500,9 @@ func TestDocumentVectorGenerationCannotDeletePublicationBeforeBackendCleanup(t *
 	require.NoError(err)
 	require.Len(candidates, 1)
 	candidate := candidates[0]
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_vector_publications (generation_id, extraction_id, extraction_profile_id, canonical_blob_hash, extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`), generation.ID, candidate.ExtractionID, candidate.ExtractionProfileID, candidate.CanonicalBlobHash, candidate.ExtractionInputKey, candidate.ChunkID, candidate.ChunkKey, candidate.ChunkChecksum, candidate.SourceSequence, "opaque-retained-token")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO document_vector_publications (generation_id, extraction_id, extraction_profile_id, canonical_blob_hash, extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`), generation.ID, candidate.ExtractionID, candidate.ExtractionProfileID, candidate.CanonicalBlobHash, candidate.ExtractionInputKey, candidate.ChunkID, candidate.ChunkKey, candidate.ChunkChecksum, candidate.SourceSequence, "opaque-retained-token")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM document_vector_generations WHERE id = ?`), generation.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM document_vector_generations WHERE id = ?`), generation.ID)
 	require.Error(err)
 }
 
@@ -1523,10 +1523,10 @@ func TestDocumentVectorChunkCandidatesRequireConfiguredExtractionProfile(t *test
 		ProfileID: target.ID, ProfileFingerprint: target.Fingerprint,
 		RetentionPosture: target.RetentionPosture, TrainingPosture: target.TrainingPosture,
 	}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), target.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), target.ID)
 	require.NoError(err)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE state = 'building'`))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE document_vector_generations SET state = 'active' WHERE state = 'building'`))
 	require.NoError(err)
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
 		Fingerprint: strings.Repeat("a", 64), TargetExtractionProfileID: target.ID,

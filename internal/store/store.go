@@ -204,19 +204,15 @@ func OpenContext(ctx context.Context, dbPath string) (*Store, error) {
 //
 // Not for production use — a process crash mid-test can leave a corrupt
 // database, which is fine because tests recreate it from scratch.
-func OpenForTest(dbPath string) (*Store, error) {
+func OpenForTest(ctx context.Context, dbPath string) (*Store, error) {
 	if IsPostgresURL(dbPath) {
-		return openPostgres(dbPath)
+		return openPostgres(ctx, dbPath)
 	}
-	return openSQLite(dbPath, testSQLiteParams)
+	return openSQLiteContext(ctx, dbPath, testSQLiteParams)
 }
 
-// openSQLite opens a SQLite database at the given file path with the
+// openSQLiteContext opens a SQLite database at the given file path with the
 // supplied DSN parameters appended.
-func openSQLite(dbPath, params string) (*Store, error) {
-	return openSQLiteContext(context.Background(), dbPath, params)
-}
-
 func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -308,8 +304,8 @@ func appendSQLiteParams(dsn, params string) string {
 }
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
-func openPostgres(dbURL string) (*Store, error) {
-	return OpenPostgresContext(context.Background(), dbURL)
+func openPostgres(ctx context.Context, dbURL string) (*Store, error) {
+	return OpenPostgresContext(ctx, dbURL)
 }
 
 // OpenPostgresContext opens PostgreSQL explicitly, accepting a URL or libpq keyword DSN.
@@ -719,6 +715,8 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 // a full scan, so ingest time grows with the square of the index size. FTS5
 // reaches these tables only through rowid and primary-key statements, so
 // statistics never improve their plans.
+// SQLite ignores NULL statistics. Retaining the rows avoids splitting and
+// collapsing sqlite_stat1 during close-time cleanup after VACUUM.
 func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) error {
 	var analyzed bool
 	err := db.QueryRowContext(ctx,
@@ -730,7 +728,7 @@ func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) erro
 	if !analyzed {
 		return nil
 	}
-	_, err = db.ExecContext(ctx, `DELETE FROM sqlite_stat1 WHERE tbl IN (
+	_, err = db.ExecContext(ctx, `UPDATE sqlite_stat1 SET stat = NULL WHERE stat IS NOT NULL AND tbl IN (
 		SELECT name || '_data' FROM sqlite_master
 		WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
 	)`)
@@ -959,7 +957,12 @@ func (s *Store) withTxLockedContext(
 ) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
-	tx, err := s.db.BeginTx(ctx, opts)
+	tx := writableSnapshot(ctx, s.db.DB)
+	joined := tx != nil
+	var err error
+	if !joined {
+		tx, err = s.db.BeginTx(ctx, opts)
+	}
 	if err != nil {
 		level := slog.LevelWarn
 		if errors.Is(err, context.Canceled) {
@@ -970,17 +973,24 @@ func (s *Store) withTxLockedContext(
 	}
 	if preFence != nil {
 		if err := preFence(tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if err := fn(tx); err != nil {
+		if joined {
+			return err
+		}
 		if rbErr := tx.Rollback(); rbErr != nil {
 			slog.Warn("sql tx rollback failed",
 				"error", rbErr.Error(),
@@ -995,13 +1005,20 @@ func (s *Store) withTxLockedContext(
 	}
 	if s.directoryProjectionReady && !s.readOnly && (opts == nil || !opts.ReadOnly) {
 		if err := s.refreshDirectoryProjectionsBeforeCommitTx(ctx, tx); err != nil {
-			_ = tx.Rollback()
+			if !joined {
+				_ = tx.Rollback()
+			}
 			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		_ = tx.Rollback()
+		if !joined {
+			_ = tx.Rollback()
+		}
 		return err
+	}
+	if joined {
+		return nil
 	}
 	if err := tx.Commit(); err != nil {
 		slog.Warn("sql tx commit failed",
@@ -1051,13 +1068,18 @@ func (s *Store) withTxLockedContext(
 // (? → $N on PG) just like withTx. The reset statement itself has no
 // placeholders, so Rebind is a no-op on it.
 func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context, tx *loggedTx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx := writableSnapshot(ctx, s.db.DB)
+	joined := tx != nil
+	var err error
+	if !joined {
+		tx, err = s.db.BeginTx(ctx, nil)
+	}
 	if err != nil {
 		return fmt.Errorf("begin maintenance tx: %w", err)
 	}
 	committed := false
 	defer func() {
-		if !committed {
+		if !committed && !joined {
 			_ = tx.Rollback()
 		}
 	}()
@@ -1075,6 +1097,9 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 		return err
 	}
 
+	if joined {
+		return nil
+	}
 	if err := tx.Commit(); err != nil {
 		if errors.Is(err, sql.ErrTxDone) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -1131,8 +1156,8 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 // INVALID during this run.
 //
 // Both an initial failure and a failed retry are logged and swallowed: a
-// future InitSchema call (the next process start) retries the same
-// idempotent build. SQLite has no CONCURRENTLY equivalent and does not need
+// full initializer run (upgrade, msgvault migrate, or setup) retries the
+// build. SQLite has no CONCURRENTLY equivalent and does not need
 // one — its index build over a working-set-sized archive is fast enough to
 // run inline in schema.sql — so this is a no-op there.
 func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
@@ -1206,7 +1231,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 				slog.Warn("drop invalid leftover index failed", "index", index.name, "error", dropErr.Error())
 			}
 			if err := build(); err != nil {
-				slog.Warn("concurrent index build failed after retry; will retry on next start",
+				slog.Warn("index retry failed; retry on upgrade, msgvault migrate, or setup",
 					"index", index.name, "error", err.Error())
 			}
 		}
@@ -1257,10 +1282,6 @@ type chunkQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 	Exec(query string, args ...any) (sql.Result, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
-	return queryInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate, fn)
 }
 
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
@@ -1341,20 +1362,12 @@ func insertInChunks(tx interface {
 	return nil
 }
 
-// execInChunks executes a parameterized DELETE/UPDATE with an IN-clause in chunks
-// to stay within SQLite's parameter limit. queryTemplate must contain a single %s
-// placeholder for the comma-separated "?" list. The prefix args are prepended before
-// each chunk's args (e.g., a message_id filter).
-func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string) error {
-	return execInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate)
-}
-
-// execInChunksContext is the context-aware form of execInChunks: every chunk's
+// execInChunksContext executes a parameterized DELETE/UPDATE with an IN-clause
+// in chunks to stay within SQLite's parameter limit. queryTemplate must contain
+// a single %s placeholder for the comma-separated "?" list. The prefix args are
+// prepended before each chunk's args (e.g., a message_id filter). Every chunk's
 // statement carries ctx, and the walk stops at the next chunk boundary once it
-// is cancelled. Callers whose write scales with archive size — the legacy
-// calendar-attribution backfill in particular — must use this form, because a
-// chunked whole-table walk on a background context is unreachable by SIGINT and
-// SIGTERM for as long as any one chunk waits on a lock.
+// is cancelled.
 func execInChunksContext[T any](
 	ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string,
 ) error {
@@ -1482,6 +1495,35 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if version > SchemaVersion {
 		return fmt.Errorf("archive schema version %d is newer than supported version %d", version, SchemaVersion)
 	}
+	if !s.IsPostgreSQL() && version == 0 {
+		fresh := false
+		err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			var tables bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')").Scan(&tables); err != nil {
+				return fmt.Errorf("inspect SQLite schema freshness: %w", err)
+			}
+			if tables {
+				return nil
+			}
+			fresh = true
+			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version)
+		})
+		if err != nil {
+			return err
+		}
+		if fresh {
+			s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
+			return nil
+		}
+	}
+	if err := s.initSchemaContext(ctx, version); err != nil {
+		return err
+	}
+	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
+	return nil
+}
+
+func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -2047,7 +2089,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// statement_timeout escape hatch (CONCURRENTLY cannot run inside a
 	// transaction at all, so runMaintenance does not apply here). Carries ctx
 	// like every other statement in this method: a cancelled build leaves at
-	// worst an INVALID leftover, which the next start drops and rebuilds.
+	// worst an INVALID leftover, rebuilt on upgrade, msgvault migrate, or setup.
 	if s.beforeLargeIndexBuildHook != nil {
 		s.beforeLargeIndexBuildHook()
 	}
@@ -2335,6 +2377,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		_, err := tx.ExecContext(ctx,
 			`CREATE INDEX IF NOT EXISTS idx_messages_content_changed_at
 			     ON messages(content_changed_at, id)`)
+		if err != nil {
+			return err
+		}
+		// IMAP capture seeks by source so other sources' changes stay out of its apply transaction.
+		// PostgreSQL's planner already bounds the query by source.
+		if !s.IsPostgreSQL() {
+			_, err = tx.ExecContext(ctx,
+				`CREATE INDEX IF NOT EXISTS idx_messages_source_content_changed
+				     ON messages(source_id, content_changed_at)`)
+		}
 		return err
 	}); err != nil {
 		return fmt.Errorf("create content_changed_at index: %w", err)
@@ -2415,7 +2467,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// like any other and carries ctx: it returns a bool, so a cancellation that
 	// was not reported as an error would be recorded as "search is unavailable"
 	// on a store the daemon is about to hand to callers.
-	available, err := s.dialect.FTSAvailable(ctx, s.db.DB)
+	available, err := s.dialect.FTSAvailable(ctx, ReadDBContext(ctx, s.db.DB))
 	if err != nil {
 		return fmt.Errorf("probe FTS availability: %w", err)
 	}
@@ -2452,11 +2504,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
-
-	// Schema initialization can add indexes to an existing archive. Refresh
-	// statistics after all schema work so SQLite can cost those indexes against
-	// the archive's actual data distribution.
-	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 
 	if err := s.ensureFilenameDiscoveryInfrastructure(ctx); err != nil {
 		return err

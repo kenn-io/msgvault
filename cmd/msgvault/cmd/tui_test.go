@@ -43,7 +43,7 @@ func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
 
 	t.Cleanup(backend.cleanup)
 
-	accounts, err := backend.engine.ListAccounts(context.Background())
+	accounts, err := backend.engine.ListAccounts(t.Context())
 	require.NoError(
 		err, "ListAccounts")
 
@@ -107,7 +107,7 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 
 	t.Cleanup(backend.cleanup)
 
-	accounts, err := backend.engine.ListAccounts(context.Background())
+	accounts, err := backend.engine.ListAccounts(t.Context())
 	require.NoError(
 		err, "ListAccounts")
 
@@ -202,7 +202,7 @@ func TestTUISemanticSearcherRequiresEnabledVectorBackend(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
 			engine := daemonclient.NewEngineAdapter(client)
 
-			searcher := tuiSemanticSearcher(context.Background(), client, engine)
+			searcher := tuiSemanticSearcher(t.Context(), client, engine)
 			if tt.wantSearch {
 				assert.NotNil(t, searcher)
 			} else {
@@ -243,7 +243,7 @@ func TestTUIPeopleBackendRequiresPeopleSchema(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
 			engine := daemonclient.NewEngineAdapter(client)
 
-			backend := tuiPeopleBackend(context.Background(), client, engine)
+			backend := tuiPeopleBackend(t.Context(), client, engine)
 			if tt.wantBackend {
 				assert.NotNil(t, backend)
 			} else {
@@ -289,7 +289,7 @@ func TestTUIPeopleBackendGatesBriefsOnTheBriefSchema(t *testing.T) {
 			t.Cleanup(func() { require.NoError(client.Close()) })
 			engine := daemonclient.NewEngineAdapter(client)
 
-			backend := tuiPeopleBackend(context.Background(), client, engine)
+			backend := tuiPeopleBackend(t.Context(), client, engine)
 			require.NotNil(backend)
 			assert.Implements((*peoplebrowser.Backend)(nil), backend,
 				"every gated backend still serves the People browser")
@@ -341,7 +341,7 @@ func TestAnalyticsCacheNotice(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
 			require.NoError(t, err, "daemonclient.New")
 
-			notice := analyticsCacheNotice(context.Background(), client)
+			notice := analyticsCacheNotice(t.Context(), client)
 			if tt.wantNotice {
 				assert.Contains(t, notice, "msgvault build-cache")
 			} else {
@@ -372,10 +372,10 @@ func TestAnalyticsCacheNoticeClearsAfterBackgroundSwap(t *testing.T) {
 
 	client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
 	require.NoError(err, "daemonclient.New")
-	assert.NotEmpty(analyticsCacheNotice(context.Background(), client),
+	assert.NotEmpty(analyticsCacheNotice(t.Context(), client),
 		"launch during initialization must show the live-SQL notice")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	messages := make(chan tea.Msg, 1)
 	go refreshAnalyticsCacheNotice(ctx, client, time.Millisecond, func(msg tea.Msg) {

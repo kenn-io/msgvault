@@ -10,7 +10,7 @@ import (
 
 func (imp *Importer) prepareArchive(ctx context.Context, m Meeting, sourceID int64, identifier, email string) (meetingarchive.Snapshot, int64, error) {
 	key := "meeting:" + m.Manifest.ID
-	records, err := imp.store.MessageMetadataBatch(sourceID, []string{key})
+	records, err := imp.store.MessageMetadataBatch(ctx, sourceID, []string{key})
 	if err != nil {
 		return meetingarchive.Snapshot{}, 0, err
 	}

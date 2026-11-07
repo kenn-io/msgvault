@@ -42,7 +42,7 @@ func TestWithRefreshHTTPClientCapsTimeout(t *testing.T) {
 	t.Run("default client is copied and capped", func(t *testing.T) {
 		assert := assert.New(t)
 
-		ctx := withRefreshHTTPClient(context.Background())
+		ctx := withRefreshHTTPClient(t.Context())
 
 		got, ok := ctx.Value(oauth2.HTTPClient).(*http.Client)
 		require.True(t, ok, "context must carry a client")
@@ -64,7 +64,7 @@ func TestWithRefreshHTTPClientCapsTimeout(t *testing.T) {
 			CheckRedirect: checkRedirect,
 		}
 
-		ctx := withRefreshHTTPClient(context.WithValue(context.Background(), oauth2.HTTPClient, caller))
+		ctx := withRefreshHTTPClient(context.WithValue(t.Context(), oauth2.HTTPClient, caller))
 
 		got, ok := ctx.Value(oauth2.HTTPClient).(*http.Client)
 		require.True(t, ok, "context must carry a client")
@@ -82,7 +82,7 @@ func TestWithRefreshHTTPClientCapsTimeout(t *testing.T) {
 	t.Run("long timeout is capped", func(t *testing.T) {
 		caller := &http.Client{Timeout: 2 * time.Hour}
 
-		ctx := withRefreshHTTPClient(context.WithValue(context.Background(), oauth2.HTTPClient, caller))
+		ctx := withRefreshHTTPClient(context.WithValue(t.Context(), oauth2.HTTPClient, caller))
 
 		got, ok := ctx.Value(oauth2.HTTPClient).(*http.Client)
 		require.True(t, ok, "context must carry a client")
@@ -93,7 +93,7 @@ func TestWithRefreshHTTPClientCapsTimeout(t *testing.T) {
 	t.Run("short timeout is kept as is", func(t *testing.T) {
 		caller := &http.Client{Timeout: 5 * time.Second}
 
-		ctx := withRefreshHTTPClient(context.WithValue(context.Background(), oauth2.HTTPClient, caller))
+		ctx := withRefreshHTTPClient(context.WithValue(t.Context(), oauth2.HTTPClient, caller))
 
 		got, ok := ctx.Value(oauth2.HTTPClient).(*http.Client)
 		require.True(t, ok, "context must carry a client")
@@ -101,7 +101,7 @@ func TestWithRefreshHTTPClientCapsTimeout(t *testing.T) {
 	})
 
 	t.Run("earlier cancellation is preserved", func(t *testing.T) {
-		parent, cancel := context.WithCancel(context.Background())
+		parent, cancel := context.WithCancel(t.Context())
 		derived := withRefreshHTTPClient(parent)
 		cancel()
 		assert.ErrorIs(t, derived.Err(), context.Canceled,
@@ -164,7 +164,7 @@ func TestTokenSourceLaterRefreshBoundsStalledTokenEndpoint(t *testing.T) {
 
 		stall := newStalledTokenTransport()
 		// Zero timeout: the cap must come from the production path.
-		ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+		ctx := context.WithValue(t.Context(), oauth2.HTTPClient,
 			&http.Client{Transport: stall})
 
 		ts := tokenSourceForLaterRefresh(ctx, t)
@@ -195,7 +195,7 @@ func TestTokenSourceLaterRefreshKeepsShorterCallerTimeout(t *testing.T) {
 		assert := assert.New(t)
 
 		stall := newStalledTokenTransport()
-		ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+		ctx := context.WithValue(t.Context(), oauth2.HTTPClient,
 			&http.Client{Timeout: 5 * time.Second, Transport: stall})
 
 		ts := tokenSourceForLaterRefresh(ctx, t)
@@ -255,7 +255,7 @@ func TestServiceAccountTokenSourceBoundsLaterRefresh(t *testing.T) {
 
 		transport := newServeThenStallTransport()
 		// Zero timeout: the cap must come from the production path.
-		ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+		ctx := context.WithValue(t.Context(), oauth2.HTTPClient,
 			&http.Client{Transport: transport})
 
 		keyPath := filepath.Join(t.TempDir(), "service-account.json")
@@ -314,7 +314,7 @@ func TestTokenSourceRefreshesExpiredTokenThroughBoundedClient(t *testing.T) {
 		Expiry:       time.Now().Add(-time.Minute),
 	}, Scopes)
 
-	ts, err := mgr.TokenSource(context.Background(), "user@example.com")
+	ts, err := mgr.TokenSource(t.Context(), "user@example.com")
 	require.NoError(err, "TokenSource should refresh the expired token")
 
 	token, err := ts.Token()
@@ -357,7 +357,7 @@ func TestTokenSourcePreservesCallerSuppliedHTTPClient(t *testing.T) {
 	assert := assert.New(t)
 
 	transport := &servingTokenTransport{served: make(chan *http.Request, 2)}
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+	ctx := context.WithValue(t.Context(), oauth2.HTTPClient,
 		&http.Client{Transport: transport})
 
 	mgr := setupTestManager(t, Scopes)

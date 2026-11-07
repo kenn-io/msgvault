@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -75,7 +74,8 @@ func insertFeedMessage(st *store.Store, n int, sentAt time.Time) (int64, error) 
 func setWatermark(t *testing.T, st *store.Store, value any, ids ...int64) {
 	t.Helper()
 	for _, id := range ids {
-		_, err := st.DB().Exec(
+		_, err := st.DB().ExecContext(
+			t.Context(),
 			st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), value, id)
 		require.NoErrorf(t, err, "set content_changed_at for message %d", id)
 	}
@@ -104,7 +104,7 @@ var feedFarFuture = time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
 // cursor nothing can match is the cheapest way to read the clock alone.
 func databaseClock(t *testing.T, st *store.Store) time.Time {
 	t.Helper()
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(feedFarFuture), 1)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(feedFarFuture), 1)
 	require.NoError(t, err, "read the database clock")
 	require.False(t, page.ServerTime.IsZero(), "every page carries the database clock")
 	return page.ServerTime
@@ -115,7 +115,7 @@ func databaseClock(t *testing.T, st *store.Store) time.Time {
 // yet, so it is what a test that has just written one has to wait on.
 func feedCompleteThrough(t *testing.T, st *store.Store) time.Time {
 	t.Helper()
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(feedFarFuture), 1)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(feedFarFuture), 1)
 	require.NoError(t, err, "read the feed's commit bound")
 	return page.CompleteThrough
 }
@@ -170,7 +170,8 @@ func settleFeedClock(t *testing.T, st *store.Store) {
 // a deletion must show up in the feed.
 func setMessageTimestamp(t *testing.T, st *store.Store, id int64, col string, value time.Time) {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(fmt.Sprintf(`UPDATE messages SET %s = ? WHERE id = ?`, col)), value, id)
 	require.NoErrorf(t, err, "set messages.%s for message %d", col, id)
 }
@@ -188,7 +189,7 @@ func drainChangedMessages(
 	for page := 0; ; page++ {
 		require.Lessf(t, page, 200,
 			"the feed did not terminate after %d pages: the cursor is not advancing", page)
-		got, err := st.ListChangedMessages(context.Background(), *cursor, limit)
+		got, err := st.ListChangedMessages(t.Context(), *cursor, limit)
 		require.NoError(t, err, "ListChangedMessages")
 		require.False(t, got.ServerTime.IsZero(), "every page must carry the database clock")
 		require.LessOrEqual(t, len(got.Messages), limit, "a page must not exceed the limit")
@@ -264,11 +265,11 @@ func TestListChangedMessages_CursorSurvivesInstantBoundary(t *testing.T) {
 	// A row whose watermark EQUALS the cursor must still be returned: that is
 	// the comparison the encoding breaks, and asserting it directly says so
 	// even when the walk below happens to have no ties.
-	all, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, total)
+	all, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, total)
 	require.NoError(err)
 	require.Len(all.Messages, total)
 	mid := all.Messages[total/2]
-	atCursor, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(mid.ContentChangedAt), total)
+	atCursor, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(mid.ContentChangedAt), total)
 	require.NoError(err)
 	ids := make([]int64, 0, len(atCursor.Messages))
 	for _, m := range atCursor.Messages {
@@ -354,7 +355,7 @@ func TestListChangedMessages_SurfacesBackfilledOldMessage(t *testing.T) {
 
 	recent := seedFeedMessage(t, st, 1, time.Date(2026, 5, 4, 3, 2, 1, 0, time.UTC))
 	settleFeedClock(t, st)
-	first, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	first, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err)
 	require.Len(first.Messages, 1)
 	require.Equal(recent, first.Messages[0].ID)
@@ -366,7 +367,8 @@ func TestListChangedMessages_SurfacesBackfilledOldMessage(t *testing.T) {
 	backfilled := seedFeedMessage(t, st, 2, oldSentAt)
 	settleFeedClock(t, st)
 
-	next, err := st.ListChangedMessages(context.Background(),
+	next, err := st.ListChangedMessages(
+		t.Context(),
 		store.ChangedMessagesAfter(cursor.ContentChangedAt, cursor.ID), 10)
 	require.NoError(err)
 	require.Len(next.Messages, 1,
@@ -385,13 +387,14 @@ func TestListChangedMessages_NullHasAttachmentsDefaultsFalse(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	id := seedFeedMessage(t, st, 1, time.Time{})
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET has_attachments = NULL WHERE id = ?`), id)
 	require.NoError(err, "store legacy NULL attachment metadata")
 	settleFeedClock(t, st)
 
 	page, err := st.ListChangedMessages(
-		context.Background(), store.ChangedMessagesCursor{}, 10)
+		t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err, "legacy nullable metadata must not block the feed")
 	require.Len(page.Messages, 1)
 	assert.False(page.Messages[0].HasAttachments)
@@ -414,7 +417,7 @@ func TestListChangedMessages_OrdersByWatermarkThenID(t *testing.T) {
 	setWatermark(t, st, watermarkEarly, ids[1], ids[3])
 	setWatermark(t, st, watermarkLate, ids[4])
 
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err)
 	got := make([]int64, 0, len(page.Messages))
 	for _, m := range page.Messages {
@@ -445,7 +448,7 @@ func TestListChangedMessages_IncludesDeletedAndDedupHidden(t *testing.T) {
 	setMessageTimestamp(t, st, removed, "deleted_from_source_at", removedAt)
 	settleFeedClock(t, st)
 
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err)
 	byID := make(map[int64]store.ChangedMessage, len(page.Messages))
 	for _, m := range page.Messages {
@@ -483,7 +486,7 @@ func TestListChangedMessages_ZeroCursorReturnsEverything(t *testing.T) {
 	}
 	settleFeedClock(t, st)
 
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err)
 	require.Len(page.Messages, len(want),
 		"a zero cursor is the first-run case: it must return the whole archive")
@@ -533,7 +536,7 @@ func TestListChangedMessages_UnreadableWatermarkReturnsAnError(t *testing.T) {
 	setWatermark(t, st, "1999-13-45 99:99:99.999", id)
 
 	since := time.Date(1995, 6, 7, 8, 9, 10, 0, time.UTC)
-	_, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(since), 10)
+	_, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(since), 10)
 	require.Error(err)
 	assert.Contains(err.Error(), "content_changed_at")
 }
@@ -547,7 +550,7 @@ func TestListChangedMessages_NullWatermarkReturnsAnError(t *testing.T) {
 	setWatermark(t, st, nil, id)
 
 	_, err := st.ListChangedMessages(
-		context.Background(), store.ChangedMessagesCursor{}, 10)
+		t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.Error(err)
 	assert.Contains(err.Error(), "content_changed_at")
 }
@@ -577,7 +580,7 @@ func TestListChangedMessages_ReportsTheStoredWatermarkNotTheRequestCursor(t *tes
 	setWatermarkAt(t, st, stored, id)
 
 	// A coarse cursor reads the row's real watermark: the truth to compare to.
-	truth, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	truth, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err)
 	require.Len(truth.Messages, 1)
 	require.Equal(stored, truth.Messages[0].ContentChangedAt.UTC())
@@ -586,7 +589,7 @@ func TestListChangedMessages_ReportsTheStoredWatermarkNotTheRequestCursor(t *tes
 	// truncates that cursor to the stored millisecond, so the row still comes
 	// back — and its watermark must be unchanged.
 	finer := stored.Add(400 * time.Microsecond)
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(finer), 10)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(finer), 10)
 	require.NoError(err)
 	require.Len(page.Messages, 1, "the truncated cursor still selects the row")
 
@@ -604,7 +607,7 @@ func TestListChangedMessages_EmptyPageStillCarriesServerTime(t *testing.T) {
 	seedFeedMessage(t, st, 1, time.Time{})
 
 	future := time.Now().UTC().Add(24 * time.Hour)
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(future), 10)
+	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(future), 10)
 	require.NoError(err)
 	require.Empty(page.Messages, "a cursor in the future is caught up by definition")
 
@@ -622,7 +625,7 @@ func TestListChangedMessages_NonPositiveLimitReturnsEmptyPage(t *testing.T) {
 	seedFeedMessage(t, st, 1, time.Time{})
 
 	for _, limit := range []int{0, -1} {
-		page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, limit)
+		page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, limit)
 		require.NoErrorf(err, "limit %d must not be an error", limit)
 		require.Emptyf(page.Messages, "limit %d must return no rows", limit)
 	}

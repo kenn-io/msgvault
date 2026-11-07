@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"math"
 	"slices"
 	"strings"
@@ -30,7 +29,7 @@ func TestAddPersonRelationshipCanonicalizesOrientationAndSymmetry(t *testing.T) 
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	group, propID, altID := "item1", "prop-1", "alt-1"
@@ -95,7 +94,7 @@ func TestAddPersonRelationshipCanonicalizesOrientationAndSymmetry(t *testing.T) 
 func TestPersonRelationshipValidatesInputAndConstructedDateBounds(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	_, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
@@ -151,7 +150,7 @@ func TestEndUpdateDeletePersonRelationshipUsesCASAndKeepsHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	edge, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
 		SourcePersonID: alice, TargetPersonID: bob, TypeSlug: "spouse", Source: store.ProvenanceUser, Actor: "user",
@@ -195,7 +194,7 @@ func TestPatchPersonRelationshipIsAtomicAndBumpsRevisionOnce(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	edge, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
 		SourcePersonID: alice, TargetPersonID: bob, TypeSlug: "spouse", Source: store.ProvenanceUser, Actor: "user",
@@ -232,7 +231,7 @@ func TestPatchPersonRelationshipIsAtomicAndBumpsRevisionOnce(t *testing.T) {
 func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	insert := f.Store.Rebind(`
 		INSERT INTO person_relationships (
@@ -272,7 +271,7 @@ func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
 	for _, test := range tests {
 		relationshipType, err := f.Store.GetRelationshipTypeBySlugContext(ctx, test.typeSlug)
 		require.NoError(err)
-		_, err = f.Store.DB().Exec(insert,
+		_, err = f.Store.DB().ExecContext(t.Context(), insert,
 			test.source, test.target, relationshipType.ID,
 			test.startYear, test.startMonth, test.startDay, test.endYear, test.endMonth, test.endDay,
 			"active", test.provenance, test.confidence,
@@ -281,7 +280,7 @@ func TestPersonRelationshipConstraintsAreEnforcedByTheDatabase(t *testing.T) {
 	}
 	accepted, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "muse")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(insert,
+	_, err = f.Store.DB().ExecContext(t.Context(), insert,
 		alice, bob, accepted.ID, 2019, 4, 12, nil, nil, nil, "active", "user", nil,
 	)
 	require.NoError(err)
@@ -291,21 +290,21 @@ func TestPersonRelationshipConstraintsAndColumnParity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO person_relationships (source_person_id, target_person_id, relationship_type_id, start_month, status, source, created_by, updated_by)
 		VALUES (?, ?, ?, 4, 'active', 'user', 'user', 'user')`), alice, bob, friend.ID)
 	require.Error(err, "database must reject a relationship bound without a year")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO person_relationships (source_person_id, target_person_id, relationship_type_id, status, source, confidence, created_by, updated_by)
 		VALUES (?, ?, ?, 'active', 'user', 0.5, 'user', 'user')`), alice, bob, friend.ID)
 	require.Error(err, "database must reject confidence on a declared source")
 
 	columnsForTable := func(table string) []string {
-		rows, queryErr := f.Store.DB().Query(`SELECT * FROM ` + table + ` WHERE 1 = 0`)
+		rows, queryErr := f.Store.DB().QueryContext(t.Context(), `SELECT * FROM `+table+` WHERE 1 = 0`)
 		require.NoError(queryErr)
 		defer func() { require.NoError(rows.Close()) }()
 		columns, queryErr := rows.Columns()
@@ -326,7 +325,7 @@ func TestPersonRelationshipConstraintsAndColumnParity(t *testing.T) {
 func TestDeletingAPersonCascadesItsRelationships(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	edge, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
 		SourcePersonID: alice, TargetPersonID: bob, TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "user",

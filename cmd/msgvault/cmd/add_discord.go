@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -113,7 +114,7 @@ func runAddDiscord(cmd *cobra.Command, deps discordCommandDeps, opts addDiscordO
 	defer cleanup()
 	manager := deps.tokenManager()
 	record := discord.NewTokenRecord(me.ID, me.Username, accessToken, opts.OAuthApp)
-	if err := saveAndRegisterDiscordCredential(st, manager, record, selected, deps); err != nil {
+	if err := saveAndRegisterDiscordCredential(cmd.Context(), st, manager, record, selected, deps); err != nil {
 		return err
 	}
 	for _, guild := range selected {
@@ -124,6 +125,7 @@ func runAddDiscord(cmd *cobra.Command, deps discordCommandDeps, opts addDiscordO
 }
 
 func saveAndRegisterDiscordCredential(
+	ctx context.Context,
 	st *store.Store,
 	manager *discord.TokenManager,
 	record discord.TokenRecord,
@@ -134,14 +136,14 @@ func saveAndRegisterDiscordCredential(
 		// Credential persistence is the first durable setup phase. If later
 		// source registration fails, rerunning the same bot binding rotates the
 		// protected record and resumes idempotent source upserts.
-		if err := saveDiscordCredential(st, manager, record); err != nil {
+		if err := saveDiscordCredential(ctx, st, manager, record); err != nil {
 			return err
 		}
 		if addDiscordAfterCredentialSaveHook != nil {
 			addDiscordAfterCredentialSaveHook()
 		}
 		for _, guild := range selected {
-			if err := deps.registerGuild(st, guild, record.Binding); err != nil {
+			if err := deps.registerGuild(ctx, st, guild, record.Binding); err != nil {
 				return err
 			}
 		}
@@ -152,7 +154,7 @@ func saveAndRegisterDiscordCredential(
 	})
 }
 
-func registerDiscordGuild(st *store.Store, guild discord.Guild, binding string) error {
+func registerDiscordGuild(ctx context.Context, st *store.Store, guild discord.Guild, binding string) error {
 	source, err := st.GetOrCreateSource(sourceTypeDiscord, guild.ID)
 	if err != nil {
 		return fmt.Errorf("register Discord guild %s: %w", guild.ID, err)
@@ -160,7 +162,7 @@ func registerDiscordGuild(st *store.Store, guild discord.Guild, binding string) 
 	if err := updateSourceDisplayNameForRegistration(st, source.ID, guild.Name, nil); err != nil {
 		return fmt.Errorf("set Discord guild name %s: %w", guild.ID, err)
 	}
-	if err := st.UpdateSourceOAuthApp(source.ID, nullableDiscordBinding(binding)); err != nil {
+	if err := st.UpdateSourceOAuthApp(ctx, source.ID, nullableDiscordBinding(binding)); err != nil {
 		return fmt.Errorf("bind Discord guild credential %s: %w", guild.ID, err)
 	}
 	return nil
@@ -196,12 +198,12 @@ func selectDiscordGuilds(accessible []discord.Guild, requested []string) ([]disc
 	return selected, false, nil
 }
 
-func saveDiscordCredential(st *store.Store, manager *discord.TokenManager, record discord.TokenRecord) error {
+func saveDiscordCredential(ctx context.Context, st *store.Store, manager *discord.TokenManager, record discord.TokenRecord) error {
 	records, err := manager.List()
 	if err != nil {
 		return fmt.Errorf("inspect Discord credentials: %w", err)
 	}
-	sources, err := st.ListSources(sourceTypeDiscord)
+	sources, err := st.ListSourcesContext(ctx, sourceTypeDiscord)
 	if err != nil {
 		return fmt.Errorf("inspect Discord source bindings: %w", err)
 	}
@@ -228,7 +230,7 @@ func saveDiscordCredential(st *store.Store, manager *discord.TokenManager, recor
 		return nil
 	}
 	for _, source := range nullBound {
-		if err := st.UpdateSourceOAuthApp(source.ID, nullableDiscordBinding(record.Binding)); err != nil {
+		if err := st.UpdateSourceOAuthApp(ctx, source.ID, nullableDiscordBinding(record.Binding)); err != nil {
 			return fmt.Errorf("promote Discord source %s credential binding: %w", source.Identifier, err)
 		}
 	}

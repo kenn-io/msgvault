@@ -25,14 +25,16 @@ func TestImportDYI_MojibakeFTSIndexed(t *testing.T) {
 
 	// The body stored in message_bodies must contain literal "café".
 	var body string
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT body_text FROM message_bodies WHERE body_text LIKE '%café%'`,
 	).Scan(&body)
 	require.NoError(err, "body query")
 	assert.Contains(body, "café")
 
 	var count int
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?", "café",
 	).Scan(&count)
 	require.NoError(err, "fts query")
@@ -53,7 +55,7 @@ func TestImportDYI_ReactionsDualPath(t *testing.T) {
 
 	// Count reactions on the message that contains café.
 	var n int
-	err := st.DB().QueryRow(`
+	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM reactions r
 		JOIN message_bodies b ON b.message_id = r.message_id
 		WHERE b.body_text LIKE '%café%'
@@ -63,13 +65,15 @@ func TestImportDYI_ReactionsDualPath(t *testing.T) {
 
 	// Body text must contain the appended [reacted: ...] summary.
 	var bodyCount int
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM message_bodies WHERE body_text LIKE '%[reacted:%'`,
 	).Scan(&bodyCount)
 	require.NoError(err)
 	assert.GreaterOrEqual(bodyCount, 1, "body with [reacted: suffix")
 
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?", "reacted",
 	).Scan(&n)
 	require.NoError(err)

@@ -307,13 +307,18 @@ func (s *Store) UnregisterAttachmentChangeConsumer(ctx context.Context, consumer
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		result, err := q.Exec(`DELETE FROM attachment_change_consumers WHERE consumer_key = ?`, consumerKey)
+		if err != nil {
+			return fmt.Errorf("unregister attachment change consumer: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil || count == 0 {
+			return err
+		}
 		if s.IsPostgreSQL() {
 			if _, err := q.Exec(`LOCK TABLE attachments, messages IN SHARE MODE`); err != nil {
 				return fmt.Errorf("lock attachment change unregistration boundary: %w", err)
 			}
-		}
-		if _, err := q.Exec(`DELETE FROM attachment_change_consumers WHERE consumer_key = ?`, consumerKey); err != nil {
-			return fmt.Errorf("unregister attachment change consumer: %w", err)
 		}
 		return pruneAttachmentChanges(q)
 	})

@@ -31,7 +31,7 @@ func TestClientGetJSONPaging(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "test-token", nil }, 50)
 	var got []Chat
-	delta, err := msgraph.PageThrough[Chat](context.Background(), c.Client, "/me/chats", func(page []Chat) { got = append(got, page...) })
+	delta, err := msgraph.PageThrough[Chat](t.Context(), c.Client, "/me/chats", func(page []Chat) { got = append(got, page...) })
 	require.NoError(t, err)
 	assert.Equal(t, "DELTA", delta)
 	assert.Len(t, got, 2)
@@ -57,7 +57,7 @@ func TestClientRejectsOffOriginAbsoluteURLBeforeAuth(t *testing.T) {
 		return "secret-token", nil
 	}, 50)
 
-	_, err := c.GetRaw(context.Background(), attacker.URL+"/hostedContents/1/$value")
+	_, err := c.GetRaw(t.Context(), attacker.URL+"/hostedContents/1/$value")
 	require.Error(t, err)
 	assert.Contains(err.Error(), "off-origin")
 	assert.EqualValues(0, tokenCalls.Load(), "off-origin URLs must be rejected before requesting a token")
@@ -85,7 +85,7 @@ func TestClientGetRawLimitedRejectsDeclaredAndStreamedOversizeBodies(t *testing.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { tt.serve(w) }))
 			defer srv.Close()
 			client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-			_, err := client.GetRawLimited(context.Background(), "/hostedContents/1/$value", 10)
+			_, err := client.GetRawLimited(t.Context(), "/hostedContents/1/$value", 10)
 			assert.ErrorIs(t, err, msgraph.ErrTooLarge)
 		})
 	}
@@ -105,7 +105,7 @@ func TestClientGetRawLimitedRetriesOversizedErrorResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	body, err := client.GetRawLimited(context.Background(), "/hostedContents/1/$value", 10)
+	body, err := client.GetRawLimited(t.Context(), "/hostedContents/1/$value", 10)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("media"), body)
 	assert.EqualValues(t, 2, calls.Load())
@@ -124,7 +124,7 @@ func TestClientRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	_, err := msgraph.PageThrough[Chat](context.Background(), c.Client, "/x", func([]Chat) {})
+	_, err := msgraph.PageThrough[Chat](t.Context(), c.Client, "/x", func([]Chat) {})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, calls.Load())
 }
@@ -146,11 +146,11 @@ func TestListChatsAndMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	chats, err := c.ListChats(context.Background())
+	chats, err := c.ListChats(t.Context())
 	require.NoError(err)
 	require.Len(chats, 1)
 
-	msgs, _, err := c.ListChatMessages(context.Background(), chats[0].ID, "", 0)
+	msgs, _, err := c.ListChatMessages(t.Context(), chats[0].ID, "", 0)
 	require.NoError(err)
 	require.Len(msgs, 1)
 	assert.Equal("m1", msgs[0].ID)
@@ -170,7 +170,7 @@ func TestListChatMessagesUsesExclusiveCursor(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	_, _, err := c.ListChatMessages(context.Background(), "19:x@thread.v2", "2025-01-01T00:00:00Z", 0)
+	_, _, err := c.ListChatMessages(t.Context(), "19:x@thread.v2", "2025-01-01T00:00:00Z", 0)
 	require.NoError(t, err)
 
 	assert.Equal("lastModifiedDateTime gt 2025-01-01T00:00:00Z", filter)

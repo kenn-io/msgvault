@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +31,7 @@ func TestListPersonRelationshipsRendersBothDirectionsFromOneRow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 	mustSetPersonDisplayName(t, f, alice, "alice")
 
@@ -71,7 +70,7 @@ func TestListPersonRelationshipsRendersSymmetricTypesIdenticallyFromBothEnds(t *
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	_, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
@@ -100,7 +99,7 @@ func TestListPersonRelationshipsHidesEndedEdgesUnlessAsked(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	ending, err := f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{
@@ -140,7 +139,7 @@ func TestListPersonRelationshipsIsDeterministicAndScopedToOnePerson(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice := mustPerson(t, f, "alice@example.com", "alice")
 	bob := mustPerson(t, f, "bob@example.com", "bob")
 	carol := mustPerson(t, f, "carol@example.com", "carol")
@@ -176,7 +175,7 @@ func TestListPersonRelationshipsCountsEachEdgeOnceForOnePerson(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	// Mutual asymmetric edges are two distinct rows; each must appear once,
@@ -208,7 +207,7 @@ func TestCounterpartLabelHelperMatchesTheQueryProjection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, bob := mustTwoPersons(t, f)
 
 	for _, slug := range []string{"parent", "agent", "emergency", "muse", "crush", "friend"} {

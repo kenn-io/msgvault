@@ -245,7 +245,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
-	return s.bumpDerivedDataRevision(tx)
+	return s.bumpDerivedDataRevisionContext(ctx, tx)
 }
 
 func preserveMergedIMAPDrafts(ctx context.Context, tx *loggedTx, from, into int64) error {

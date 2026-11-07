@@ -3,7 +3,6 @@
 package embed
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -18,11 +17,13 @@ import (
 // skip-stamping as empty) belonging to the given source.
 func insertScopedMessage(t *testing.T, db *sql.DB, id int64, sourceID int64) {
 	t.Helper()
-	_, err := db.Exec(
+	_, err := db.ExecContext(
+		t.Context(),
 		`INSERT INTO messages (id, subject, source_id, message_type) VALUES (?, ?, ?, 'email')`,
 		id, fmt.Sprintf("msg %d", id), sourceID)
 	require.NoError(t, err, "insert message")
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`,
 		id, fmt.Sprintf("body %d", id))
 	require.NoError(t, err, "insert body")
@@ -52,7 +53,7 @@ func TestWorker_SourceScopeSkipsOutOfScopeMessages(t *testing.T) {
 		BuildScope: vector.NewBuildScope(nil, []int64{2}),
 		Recorder:   f.Recorder,
 	})
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce")
 	assert.Equal(2, res.Claimed, "only source 2's messages are claimed")
 	assert.Equal(2, res.Succeeded, "only source 2's messages embed")
@@ -69,7 +70,7 @@ func TestWorker_SourceScopeSkipsOutOfScopeMessages(t *testing.T) {
 	}
 
 	// A second run finds no remaining work for the scoped generation.
-	res, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err, "RunOnce again")
 	assert.Equal(0, res.Claimed, "scoped drain is complete")
 }

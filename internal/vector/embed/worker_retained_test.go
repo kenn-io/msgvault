@@ -44,7 +44,7 @@ func newRetainingWorker(f *workerFixture, backend vector.Backend, batchSize int)
 func countChunks(t *testing.T, f *workerFixture, id int64) int {
 	t.Helper()
 	var n int
-	require.NoError(t, f.VectorsDB.QueryRow(
+	require.NoError(t, f.VectorsDB.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = ?`,
 		int64(f.BuildingGen), id).Scan(&n))
 	return n
@@ -52,9 +52,9 @@ func countChunks(t *testing.T, f *workerFixture, id int64) int {
 
 func TestWorker_CheckpointFailureStopsLaterRequests(t *testing.T) {
 	f := newWorkerFixture(t, 1)
-	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
 	require.NoError(t, err)
-	_, err = f.VectorsDB.Exec(`CREATE TRIGGER fail_checkpoint BEFORE INSERT ON embedding_checkpoints
+	_, err = f.VectorsDB.ExecContext(t.Context(), `CREATE TRIGGER fail_checkpoint BEFORE INSERT ON embedding_checkpoints
 		BEGIN SELECT RAISE(ABORT, 'checkpoint storage unavailable'); END`)
 	require.NoError(t, err)
 	requests := 0
@@ -74,12 +74,12 @@ func TestWorker_CheckpointedOutputIsReusedUntilInputChanges(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newWorkerFixture(t, 1)
-	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
 	require.NoError(err)
 	var requested []string
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
 		var saved int
-		require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+		require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
 		assert.Equal(len(requested), saved, "earlier requests are saved before the next starts")
 		requested = append(requested, inputs...)
 		return fakeVectors(inputs), nil
@@ -87,7 +87,7 @@ func TestWorker_CheckpointedOutputIsReusedUntilInputChanges(t *testing.T) {
 	backend := &upsertFailingBackend{Backend: f.Backend, fail: true}
 	w := newRetainingWorker(f, backend, 1)
 
-	passCtx := jobctx.WithProgress(context.Background())
+	passCtx := jobctx.WithProgress(t.Context())
 	_, err = w.RunOnce(passCtx, f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err, "the upsert failure stops the pass")
 	require.Greater(len(requested), 1, "the message spans several requests")
@@ -100,33 +100,33 @@ func TestWorker_CheckpointedOutputIsReusedUntilInputChanges(t *testing.T) {
 	w = newRetainingWorker(f, backend, 1)
 
 	requested = nil
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err)
 	assert.Empty(requested, "unchanged input reuses the checkpointed output")
 
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`,
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`,
 		strings.ReplaceAll(retainedLongBody, "alpha", "omega"))
 	require.NoError(err)
-	_, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.Error(err, "the changed input also fails to publish")
 	require.NotEmpty(requested, "changed input is requested again")
 	for _, input := range requested {
 		assert.NotContains(first, input, "output for the old input is not reused")
 	}
 	var checkpointCount int
-	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&checkpointCount))
+	require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&checkpointCount))
 	assert.Equal(len(requested), checkpointCount, "only the current input revision remains checkpointed")
 	changed := slices.Clone(requested)
 
 	requested = nil
 	backend.fail = false
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(err)
 	assert.Equal(1, res.Succeeded)
 	assert.Empty(requested, "the new input publishes from checkpointed output")
 	assert.Equal(len(changed), countChunks(t, f, 1), "every chunk of the new input is published")
 	var saved int
-	require.NoError(f.VectorsDB.QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+	require.NoError(f.VectorsDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
 	assert.Zero(saved, "published checkpoints are removed")
 }
 
@@ -136,11 +136,11 @@ func TestWorker_CheckpointedOutputIsReusedUntilInputChanges(t *testing.T) {
 func TestWorker_Downshift_CheckpointedOutputDoesNotDropRejectedSiblings(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newWorkerFixture(t, 3)
-	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
 	require.NoError(err)
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(f.BuildingGen))
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(f.BuildingGen))
 	require.NoError(err)
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) { return fakeVectors(inputs), nil }
 	backend := &upsertFailingBackend{Backend: f.Backend, fail: true}
@@ -154,7 +154,7 @@ func TestWorker_Downshift_CheckpointedOutputDoesNotDropRejectedSiblings(t *testi
 			MessageID: id, Vector: []float32{1, 0, 0, 0}, SourceCharLen: 6, ChunkCharEnd: 6,
 		}}))
 	}
-	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id IN (2, 3)`)
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id IN (2, 3)`)
 	require.NoError(err)
 	backend.fail = false
 	var requested []string
@@ -195,7 +195,7 @@ func TestWorker_YieldDuringEmbed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newWorkerFixture(t, tc.messages)
-			ctx, requestYield := jobctx.WithPreemption(context.Background())
+			ctx, requestYield := jobctx.WithPreemption(t.Context())
 			ctx, cancel := context.WithCancelCause(ctx)
 			t.Cleanup(func() { cancel(nil) })
 			batchSize := 1
@@ -249,11 +249,11 @@ func fakeVectors(inputs []string) [][]float32 {
 func TestWorker_Downshift_EarlierRequestInBatchProvesEndpointHealth(t *testing.T) {
 	require := require.New(t)
 	f := newWorkerFixture(t, 2)
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = NULL`)
+	_, err := f.MainDB.ExecContext(t.Context(), `UPDATE messages SET subject = NULL`)
 	require.NoError(err)
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, strings.Repeat("a", 40))
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, strings.Repeat("a", 40))
 	require.NoError(err)
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 2`, strings.Repeat("b", 10))
+	_, err = f.MainDB.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = 2`, strings.Repeat("b", 10))
 	require.NoError(err)
 	var requested [][]string
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
@@ -319,18 +319,18 @@ func TestWorkerResolvedSourceReleasesUnpublishedCheckpoint(t *testing.T) {
 			_, err := newWorker().RunOnce(ctx, f.gen, testEmbeddingPassScope())
 			require.ErrorIs(t, err, context.Canceled)
 			var saved int
-			require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
+			require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
 			require.Equal(t, 1, saved)
 			switch state {
 			case "deleted":
 				require.NoError(t, f.store.MarkMessageDeleted(f.sourceID, "email-1"))
 			case "missing":
-				_, err = f.store.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
+				_, err = f.store.DB().ExecContext(t.Context(), `DELETE FROM messages WHERE id = ?`, id)
 				require.NoError(t, err)
 			case "empty":
-				_, err = f.store.DB().Exec(`UPDATE message_bodies SET body_text = '' WHERE message_id = ?`, id)
+				_, err = f.store.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '' WHERE message_id = ?`, id)
 				require.NoError(t, err)
-				_, err = f.store.DB().Exec(`UPDATE messages SET subject = '', snippet = '' WHERE id = ?`, id)
+				_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = '', snippet = '' WHERE id = ?`, id)
 				require.NoError(t, err)
 			case "stamped":
 				require.NoError(t, f.store.SetEmbedGen(t.Context(), []int64{id}, int64(f.gen)))
@@ -342,13 +342,13 @@ func TestWorkerResolvedSourceReleasesUnpublishedCheckpoint(t *testing.T) {
 			if state == "unfinished" {
 				// A finish sweep must keep live work whose stamp has not landed.
 				require.NoError(t, newWorker().pruneDeletedCheckpoints(t.Context(), f.gen))
-				require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
+				require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
 				assert.Equal(t, 1, saved)
 			}
 			result, err := newWorker().RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 			require.NoError(t, err)
 			assert.True(t, result.ScanComplete)
-			require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
+			require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
 			assert.Zero(t, saved, "a completed scan releases resolved output")
 		})
 	}

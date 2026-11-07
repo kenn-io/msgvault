@@ -29,24 +29,24 @@ func insertMergeDraft(t *testing.T, st *store.Store, sourceID int64, table strin
 	require.NoError(t, err)
 	switch table {
 	case "gmail_drafts":
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO gmail_drafts(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO gmail_drafts(
 			draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id,
 			thread_id, revision, discarded_at
 		) VALUES (?, ?, 'gmail-draft', ?, 'current-gmail-message', 'thread', 1, ?)`),
 			fmt.Sprintf("draft-%d", sourceID), sourceID, messageID, discardedAt)
 	case "imap_drafts":
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_drafts(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_drafts(
 			draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity,
 			current_uid, revision, discarded_at
 		) VALUES (?, ?, ?, 'Drafts', 1, 1, 1, ?)`),
 			fmt.Sprintf("draft-%d", sourceID), sourceID, messageID, discardedAt)
 	case "beeper_drafts":
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO beeper_drafts(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO beeper_drafts(
 			draft_id, source_id, chat_id, text, revision, discarded_at
 		) VALUES (?, ?, '!draft:example.test', 'draft', 1, ?)`),
 			fmt.Sprintf("draft-%d", sourceID), sourceID, discardedAt)
 	case "chat_drafts":
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO chat_drafts(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO chat_drafts(
 			draft_id, source_id, conversation_id, source_conversation_id,
 			conversation_type, body, revision
 		) VALUES (?, ?, ?, 'draft-thread', 'email_thread', 'synthetic draft', 1)`),
@@ -97,7 +97,7 @@ func TestMergeSourcesBlocksActiveDraftsAndRetainsDiscardedReceipts(t *testing.T)
 			}
 			require.NoError(err)
 			var retainedSourceID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT source_id FROM `+test.table+` WHERE source_id = ?`), from.ID).Scan(&retainedSourceID))
 			assert.Equal(from.ID, retainedSourceID, "discarded provider receipts remain owned by the retired source")
 		})
@@ -119,7 +119,7 @@ func TestMergeSourcesSafety(t *testing.T) {
 			into, err := st.GetOrCreateSource(intoType, "live-example")
 			require.NoError(err)
 			req := store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID, DryRun: true}
-			ctx := context.Background()
+			ctx := t.Context()
 			switch mode {
 			case "same":
 				req.IntoSourceID = from.ID
@@ -130,10 +130,10 @@ func TestMergeSourcesSafety(t *testing.T) {
 				require.NoError(err)
 				t.Cleanup(func() { require.NoError(execution.Release()) })
 			case "abandoned":
-				_, err := st.DB().Exec(st.Rebind(`INSERT INTO sync_runs(source_id, sync_type, started_at, status) VALUES (?, 'full', ?, 'running')`), from.ID, time.Now().UTC())
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO sync_runs(source_id, sync_type, started_at, status) VALUES (?, 'full', ?, 'running')`), from.ID, time.Now().UTC())
 				require.NoError(err)
 			case "pending":
-				_, err := st.DB().Exec(st.Rebind(`INSERT INTO sync_operations(id, source_id, status) VALUES ('example-pending', ?, 'pending')`), into.ID)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO sync_operations(id, source_id, status) VALUES ('example-pending', ?, 'pending')`), into.ID)
 				require.NoError(err)
 			case "cancelled":
 				cancelled, cancel := context.WithCancel(ctx)
@@ -145,12 +145,12 @@ func TestMergeSourcesSafety(t *testing.T) {
 				_, err := st.MergeSourcesContext(ctx, req)
 				require.Error(err)
 			}
-			settings, err := st.GetSourceSettingsContext(context.Background(), from.ID)
+			settings, err := st.GetSourceSettingsContext(t.Context(), from.ID)
 			require.NoError(err)
 			assert.Zero(settings.MergedIntoSourceID)
 			if mode == "abandoned" {
 				var status string
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT status FROM sync_runs WHERE source_id = ?`), from.ID).Scan(&status))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT status FROM sync_runs WHERE source_id = ?`), from.ID).Scan(&status))
 				assert.Equal("running", status, "preview/rejected execution must not recover abandoned history")
 			}
 		})
@@ -160,7 +160,7 @@ func TestMergeSourcesSafety(t *testing.T) {
 func TestMergeSourcesEmptyDryRunAndIdempotency(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	from, err := st.GetOrCreateSource("beeper", "history-example")
 	require.NoError(err)
@@ -175,7 +175,7 @@ func TestMergeSourcesEmptyDryRunAndIdempotency(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(before.MergedIntoSourceID)
 	var journal int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM source_merges`).Scan(&journal))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM source_merges`).Scan(&journal))
 	assert.Zero(journal)
 	req.DryRun = false
 	result, err := st.MergeSourcesContext(ctx, req)
@@ -193,9 +193,9 @@ func TestMergeSourcesEmptyDryRunAndIdempotency(t *testing.T) {
 	require.ErrorIs(err, store.ErrSourceRetired)
 	_, err = st.StartSync(from.ID, "full")
 	require.ErrorIs(err, store.ErrSourceRetired)
-	_, err = st.EnsureConversation(from.ID, "new-chat", "Example")
+	_, err = st.EnsureConversation(t.Context(), from.ID, "new-chat", "Example")
 	require.Error(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO conversations(source_id, source_conversation_id, conversation_type) VALUES (?, 'direct', 'direct_chat')`), from.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO conversations(source_id, source_conversation_id, conversation_type) VALUES (?, 'direct', 'direct_chat')`), from.ID)
 	require.Error(err, "database admission also blocks direct importer writes")
 	third, err := st.GetOrCreateSource("beeper", "third-example")
 	require.NoError(err)
@@ -273,9 +273,9 @@ func TestMergeSourcesCanonicalizesRFC822MessageIDs(t *testing.T) {
 
 	survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", []string{"recipient@example.test"}, true)
 	historical := emailMergeFixtureMessage(t, st, from.ID, "history-message", []string{"recipient@example.test"}, true)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<shared@example.test>", survivor)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<shared@example.test>", survivor)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "shared@example.test", historical)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "shared@example.test", historical)
 	require.NoError(err)
 
 	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
@@ -284,11 +284,11 @@ func TestMergeSourcesCanonicalizesRFC822MessageIDs(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), result.DuplicatesHidden)
 	var hidden bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), historical).Scan(&hidden))
 	assert.True(hidden)
 	var basis string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT match_basis FROM source_merge_messages WHERE message_id = ?`), historical).Scan(&basis))
 	assert.Equal("rfc822-or-payload", basis)
 }
@@ -312,18 +312,18 @@ func TestMergeSourcesConflictingRFC822EvidenceCannotRetargetDeletion(t *testing.
 			require.NoError(err)
 			survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", []string{"recipient@example.test"}, true)
 			historical := emailMergeFixtureMessage(t, st, from.ID, "history-message", []string{"recipient@example.test"}, true)
-			_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
 				"<collision@example.test>", survivor, historical)
 			require.NoError(err)
 			if test.payloadConflict {
-				_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = CASE message_id
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = CASE message_id
 					WHEN ? THEN 'legitimate destination payload' ELSE 'forged historical payload' END
 					WHERE message_id IN (?, ?)`), survivor, survivor, historical)
 				require.NoError(err)
 			} else {
 				attackerID, err := st.EnsureParticipant("attacker@example.test", "Example Attacker", "example.test")
 				require.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(
 				message_id, participant_id, recipient_type, email_address
 			) VALUES (?, ?, 'from', 'attacker@example.test')`), historical, attackerID)
 				require.NoError(err)
@@ -353,7 +353,7 @@ func TestMergeSourcesConflictingRFC822EvidenceCannotRetargetDeletion(t *testing.
 				require.NoError(err)
 				assert.Empty(after, "historical sender evidence must not retarget the live destination message for deletion")
 				var copiedAttackerFromRows int
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_recipients
 				WHERE message_id = ? AND recipient_type = 'from' AND email_address = 'attacker@example.test'`), survivor).
 					Scan(&copiedAttackerFromRows))
 				assert.Zero(copiedAttackerFromRows, "conflicting sender evidence must remain on the archived message")

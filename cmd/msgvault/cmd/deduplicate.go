@@ -108,7 +108,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		return runDeduplicateInteractiveHTTP(cmd)
 	}
 
-	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		var allStillRunning []string
 		var undoErrs []error
 		for _, batchID := range dedupUndo {
-			restored, stillRunning, err := engine.Undo(batchID)
+			restored, stillRunning, err := engine.Undo(cmd.Context(), batchID)
 			// Undo is best-effort: database rows may have been restored
 			// even if cancelling pending manifests failed. Always report
 			// the restored count and any still-running manifests before
@@ -161,7 +161,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		preferenceWarnings = nil
 	}
 	preference := deduplicateSourcePreference(dedupPrefer, preferenceWarnings)
-	scope, err := resolveDeduplicateScope(st, deduplicateScopeRequest{
+	scope, err := resolveDeduplicateScope(cmd.Context(), st, deduplicateScopeRequest{
 		Account:    dedupAccount,
 		Collection: dedupCollection,
 		SourceID:   dedupSourceID,
@@ -182,7 +182,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(scope.SourceIDs) > 0 {
-		bySource, err := loadPerSourceIdentities(st, scope.SourceIDs)
+		bySource, err := loadPerSourceIdentities(cmd.Context(), st, scope.SourceIDs)
 		if err != nil {
 			return fmt.Errorf("load per-source identities: %w", err)
 		}
@@ -385,10 +385,10 @@ func deduplicateSourcePreference(prefer string, warnings io.Writer) []string {
 	return preference
 }
 
-func resolveDeduplicateScope(st *store.Store, req deduplicateScopeRequest) (deduplicateScope, error) {
+func resolveDeduplicateScope(ctx context.Context, st *store.Store, req deduplicateScopeRequest) (deduplicateScope, error) {
 	switch {
 	case req.SourceID > 0:
-		src, err := st.GetSourceByID(req.SourceID)
+		src, err := st.GetSourceByIDContext(ctx, req.SourceID)
 		if err != nil {
 			return deduplicateScope{}, fmt.Errorf("load source %d: %w", req.SourceID, err)
 		}
@@ -400,7 +400,7 @@ func resolveDeduplicateScope(st *store.Store, req deduplicateScopeRequest) (dedu
 			DisplayName: src.Identifier,
 		}, nil
 	case req.Account != "":
-		scope, err := ResolveEmailAccountFlag(st, req.Account)
+		scope, err := ResolveEmailAccountFlag(ctx, st, req.Account)
 		if err != nil {
 			return deduplicateScope{}, err
 		}
@@ -417,14 +417,14 @@ func resolveDeduplicateScope(st *store.Store, req deduplicateScopeRequest) (dedu
 		if err != nil {
 			return deduplicateScope{}, err
 		}
-		sourceIDs, err := dedupEligibleSourceIDs(st, scope.SourceIDs())
+		sourceIDs, err := dedupEligibleSourceIDs(ctx, st, scope.SourceIDs())
 		if err != nil {
 			return deduplicateScope{}, err
 		}
 		if len(sourceIDs) == 0 {
 			return deduplicateScope{}, opserr.Invalid(fmt.Errorf("--collection %q has no member accounts", req.Collection))
 		}
-		intro, err := deduplicateCollectionIntro(st, scope.DisplayName(), sourceIDs)
+		intro, err := deduplicateCollectionIntro(ctx, st, scope.DisplayName(), sourceIDs)
 		if err != nil {
 			return deduplicateScope{}, err
 		}
@@ -439,8 +439,8 @@ func resolveDeduplicateScope(st *store.Store, req deduplicateScopeRequest) (dedu
 	}
 }
 
-func deduplicateCollectionIntro(st *store.Store, displayName string, sourceIDs []int64) (string, error) {
-	allSources, err := st.ListSources("")
+func deduplicateCollectionIntro(ctx context.Context, st *store.Store, displayName string, sourceIDs []int64) (string, error) {
+	allSources, err := st.ListSourcesContext(ctx, "")
 	if err != nil {
 		return "", fmt.Errorf("list sources: %w", err)
 	}
@@ -480,7 +480,7 @@ func planCLIDeduplicate(
 	logger := state.logger
 	preference := deduplicateSourcePreference(req.Prefer, nil)
 	deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
-	scope, err := resolveDeduplicateScope(st, deduplicateScopeRequest{
+	scope, err := resolveDeduplicateScope(ctx, st, deduplicateScopeRequest{
 		Account:    req.Account,
 		Collection: req.Collection,
 	})
@@ -499,7 +499,7 @@ func planCLIDeduplicate(
 	base.AccountSourceIDs = scope.SourceIDs
 	base.Account = scope.DisplayName
 	base.ScopeIsCollection = scope.IsCollection
-	bySource, err := loadPerSourceIdentities(st, scope.SourceIDs)
+	bySource, err := loadPerSourceIdentities(ctx, st, scope.SourceIDs)
 	if err != nil {
 		return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("load per-source identities: %w", err)
 	}
@@ -525,7 +525,7 @@ func planCLIDeduplicatePerSource(
 		return api.CLIDeduplicatePlanResponse{}, errors.New("configuration is unavailable")
 	}
 	logger := state.logger
-	sources, err := st.ListSources("")
+	sources, err := st.ListSourcesContext(ctx, "")
 	if err != nil {
 		return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("list sources: %w", err)
 	}
@@ -544,7 +544,7 @@ func planCLIDeduplicatePerSource(
 		cfgScoped := base
 		cfgScoped.AccountSourceIDs = []int64{src.ID}
 		cfgScoped.Account = src.Identifier
-		bySource, err := loadPerSourceIdentities(st, []int64{src.ID})
+		bySource, err := loadPerSourceIdentities(ctx, st, []int64{src.ID})
 		if err != nil {
 			return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("load identities for %s: %w", src.Identifier, err)
 		}
@@ -764,7 +764,7 @@ func runDeduplicatePerSource(
 		cfgScoped := cfgBase
 		cfgScoped.AccountSourceIDs = []int64{src.ID}
 		cfgScoped.Account = src.Identifier
-		bySource, err := loadPerSourceIdentities(st, []int64{src.ID})
+		bySource, err := loadPerSourceIdentities(cmd.Context(), st, []int64{src.ID})
 		if err != nil {
 			return fmt.Errorf("load identities for %s: %w", src.Identifier, err)
 		}
@@ -877,10 +877,10 @@ func runDeduplicatePerSource(
 	return nil
 }
 
-func dedupEligibleSourceIDs(st *store.Store, sourceIDs []int64) ([]int64, error) {
+func dedupEligibleSourceIDs(ctx context.Context, st *store.Store, sourceIDs []int64) ([]int64, error) {
 	ids := make([]int64, 0, len(sourceIDs))
 	for _, id := range sourceIDs {
-		src, err := st.GetSourceByID(id)
+		src, err := st.GetSourceByIDContext(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("load source %d: %w", id, err)
 		}
@@ -1080,10 +1080,10 @@ func backupDatabase(st *store.Store, dst string) error {
 // MXIDs, chat handles, phone E.164) preserve case. Without this,
 // blanket-lowercasing would misclassify case-sensitive synthetic
 // identifiers as sent copies.
-func loadPerSourceIdentities(st *store.Store, sourceIDs []int64) (map[int64]map[string]struct{}, error) {
+func loadPerSourceIdentities(ctx context.Context, st *store.Store, sourceIDs []int64) (map[int64]map[string]struct{}, error) {
 	out := make(map[int64]map[string]struct{}, len(sourceIDs))
 	for _, id := range sourceIDs {
-		addrs, err := st.GetIdentitiesForScope([]int64{id})
+		addrs, err := st.GetIdentitiesForScope(ctx, []int64{id})
 		if err != nil {
 			return nil, fmt.Errorf("get identities for source %d: %w", id, err)
 		}
