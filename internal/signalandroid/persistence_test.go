@@ -83,6 +83,34 @@ func TestRerunCountsOnlyNewEdits(t *testing.T) {
 	assert.Zero(runImport(t, st, dir, storage).MessagesEdited)
 }
 
+func TestCheckpointWriteFailureFailsImport(t *testing.T) {
+	for _, stage := range []string{"batch", "final"} {
+		t.Run(stage, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			if stage == "final" {
+				changeFixture(t, dir, `DELETE FROM reaction`, `DELETE FROM message`)
+			}
+			_, err := st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs WHEN NEW.messages_processed <= 1 BEGIN SELECT RAISE(ABORT, 'checkpoint failure'); END`)
+			require.NoError(err)
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
+			opts.BatchSize = 1
+
+			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
+			require.ErrorContains(err, "checkpoint failure")
+			if stage == "batch" {
+				assert.Equal(int64(1), summary.MessagesProcessed)
+			}
+			var status, errorMessage string
+			require.NoError(st.DB().QueryRow(`SELECT status, error_message FROM sync_runs`).Scan(&status, &errorMessage))
+			assert.Equal("failed", status)
+			assert.Contains(errorMessage, "checkpoint failure")
+		})
+	}
+}
+
 func TestFailedWriteCounts(t *testing.T) {
 	assert := assert.New(t)
 	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()

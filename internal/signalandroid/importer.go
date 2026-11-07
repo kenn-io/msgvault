@@ -143,7 +143,9 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		if err := r.imp.store.RecomputeConversationStatsContext(finalCtx, source.ID); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("recompute conversation stats: %w", err))
 		}
-		r.checkpoint()
+		if err := r.checkpoint(); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
 		if retErr != nil {
 			_ = r.imp.store.FailSync(syncID, retErr.Error())
 		} else {
@@ -329,8 +331,8 @@ func (r *run) displayName(recipientID int64) string {
 }
 
 // checkpoint records the run's counters on its sync run.
-func (r *run) checkpoint() {
-	_ = r.imp.store.UpdateSyncCheckpoint(r.syncID, &store.Checkpoint{
+func (r *run) checkpoint() error {
+	return r.imp.store.UpdateSyncCheckpoint(r.syncID, &store.Checkpoint{
 		MessagesProcessed: r.summary.MessagesProcessed,
 		MessagesAdded:     r.summary.MessagesAdded,
 		MessagesUpdated:   r.summary.MessagesUpdated,
@@ -411,7 +413,9 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 			return err
 		}
 		chatAdded += added
-		r.checkpoint()
+		if err := r.checkpoint(); err != nil {
+			return err
+		}
 		r.imp.progress.OnProgress(r.summary.MessagesProcessed, r.summary.MessagesAdded, r.summary.MessagesSkipped)
 		if len(messages) < r.opts.BatchSize {
 			break

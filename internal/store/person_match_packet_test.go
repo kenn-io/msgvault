@@ -20,6 +20,7 @@ func TestPersonMatchPairSummariesContainOnlyTwoBoundedEndpoints(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(left, "beeper", "pair-left"))
 	require.NoError(st.SetParticipantIdentifier(right, "beeper", "pair-right"))
+	require.NoError(st.SetParticipantIdentifier(left, "signal", "+15555550101"))
 	summaries, err := st.PersonMatchPairSummariesContext(t.Context(), left, right)
 	require.NoError(err)
 	assert.Equal("Pair Left", summaries.Left.DisplayName)

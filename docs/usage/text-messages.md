@@ -160,11 +160,9 @@ available on a first import.
 | `--limit` | No | Maximum new messages to import (0 imports all; must be non-negative) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
-msgvault identifies the backup's own account from its messages: the author
-of sent messages and the recipient of received direct messages. It refuses the
+msgvault identifies the backup's own account from its messages. It refuses the
 backup when that account has a different number than `--phone` or the backup
-does not record that account's number. Without sent or received direct
-messages, msgvault finds the owner through the recipient record matching `--phone`.
+does not record that account's number.
 
 ### What is imported
 
@@ -181,30 +179,19 @@ messages, msgvault finds the owner through the recipient record matching `--phon
 
 Contacts whose number Signal knows are matched by number, so they join the same
 person as their WhatsApp or SMS messages. Contacts Signal knows only by their
-account ID are recorded with a `signal_aci` identifier. If a later backup adds
+account ID are recorded. If a later backup adds
 a phone number, their archived messages and group membership follow that contact.
-Chats with contacts Signal knows only by a phone-number ID are also archived.
-They keep their archived chat ID when Signal later learns the contact's account ID.
 
 ### Run it again
 
-Run the command with each newer backup. Every message is identified by its
-chat, author, and original sent timestamp. Direct chats identify the author as
-the owner or the other person, so messages keep their IDs when Signal learns
-a contact's account ID. Groups identify other authors by account ID, phone-number ID,
-or phone number, in that order. A rerun adds
+Run the command with each newer backup. A rerun adds
 new messages and updates existing edits and reactions. It reuses archived
-attachments even when other files are added, removed, or reordered, and stores newly available files. Messages and attachment rows
-keep their identities, including after a backup is restored on a new phone. Each rerun replaces a message's reactions with
+attachments and stores newly available files. Each rerun replaces a message's reactions with
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
-When a long-text file is missing, msgvault keeps archived full text only when the revision's sent timestamp and raw text preview match the archived raw record. This match survives restored backups with different row IDs. Otherwise, it archives the latest preview, so an edit replaces the previous revision's text even when its full-text file is missing.
-
-Each message commits with its text, attachments, reactions, and sender membership.
-If a reaction's author conflicts with existing people, that message keeps its previous snapshot and the import reports an error.
 Missing, oversized, or failed attachment files leave message text available and count as missing or skipped attachments. File storage failures also count as errors. Reruns store files that become available later.
-If the import fails or is interrupted, rerun it to finish and repair conversation counts.
+If the import fails or is interrupted, rerun it to finish.
 The message summary separates new messages from those already archived, including unchanged messages.
 The unresolved reply count covers messages written in that run.
 
