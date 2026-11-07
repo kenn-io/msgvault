@@ -56,7 +56,7 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 	if !ValidID(app) || !ValidID(account) {
 		return nil, errors.New("invalid TikTok app or account selector")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(MessagesSourceType, SourceIdentifier(app, account))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, MessagesSourceType, SourceIdentifier(app, account))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ type messageMetadata struct {
 func (r *messageRun) resolveReplies(ctx context.Context) error {
 	var after int64
 	for {
-		rows, err := r.imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, r.source.ID, MessagesSourceType, after, 100)
+		rows, err := r.imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, r.source.ID, MessagesSourceType, after, 100, 0)
 		if err != nil {
 			return err
 		}
