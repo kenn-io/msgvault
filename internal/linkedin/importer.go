@@ -127,7 +127,7 @@ func Import(ctx context.Context, st *store.Store, root string, opts Options) (su
 		if err != nil {
 			return nil, err
 		}
-		if err := st.UpdateSourceSyncState(source.ID, string(state)); err != nil {
+		if err := st.UpdateSourceSyncState(ctx, source.ID, string(state)); err != nil {
 			return nil, err
 		}
 		source.SyncCursor = sql.NullString{String: string(state), Valid: true}
@@ -438,7 +438,7 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	if label != "" {
 		id := imp.labels[label]
 		if id == 0 {
-			id, err = imp.st.EnsureLabel(imp.sum.SourceID, label, label, "user")
+			id, err = imp.st.EnsureLabel(ctx, imp.sum.SourceID, label, label, "user")
 			if err != nil {
 				return err
 			}
