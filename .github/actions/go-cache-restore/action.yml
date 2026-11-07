@@ -10,6 +10,10 @@ inputs:
     description: Additional cache directory owned by the group
     required: false
     default: ""
+  trim:
+    description: Track cache use in the job that owns and saves the group
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -45,3 +49,39 @@ runs:
     - name: Record exact cache hit
       shell: bash
       run: echo "GO_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}" >> "$GITHUB_ENV"
+
+    - name: Track Go cache use
+      if: >-
+        inputs.trim == 'true' && github.event_name == 'push'
+        && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+        import shutil
+        import subprocess
+        import time
+
+        paths = json.loads(subprocess.check_output(["go", "env", "-json", "GOCACHE", "GOMODCACHE", "GOPROXY"], text=True))
+        cache = Path(paths["GOCACHE"])
+        modules = Path(paths["GOMODCACHE"])
+        restored = Path(os.environ["RUNNER_TEMP"]) / "go-mod-cache"
+        if modules.exists():
+            shutil.move(str(modules), restored)
+        download = modules / "cache" / "download"
+        download.mkdir(parents=True, exist_ok=True)
+        sumdb = restored / "cache" / "download" / "sumdb"
+        if sumdb.exists():
+            shutil.copytree(sumdb, download / "sumdb")
+        proxy = (restored / "cache" / "download").resolve().as_uri()
+        # Go refreshes entry mtimes at most hourly; age them so every use is recorded.
+        aged = time.time() - 2 * 60 * 60
+        for entry in cache.glob("[0-9a-f][0-9a-f]/*"):
+            if entry.is_file() and entry.name.endswith(("-a", "-d")):
+                os.utime(entry, (aged, aged))
+        (Path(os.environ["RUNNER_TEMP"]) / "go-cache-used-after").touch()
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+            env.write(f"GOPROXY={proxy}|{paths['GOPROXY']}\nGO_CACHE_TRIM=true\n")
+        PY

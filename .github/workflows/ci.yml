@@ -165,6 +165,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
+          trim: "true"
           extra-path: .git/golangci-lint-cache
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
@@ -227,6 +228,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
@@ -361,6 +363,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: macos
+          trim: "true"
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -624,6 +627,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: windows
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
@@ -1059,6 +1063,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
