@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, IconButton, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, TextInput, Typeahead } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import { onDestroy, untrack } from 'svelte';
   import DetailRow from '../people/DetailRow.svelte';
@@ -30,6 +30,10 @@
   let truncated = $state(false);
   let title = $state('');
   let listName = $state('agenda');
+  const listOptions = $derived(
+    [...new Set([listName, 'agenda', ...items.map((item) => item.list)])]
+      .map((name) => ({ name, label: name })),
+  );
   let generation = 0;
   let mutationToken = 0;
   let controller: AbortController | null = null;
@@ -202,10 +206,6 @@
       ? value.message
       : fallback;
   }
-
-  function label(value: string): string {
-    return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
-  }
 </script>
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
@@ -217,31 +217,54 @@
   {#each items as item (item.uid)}
     <DetailRow>
       {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}
-      {#if item.list !== 'agenda'}<small>{item.list}</small>{/if}
-      {#if item.state !== 'open'}<small>{label(item.state)}</small>{/if}
-      {#if item.status !== item.state}<small>{label(item.status)}</small>{/if}
-      {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
+      {#snippet actions()}
+        <span class="unlink"><IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton></span>
+        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info" title={item.list}>{item.list}</Chip>{/if}
+      {/snippet}
     </DetailRow>
   {/each}
   {#if mutationReady}
     <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
-      <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task" block disabled={mutating} />
-      <TextInput bind:value={listName} ariaLabel="List" placeholder="agenda" disabled={mutating} />
-      <Button type="submit" label="Add item" disabled={mutating || !title.trim()} />
+      <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task…" block disabled={mutating}>
+        {#snippet suffix()}
+          <div class="list-picker">
+            <Typeahead options={listOptions} value={listName} fallbackLabel="agenda" placeholder="List" allowCustom disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
+              {#snippet trigger({ attachment })}
+                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listName}`}><span class="trigger-label">{listName}</span><span aria-hidden="true">▾</span></button>
+              {/snippet}
+            </Typeahead>
+          </div>
+        {/snippet}
+      </TextInput>
+      <Button type="submit" label="Add" disabled={mutating || !title.trim()} />
     </form>
   {/if}
 
 </section>
 
 <style>
-  .person-agenda { display: grid; gap: var(--space-2); min-width: 0; }
+  .person-agenda { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; }
   .heading { min-height: var(--control-h); }
   .heading, form { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); }
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
-  small { margin-left: var(--space-2); color: var(--text-muted); }
+  .person-agenda :global(.kit-chip) { max-width: 12rem; min-width: 0; align-self: center; }
+  .list-picker { max-width: 9rem; --typeahead-min-width: 0; --typeahead-max-width: 9rem; --typeahead-panel-min-width: 16rem; }
+  .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 9rem; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+  .trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-trigger:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
+  .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .person-agenda :global(.detail-row) { flex-wrap: wrap; }
+  .person-agenda :global(.value) { flex-basis: 12rem; }
+  .person-agenda :global(.actions) { opacity: 1; max-width: 100%; margin-left: auto; }
+  .unlink { display: flex; }
+  @media (hover: hover) {
+    .unlink { opacity: 0; }
+    :global(.detail-row:hover) .unlink,
+    :global(.detail-row:focus-within) .unlink { opacity: 1; }
+  }
 </style>
