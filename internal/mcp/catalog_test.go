@@ -368,6 +368,7 @@ func TestCatalogSchemas(t *testing.T) {
 					"search_messages",
 					"search_metadata",
 					ToolSearchPersonFiles,
+					ToolSearchTools,
 					"semantic_search_messages",
 				}
 				if shape.similar {

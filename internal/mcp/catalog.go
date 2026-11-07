@@ -213,6 +213,8 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 		}
 	}
 	definitions = slices.DeleteFunc(definitions, func(d toolDefinition) bool { return !opts.Families.allows(d.name) })
+	// Metadata discovery is safe even with no archive grants or backend.
+	definitions = append(definitions, stableToolDiscoveryDefinition)
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }
