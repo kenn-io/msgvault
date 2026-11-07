@@ -891,7 +891,22 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, "/api/v1/meetings/actions", "/api/v1/meetings/context", "/api/v1/meetings/metrics"}
+	meetingActionsPath := "/api/v1/meetings/actions"
+	meetingActions := doc.Paths[meetingActionsPath]
+	require.NotNil(meetingActions, "meeting actions route must exist")
+	require.NotNil(meetingActions.Post, "meeting actions must be registered as POST")
+
+	meetingContextPath := "/api/v1/meetings/context"
+	meetingContext := doc.Paths[meetingContextPath]
+	require.NotNil(meetingContext, "meeting context route must exist")
+	require.NotNil(meetingContext.Post, "meeting context must be registered as POST")
+
+	meetingMetricsPath := "/api/v1/meetings/metrics"
+	meetingMetrics := doc.Paths[meetingMetricsPath]
+	require.NotNil(meetingMetrics, "meeting metrics route must exist")
+	require.NotNil(meetingMetrics.Post, "meeting metrics must be registered as POST")
+
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
