@@ -2324,6 +2324,7 @@ type SearchFastResponse struct {
 	TotalCount       int64               `json:"total_count"`
 	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []query.SearchHint  `json:"hints,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -4002,6 +4003,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		Hints:            result.Hints,
 		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
 		Query:            queryStr,

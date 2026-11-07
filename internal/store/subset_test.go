@@ -4270,6 +4270,7 @@ func TestCopySubset_LegacySourceWithoutContentChangedAt(t *testing.T) {
 		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_upd`,
 		`DROP INDEX IF EXISTS idx_messages_content_changed_at`,
 		`DROP INDEX IF EXISTS idx_messages_conversation_content_changed`,
+		`DROP INDEX IF EXISTS idx_messages_source_content_changed`,
 		`ALTER TABLE messages DROP COLUMN content_changed_at`,
 	} {
 		_, err = srcDB.ExecContext(t.Context(), stmt)

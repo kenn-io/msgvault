@@ -537,7 +537,7 @@ func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql
 
 // FTSAvailable reports whether tsvector search is available.
 // PostgreSQL always supports tsvector — check that the column exists.
-func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
+func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db SQLReader) (bool, error) {
 	var count int
 	err := db.QueryRowContext(ctx, postgresColumnExistsSQL("messages", "search_fts")).Scan(&count)
 	if err != nil && ctx.Err() != nil {

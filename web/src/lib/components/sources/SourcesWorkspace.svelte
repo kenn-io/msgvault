@@ -365,6 +365,9 @@
       ? value.message
       : fallback;
   }
+  export function openAddSource(): void {
+    adding = true;
+  }
   export function refresh(): void {
     stopPolling(false);
     lockHoldPolls = 0;
@@ -399,7 +402,9 @@
   <PageHeader title="Sources">
     {#snippet actions()}
       <Button size="sm" label="Sync history" onclick={onOpenOperations} />
-      <Button size="sm" tone="info" surface="solid" label="Add source" onclick={() => (adding = true)} />
+      {#if statusError || contactsError || sources.length > 0 || contacts.length > 0}
+        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
+      {/if}
     {/snippet}
   </PageHeader>
   {#if statusError}<div class="notice notice--error" role="alert">
@@ -415,7 +420,9 @@
     </div>{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" />{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" description="Add an account or import an export to start your archive.">
+        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
+      </EmptyState>{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
