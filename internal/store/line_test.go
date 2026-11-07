@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
@@ -21,7 +20,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -82,7 +81,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 func TestLineInboxRetryDeadlineIgnoresCallerZone(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -113,7 +112,7 @@ func TestLineInboxDueAndStatus(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -154,7 +153,7 @@ func TestLineIdentityChannelIsolation(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	raw := "U00000000000000000000000000000001"
 	a, err := st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", "channel:2000000001:user:"+raw, "Synthetic sender")
@@ -163,7 +162,7 @@ func TestLineIdentityChannelIsolation(t *testing.T) {
 	must.NoError(err)
 	checks.NotEqual(a, b)
 	var slug, kind, value string
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT s.slug,p.scope_kind,p.scope_value FROM participant_identifiers p JOIN communication_services s ON s.id=p.service_id WHERE p.participant_id=?`), a).Scan(&slug, &kind, &value))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT s.slug,p.scope_kind,p.scope_value FROM participant_identifiers p JOIN communication_services s ON s.id=p.service_id WHERE p.participant_id=?`), a).Scan(&slug, &kind, &value))
 	checks.Equal("line", slug)
 	checks.Equal("line_channel", kind)
 	checks.Equal("2000000001", value)
@@ -176,7 +175,7 @@ func TestLineMembershipOutOfOrder(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -193,7 +192,7 @@ func TestLineMembershipOutOfOrder(t *testing.T) {
 	_, err = st.SetLineMembershipContext(ctx, conv, pid, member, false, base.Add(time.Hour))
 	must.NoError(err)
 	var joined, left sql.NullTime
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
 	must.True(left.Valid)
 	must.True(joined.Valid)
 	checks.WithinDuration(base, joined.Time, time.Millisecond)
@@ -202,12 +201,12 @@ func TestLineMembershipOutOfOrder(t *testing.T) {
 	must.NoError(err)
 	_, err = st.SetLineMembershipContext(ctx, conv, pid, member, true, base)
 	must.NoError(err)
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
 	checks.WithinDuration(base.Add(30*time.Minute), joined.Time, time.Millisecond)
 	checks.WithinDuration(base.Add(2*time.Hour), left.Time, time.Millisecond)
 	_, err = st.SetLineMembershipContext(ctx, conv, pid, member, true, base.Add(3*time.Hour))
 	must.NoError(err)
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT joined_at,left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conv, pid).Scan(&joined, &left))
 	checks.False(left.Valid, "a rejoined participant must be active to existing messaging-route queries")
 }
 
@@ -234,7 +233,7 @@ func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
 	}
 	first := persist("first", base)
 	var conversation int64
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), first).Scan(&conversation))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), first).Scan(&conversation))
 	type projection struct {
 		joined, left sql.NullTime
 		revision     int64
@@ -244,7 +243,7 @@ func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
 		_, err := st.ExpandActivityConversationQueueContext(ctx, func() error { return nil })
 		must.NoError(err)
 		var state projection
-		must.NoError(st.DB().QueryRow(st.Rebind(`SELECT cp.joined_at,cp.left_at,q.revision FROM conversation_participants cp
+		must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cp.joined_at,cp.left_at,q.revision FROM conversation_participants cp
  JOIN activity_projection_queue q ON q.message_id=? WHERE cp.conversation_id=? AND cp.participant_id=?`), first, conversation, participant).Scan(&state.joined, &state.left, &state.revision))
 		return state
 	}
@@ -254,7 +253,7 @@ func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
 	persist("second", base.Add(time.Minute))
 	checks.Equal(initial, snapshot(), "an active sender's next message must preserve membership and leave existing history queued at the same revision")
 	var presence int64
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at FROM line_memberships WHERE source_id=? AND member_identifier=?`), source.ID, member).Scan(&presence))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT joined_at FROM line_memberships WHERE source_id=? AND member_identifier=?`), source.ID, member).Scan(&presence))
 	checks.Equal(base.Add(time.Minute).UnixMilli(), presence, "the operational presence clock still advances")
 
 	leave := base.Add(2 * time.Minute)
@@ -284,7 +283,7 @@ func TestLineBotConfigMerge(t *testing.T) {
 	checks := assert.New(t)
 
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
 	must.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"no_default_identity":true}`))
@@ -293,7 +292,7 @@ func TestLineBotConfigMerge(t *testing.T) {
 	must.NoError(err)
 	checks.Equal("U00000000000000000000000000000002", bot)
 	var raw string
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT sync_config FROM sources WHERE id=?`), src.ID).Scan(&raw))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sync_config FROM sources WHERE id=?`), src.ID).Scan(&raw))
 	checks.Contains(raw, "no_default_identity")
 }
 
@@ -304,18 +303,18 @@ func TestLineServiceMigrationPreservesCuratedPolicy(t *testing.T) {
 			checks := assert.New(t)
 
 			st := testutil.NewTestStore(t)
-			ctx := context.Background()
-			_, err := st.DB().Exec(`DELETE FROM applied_migrations WHERE name='line_channel_scope_v1'`)
+			ctx := t.Context()
+			_, err := st.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name='line_channel_scope_v1'`)
 			must.NoError(err)
-			_, err = st.DB().Exec(`UPDATE communication_services SET scope_policy='none',default_scope_kind=NULL,normalization='lower',updated_at=created_at WHERE slug='line'`)
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE communication_services SET scope_policy='none',default_scope_kind=NULL,normalization='lower',updated_at=created_at WHERE slug='line'`)
 			must.NoError(err)
 			if curated {
-				_, err = st.DB().Exec(`UPDATE communication_services SET display_label='Custom LINE' WHERE slug='line'`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE communication_services SET display_label='Custom LINE' WHERE slug='line'`)
 				must.NoError(err)
 			}
 			must.NoError(st.InitSchemaContext(ctx))
 			var policy, label string
-			must.NoError(st.DB().QueryRow(`SELECT scope_policy,display_label FROM communication_services WHERE slug='line'`).Scan(&policy, &label))
+			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT scope_policy,display_label FROM communication_services WHERE slug='line'`).Scan(&policy, &label))
 			if curated {
 				checks.Equal("none", policy)
 				checks.Equal("Custom LINE", label)
@@ -332,7 +331,7 @@ func TestLineQuotesStayInConversation(t *testing.T) {
 	checks := assert.New(t)
 
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	src, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "group:synthetic-a", "group_chat", "")
@@ -353,19 +352,19 @@ func TestLineQuotesStayInConversation(t *testing.T) {
 	persist("other-parent", other, "")
 	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"child", "cross-conversation"}))
 	var reply sql.NullInt64
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.False(reply.Valid)
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), crossConversation).Scan(&reply))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), crossConversation).Scan(&reply))
 	checks.False(reply.Valid, "quotes stay within their conversation")
 	parent := persist("parent", conv, "")
 	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"parent"}))
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.True(reply.Valid)
 	checks.Equal(parent, reply.Int64)
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
 	checks.False(reply.Valid, "settling a batch leaves unrelated messages alone")
 	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"unrelated-child"}))
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
 	checks.True(reply.Valid, "a batch's reply can quote an already archived parent")
 }
 
@@ -429,7 +428,7 @@ func TestLineInboxScrubsPayloadsForGCPurgedTargets(t *testing.T) {
 	} {
 		must.NoError(st.EnqueueLineEventsContext(t.Context(), tc.source.ID, tc.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: tc.name, EventType: "messageEdited", TargetMessageID: tc.target, EventTimestamp: 20, RawJSON: `{"text":"late edit"}`}}))
 		var raw string
-		must.NoError(st.DB().QueryRow(st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), tc.source.ID, tc.name).Scan(&raw))
+		must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), tc.source.ID, tc.name).Scan(&raw))
 		checks.Equal(tc.want, raw, tc.name)
 	}
 }
@@ -478,7 +477,7 @@ func TestLineGCPurgesRetryPayloadsAfterSourceMerge(t *testing.T) {
 		must.Equal(int64(1), deleted)
 		for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
 			var raw string
-			must.NoError(st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
 			checks.Equal("{}", raw)
 		}
 	})

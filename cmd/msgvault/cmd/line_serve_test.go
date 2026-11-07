@@ -144,7 +144,7 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			sched.Start()
 			defer func() { <-sched.Stop().Done() }()
 			server := api.NewServerWithOptions(api.ServerOptions{Config: loaded, Logger: testLoggerValue(), LineWebhook: runtime.receiver, OperationGate: gate})
-			defer func() { must.NoError(server.Shutdown(context.Background())) }()
+			defer func() { must.NoError(server.Shutdown(t.Context())) }()
 			listener := httptest.NewServer(server.Router())
 			defer listener.Close()
 			receive := func(id int, message string) int {
@@ -178,7 +178,7 @@ func TestLineServeReceiptsDuringEnrichment(t *testing.T) {
 			close(release)
 			checks.EventuallyWithT(func(c *assert.CollectT) {
 				var count int
-				require.NoError(c, st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='1'").Scan(&count))
+				require.NoError(c, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id='1'").Scan(&count))
 				assert.Equal(c, 1, count, "later text must archive in the queued pass after media completes")
 				source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "line", "2000000001")
 				require.NoError(c, err)

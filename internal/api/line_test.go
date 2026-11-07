@@ -57,15 +57,15 @@ func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) l
 	for _, configureServer := range configure {
 		configureServer(server)
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- server.StartOnListener(listener) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, server.WaitStarted(ctx))
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
 		defer cancel()
 		require.NoError(t, server.Shutdown(ctx))
 		require.ErrorIs(t, <-done, http.ErrServerClosed)
@@ -75,7 +75,7 @@ func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) l
 
 func lineAPIRequest(t *testing.T, base, method, path, body string, headers http.Header) (int, string) {
 	t.Helper()
-	request, err := http.NewRequest(method, base+path, strings.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), method, base+path, strings.NewReader(body))
 	require.NoError(t, err)
 	request.Host = "archive.example.com"
 	request.Header = headers.Clone()
@@ -119,7 +119,7 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 		wakes++
 	})
 	server = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
-	t.Cleanup(func() { must.NoError(server.Shutdown(context.Background())) })
+	t.Cleanup(func() { must.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	router := server.Router()
 	body := lineEnvelope("[" + lineEvent("freeze-event") + "]")
 	token := beginBackupFreeze(t, server)
@@ -131,7 +131,7 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 		{`{"destination":"` + lineTestBot + `"}`, "", http.StatusBadRequest},
 		{lineEnvelope("[]"), "", http.StatusOK},
 	} {
-		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(tc.body))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(tc.body))
 		request.Header = lineSignedHeaders(tc.body)
 		if tc.signature != "" {
 			request.Header.Set("X-Line-Signature", tc.signature)
@@ -146,7 +146,7 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 			return
 		}
 		// Kit has checkpointed the main file, but hasn't pinned its snapshot.
-		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(body))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(body))
 		request.Header = lineSignedHeaders(body)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
@@ -165,7 +165,7 @@ func TestLineReceiptDuringBackupFreeze(t *testing.T) {
 	router.ServeHTTP(endResponse, endBackupFreeze(t, token))
 	must.Equal(http.StatusOK, endResponse.Code)
 	for range 2 {
-		request := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(body))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(body))
 		request.Header = lineSignedHeaders(body)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
@@ -191,7 +191,7 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	headers.Set("Forwarded", `host="malformed`)
 	status, response := lineAPIRequest(t, base, "POST", lineTestPath, body, headers)
 	checks.Equal(200, status, response)
-	rows, err := st.DueLineEventsContext(context.Background(), sourceID, time.Now(), 10)
+	rows, err := st.DueLineEventsContext(t.Context(), sourceID, time.Now(), 10)
 	must.NoError(err)
 	must.Len(rows, 1)
 	checks.Equal(int64(1), wakes.Load())
@@ -230,11 +230,11 @@ func TestLineWebhookCLIHeaderCannotDisableDeadlines(t *testing.T) {
 		server.readTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: unfinished webhook bodies must release ingress without another client write
 	})
 
-	request := httptest.NewRequest(http.MethodPost, lineTestPath, nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, nil)
 
 	readers := make([]*bufio.Reader, 0, 16)
 	for range 16 {
-		conn, err := net.DialTimeout("tcp4", strings.TrimPrefix(fixture.base, "http://"), 5*time.Second)
+		conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp4", strings.TrimPrefix(fixture.base, "http://"))
 		must.NoError(err)
 		t.Cleanup(func() { _ = conn.Close() })
 		must.NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))

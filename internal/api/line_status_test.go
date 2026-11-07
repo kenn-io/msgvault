@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,22 +23,22 @@ func TestLineSourceStatusReportsDurableInboxAndActiveReceiver(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	must.NoError(err)
-	must.NoError(st.SetLineBotContext(context.Background(), source.ID, lineTestBot))
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
 	receiver := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: source.Identifier, SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, nil)
-	bad := httptest.NewRequest(http.MethodPost, lineTestPath, strings.NewReader(`{}`))
+	bad := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(`{}`))
 	receiver.Receive(httptest.NewRecorder(), bad, nil)
 	received := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	must.NoError(st.EnqueueLineEventsContext(context.Background(), source.ID, source.Identifier, []store.LineWebhookEvent{
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, []store.LineWebhookEvent{
 		{WebhookEventID: "pending", EventType: "message", TargetMessageID: "1", EventTimestamp: 1, RawJSON: `{"type":"message","timestamp":1,"webhookEventId":"pending","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}`, ReceivedAt: received},
 		{WebhookEventID: "failed", EventType: "message", TargetMessageID: "2", EventTimestamp: 2, RawJSON: `{"type":"message","timestamp":2,"webhookEventId":"failed","source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"synthetic"}}`, ReceivedAt: received},
 	}))
-	rows, err := st.DueLineEventsContext(context.Background(), source.ID, time.Now(), 10)
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
 	must.NoError(err)
 	must.Len(rows, 2)
-	must.NoError(st.FinishLineEventContext(context.Background(), rows[1].ID, "failed", "synthetic failure", time.Time{}))
+	must.NoError(st.FinishLineEventContext(t.Context(), rows[1].ID, "failed", "synthetic failure", time.Time{}))
 	srv := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Logger: testLogger(), LineWebhook: receiver})
 	recorder := httptest.NewRecorder()
-	srv.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=line", nil))
+	srv.Router().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status?source_type=line", nil))
 	must.Equal(http.StatusOK, recorder.Code)
 	var response struct {
 		Sources []struct {
@@ -58,7 +57,7 @@ func TestLineSourceStatusReportsDurableInboxAndActiveReceiver(t *testing.T) {
 	// Runtime receiver state must not be inferred from disk config alone.
 	srv = NewServer(config.NewDefaultConfig(), st, nil, testLogger())
 	recorder = httptest.NewRecorder()
-	srv.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=line", nil))
+	srv.Router().ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status?source_type=line", nil))
 	must.Equal(http.StatusOK, recorder.Code)
 	must.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 	checks.Equal(false, response.Sources[0].LineWebhook["active"])

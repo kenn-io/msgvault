@@ -33,7 +33,7 @@ func TestClientTokenAndProfiles(t *testing.T) {
 	checks := assert.New(t)
 
 	client, api := newClient(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() { _, err := client.BotInfo(ctx); assert.NoError(t, err) })
@@ -77,7 +77,7 @@ func TestClientUnauthorizedRefresh(t *testing.T) {
 
 	client, api := newClient(t)
 	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 401}, lineapi.Response{Status: 200, Body: `{"userId":"U00000000000000000000000000000001"}`})
-	_, err := client.BotInfo(context.Background())
+	_, err := client.BotInfo(t.Context())
 	must.NoError(err)
 	checks.Equal(2, api.Count("POST", "/oauth2/v3/token"))
 	var authorizations []string
@@ -88,7 +88,7 @@ func TestClientUnauthorizedRefresh(t *testing.T) {
 	}
 	checks.Equal([]string{"Bearer synthetic-token-1", "Bearer synthetic-token-2"}, authorizations, "the retry must present the newly minted token")
 	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 401}, lineapi.Response{Status: 401})
-	_, err = client.BotInfo(context.Background())
+	_, err = client.BotInfo(t.Context())
 	var apiErr *line.APIError
 	must.ErrorAs(err, &apiErr)
 	checks.Equal(401, apiErr.StatusCode)
@@ -101,14 +101,14 @@ func TestClientRefreshBeforeExpiration(t *testing.T) {
 
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	client, api := newClient(t, line.WithClock(func() time.Time { return now }))
-	_, err := client.BotInfo(context.Background())
+	_, err := client.BotInfo(t.Context())
 	must.NoError(err)
 	now = now.Add(14*time.Minute - time.Second)
-	_, err = client.BotInfo(context.Background())
+	_, err = client.BotInfo(t.Context())
 	must.NoError(err)
 	checks.Equal(1, api.Count("POST", "/oauth2/v3/token"))
 	now = now.Add(time.Second)
-	_, err = client.BotInfo(context.Background())
+	_, err = client.BotInfo(t.Context())
 	must.NoError(err)
 	checks.Equal(2, api.Count("POST", "/oauth2/v3/token"))
 }
@@ -121,7 +121,7 @@ func TestClientRetryAfterAndErrorRedaction(t *testing.T) {
 	client, api := newClient(t, line.WithClock(func() time.Time { return now }))
 	for index, header := range []string{"120", now.Add(time.Minute).Format(http.TimeFormat)} {
 		api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {header}}, Body: "synthetic-secret synthetic-token"})
-		_, err := client.BotInfo(context.Background())
+		_, err := client.BotInfo(t.Context())
 		var apiErr *line.APIError
 		must.ErrorAs(err, &apiErr)
 		checks.Equal(429, apiErr.StatusCode)
@@ -130,7 +130,7 @@ func TestClientRetryAfterAndErrorRedaction(t *testing.T) {
 		checks.NotContains(err.Error(), "synthetic-token")
 	}
 	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 500, Body: "synthetic-secret synthetic-token"})
-	_, err := client.BotInfo(context.Background())
+	_, err := client.BotInfo(t.Context())
 	must.Error(err)
 	checks.NotContains(err.Error(), "synthetic-")
 }
@@ -154,14 +154,14 @@ func TestClientRefusesRedirects(t *testing.T) {
 			var err error
 			if strings.HasSuffix(path, "content") {
 				var response *http.Response
-				response, err = client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
+				response, err = client.Content(t.Context(), "123", attachmentpolicy.DefaultChatMaxBytes)
 				if response != nil {
 					require.NoError(t, response.Body.Close())
 				}
 			} else if path == "/v2/bot/message/push" {
 				_, err = client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
 			} else {
-				_, err = client.BotInfo(context.Background())
+				_, err = client.BotInfo(t.Context())
 			}
 			require.Error(t, err)
 		})
@@ -176,13 +176,13 @@ func TestClientBoundsResponses(t *testing.T) {
 	client, api := newClient(t)
 	oversized := `{"userId":"U00000000000000000000000000000001","basicId":"@synthetic","displayName":"Synthetic bot","padding":"` + strings.Repeat("x", 1<<20) + `"}`
 	api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 200, Body: oversized})
-	_, err := client.BotInfo(context.Background())
+	_, err := client.BotInfo(t.Context())
 	must.EqualError(err, "line: API response exceeds limit")
 	checks.Less(len(err.Error()), 200)
 
 	for _, body := range []string{`{"userId":`, `{"userId":"U00000000000000000000000000000001"} {}`} {
 		api.Enqueue("GET", "/v2/bot/info", lineapi.Response{Status: 200, Body: body})
-		_, err = client.BotInfo(context.Background())
+		_, err = client.BotInfo(t.Context())
 		must.Error(err)
 		checks.Less(len(err.Error()), 200)
 	}
@@ -193,11 +193,11 @@ func TestClientEscapesPathSegments(t *testing.T) {
 	checks := assert.New(t)
 
 	client, api := newClient(t)
-	_, err := client.Profile(context.Background(), line.Source{Type: "group", GroupID: "group/with?query#fragment"}, "user/with?query#fragment")
+	_, err := client.Profile(t.Context(), line.Source{Type: "group", GroupID: "group/with?query#fragment"}, "user/with?query#fragment")
 	must.NoError(err)
 	requests := api.Requests()
 	checks.Equal("/v2/bot/group/group%2Fwith%3Fquery%23fragment/member/user%2Fwith%3Fquery%23fragment", requests[len(requests)-1].Path)
-	_, err = client.Profile(context.Background(), line.Source{Type: "group"}, "U00000000000000000000000000000002")
+	_, err = client.Profile(t.Context(), line.Source{Type: "group"}, "U00000000000000000000000000000002")
 	must.Error(err)
 }
 
@@ -248,7 +248,7 @@ func TestClientCancellationDuringResponse(t *testing.T) {
 				return response, err
 			})}
 			client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(server.URL, server.URL), line.WithHTTPClient(httpClient))
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { _, err := client.BotInfo(ctx); done <- err }()
@@ -318,14 +318,14 @@ func TestClientTokenValidationAndRateLimit(t *testing.T) {
 	} {
 		client, api := newClient(t)
 		api.Enqueue("POST", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: body})
-		_, err := client.BotInfo(context.Background())
+		_, err := client.BotInfo(t.Context())
 		must.Error(err)
 		checks.NotContains(err.Error(), "synthetic-token")
 		checks.Zero(api.Count("GET", "/v2/bot/info"))
 	}
 	client, api := newClient(t)
 	api.Enqueue("POST", "/oauth2/v3/token", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": {"60"}}})
-	_, err := client.BotInfo(context.Background())
+	_, err := client.BotInfo(t.Context())
 	var apiErr *line.APIError
 	must.ErrorAs(err, &apiErr)
 	checks.Equal(429, apiErr.StatusCode)
@@ -342,7 +342,7 @@ func TestClientSeparateDataHost(t *testing.T) {
 	defer apiServer.Close()
 	defer dataServer.Close()
 	client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(apiServer.URL, dataServer.URL))
-	response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
+	response, err := client.Content(t.Context(), "123", attachmentpolicy.DefaultChatMaxBytes)
 	must.NoError(err)
 	must.NoError(response.Body.Close())
 	checks.Equal(1, api.Count("POST", "/oauth2/v3/token"))
@@ -358,7 +358,7 @@ func TestClientTimeout(t *testing.T) {
 			return nil, request.Context().Err()
 		})}))
 		started := time.Now()
-		_, err := client.BotInfo(context.Background())
+		_, err := client.BotInfo(t.Context())
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Equal(t, 30*time.Second, time.Since(started), "the client caps an injected timeout at 30 seconds")
 	})
@@ -376,7 +376,7 @@ func TestClientContentUsesAttachmentDownloadTimeout(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
 	})}))
-	response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
+	response, err := client.Content(t.Context(), "123", attachmentpolicy.DefaultChatMaxBytes)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.True(t, downloadDeadline.After(time.Now().Add(30*time.Second)))
@@ -414,7 +414,7 @@ func TestClientResponseOwnership(t *testing.T) {
 				}
 				return response, err
 			})}))
-			response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
+			response, err := client.Content(t.Context(), "123", attachmentpolicy.DefaultChatMaxBytes)
 			if status == 200 || status == 202 || status == 404 || status == 410 {
 				must.NoError(err)
 				checks.Equal(status, response.StatusCode)
