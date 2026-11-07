@@ -55,12 +55,10 @@
 </div>
 
 <style>
-  /* A list item pads 8, so its text starts on the body's 12 line. The dialog stays 16 from the
-   * screen's edges and opens 32 from the top (16 on a phone). */
+  /* The dialog stays 16 from the screen's edges and opens 32 from the top (16 on a phone). */
   .dialog-shell {
     --dialog-inset: var(--space-6);
     --dialog-top: 32px;
-    --list-item-pad-x: var(--space-group);
   }
   .dialog-shell :global(.kit-modal-overlay) {
     align-items: flex-start;

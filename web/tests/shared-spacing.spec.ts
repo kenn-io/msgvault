@@ -4,6 +4,7 @@ import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
+import { installOperations } from './e2e/fixtures/operations';
 
 test.beforeEach(async ({ page }) => {
   await mockArchiveLayout(page);
@@ -56,6 +57,40 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
     });
   }
   expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 12 : 20])));
+});
+
+test('page menus and dropdowns keep the shared minimum inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [{
+    id: 1, name: 'Archive search', schema_version: 2, revision: 1, canonical_state: {},
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  }] } }));
+  await page.goto('/');
+  for (const kind of ['dropdown', 'menu']) {
+    if (kind === 'dropdown') await page.getByRole('combobox', { name: 'Show as: Table' }).click();
+    else {
+      const view = page.locator('.saved-view').filter({ hasText: 'Archive search' });
+      await view.hover();
+      await view.getByRole('button', { name: 'Archive search actions', exact: true }).click();
+    }
+    const popup = page.getByRole(kind === 'dropdown' ? 'listbox' : 'menu');
+    await expect(popup).toBeVisible();
+    const bounds = (await popup.boundingBox())!;
+    expect.soft(bounds.width).toBeGreaterThanOrEqual(200);
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(1280);
+    await page.keyboard.press('Escape');
+  }
+});
+
+test('dialog dropdown choices keep the shared option inset', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installOperations(page);
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true })));
+  await page.getByRole('dialog', { name: 'Past runs' }).getByRole('combobox', { name: 'State: All states' }).click();
+  const option = page.getByRole('option', { name: 'All states', exact: true });
+  await expect(option).toHaveCSS('padding-left', '12px');
+  await expect(option).toHaveCSS('padding-right', '12px');
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {

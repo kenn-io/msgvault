@@ -392,6 +392,16 @@ body .kit-checkbox__label.kit-checkbox__label {
   padding: var(--space-tight);
 }
 
+/* Menu and SelectDropdown write an inline min-width of the trigger's width, which
+ * replaces the one above, so a zero-height strut holds their content at 200 less
+ * the padding and border. They still grow to a wider trigger and stop at Kit's
+ * viewport-bound max-width, and Kit measures the strut when it places them. */
+:root:root :is(.kit-menu__content, .kit-select-dropdown__list)::before {
+  content: '';
+  display: block;
+  width: calc(min(200px, calc(100vw - 32px)) - 2 * (var(--space-tight) + var(--border-width)));
+}
+
 body :is(.kit-menu__item.kit-menu__item, .kit-select-dropdown__option.kit-select-dropdown__option, .kit-typeahead__option.kit-typeahead__option) {
   box-sizing: border-box;
   min-height: var(--list-item-h);
