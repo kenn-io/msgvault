@@ -98,7 +98,7 @@ func newAddLineCmd() *cobra.Command {
 				return fmt.Errorf("save LINE configuration: %w", err)
 			}
 			if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
-				return fmt.Errorf("post-source-create migrations: %w", err)
+				return fmt.Errorf("finish LINE setup: %w", err)
 			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "Registered LINE channel %s (source %d).\n", channelID, source.ID)
@@ -180,12 +180,16 @@ func newSyncLineCmd() *cobra.Command {
 					continue
 				}
 				client, err := configuredLineClient(profile)
-				if err == nil {
+				drained := err == nil
+				if drained {
 					err = line.NewProcessor(st, client, source.ID, profile.ChannelID, cfg.AttachmentsDir(), line.WithProcessorMediaPolicy(profile.MediaPolicy())).Drain(ctx)
 				}
 				_ = recordSyncAttempt(ctx, line.SourceType, profile.ChannelID, err)
+				if err != nil && drained {
+					err = fmt.Errorf("LINE channel %s: %w", profile.ChannelID, err)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Errorf("LINE channel %s: %w", profile.ChannelID, err))
+					errs = append(errs, err)
 				}
 				if ctx.Err() == nil {
 					status, statusErr := st.LineInboxStatusContext(ctx, source.ID)
