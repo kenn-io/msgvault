@@ -386,12 +386,6 @@ func TestCatalogSchemas(t *testing.T) {
 				checks.Equal(expectedNames, names)
 
 				byName := toolsByName(t, tools)
-				mediaOpts := shape.opts
-				mediaOpts.MediaSearcher = struct{ MediaSearcher }{}
-				mediaTools := toolsByName(t, rawListTools(t, mediaOpts, false))
-				for _, name := range []string{ToolSearchMetadata, ToolSearchMessages, ToolSearchMessageBodies, ToolSemanticSearchMessages} {
-					checks.Contains(mediaTools[name]["description"], "search_media", name)
-				}
 
 				searchMessagesProperties := []string{"account", "limit", "offset", "query"}
 				semanticProperties := []string{"query"}

@@ -32,7 +32,8 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true},
 		{name: "json", args: []string{"search", "quarterly numbers", "--json"}, status: 200, want: []string{`"message_id":11`, "generated", "quarterly numbers", "report.pdf"}},
 		{name: "semantic", args: []string{"search", "words", "--mode", "semantic"}, status: 200, want: []string{"Attachments mode semantic; coverage complete", "report.pdf"}},
-		{name: "fallback", args: []string{"search", "words", "--mode", "hybrid"}, status: 200, want: []string{"Attachments mode lexical; coverage unknown; partial true", "semantic_unconfigured"}},
+		{name: "fallback", args: []string{"search", "words", "--mode", "hybrid"}, status: 200, want: []string{"Attachments mode lexical; coverage unknown; partial true", "Semantic search is not configured."}, absent: []string{"semantic_unconfigured"}},
+		{name: "fallback json", args: []string{"search", "words", "--mode", "hybrid", "--json"}, status: 200, want: []string{"semantic_unconfigured"}, absent: []string{"Semantic search is not configured."}},
 		{name: "upper limit delegated", args: []string{"search", "words", "--limit", "101"}, status: 400, want: []string{"invalid_limit"}},
 		{name: "person relation delegated", args: []string{"search", "words", "--direction", "from_person"}, status: 400, want: []string{"invalid_person"}},
 		{name: "direction delegated", args: []string{"search", "words", "--person", "7", "--direction", "invalid"}, status: 400, want: []string{"invalid_direction"}},
@@ -50,7 +51,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					assert.Equal("from_person", r.URL.Query().Get("direction"))
 				case "semantic":
 					assert.Equal("semantic", r.URL.Query().Get("mode"))
-				case "fallback":
+				case "fallback", "fallback json":
 					assert.Equal("hybrid", r.URL.Query().Get("mode"))
 				case "upper limit delegated":
 					assert.Equal("101", r.URL.Query().Get("limit"))
@@ -75,7 +76,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					Results:     []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
 					Attachments: &generated.MediaAttachmentSearch{RequestedMode: "lexical", ActualMode: "lexical", Coverage: generated.SearchCoverage{State: "unknown"}, Degradations: []string{}, Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
 				}
-				if test.name == "semantic" || test.name == "fallback" {
+				if test.name == "semantic" || test.name == "fallback" || test.name == "fallback json" {
 					response.Results = []generated.MediaSearchResult{}
 					response.Coverage = generated.SearchCoverage{State: "unknown"}
 					response.Partial = true
@@ -86,7 +87,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					response.Attachments.Coverage = generated.SearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}
 					response.Attachments.Results[0].Excerpt = ""
 				}
-				if test.name == "fallback" {
+				if test.name == "fallback" || test.name == "fallback json" {
 					response.Attachments.RequestedMode = "hybrid"
 					response.Attachments.Partial = true
 					response.Attachments.Degradations = []string{"semantic_unconfigured"}

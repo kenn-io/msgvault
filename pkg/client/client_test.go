@@ -756,6 +756,10 @@ func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
 			"filename":"","containing_title":"","excerpt":"matching text"}],"truncated":false}
 	}`), &response))
 	requirements.NoError(response.Validate())
+	response.Attachments.RequestedMode = "semantic"
+	response.Attachments.ActualMode = "semantic"
+	response.Attachments.Results[0].Excerpt = ""
+	requirements.NoError(response.Validate(), "semantic-only attachment matches may have no excerpt")
 }
 
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {

@@ -215,7 +215,7 @@ func mediaSearchFailure(err error) (int, ErrorResponse) {
 	httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 	switch {
 	case errors.Is(err, errMediaSearchMode):
-		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_mode_unavailable", Message: "The requested retrieval mode is unavailable for this list."}
+		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_mode_unavailable", Message: "Recordings support lexical search only."}
 	case errors.Is(err, errMediaSearchScope):
 		return http.StatusBadRequest, ErrorResponse{Error: "media_search_scope_limit", Message: "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"}
 	case httpError && httpErr.Status == http.StatusBadRequest:

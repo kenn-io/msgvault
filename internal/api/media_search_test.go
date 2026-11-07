@@ -1377,6 +1377,7 @@ func TestMediaSearchDocumentModes(t *testing.T) {
 			assert.Empty(response.Attachments.Results[0].Excerpt)
 			require.NotNil(response.RecordingsError)
 			assert.Equal("media_search_mode_unavailable", response.RecordingsError.Error)
+			assert.Equal("Recordings support lexical search only.", response.RecordingsError.Message)
 		})
 	}
 }

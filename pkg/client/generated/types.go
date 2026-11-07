@@ -7280,7 +7280,7 @@ type MediaAttachmentResult struct {
 	AttachmentID    int64      `json:"attachment_id"`
 	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
 	ConversationID  int64      `json:"conversation_id"`
-	Excerpt         string     `json:"excerpt" validate:"required"`
+	Excerpt         string     `json:"excerpt" validate:"omitempty"`
 	Filename        string     `json:"filename" validate:"omitempty"`
 	MessageID       int64      `json:"message_id"`
 	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
