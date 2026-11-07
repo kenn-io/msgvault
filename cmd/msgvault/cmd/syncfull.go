@@ -437,6 +437,20 @@ func imapFolderStateOptions(
 	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
 		func(mailbox string, uids []uint32) (map[string]string, error) {
 			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
+		}), imaplib.WithStoredMembershipLoader(
+		func(mailbox string, uidValidity uint32, uids []uint32) (map[uint32]imaplib.StoredMembership, error) {
+			stored, err := s.GetIMAPStoredMemberships(src.ID, mailbox, uidValidity, uids)
+			if err != nil {
+				return nil, err
+			}
+			result := make(map[uint32]imaplib.StoredMembership, len(stored))
+			for uid, membership := range stored {
+				result[uid] = imaplib.StoredMembership{
+					SourceMessageID: membership.SourceMessageID,
+					Flags:           membership.Flags,
+				}
+			}
+			return result, nil
 		}), imaplib.WithRelocationCandidateLoader(
 		func(ctx context.Context, lost []string) ([]imaplib.RelocationCandidate, error) {
 			candidates, err := s.GetIMAPRelocationCandidatesContext(ctx, src.ID, lost)
