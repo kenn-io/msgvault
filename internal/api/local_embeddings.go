@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -68,6 +69,8 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 	}
 	if isLoopbackAuthority(r.Host, 0) {
 		status.Host = ""
+	} else {
+		status.Host = (&url.URL{Host: r.Host}).Hostname()
 	}
 	writeJSON(w, http.StatusOK, status)
 }

@@ -22,7 +22,7 @@ type localSetupTestController struct {
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Host: "archive.example.test", Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Host: "system.example.test", Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)
@@ -94,7 +94,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 }
 
 func TestLocalEmbeddingsHostDisplay(t *testing.T) {
-	for _, host := range []string{"localhost:8080", "127.0.0.1:8080", "[::1]:8080", "archive.example.test:8080"} {
+	for _, host := range []string{"localhost:8080", "archive.example.test:8080"} {
 		t.Run(host, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})

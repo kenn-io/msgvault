@@ -1433,7 +1433,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.withPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {

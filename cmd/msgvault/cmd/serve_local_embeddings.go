@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -58,28 +57,32 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
 		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
 	}
-	host, err := os.Hostname()
+	snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
 	if err != nil {
-		return api.LocalEmbeddingsStatus{}, fmt.Errorf("read local search host: %w", err)
+		return api.LocalEmbeddingsStatus{}, err
 	}
-
+	loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
+	if err != nil {
+		return api.LocalEmbeddingsStatus{}, err
+	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, err
 	}
-	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir})
-	if err != nil {
-		return api.LocalEmbeddingsStatus{}, err
-	}
 	c.handle.mu.Lock()
-	cfg := c.state.cfg.Vector
+	cfg := loaded.Vector
 	missingRuntime := c.handle.vf == nil
 	if c.handle.vf != nil {
 		cfg = c.handle.vf.Cfg
 	}
 	c.handle.mu.Unlock()
+	configured := cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != ""
+	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir, SkipOllama: configured})
+	if err != nil {
+		return api.LocalEmbeddingsStatus{}, err
+	}
 	provider := ""
-	if cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != "" {
+	if configured {
 		switch {
 		case cfg.Embeddings.LocalOnly:
 			provider = "builtin"
@@ -106,7 +109,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		}
 	default:
 	}
-	return api.LocalEmbeddingsStatus{Host: host, Enabled: cfg.Enabled, Provider: provider,
+	return api.LocalEmbeddingsStatus{Enabled: cfg.Enabled, Provider: provider,
 		DownloadBytes: status.DownloadBytes, Phase: "idle", Error: startupError}, nil
 }
 

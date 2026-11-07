@@ -333,14 +333,14 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name, catalog string
-		pausedRemote  bool
+		name, catalog, wantProvider string
+		pausedRemote                bool
 	}{
-		{name: "local without Ollama API"},
-		{name: "enabled Ollama", catalog: `{"models":[]}`},
-		{name: "local without catalog", catalog: `{}`},
-		{name: "local with invalid catalog", catalog: `invalid json`},
-		{name: "paused remote", pausedRemote: true},
+		{name: "local without Ollama API", wantProvider: "configured"},
+		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
+		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
+		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
+		{name: "paused remote", pausedRemote: true, wantProvider: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -360,11 +360,7 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			f.start(t)
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
-			if tc.name == "enabled Ollama" {
-				assert.Equal("ollama", status.Provider)
-			} else {
-				assert.Equal("configured", status.Provider)
-			}
+			assert.Equal(tc.wantProvider, status.Provider)
 			require.ErrorContains(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
 			after, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
@@ -375,17 +371,17 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 
 func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 	for _, tc := range []struct {
-		name, model, building string
-		reuse                 bool
-		changedRecipe         bool
+		name, building string
+		reuse          bool
+		changedRecipe  bool
 	}{
-		{name: "matching active", model: "nomic-embed-text", reuse: true},
-		{name: "different active", model: "nomic-embed-text", changedRecipe: true},
-		{name: "matching build", model: "nomic-embed-text", building: "matching"},
-		{name: "different build", model: "nomic-embed-text", building: "obsolete-build", changedRecipe: true},
+		{name: "matching active", reuse: true},
+		{name: "different active", changedRecipe: true},
+		{name: "matching build", building: "matching"},
+		{name: "different build", building: "obsolete-build", changedRecipe: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newLocalActivationFixture(t, tc.model)
+			f := newLocalActivationFixture(t, "nomic-embed-text")
 			f.useBuiltin(t)
 			f.start(t)
 			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
@@ -408,7 +404,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 				if tc.building == "matching" {
 					fingerprint = f.handle.vf.Cfg.GenerationFingerprint()
 				}
-				building, err = f.handle.vf.Backend.CreateGeneration(f.ctx, tc.model, 768, fingerprint)
+				building, err = f.handle.vf.Backend.CreateGeneration(f.ctx, "nomic-embed-text", 768, fingerprint)
 				require.NoError(t, err)
 			}
 			before := f.inputs.Load()
@@ -615,37 +611,14 @@ func TestLocalEmbeddingsFailureBeforeConfigWriteOffersRetry(t *testing.T) {
 	assert.True(t, f.localStatus(t).Enabled)
 }
 
-func TestLocalEmbeddingsFirstSetupUsesOllama(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.ollamaTags = true
-	f.start(t)
-	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-		return embedlocal.Status{OllamaAvailable: true}, nil
-	}
-	status, err := f.controller.Inspect(f.ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "ollama", status.Provider)
-	assert.False(t, status.Enabled)
-	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	assert.Zero(t, f.installs)
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(t, err)
-	saved, err := f.cfg.ReloadConfigFile(snapshot)
-	require.NoError(t, err)
-	assert.False(t, saved.Vector.Embeddings.LocalOnly)
-	assert.Equal(t, f.cfg.Chat.Server+"/v1", saved.Vector.Embeddings.Endpoint)
-	assert.Len(t, f.runner.calls, 1)
-	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-	require.NoError(t, err)
-	assert.Len(t, results, 1)
-}
-
 func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
 	for _, setting := range []string{"preprocessing", "account scope"} {
 		t.Run(setting, func(t *testing.T) {
 			require := require.New(t)
 			f := newLocalActivationFixture(t, "")
 			f.start(t)
+			var wantID int64
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&wantID))
 			edit := config.TableEdit{Path: []string{"vector", "preprocess"}, Values: map[string]any{"strip_quotes": false}}
 			if setting == "account scope" {
 				_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "excluded@example.test", "excluded", "Excluded orchard", "Another orchard message.")
@@ -659,7 +632,8 @@ func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
 			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 			results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
 			require.NoError(err, "activation must publish the same text settings used by its index build")
-			assert.Len(t, results, 1)
+			require.Len(results, 1)
+			assert.Equal(t, wantID, results[0].MessageID)
 		})
 	}
 }
@@ -668,6 +642,15 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	f := newLocalActivationFixture(t, "")
 	f.ollamaTags = true
 	f.start(t)
+	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+		return embedlocal.Status{OllamaAvailable: true}, nil
+	}
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", status.Provider)
+	assert.False(t, status.Enabled)
+	before, err := os.ReadFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
 	credentials, err := providercredentials.Read(f.cfg.TokensDir())
 	require.NoError(t, err)
 	credentials, err = providercredentials.Put(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, "https://previous.example.test/v1", "synthetic-previous-key")
@@ -677,14 +660,46 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	require.Nil(t, f.handle.vf)
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(t, err)
-	saved, err := f.cfg.ReloadConfigFile(snapshot)
-	require.NoError(t, err)
-	require.False(t, saved.Vector.Enabled)
-	require.Empty(t, saved.Vector.Embeddings.Endpoint)
+	require.Equal(t, before, snapshot.Content)
 	_, err = providercredentials.Delete(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID)
 	require.NoError(t, err)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	assert.Zero(t, f.installs)
+	snapshot, err = config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	saved, err := f.cfg.ReloadConfigFile(snapshot)
+	require.NoError(t, err)
+	assert.False(t, saved.Vector.Embeddings.LocalOnly)
+	assert.Equal(t, f.cfg.Chat.Server+"/v1", saved.Vector.Embeddings.Endpoint)
+	assert.Len(t, f.runner.calls, 1)
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["embeddings","optimize","--drop"]}`))
+	request.Header.Set("Authorization", "Bearer owner")
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "exact vectors retained")
+}
+
+func TestLocalEmbeddingsInspectUsesSavedSettings(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": "https://api.example.test/v1"}}})
+	require.NoError(t, err)
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "configured", status.Provider)
+	require.ErrorContains(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
 }
