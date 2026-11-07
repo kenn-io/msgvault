@@ -316,9 +316,27 @@ test('Sources notice keeps Retry usable on a phone', async ({ page }) => {
   await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [] } }));
   await page.goto('/?workspace=sources');
   const notice = page.getByRole('alert');
+  expect(await notice.ariaSnapshot()).toContain('Error');
   const retry = notice.getByRole('button', { name: 'Retry', exact: true });
   await expect(retry).toHaveCSS('height', '28px');
   await expect(retry).toBeInViewport({ ratio: 1 });
+});
+
+test('a person’s phone Messages toolbar keeps Filter and Sort on one line', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installDirectoryReviewArchive(page);
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  const toolbar = page.getByRole('region', { name: 'Active analytical context' });
+  const filter = toolbar.getByRole('button', { name: 'Filter', exact: true });
+  const sort = toolbar.getByRole('combobox', { name: 'Sort: Newest first', exact: true });
+  await expect(sort).toBeVisible();
+  const filterBox = (await filter.boundingBox())!;
+  const sortBox = (await sort.boundingBox())!;
+  expect(sortBox.y).toBe(filterBox.y);
+  expect(sortBox.x + sortBox.width).toBeLessThanOrEqual(390);
+  await sort.click();
+  await expect(page.getByRole('option', { name: 'Newest first', exact: true })).toBeVisible();
 });
 
 test('loaded message sender, body, and attachment edges align with the reader', async ({ page }) => {

@@ -282,10 +282,10 @@
     width: 172px;
   }
 
-  /* On a phone ViewMenu replaces the view group except in a scoped view, where the sort picker takes its own line. */
+  /* On a phone ViewMenu replaces the view group except in a scoped view, where the sort picker fills the rest of the Filter line. */
   @media (max-width: 640px) {
     .view-group {
-      flex: 1 1 100%;
+      flex: 1 1 auto;
     }
 
     .view-group > :global(*) {
