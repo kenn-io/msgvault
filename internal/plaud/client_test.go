@@ -81,6 +81,67 @@ func TestTransientToolFailuresAreRetried(t *testing.T) {
 	}
 }
 
+func TestRateLimitedCallsRetryLongerAndSlowTheSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		failures      int
+		wantCalls     int
+		wantErr       bool
+		wantLimit     rate.Limit
+	}{
+		{"rate limit recovers", "Failed to get file: Error: API error: 429 Too Many Requests", 5, 6, false, 1000.0 / 32},
+		{"rate limit exhausted", "Failed to get file: Error: API error: 429 Too Many Requests", 100, 6, true, 1000.0 / 64},
+		{"other transient failure", "Failed to get file: Error: API error: 503 Service Unavailable", 100, 4, true, 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			calls := 0
+			s := resultSession(t, map[string]func(map[string]any) *mcp.CallToolResult{"get_current_user": func(map[string]any) *mcp.CallToolResult {
+				calls++
+				if calls <= tc.failures {
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: tc.message}}}
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"email":"user@example.com"}`}}}
+			}})
+			s.limiter = rate.NewLimiter(1000, 2)
+			_, err := s.CurrentUser(t.Context())
+			if tc.wantErr {
+				require.Error(err)
+				assert.Contains(err.Error(), tc.message)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(tc.wantCalls, calls)
+			assert.InDelta(float64(tc.wantLimit), float64(s.limiter.Limit()), 1e-9)
+		})
+	}
+}
+
+func TestRetryBackoffOutlastsRateLimitWindow(t *testing.T) {
+	s := newSession(nil)
+	var transient, rateLimited []time.Duration
+	for attempt := range retryAttempts - 1 {
+		transient = append(transient, s.backoff(attempt, false))
+	}
+	for attempt := range rateLimitAttempts - 1 {
+		rateLimited = append(rateLimited, s.backoff(attempt, true))
+	}
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, transient)
+	assert.Equal(t, []time.Duration{
+		5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute,
+	}, rateLimited)
+}
+
+func TestRateLimitSlowdownStopsAtFloor(t *testing.T) {
+	s := &Session{limiter: rate.NewLimiter(0.3, 2)}
+	s.slowDown()
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
+	assert.Equal(t, 1, s.limiter.Burst())
+	s.slowDown()
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
+}
+
 func TestToolErrorsPreserveProviderMessage(t *testing.T) {
 	for _, tc := range []struct {
 		name, message, want string
@@ -142,7 +203,7 @@ func TestTransientHTTPToolFailuresAreRetried(t *testing.T) {
 			s, err := Connect(t.Context(), host.URL, nil)
 			require.NoError(err)
 			defer func() { _ = s.Close() }()
-			s.retryDelay = 0
+			s.retryDelay, s.rateLimitDelay = 0, 0
 			email, err := s.CurrentUser(t.Context())
 			require.NoError(err)
 			assert.Equal("user@example.com", email)
