@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -14,7 +15,7 @@ func (s *Store) PersonPhotoOccurrences(ctx context.Context, destination string, 
 		return result, nil
 	}
 	if len(versionIDs) > 100 || limit < 1 || limit > 10 {
-		return nil, fmt.Errorf("invalid photo occurrence bounds")
+		return nil, errors.New("invalid photo occurrence bounds")
 	}
 	args := make([]any, len(versionIDs))
 	for i, id := range versionIDs {

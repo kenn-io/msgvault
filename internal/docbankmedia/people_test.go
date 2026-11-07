@@ -5,13 +5,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveExternalPersonEscapesAndValidates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
-		require.Equal(t, "u+id", r.URL.Query().Get("uid"))
+		assert.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
+		assert.Equal(t, "u+id", r.URL.Query().Get("uid"))
 		_, _ = w.Write([]byte(`{"person_id":"p1","system":"msgvault","archive_id":"a&b","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current","forwarded":false}`))
 	}))
 	defer server.Close()
@@ -56,8 +57,8 @@ func TestPersonProtocolRejectsMalformedAndPreservesStatuses(t *testing.T) {
 
 func TestSetExternalPersonIdentityRevision(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, `"4"`, r.Header.Get("If-Match"))
-		require.Equal(t, "/api/v1/people/by-id/person%2Fone/external-identities", r.URL.EscapedPath())
+		assert.Equal(t, `"4"`, r.Header.Get("If-Match"))
+		assert.Equal(t, "/api/v1/people/by-id/person%2Fone/external-identities", r.URL.EscapedPath())
 		w.Header().Set("ETag", `"5"`)
 		_, _ = w.Write([]byte(`{"system":"msgvault","archive_id":"a","uid":"u","uid_state":"current","uid_kind":"vcard_uid"}`))
 	}))
@@ -71,7 +72,7 @@ func TestSetExternalPersonIdentityRevision(t *testing.T) {
 
 func TestPersonAssertionsRejectsMismatchedPerson(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "100", r.URL.Query().Get("assertion_limit"))
+		assert.Equal(t, "100", r.URL.Query().Get("assertion_limit"))
 		_, _ = w.Write([]byte(`{"person_id":"p","state":"active","revision":1,"assertions":[{"person_id":"other","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"}]}`))
 	}))
 	defer server.Close()

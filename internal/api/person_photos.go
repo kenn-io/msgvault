@@ -96,8 +96,7 @@ func photoRemotePerson(ctx context.Context, r *DocbankAttachmentReader, archive 
 	return id, nil
 }
 func photoFailure(err error) error {
-	var status huma.StatusError
-	if errors.As(err, &status) {
+	if status, ok := errors.AsType[huma.StatusError](err); ok {
 		return status
 	}
 	return photoError(err)

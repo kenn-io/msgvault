@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -41,7 +42,7 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 	require.NoError(err)
 	conflict := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(archive, r.URL.Query().Get("archive_id"))
+		assert.Equal(t, archive, r.URL.Query().Get("archive_id"))
 		if !conflict {
 			http.NotFound(w, r)
 			return
@@ -51,7 +52,11 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 		if uid == "retired" {
 			person = "two"
 		}
-		_, _ = fmt.Fprintf(w, `{"person_id":%q,"system":"msgvault","archive_id":%q,"requested_uid":%q,"resolved_uid":%q,"uid_state":"current"}`, person, archive, uid, uid)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(docbankmedia.ExternalPersonResolution{
+			PersonID: person, System: "msgvault", ArchiveID: archive,
+			RequestedUID: uid, ResolvedUID: uid, UIDState: "current",
+		}))
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
@@ -152,12 +157,12 @@ func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		require.Equal(`"7"`, r.Header.Get("If-Match"))
+		assert.Equal(t, `"7"`, r.Header.Get("If-Match"))
 		var identity docbankmedia.ExternalPersonIdentity
-		require.NoError(json.NewDecoder(r.Body).Decode(&identity))
-		require.Equal(archive, identity.ArchiveID)
-		require.Equal("old", identity.UID)
-		require.Equal("unlinked", identity.UIDState)
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&identity))
+		assert.Equal(t, archive, identity.ArchiveID)
+		assert.Equal(t, "old", identity.UID)
+		assert.Equal(t, "unlinked", identity.UIDState)
 		if stale {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
