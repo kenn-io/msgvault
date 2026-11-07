@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -3472,4 +3473,17 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 	f := storetest.New(t)
 	_, err := f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "Local")
 	require.ErrorIs(t, err, store.ErrInvalidActivity)
+}
+
+func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
+	assertions := assert.New(t)
+	personID := int64(7)
+	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
+		MessageType: callhistory.MessageType, ConversationType: "call_history",
+		SourceIsFromMe: true,
+		Counterparts:   []store.ActivityCounterpart{{ParticipantID: 1, PersonID: &personID, RecipientType: "call_joined"}},
+	}, 10)
+	assertions.Empty(got.Persons)
+	assertions.Equal(store.DirectionObserved, got.Direction)
+	assertions.Equal(store.ChannelOther, got.Channel)
 }

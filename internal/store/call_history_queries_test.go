@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -335,4 +336,32 @@ func TestCallsReadImportedPhoneCalls(t *testing.T) {
 			assert.Equal(2, strings.Count(logs.String(), `"kind":"query"`), "listing calls and participants must use two queries regardless of page size")
 		}
 	})
+}
+
+func TestCallObservationUTCWindow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := storetest.New(t).Store
+	o, sourceID := validCallObservation(t, st)
+	var ids []int64
+	for i, timestamp := range []string{"2026-10-01T00:30:00-04:00", "2026-10-01T03:30:00+02:00", "2026-10-01T01:30:00-06:00"} {
+		o.RecordID = fmt.Sprintf("window-call-%d", i)
+		var err error
+		o.OccurredAt, err = time.Parse(time.RFC3339, timestamp)
+		require.NoError(err)
+		o.EndedAt = new(o.OccurredAt.Add(time.Minute))
+		o.Raw = []byte(fmt.Sprintf(`{"occurred_at":%q}`, timestamp))
+		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
+		require.NoError(err)
+		ids = append(ids, id)
+	}
+	after := time.Date(2026, 10, 1, 0, 0, 0, 0, time.FixedZone("", -4*3600))
+	before := time.Date(2026, 10, 1, 6, 0, 0, 0, time.FixedZone("", 3600))
+	calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{After: &after, Before: &before})
+	require.NoError(err)
+	require.Len(calls, 1)
+	assert.Equal(ids[0], calls[0].MessageID)
+	assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.UTC().Format(time.RFC3339))
+	require.NotNil(calls[0].EndedAt)
+	assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.UTC().Format(time.RFC3339))
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,5 +68,19 @@ func FuzzObservationDurationValidation(f *testing.F) {
 			return
 		}
 		require.NoError(t, o.Validate())
+	})
+}
+
+func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
+	f.Add("a", "bc", "ab", "c")
+	f.Fuzz(func(t *testing.T, providerA, accountA, providerB, accountB string) {
+		assertions := assert.New(t)
+		a := (Evidence{Provider: providerA, Account: accountA}).SourceIdentifier()
+		b := (Evidence{Provider: providerB, Account: accountB}).SourceIdentifier()
+		if providerA == providerB && accountA == accountB {
+			assertions.Equal(a, b)
+		} else {
+			assertions.NotEqual(a, b)
+		}
 	})
 }
