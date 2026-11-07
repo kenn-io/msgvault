@@ -169,7 +169,7 @@ func TestAccountPollingDeadlineWakeIsFencedByLifecycle(t *testing.T) {
 				s.mu.RUnlock()
 				assert.False(wakeStillArmed, "lifecycle changes leave no active one-shot wake")
 				if action == "remove and re-add" {
-					assert.False(registration == current, "re-adding the same identifier creates a new registration")
+					assert.NotSame(registration, current, "re-adding the same identifier creates a new registration")
 				}
 			})
 		})
@@ -232,7 +232,7 @@ func TestAccountPollingDeadlineWakeHonorsProviderFloor(t *testing.T) {
 		currentWake := registration.pollWake
 		s.mu.RUnlock()
 		require.NotNil(currentWake)
-		assert.True(currentWake == firstWake, "early ticks retain the timer for the same deadline")
+		assert.Same(firstWake, currentWake, "early ticks retain the timer for the same deadline")
 		assert.True(currentWake.deadline.Equal(floor))
 	})
 }
