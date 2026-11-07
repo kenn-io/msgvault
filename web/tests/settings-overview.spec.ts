@@ -46,7 +46,7 @@ for (const width of [1280, 390]) {
         done_bytes: 0, total_bytes: 0, error: 'Message index build interrupted.'
       } }));
       await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
-        eligible_count: 10, embedded_count: 4, percentage: 40, cache_revision: 'cache-1',
+        eligible_count: 0, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
         status: 'initializing', actions: ['build_index']
       } }));
       await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);

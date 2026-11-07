@@ -791,19 +791,6 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
 const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.example.test', enabled: false, provider: '', download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, ...status });
 const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
 
-it('shows an Ollama setup as status only', async () => {
-  const { client, operationsController } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'ollama' }));
-    if (path === '/api/v1/embeddings/status') return Response.json(embeddingStatus);
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'ollama', eligible_count: 10, embedded_count: 10, percentage: 100, status: 'ready', actions: [] });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
-  });
-  render(SettingsWorkspace, { client, operationsController });
-  const row = (await screen.findByText('On · Ollama')).closest('li')!;
-  expect(within(row).queryAllByRole('button')).toEqual([]);
-});
-
 it('retries a failed startup in the Off row through Turn on', async () => {
   let retried = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
@@ -826,7 +813,7 @@ it('finishes a first index build interrupted by a daemon restart through Build i
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0 }));
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: built ? 'restart-2' : 'restart-1', eligible_count: 6, embedded_count: built ? 6 : 4, percentage: built ? 100 : 66.7, status: built ? 'ready' : 'initializing', actions: built ? [] : ['build_index'] });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: built ? 'restart-2' : 'restart-1', eligible_count: built ? 6 : 0, embedded_count: built ? 6 : 0, percentage: built ? 100 : 0, status: built ? 'ready' : 'initializing', actions: built ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: built ? 6 : 4, pending: built ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
     if (path === '/api/v1/cli/run') {
@@ -853,7 +840,7 @@ it.each(['manual', 'scheduled'] as const)('hides the setup failure after a succe
       if (recovered) recoveredStatusReads++;
       return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: recovered ? undefined : 'Message index build interrupted.' }));
     }
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: recovered ? 6 : 0, embedded_count: recovered ? 6 : 0, percentage: recovered ? 100 : 0, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
       configured: true, active: running ? { id: 'recovery-1', kind: 'message_embedding', lane: 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } : undefined,

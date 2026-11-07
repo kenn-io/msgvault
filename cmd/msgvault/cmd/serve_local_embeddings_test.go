@@ -696,8 +696,6 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 				require.Equal(building.ID, active.ID)
 			}
 			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-			readStatus()
-			require.Empty(status.Error, "a matching usable index resolves the old setup failure")
 		})
 	}
 }
@@ -735,5 +733,5 @@ func TestLocalEmbeddingsPreservesModelSavedWhileDisabled(t *testing.T) {
 	saved, readErr = f.cfg.ReloadConfigFile(after)
 	require.NoError(readErr)
 	assert.Equal("custom-model", saved.Vector.Embeddings.Model, "Turn on must preserve the model saved through Settings")
-	assert.Error(err, "a conflicting saved recipe needs an explicit decision")
+	assert.ErrorContains(err, "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions")
 }

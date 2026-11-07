@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 type localSetupTestController struct {
@@ -78,7 +79,18 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					close(controller.release)
 					synctest.Wait()
 					controller.enabled.Store(true)
+					cfg := vector.Config{Enabled: true}
+					backend := &filteredCoverageBackend{activeErr: vector.ErrNoActiveGeneration}
+					srv.SetVectorFeatures(nil, nil, backend, cfg)
+					pending := int64(1)
+					srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
+						return vector.EmbeddingStatus{Pending: pending}, nil
+					}, 0)
 					checks.Equal("build interrupted", status().Error)
+					backend.activeErr = nil
+					backend.active = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: cfg.GenerationFingerprint()}
+					pending = 0
+					checks.Empty(status().Error)
 				case "retry after failure":
 					close(controller.release)
 					synctest.Wait()
