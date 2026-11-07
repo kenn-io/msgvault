@@ -693,6 +693,9 @@ func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
 			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
 			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 			require.ErrorContains(err, "embed endpoint returned 500 (unavailable)")
+			var status vector.EmbeddingStatus
+			require.NoError(setEmbeddingRunStatus(f.ctx, f.store, &status))
+			require.Equal("Upstream operation failed.", status.LatestRunError)
 			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
 			require.NoError(err)
 			if existingIndex {
@@ -704,6 +707,9 @@ func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
 			}
 			f.onEmbedding = nil
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+			status = vector.EmbeddingStatus{}
+			require.NoError(setEmbeddingRunStatus(f.ctx, f.store, &status))
+			require.Empty(status.LatestRunError)
 			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
 			require.NoError(err)
 			if building != nil {

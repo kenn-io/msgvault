@@ -206,6 +206,9 @@ func setEmbeddingRunStatus(ctx context.Context, st *store.Store, status *vector.
 	}
 	if run := lane.Latest; run != nil {
 		status.LatestRunStartedAt, status.LatestRunEndedAt = &run.StartedAt, run.FinishedAt
+		if run.Error != nil {
+			status.LatestRunError = run.Error.Message
+		}
 		for _, counter := range run.Counters {
 			if counter.Name == operations.CounterFailed {
 				status.Failed = counter.Value

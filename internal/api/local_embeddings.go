@@ -81,17 +81,25 @@ func (s *Server) localSetupError(ctx context.Context) string {
 	s.importMu.Lock()
 	progress := s.localSetup
 	s.importMu.Unlock()
-	if !progress.Running && progress.Error != "" {
+	if !progress.Running {
 		_, backend, cfg := s.vectorComponents()
 		if backend != nil && cfg.Enabled {
-			if coverage, _, err := s.loadEmbeddingStatus(ctx, 0); err == nil && coverage.Pending == 0 {
-				if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err == nil {
-					s.importMu.Lock()
-					if s.localSetup == progress {
-						s.localSetup.Error = ""
+			if coverage, _, err := s.loadEmbeddingStatus(ctx, 0); err == nil {
+				if progress.Error == "" {
+					if coverage.Pending > 0 && coverage.ActiveRunID == 0 {
+						return coverage.LatestRunError
 					}
-					progress = s.localSetup
-					s.importMu.Unlock()
+					return ""
+				}
+				if coverage.Pending == 0 {
+					if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err == nil {
+						s.importMu.Lock()
+						if s.localSetup == progress {
+							s.localSetup.Error = ""
+						}
+						progress = s.localSetup
+						s.importMu.Unlock()
+					}
 				}
 			}
 		}
