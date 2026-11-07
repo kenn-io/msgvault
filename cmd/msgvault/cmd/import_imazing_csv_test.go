@@ -116,10 +116,10 @@ func TestImportIMazingCSVRebuildsCacheAfterPartialImportFailure(t *testing.T) {
 	require.ErrorContains(err, "import iMazing CSV")
 	require.ErrorContains(err, "parse iMazing contacts")
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	revision, err := st.DerivedDataRevision()
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -166,13 +166,14 @@ func TestImportIMazingCSVRejectsLocalTimezone(t *testing.T) {
 	err := command.Execute()
 
 	require.ErrorContains(err, "host-dependent Local")
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var sources, syncs, messages int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM sources WHERE source_type = 'imazing_csv'`).Scan(&sources))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	require.NoError(st.Close())
 	assert.Zero(sources, "no iMazing CSV source may be created for --timezone Local")
 	assert.Zero(syncs, "no sync may be started for --timezone Local")
@@ -257,14 +258,14 @@ func TestImportIMazingCSVOmittedTimezonePlatformContract(t *testing.T) {
 	t.Setenv("TZ", "Europe/Berlin")
 	require.NoError(command.Execute())
 	assert.Contains(output.String(), "Import complete")
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier("imazing_csv", "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "imazing_csv", "+15550000001")
 	require.NoError(err)
 	require.True(source.SyncConfig.Valid)
 	assert.JSONEq(`{"ambiguous_time_policy":"earlier","timezone":"Europe/Berlin"}`, source.SyncConfig.String)
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	require.NoError(st.Close())
 	assert.Equal(1, messages, "the import runs with the resolved zone")
 }

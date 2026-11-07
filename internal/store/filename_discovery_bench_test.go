@@ -64,16 +64,16 @@ func filenameScaleCases() []filenameScaleCase {
 // 512 normalized runes; its 64-rune query stays within request limits.
 func newFilenameScaleFixture(ctx context.Context, tb testing.TB, st *store.Store, size int) *filenameScaleFixture {
 	tb.Helper()
-	source, err := st.GetOrCreateSource("gmail", "scale@example.test")
+	source, err := st.GetOrCreateSourceContext(ctx, "gmail", "scale@example.test")
 	require.NoError(tb, err)
-	conv, err := st.EnsureConversation(source.ID, "scale-thread", "Synthetic scale")
+	conv, err := st.EnsureConversation(ctx, source.ID, "scale-thread", "Synthetic scale")
 	require.NoError(tb, err)
 	members := make([]int64, 64)
 	for i := range members {
-		members[i], err = st.EnsureParticipant(fmt.Sprintf("member-%02d@example.test", i), fmt.Sprintf("Scale Member %02d", i), "example.test")
+		members[i], err = st.EnsureParticipantContext(ctx, fmt.Sprintf("member-%02d@example.test", i), fmt.Sprintf("Scale Member %02d", i), "example.test")
 		require.NoError(tb, err)
 	}
-	person, _, err := st.CreatePersonFromParticipant(members[0])
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, members[0])
 	require.NoError(tb, err)
 	tx, err := st.DB().BeginTx(ctx, nil)
 	require.NoError(tb, err)

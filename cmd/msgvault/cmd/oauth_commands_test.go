@@ -230,7 +230,7 @@ func TestCommandSyncReadFailurePreservesSuccessfulAccount(t *testing.T) {
 				require.NoError(st.UpdateSourceSyncCursor(src.ID, "1"))
 				healthy, err := st.GetOrCreateSource("imap", imapConfig.Identifier())
 				require.NoError(err)
-				require.NoError(st.UpdateSourceSyncConfig(healthy.ID, encoded))
+				require.NoError(st.UpdateSourceSyncConfig(t.Context(), healthy.ID, encoded))
 				require.NoError(st.Close())
 				cmd := &cobra.Command{}
 				cmd.SetContext(withInvocation(t.Context(), state))
@@ -255,7 +255,7 @@ func TestCommandSyncReadFailurePreservesSuccessfulAccount(t *testing.T) {
 				st, err = store.Open(state.cfg.DatabaseDSN())
 				require.NoError(err)
 				defer func() { _ = st.Close() }()
-				synced, err := st.GetSourceByIdentifier(healthy.Identifier)
+				synced, err := st.GetSourceByIdentifier(t.Context(), healthy.Identifier)
 				require.NoError(err)
 				assert.True(synced.SyncCursor.Valid)
 			})
@@ -405,12 +405,12 @@ func headlessNativeArgs(t *testing.T, shell, fixture, line string) []string {
 	var command *exec.Cmd
 	switch shell {
 	case "cmd":
-		command = exec.Command(path, "/d", "/c", ".\\"+filepath.Base(fixture)+" argv "+tail)
+		command = exec.CommandContext(t.Context(), path, "/d", "/c", ".\\"+filepath.Base(fixture)+" argv "+tail)
 		command.Dir = filepath.Dir(fixture)
 	case "pwsh":
-		command = exec.Command(path, "-NoProfile", "-NonInteractive", "-Command", "& '"+strings.ReplaceAll(fixture, "'", "''")+"' argv "+tail)
+		command = exec.CommandContext(t.Context(), path, "-NoProfile", "-NonInteractive", "-Command", "& '"+strings.ReplaceAll(fixture, "'", "''")+"' argv "+tail)
 	case "sh":
-		command = exec.Command(path, "-c", "exec \"$1\" argv "+tail, "sh", filepath.ToSlash(fixture))
+		command = exec.CommandContext(t.Context(), path, "-c", "exec \"$1\" argv "+tail, "sh", filepath.ToSlash(fixture))
 	}
 	data, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", data)

@@ -123,7 +123,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
 		Files: []query.FileRow{
-			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, ConversationID: 21, OccurredAt: now, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
+			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, SenderLabel: "Zoe Sender", ConversationID: 21, OccurredAt: now, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
 			{ID: 2, Key: "file:2", EntryKey: "message:2", MessageID: 12, ConversationID: 22, OccurredAt: now, Filename: "remote.pdf", MimeType: "application/pdf", MIMEFamily: query.FileMIMEPDF},
 			{ID: 3, Key: "file:3", EntryKey: "message:3", MessageID: 13, ConversationID: 23, OccurredAt: now, Filename: "missing.bin"},
 			{ID: 4, Key: "file:4", EntryKey: "message:4", MessageID: 14, ConversationID: 24, OccurredAt: now, Filename: "metadata.txt"},
@@ -143,7 +143,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	})
 
 	body := bytes.NewBufferString(`{"predicate":{"filters":[{"dimension":"source","values":["7"]}]},"filename_query":"report","mime_families":["image","pdf"],"sort":{"field":"size","direction":"asc"},"limit":25}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", body)
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, req)
@@ -154,6 +154,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	requirements.Len(result.Files, 4)
 	assertions.Equal([]int64{1, 2, 3, 4}, catalog.batchIDs)
 	assertions.Equal(1, catalog.batchCalls)
+	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
 	assertions.Equal(FileContentLocal, result.Files[0].ContentState)
 	assertions.True(result.Files[0].ContentAvailable)
 	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
@@ -165,7 +166,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
 	assertions.Equal(query.SortSpec{Field: "size", Direction: "asc"}, engine.request.Sort)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
@@ -284,7 +285,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 		Store:  st, Engine: engine, Logger: testLogger(),
 	})
 	search := func(participantID int64) {
-		request := httptest.NewRequest(http.MethodPost,
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 			fmt.Sprintf("/api/v1/participants/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -499,7 +500,7 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 		{id: 4, state: FileContentLocal, available: true},
 	}
 	for _, want := range wants {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/files/"+string(rune('0'+want.id)), nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/"+string(rune('0'+want.id)), nil)
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
 		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -533,7 +534,7 @@ func TestGetFileEntryKeyMatchesExploreProducedKey(t *testing.T) {
 		Store:  catalog, Engine: engine, Logger: testLogger(),
 	})
 
-	search := httptest.NewRequest(http.MethodPost, "/api/v1/files/search",
+	search := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search",
 		bytes.NewBufferString(`{"predicate":{},"limit":10}`))
 	search.Header.Set("Content-Type", "application/json")
 	searchResponse := httptest.NewRecorder()
@@ -544,7 +545,7 @@ func TestGetFileEntryKeyMatchesExploreProducedKey(t *testing.T) {
 	requirements.Len(searched.Files, 2)
 
 	for _, file := range searched.Files {
-		metadata := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/files/%d", file.ID), nil)
+		metadata := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/files/%d", file.ID), nil)
 		metadataResponse := httptest.NewRecorder()
 		srv.Router().ServeHTTP(metadataResponse, metadata)
 		requirements.Equal(http.StatusOK, metadataResponse.Code, metadataResponse.Body.String())
@@ -570,7 +571,7 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 		Engine: &querytest.MockEngine{}, BlobStore: fixedFileBlobStore{content: []byte("png")}, Logger: testLogger(),
 	})
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/files/7/content", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/7/content", nil)
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
 
@@ -610,21 +611,21 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	})
 
 	download := httptest.NewRecorder()
-	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/7/content", nil))
+	srv.Router().ServeHTTP(download, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/7/content", nil))
 	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
 	assertions.Equal("image/png", download.Header().Get("Content-Type"))
 	assertions.Equal(strconv.Itoa(len(packed)), download.Header().Get("Content-Length"))
 	assertions.Equal(string(packed), download.Body.String())
 
 	metadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/7", nil))
+	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/7", nil))
 	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
 	var decoded FileMetadataResponse
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
 	assertions.Equal(FileContentLocal, decoded.ContentState)
 	assertions.True(decoded.ContentAvailable)
 
-	search := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	search := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
 	search.Header.Set("Content-Type", "application/json")
 	listing := httptest.NewRecorder()
 	srv.Router().ServeHTTP(listing, search)
@@ -656,12 +657,12 @@ func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
 	})
 
 	download := httptest.NewRecorder()
-	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/8/content", nil))
+	srv.Router().ServeHTTP(download, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8/content", nil))
 	assertions.Equal(http.StatusNotFound, download.Code, download.Body.String())
 	assertions.Contains(download.Body.String(), "file_content_unavailable")
 
 	metadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/8", nil))
+	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
 	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
 	var decoded FileMetadataResponse
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
@@ -692,13 +693,13 @@ func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
 	})
 
 	download := httptest.NewRecorder()
-	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/9/content", nil))
+	srv.Router().ServeHTTP(download, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/9/content", nil))
 	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
 	assertions.Equal("application/pdf", download.Header().Get("Content-Type"))
 	assertions.Equal(string(loose), download.Body.String())
 
 	metadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/9", nil))
+	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/9", nil))
 	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
 	var decoded FileMetadataResponse
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
@@ -723,7 +724,7 @@ func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
 	aliasMessageID := f.CreateMessage("discord-cas-alias")
 	looseMessageID := f.CreateMessage("discord-loose-hashless")
 	insert := func(messageID int64, filename, storagePath string) {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 			INSERT INTO attachments
 				(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 			VALUES (?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP)`),
@@ -743,7 +744,8 @@ func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
 	})
 
 	metadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metadata, httptest.NewRequest(
+	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", aliasFileID), nil))
 	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
 	var decoded FileMetadataResponse
@@ -753,14 +755,16 @@ func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
 	assertions.Equal(hash, decoded.ContentHash, "the alias must expose its recovered hash")
 
 	download := httptest.NewRecorder()
-	srv.Router().ServeHTTP(download, httptest.NewRequest(
+	srv.Router().ServeHTTP(download, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", aliasFileID), nil))
 	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
 	assertions.Equal("image/png", download.Header().Get("Content-Type"))
 	assertions.Equal(string(blob), download.Body.String())
 
 	looseMetadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(looseMetadata, httptest.NewRequest(
+	srv.Router().ServeHTTP(looseMetadata, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", looseFileID), nil))
 	requirements.Equal(http.StatusOK, looseMetadata.Code, looseMetadata.Body.String())
 	var looseDecoded FileMetadataResponse
@@ -771,7 +775,8 @@ func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
 	assertions.Empty(looseDecoded.ContentHash)
 
 	looseDownload := httptest.NewRecorder()
-	srv.Router().ServeHTTP(looseDownload, httptest.NewRequest(
+	srv.Router().ServeHTTP(looseDownload, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", looseFileID), nil))
 	assertions.Equal(http.StatusNotFound, looseDownload.Code, looseDownload.Body.String())
 	assertions.Contains(looseDownload.Body.String(), "file_content_unavailable")
@@ -783,7 +788,7 @@ func TestFilesSearchNamesUnavailableCache(t *testing.T) {
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  &mockStore{}, Engine: &querytest.MockEngine{}, Logger: testLogger(),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
@@ -810,7 +815,7 @@ func TestFilesSearchPreservesLegitimateEmptyFilenameAndMIME(t *testing.T) {
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  catalog, Engine: engine, Logger: testLogger(),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
@@ -841,7 +846,7 @@ func TestFileGroupsUsesFilePopulationAndForwardsEveryConstraint(t *testing.T) {
 		"filename_query":" invoice ","mime_families":["pdf"],"grouping":["participant"],
 		"sort":[{"field":"estimated_bytes","direction":"desc"}],"limit":25
 	}`)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/groups", body)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/groups", body)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
@@ -869,7 +874,7 @@ func TestFileGroupsNamesUnavailableCacheWithoutGenericFallback(t *testing.T) {
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(`{
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(`{
 		"predicate":{},"grouping":["source"]
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -892,7 +897,7 @@ func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
 		Store:  &mockStore{}, Engine: engine, Logger: testLogger(),
 	})
 	requestBody := `{"predicate":{},"filename_query":"invoice","mime_families":["pdf"],"grouping":["source"],"limit":1}`
-	firstRequest := httptest.NewRequest(http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(requestBody))
+	firstRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(requestBody))
 	firstRequest.Header.Set("Content-Type", "application/json")
 	firstResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(firstResponse, firstRequest)
@@ -902,7 +907,7 @@ func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
 	requirements.NotEmpty(first.NextCursor)
 
 	secondBody := fmt.Sprintf(`{"predicate":{},"filename_query":"invoice","mime_families":["pdf"],"grouping":["source"],"limit":1,"cursor":%q}`, first.NextCursor)
-	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(secondBody))
+	secondRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(secondBody))
 	secondRequest.Header.Set("Content-Type", "application/json")
 	secondResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(secondResponse, secondRequest)
@@ -910,7 +915,7 @@ func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
 	assert.Equal(t, query.PageSpec{Limit: 1, Offset: 1}, engine.groupRequest.Page)
 
 	engine.groupResult.CacheRevision = "cache-two"
-	staleRequest := httptest.NewRequest(http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(secondBody))
+	staleRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/groups", bytes.NewBufferString(secondBody))
 	staleRequest.Header.Set("Content-Type", "application/json")
 	staleResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(staleResponse, staleRequest)
@@ -930,31 +935,36 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	survivorID := f.CreateMessage("dedup-file-keep")
 	hiddenID := f.CreateMessage("dedup-file-drop")
 	requirements.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
 	))
 	requirements.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
 	))
 	survivorFileID := apiSingleAttachmentID(t, f, survivorID)
 	hiddenFileID := apiSingleAttachmentID(t, f, hiddenID)
-	_, err := f.Store.MergeDuplicates(survivorID, []int64{hiddenID}, "dedup-file-batch")
+	_, err := f.Store.MergeDuplicates(t.Context(), survivorID, []int64{hiddenID}, "dedup-file-batch")
 	requirements.NoError(err)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
 
 	metadata := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metadata, httptest.NewRequest(
+	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", hiddenFileID), nil))
 	assertions.Equal(http.StatusNotFound, metadata.Code, "hidden metadata: %s", metadata.Body.String())
 	assertions.Contains(metadata.Body.String(), "file_not_found")
 
 	content := httptest.NewRecorder()
-	srv.Router().ServeHTTP(content, httptest.NewRequest(
+	srv.Router().ServeHTTP(content, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", hiddenFileID), nil))
 	assertions.Equal(http.StatusNotFound, content.Code, "hidden content: %s", content.Body.String())
 	assertions.Contains(content.Body.String(), "file_not_found")
 
 	live := httptest.NewRecorder()
-	srv.Router().ServeHTTP(live, httptest.NewRequest(
+	srv.Router().ServeHTTP(live, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", survivorFileID), nil))
 	requirements.Equal(http.StatusOK, live.Code, "survivor metadata: %s", live.Body.String())
 	var decoded FileMetadataResponse
@@ -966,7 +976,7 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {
 	t.Helper()
 	var id int64
-	err := f.Store.DB().QueryRow(f.Store.Rebind(
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
 	require.NoError(t, err, "look up attachment for message %d", messageID)
 	return id
@@ -989,7 +999,7 @@ func TestParticipantFileSearchAcceptsVisualQueryFields(t *testing.T) {
 	// scope as to the global one; strict decoding must accept them. Visual
 	// search is not initialized here, so the request reports 503 rather
 	// than 400 unknown-field.
-	request := httptest.NewRequest(http.MethodPost,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 		fmt.Sprintf("/api/v1/participants/%d/files/search", person),
 		bytes.NewBufferString(`{"predicate":{},"visual_query":"red bicycle"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -1011,7 +1021,7 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 		func(context.Context, bool) (visual.Status, error) { return visual.Status{}, nil }, nil)
 	router := srv.Router()
 	get := func(origin string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status?coverage=1", nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/multimodal/status?coverage=1", nil)
 		if origin != "" {
 			request.Header.Set("Origin", origin)
 		}
@@ -1034,7 +1044,7 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	require.Equal(http.StatusTooManyRequests, response.Code, response.Body.String())
 
 	// The light status path stays unmetered.
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/multimodal/status", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/multimodal/status", nil)
 	light := httptest.NewRecorder()
 	router.ServeHTTP(light, request)
 	require.Equal(http.StatusOK, light.Code, light.Body.String())

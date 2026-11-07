@@ -34,7 +34,7 @@ func TestRepairDerivedAttachmentMessage(t *testing.T) {
 	mock.AddMessage("local-attachment", raw, []string{"INBOX"})
 	_, err = syncer.New(mock, st, &syncer.Options{}).Full(t.Context(), "synthetic@example.com")
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier("gmail", "synthetic@example.com")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "gmail", "synthetic@example.com")
 	require.NoError(err)
 	ids, err := st.MessageExistsBatch(source.ID, []string{"local-attachment"})
 	require.NoError(err)

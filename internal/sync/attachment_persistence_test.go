@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,7 +47,7 @@ func TestAttachmentPersistenceFailureAndFullRetry(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(testMIMEWithAttachment(), raw)
 	var expected int
-	require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&expected))
+	require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&expected))
 	assert.Equal(1, expected, "failed writes must not erase the expected count")
 	// Repeated failures, including disabled materialization, remain retryable
 	// across completed incremental runs on an otherwise idle mailbox.
@@ -103,11 +102,11 @@ func TestAttachmentRepairPreservesUnusableEvidence(t *testing.T) {
 			path := filepath.Join(dir, refs[0].StoragePath)
 			switch mode {
 			case "missing-raw":
-				_, err = e.Store.DB().Exec(e.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
+				_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
 			case "empty-raw":
 				err = e.Store.UpsertMessageRaw(id, []byte{})
 			case "undecodable-raw":
-				_, err = e.Store.DB().Exec(e.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("invalid zlib"), id)
+				_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("invalid zlib"), id)
 			case "unparseable-raw":
 				err = e.Store.UpsertMessageRaw(id, []byte("not a MIME message\x00"))
 			case "insufficient-raw":
@@ -119,9 +118,9 @@ func TestAttachmentRepairPreservesUnusableEvidence(t *testing.T) {
 			case "corrupt-file":
 				err = os.WriteFile(path, []byte("Goodbye!!!!!"), 0600)
 			case "metadata-conflict":
-				_, err = e.Store.DB().Exec(e.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE message_id = ?`), strings.Repeat("a", 64), id)
+				_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE message_id = ?`), strings.Repeat("a", 64), id)
 			case "intentional-skip":
-				_, err = e.Store.DB().Exec(e.Store.Rebind(`UPDATE attachments SET attachment_state = 'skipped' WHERE message_id = ?`), id)
+				_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind(`UPDATE attachments SET attachment_state = 'skipped' WHERE message_id = ?`), id)
 			}
 			require.NoError(err)
 			before := attachmentSnapshot(t, e.Store, id)
@@ -223,7 +222,7 @@ func TestAttachmentPersistenceOfflineReplay(t *testing.T) {
 				require.NoError(err)
 				service.setAcquisitionReplay(runID, []string{"offline-attachment"})
 				require.NoError(service.recordAcquisitionFailure(runID, "offline-attachment", syncItemPhaseIngest, syncItemKindIngestError, errAttachmentMaterialization))
-				_, err = service.replayAcquisitionFailures(context.Background(), runID, source.ID,
+				_, err = service.replayAcquisitionFailures(t.Context(), runID, source.ID,
 					[]string{"offline-attachment"}, nil, &store.Checkpoint{}, &gmail.SyncSummary{})
 				require.NoError(err)
 				require.NoError(e.Store.CompleteSync(runID, ""))
@@ -254,7 +253,7 @@ func attachmentSnapshot(t *testing.T, st *store.Store, id int64) []string {
 		if table == "messages" {
 			key = "id"
 		}
-		rows, err := st.DB().Query(st.Rebind("SELECT * FROM "+table+" WHERE "+key+" = ?"), id)
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind("SELECT * FROM "+table+" WHERE "+key+" = ?"), id)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
 		columns, err := rows.Columns()

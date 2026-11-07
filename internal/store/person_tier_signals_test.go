@@ -23,7 +23,7 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 	var counterpart int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&counterpart))
 	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	drafts, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{"DRAFT": {Name: "DRAFT", Type: "system"}})
+	drafts, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, map[string]store.LabelInfo{"DRAFT": {Name: "DRAFT", Type: "system"}})
 	require.NoError(err)
 	for i, event := range []struct {
 		days                           int

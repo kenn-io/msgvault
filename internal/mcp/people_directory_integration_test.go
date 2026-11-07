@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
@@ -164,7 +163,7 @@ func createDirectoryIntegrationPerson(
 	lastContactAt *time.Time,
 ) *store.Person {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier("email", email, displayName)
 	require.NoError(t, err)
 	person, _, err := st.CreatePersonFromParticipantContext(ctx, participantID)

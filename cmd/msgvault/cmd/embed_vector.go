@@ -32,7 +32,7 @@ func runEmbed(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(ctx, cfg, state)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func runEmbed(cmd *cobra.Command) error {
 	// --account/--collection flags (or [vector.embed.scope] accounts)
 	// become source IDs here, and unknown identifiers fail the run loudly
 	// rather than silently widening the embedded corpus.
-	if err := resolveEmbedScopeSourceIDs(s, state); err != nil {
+	if err := resolveEmbedScopeSourceIDs(ctx, s, state); err != nil {
 		return err
 	}
 

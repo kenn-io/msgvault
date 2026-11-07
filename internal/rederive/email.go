@@ -3,6 +3,7 @@ package rederive
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -37,7 +38,7 @@ const (
 // set, a source whose last full walk finished with failures retries only them.
 func emailPass(base string, retry bool) Func {
 	return func(ctx context.Context, s *store.Store, sourceID int64, progress func(string)) (*Summary, error) {
-		w := &emailWalk{s: s, sourceID: sourceID, base: base, progress: progress, sum: &Summary{unchanged: true}}
+		w := &emailWalk{s: s, sourceID: sourceID, base: base, progress: progress, sum: &Summary{unchanged: true}, resume: retry}
 		if !retry {
 			return repairEmail(ctx, w)
 		}
@@ -46,6 +47,9 @@ func emailPass(base string, retry bool) Func {
 			return nil, err
 		}
 		if pending {
+			if err := w.restoreCursor(ctx); err != nil {
+				return w.sum, err
+			}
 			return retryEmail(ctx, w)
 		}
 		return repairEmail(ctx, w)
@@ -61,30 +65,40 @@ type emailWalk struct {
 	sum      *Summary
 	slots    int
 	lo, hi   int64
+
+	resume, checkpointing bool
+	cursor, rangeKey      string
+	afterID, savedID      int64
 }
 
 // repairEmail rebuilds text from retained MIME, including Gmail Chat messages.
-// Each attempt starts at the first row; completed writes survive interruption.
-// Clearing completion and retry state first means only a walk that recorded
-// every failure can leave the retry phase marked.
-func repairEmail(ctx context.Context, w *emailWalk) (*Summary, error) {
+// Sync-triggered attempts resume their safe prefix, preserving failed rows.
+// Manual attempts discard progress so they still inspect the whole archive.
+func repairEmail(ctx context.Context, w *emailWalk) (sum *Summary, err error) {
 	start := time.Now()
-	defer func() { w.sum.Duration = time.Since(start) }()
-	if err := w.s.ForgetMigrationsContext(ctx, w.base); err != nil {
-		return w.sum, err
-	}
-	if err := w.scan(ctx, 0, math.MaxInt64); err != nil {
-		return w.sum, err
-	}
-	if w.sum.Errors == 0 {
-		return w.sum, nil
-	}
-	if w.lo > 0 {
-		if err := w.s.ReplaceMigrationContext(ctx, "", emailRetryRangeKey(w.base, w.lo, w.hi)); err != nil {
-			return w.sum, err
+	defer func() {
+		if w.checkpointing && w.afterID != w.savedID {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err = errors.Join(err, w.checkpoint(cleanupCtx))
+			cancel()
 		}
+		w.sum.Duration = time.Since(start)
+	}()
+	if err := w.restore(ctx); err != nil {
+		return w.sum, err
 	}
-	return w.sum, w.s.ReplaceMigrationContext(ctx, "", w.base+emailRetryPhase)
+	w.checkpointing = true
+	if err := w.scan(ctx, w.afterID, math.MaxInt64); err != nil {
+		return w.sum, err
+	}
+	if err := w.checkpoint(ctx); err != nil {
+		return w.sum, err
+	}
+	w.sum.incomplete = w.slots > 0 || w.lo > 0
+	if w.sum.incomplete {
+		return w.sum, w.s.ReplaceMigrationContext(ctx, "", w.base+emailRetryPhase)
+	}
+	return w.sum, nil
 }
 
 // retryEmail repairs the failed rows a finished full walk recorded. A marker
@@ -119,13 +133,21 @@ func (w *emailWalk) scan(ctx context.Context, afterID, throughID int64) error {
 		if item == nil {
 			return ctx.Err()
 		}
-		afterID = item.MessageID
 		failed, err := w.repairRow(ctx, item)
 		if err == nil && failed {
 			err = w.record(ctx, item.MessageID)
 		}
 		if err != nil {
 			return err
+		}
+		afterID = item.MessageID
+		if w.checkpointing {
+			w.afterID = afterID
+			if w.sum.MessagesScanned%emailCheckpointRows == 0 {
+				if err := w.checkpoint(ctx); err != nil {
+					return err
+				}
+			}
 		}
 	}
 }
@@ -137,10 +159,12 @@ func (w *emailWalk) record(ctx context.Context, id int64) error {
 		w.slots++
 		return w.s.ReplaceMigrationContext(ctx, "", fmt.Sprintf("%s%s%016x", w.base, emailRetrySlot, id))
 	}
-	if w.lo == 0 {
+	if w.lo == 0 || id < w.lo {
 		w.lo = id
 	}
-	w.hi = id
+	if id > w.hi {
+		w.hi = id
+	}
 	return nil
 }
 
@@ -175,16 +199,9 @@ func (w *emailWalk) retrySlots(ctx context.Context) error {
 // retryRange rescans the overflow range and swaps it for the range of rows
 // still failing only after the whole range was scanned.
 func (w *emailWalk) retryRange(ctx context.Context) error {
-	prefix := w.base + emailRetryRange
-	key, err := w.s.NextMigrationKeyContext(ctx, prefix, "")
+	key, first, last, err := w.readRange(ctx)
 	if err != nil || key == "" {
 		return err
-	}
-	lo, hi, ok := strings.Cut(strings.TrimPrefix(key, prefix), "-")
-	first, firstOK := parseEmailRetryID(lo)
-	last, lastOK := parseEmailRetryID(hi)
-	if !ok || !firstOK || !lastOK || first > last {
-		return w.malformed(ctx, key)
 	}
 	if err := w.scan(ctx, first-1, last); err != nil {
 		return err
@@ -196,9 +213,9 @@ func (w *emailWalk) retryRange(ctx context.Context) error {
 	return w.s.ReplaceMigrationContext(ctx, key, replacement)
 }
 
-// malformed clears the retry phase so the next sync runs a full walk.
+// malformed discards progress so the next sync cannot skip unknown failed work.
 func (w *emailWalk) malformed(ctx context.Context, key string) error {
-	if err := w.s.ReplaceMigrationContext(ctx, w.base+emailRetryPhase, ""); err != nil {
+	if err := w.s.ForgetMigrationsContext(ctx, w.base); err != nil {
 		return err
 	}
 	return fmt.Errorf("malformed email retry marker %q", key)

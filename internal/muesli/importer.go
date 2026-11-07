@@ -91,7 +91,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	started := imp.now()
 	identifier := strings.TrimSpace(opts.Identifier)
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, identifier)
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
 			return nil, fmt.Errorf("muesli source %q is not registered; run msgvault add-muesli %s first",
@@ -182,7 +182,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		sum.MeetingsProcessed++
 
-		if err := imp.resolveParticipants(source.ID, &meeting, contacts, opts.PhoneCountryCode, sharedAddresses); err != nil {
+		if err := imp.resolveParticipants(ctx, source.ID, &meeting, contacts, opts.PhoneCountryCode, sharedAddresses); err != nil {
 			return sum, err
 		}
 		snapshot, err := meeting.ArchiveSnapshot(source.ID, identifier, opts.AccountEmail)

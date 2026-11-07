@@ -24,7 +24,7 @@ func TestListMessagesSourceScope(t *testing.T) {
 		src, err := st.GetOrCreateSource("test", fmt.Sprintf("scope-%d@example.test", i))
 		requirements.NoError(err)
 		sources = append(sources, src.ID)
-		conv, err := st.EnsureConversation(src.ID, "thread", "Synthetic")
+		conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Synthetic")
 		requirements.NoError(err)
 		for j := range 3 {
 			id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: strconv.Itoa(j), MessageType: "whatsapp", Subject: sql.NullString{String: "Synthetic", Valid: true}})
@@ -62,7 +62,7 @@ func TestReadSnapshotContextHydration(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("test", "reader@example.test")
 	requirements.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "Synthetic")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Synthetic")
 	requirements.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 	requirements.NoError(err)

@@ -125,11 +125,11 @@ describe('appearance preferences', () => {
   });
 
   it('derives row geometry from the computed CSS token', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     const style = document.createElement('style');
     style.textContent = `
-      :root[data-density="compact"] { --row-height: 36px; }
-      :root[data-density="comfortable"] { --row-height: 46px; }
+      :root[data-density="compact"] { --table-row-height: 36px; }
+      :root[data-density="comfortable"] { --table-row-height: 46px; }
     `;
     document.head.append(style);
     document.documentElement.dataset.density = 'compact';
@@ -144,8 +144,25 @@ describe('appearance preferences', () => {
     style.remove();
   });
 
+  it('updates geometry at the compact breakpoint and removes its listener on disposal', async () => {
+    const media = new EventTarget();
+    vi.stubGlobal('matchMedia', vi.fn(() => media));
+    document.documentElement.style.setProperty('--table-row-height', '36px');
+    const { RowGeometry } = await import('./preferences.svelte');
+    const geometry = new RowGeometry();
+    expect(geometry.height).toBe(36);
+
+    document.documentElement.style.setProperty('--table-row-height', '72px');
+    media.dispatchEvent(new Event('change'));
+    expect(geometry.height).toBe(72);
+    geometry.destroy();
+    document.documentElement.style.setProperty('--table-row-height', '36px');
+    media.dispatchEvent(new Event('change'));
+    expect(geometry.height).toBe(72);
+  });
+
   it('has no geometry before CSS exists and becomes ready from a later computed token', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
@@ -161,7 +178,7 @@ describe('appearance preferences', () => {
     expect(frames.size).toBe(1);
 
     const style = document.createElement('style');
-    style.textContent = ':root { --row-height: 37px; }';
+    style.textContent = ':root { --table-row-height: 37px; }';
     document.head.append(style);
     const [frame, callback] = [...frames.entries()][0]!;
     frames.delete(frame);
@@ -174,7 +191,7 @@ describe('appearance preferences', () => {
   });
 
   it('stops probing when CSS readiness remains unavailable', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
@@ -200,7 +217,7 @@ describe('appearance preferences', () => {
   });
 
   it('cancels an unfinished CSS readiness probe on disposal', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 42));
     const cancelAnimationFrame = vi.fn();
@@ -213,7 +230,9 @@ describe('appearance preferences', () => {
     expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
   });
 
-  it('rebases a virtual scroll offset around the same visible row', () => {
+  it('moves visible focus to the top and otherwise rebases the top row', () => {
+    expect(rebaseVirtualScroll(3600, 36, 72, 110, 500)).toBe(7920);
+    expect(rebaseVirtualScroll(3650, 72, 36, 0, 500)).toBe(1835);
     expect(rebaseVirtualScroll(249 * 36 + 5, 36, 46)).toBe(249 * 46 + 5);
   });
 

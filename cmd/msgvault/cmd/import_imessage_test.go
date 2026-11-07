@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -46,7 +47,7 @@ func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
 
 			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments, config.IMessageConfig{}.MediaPolicy())
 			requirements.NoError(err)
-			client, err := imessage.NewClient(chatPath, opts...)
+			client, err := imessage.NewClient(t.Context(), chatPath, opts...)
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			_, err = client.Import(t.Context(), s, src.ID)
@@ -188,6 +189,59 @@ func runImessageImport(t *testing.T, home string, args ...string) {
 	require.NoError(t, err, output)
 }
 
+func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
+	for _, explicitPath := range []bool{true, false} {
+		name := "configured database"
+		if explicitPath {
+			name = "flag overrides configured database"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			home := t.TempDir()
+			path, chat := testutil.NewIMessageChatDB(t)
+			_, err := chat.ExecContext(t.Context(), `CREATE TABLE attachment (filename TEXT);
+ CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+ INSERT INTO message (date, text, is_from_me) VALUES (700000000, 'outgoing', 1)`)
+			require.NoError(err)
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = home
+			cfg.Analytics.AutoBuildCache = false
+			cfg.IMessage.DBPath = path
+			cfg.IMessage.Me = "owner@example.test"
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+			var owner string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			assert.Equal("owner@example.test", owner)
+			require.NoError(st.Close())
+
+			if explicitPath {
+				cfg.IMessage.DBPath = filepath.Join(home, "unused-chat.db")
+			}
+			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), fmt.Appendf(nil,
+				"[analytics]\nauto_build_cache = false\n[imessage]\ndb_path = %q\nme = %q\n", cfg.IMessage.DBPath, cfg.IMessage.Me), 0o600))
+
+			args := []string{"--no-attachments"}
+			if explicitPath {
+				args = append(args, "--db-path", path)
+			}
+			restoreImessageFlags(t)
+			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+			rootCmd.SetArgs(append([]string{"--home", home, "import-imessage"}, args...))
+			done := captureStdout(t)
+			err = executeRootContext(t.Context(), rootCmd)
+			output := done()
+			require.NoError(err, output)
+			st, err = store.Open(cfg.DatabaseDSN())
+			require.NoError(err)
+			t.Cleanup(func() { _ = st.Close() })
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			assert.Equal("owner@example.test", owner)
+		})
+	}
+}
+
 // Config limits and --max-media-mb must both reach the importer through the
 // command. Dropping either from the policy handoff leaves the attachment
 // stored and fails the case that sets it.
@@ -206,7 +260,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			home := t.TempDir()
 			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.toml), 0o600))
 			chatPath, chat := testutil.NewIMessageAttachmentChatDB(t)
-			_, err := chat.Exec(`UPDATE attachment SET total_bytes=?`, 2<<20)
+			_, err := chat.ExecContext(t.Context(), `UPDATE attachment SET total_bytes=?`, 2<<20)
 			require.NoError(err)
 			root := t.TempDir()
 			require.NoError(os.MkdirAll(filepath.Join(root, "Attachments"), 0o700))
@@ -220,7 +274,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			src, err := resolveImessageSource(st)
 			require.NoError(err)
 			var messageID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), src.ID, "1").Scan(&messageID))
 			refs, err := st.MessageIMessageAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)

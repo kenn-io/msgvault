@@ -53,8 +53,8 @@ func sqliteDatabaseDSN(path, rawQuery string) (string, error) {
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: rawQuery}).String(), nil
 }
 
-func detectDatabaseKind(db *sql.DB) (databaseKind, error) {
-	rows, err := db.Query(`
+func detectDatabaseKind(ctx context.Context, db *sql.DB) (databaseKind, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT name
 		FROM sqlite_master
 		WHERE type = 'table'

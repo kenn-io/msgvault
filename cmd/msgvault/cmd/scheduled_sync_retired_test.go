@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -26,7 +25,7 @@ func retireScheduledSyncSourceForTest(t *testing.T, st *store.Store, sourceType 
 	require.NoError(t, err)
 	destination, err := st.GetOrCreateSource(sourceType, identifier+"-current")
 	require.NoError(t, err)
-	_, err = st.MergeSourcesContext(context.Background(), store.MergeSourcesRequest{
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 		FromSourceID: retired.ID,
 		IntoSourceID: destination.ID,
 	})
@@ -38,7 +37,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		retireScheduledSyncSourceForTest(t, st, granola.SourceType)
 
-		err := runConfiguredGranolaSync(context.Background(), st, config.GranolaSource{
+		err := runConfiguredGranolaSync(t.Context(), st, config.GranolaSource{
 			Identifier: "history",
 		})
 
@@ -54,7 +53,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
 		t.Cleanup(server.Close)
-		ctx := testInvocationContext(context.Background(), &config.Config{}, invocationOptions{})
+		ctx := testInvocationContext(t.Context(), &config.Config{}, invocationOptions{})
 
 		err := runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{
 			Identifier: "history", AccountEmail: "person@example.test", Endpoint: server.URL,
@@ -68,7 +67,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		retireScheduledSyncSourceForTest(t, st, notionmeetings.SourceType)
 
-		err := runConfiguredNotionMeetingsSync(context.Background(), st, config.NotionMeetingsSource{
+		err := runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{
 			Identifier: "history",
 		})
 
@@ -90,7 +89,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		retireScheduledSyncSourceForTest(t, st, muesli.SourceType)
 
-		err := runConfiguredMuesliSync(context.Background(), st, config.MuesliSource{
+		err := runConfiguredMuesliSync(t.Context(), st, config.MuesliSource{
 			Identifier: "history", AccountEmail: "person@example.test",
 			DBPath: filepath.Join(t.TempDir(), "missing-muesli.db"),
 		}, t.TempDir())

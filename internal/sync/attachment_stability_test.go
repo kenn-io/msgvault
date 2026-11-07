@@ -40,7 +40,7 @@ func TestAttachmentStabilityIMAPPartialWrite(t *testing.T) {
 	assert.Zero(summary.Errors, "preserve IMAP's best-effort attachment contract")
 	var id, sourceID int64
 	var count int
-	require.NoError(e.Store.DB().QueryRow(`SELECT id, source_id, attachment_count FROM messages`).Scan(&id, &sourceID, &count))
+	require.NoError(e.Store.DB().QueryRowContext(t.Context(), `SELECT id, source_id, attachment_count FROM messages`).Scan(&id, &sourceID, &count))
 	assert.Equal(1, count, "IMAP statistics reflect the successfully saved subset")
 	refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(err)
@@ -145,7 +145,7 @@ func TestAttachmentStabilityCaseEquivalentLegacyRows(t *testing.T) {
 	require.NoError(err)
 	require.Len(parsed.Attachments, 2)
 	dir := filepath.Join(e.TmpDir, "attachments")
-	receipt, err := export.StoreAttachmentFileDurable(dir, &parsed.Attachments[0])
+	receipt, err := export.StoreAttachmentFileDurable(t.Context(), dir, &parsed.Attachments[0])
 	require.NoError(err)
 	hash := parsed.Attachments[0].ContentHash
 	legacyIDs := make([]int64, 3)
@@ -155,7 +155,7 @@ func TestAttachmentStabilityCaseEquivalentLegacyRows(t *testing.T) {
 			ContentHash: legacyHash, Size: int64(len(content)), ContentID: fmt.Sprintf("legacy-%d@example.com", i),
 			Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
 		}))
-		require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT id FROM attachments WHERE message_id = ? AND filename = ?`),
+		require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT id FROM attachments WHERE message_id = ? AND filename = ?`),
 			id, fmt.Sprintf("legacy-%d.txt", i)).Scan(&legacyIDs[i]))
 	}
 	require.NoError(e.Store.RecomputeMessageAttachmentStats(id))
@@ -173,7 +173,7 @@ func TestAttachmentStabilityCaseEquivalentLegacyRows(t *testing.T) {
 		require.Len(after, 3)
 		for i := range after {
 			var rowID int64
-			require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT id FROM attachments WHERE message_id = ? AND filename = ?`),
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT id FROM attachments WHERE message_id = ? AND filename = ?`),
 				id, after[i].Filename).Scan(&rowID))
 			assert.Equal(legacyIDs[i], rowID)
 			if i < 2 {

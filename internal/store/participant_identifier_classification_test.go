@@ -17,7 +17,7 @@ func assertParticipantIdentifierClassification(
 ) {
 	t.Helper()
 	var gotService, gotScopeKind, gotScopeValue sql.NullString
-	err := st.DB().QueryRow(st.Rebind(`SELECT cs.slug, pi.scope_kind, pi.scope_value
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cs.slug, pi.scope_kind, pi.scope_value
 		FROM participant_identifiers pi
 		LEFT JOIN communication_services cs ON cs.id = pi.service_id
 		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`),
@@ -38,6 +38,7 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 	st := f.Store
 
 	_, err := st.EnsureParticipantByPhone(
+		t.Context(),
 		"+15550100001", "Test User", "whatsapp",
 	)
 	require.NoError(err)
@@ -108,11 +109,11 @@ func TestParticipantIdentifierServiceScopeV2RepairsAlreadyMigratedRows(t *testin
 		"slack", "T-REPAIR:U-REPAIR", "Test User",
 	)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participant_identifiers
 		SET service_id = NULL, scope_kind = NULL, scope_value = NULL
 		WHERE identifier_value IN ('+15550100003', 'T-REPAIR:U-REPAIR')`)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`),
 		"participant_identifiers_service_scope_v2",
 	)

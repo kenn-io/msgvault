@@ -58,7 +58,7 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
-	_, err = st.EnsureConversation(src.ID, "!top\n:example.test", "Club\x1b[31m\nTitle")
+	_, err = st.EnsureConversation(t.Context(), src.ID, "!top\n:example.test", "Club\x1b[31m\nTitle")
 	require.NoError(err)
 	sum := &beeper.ImportSummary{SourceID: src.ID, Errors: 25, FailedChats: map[string]*beeper.ChatFailure{
 		"!top\n:example.test": {MediaErrors: 3, LastError: "bad\r\n" + strings.Repeat("界", 170)},

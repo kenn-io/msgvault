@@ -190,7 +190,7 @@ func (s *Syncer) incrementalWithRecovery(
 				return nil, err
 			}
 		}
-		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			s.logger.Warn("failed to save replay checkpoint", "error", err)
 		}
 	}
@@ -230,7 +230,7 @@ func (s *Syncer) incrementalWithRecovery(
 			for id := range allIDs {
 				idList = append(idList, id)
 			}
-			existingMap, err := s.store.MessageExistsBatch(source.ID, idList)
+			existingMap, err := s.store.MessageExistsBatchContext(ctx, source.ID, idList)
 			if err != nil {
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("check existing messages: %w", err)
@@ -328,7 +328,7 @@ func (s *Syncer) incrementalWithRecovery(
 
 			// Batch-mark deleted messages
 			if len(deletedIDs) > 0 {
-				if err := s.store.MarkMessagesDeletedBatch(source.ID, deletedIDs); err != nil {
+				if err := s.store.MarkMessagesDeletedBatch(ctx, source.ID, deletedIDs); err != nil {
 					s.logger.Warn("failed to batch mark messages deleted", "error", err)
 					for _, id := range deletedIDs {
 						s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
@@ -517,7 +517,7 @@ func (s *Syncer) replayAcquisitionFailures(
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
 			successfulIDs = append(successfulIDs, messageID)
 		}
-		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 		}
 	}
@@ -641,12 +641,12 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 
 	// Apply label diff directly — no API call needed
 	if isAdd {
-		if err := s.store.AddMessageLabels(internalID, labelIDs); err != nil {
+		if err := s.store.AddMessageLabels(ctx, internalID, labelIDs); err != nil {
 			return false, false, err
 		}
 		return true, true, nil
 	}
-	if err := s.store.RemoveMessageLabels(internalID, labelIDs); err != nil {
+	if err := s.store.RemoveMessageLabels(ctx, internalID, labelIDs); err != nil {
 		return false, false, err
 	}
 	return true, true, nil

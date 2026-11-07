@@ -4,6 +4,7 @@
 import type { CLIQueryMessageSummary } from "./cLIQueryMessageSummary";
 
 export interface CliSearchResponse {
+  has_more?: boolean;
   hybrid_available?: boolean;
   index_built?: boolean;
   index_state?: string;

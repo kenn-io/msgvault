@@ -61,7 +61,7 @@ func revisionStoreLocation(t *testing.T, st *store.Store) string {
 	require := require.New(t)
 	if st.IsPostgreSQL() {
 		var database, schema string
-		require.NoError(st.DB().QueryRow("SELECT current_database(), current_schema()").Scan(&database, &schema))
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
 		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(err)
 		u.Path = "/" + database
@@ -72,7 +72,7 @@ func revisionStoreLocation(t *testing.T, st *store.Store) string {
 	}
 	var sequence int
 	var name, location string
-	require.NoError(st.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &location))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &location))
 	return location
 }
 
@@ -82,7 +82,7 @@ func TestAttachmentRevisionCrashWorker(t *testing.T) {
 		t.Skip("subprocess worker")
 	}
 	require := require.New(t)
-	st, err := store.OpenForTest(os.Getenv("MSGVAULT_ATTACHMENT_CRASH_DSN"))
+	st, err := store.OpenForTest(t.Context(), os.Getenv("MSGVAULT_ATTACHMENT_CRASH_DSN"))
 	require.NoError(err)
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
@@ -106,7 +106,7 @@ func TestAttachmentRevisionCrashWorker(t *testing.T) {
 		mock.Profile.HistoryID = 1001
 		mock.HistoryID = 1001
 		mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("interrupted")}
-		source, sourceErr := st.GetSourceByIdentifier(testEmail)
+		source, sourceErr := st.GetSourceByIdentifier(t.Context(), testEmail)
 		require.NoError(sourceErr)
 		_, err = service.Incremental(t.Context(), source)
 	} else {

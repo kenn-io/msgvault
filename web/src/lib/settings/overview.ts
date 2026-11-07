@@ -75,7 +75,7 @@ export function overviewRows(
   const buildAvailable = Boolean(coverage?.actions.includes('build_index'));
   rows.push({
     id: 'message_embedding',
-    name: 'Message search',
+    name: 'Search by meaning',
     chip: chip('message_embedding', messageProgress, coverage?.status === 'unavailable' && buildAvailable ? { tone: 'muted', text: 'Unbuilt' } : coverage && COVERAGE_CHIPS[coverage.status]),
     action: buildAvailable
       ? { kind: 'start', id: 'messages', label: 'Build index' }

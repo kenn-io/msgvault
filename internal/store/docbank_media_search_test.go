@@ -48,17 +48,17 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 			if name == "new earlier" {
 				date = time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC)
 			}
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL,sender_id=? WHERE id=?`), date, participant, mid)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL,sender_id=? WHERE id=?`), date, participant, mid)
 			require.NoError(err)
 			switch name {
 			case "deleted":
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), time.Now().UTC(), mid)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), time.Now().UTC(), mid)
 			case "hidden":
-				_, err = f.Store.MergeDuplicates(f.CreateMessage("survivor"), []int64{mid}, "hidden")
+				_, err = f.Store.MergeDuplicates(t.Context(), f.CreateMessage("survivor"), []int64{mid}, "hidden")
 			case "other person":
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id=NULL WHERE id=?`), mid)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=NULL WHERE id=?`), mid)
 			case "storage path fallback":
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash=NULL,source_attachment_id='slack:file' WHERE message_id=?`), mid)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=NULL,source_attachment_id='slack:file' WHERE message_id=?`), mid)
 			}
 			require.NoError(err)
 			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: versionIDs[name]}, ""))
@@ -101,7 +101,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 				require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "original", ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
 				// The same file can appear twice under separate source attachment IDs.
 				require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "duplicate", SourceAttachmentID: "duplicate", ContentHash: hash, Filename: "copy.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), mid)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), mid)
 				require.NoError(err)
 				if day >= 3 {
 					want[version] = append(want[version], mid)
@@ -109,7 +109,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 			}
 		}
 		var attachments int
-		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
 		require.Equal(20, attachments)
 		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2)
 		require.NoError(err)

@@ -141,7 +141,7 @@ func (f *Fetcher) ArchiveWithOptions(ctx context.Context, st *store.Store, dir s
 	}
 	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
 	defer cancel()
-	refs, err := st.MessageRemoteImages(messageID)
+	refs, err := st.MessageRemoteImagesContext(ctx, messageID)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("load archived remote images: %w", err))
 		return result
@@ -199,7 +199,7 @@ func (f *Fetcher) ArchiveWithOptions(ctx context.Context, st *store.Store, dir s
 			continue
 		}
 		att := &mime.Attachment{ContentType: contentType, Content: body}
-		receipt, err := export.StoreAttachmentFileDurable(dir, att)
+		receipt, err := export.StoreAttachmentFileDurable(ctx, dir, att)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("store remote image bytes: %w", err))
 			continue
@@ -217,7 +217,10 @@ func (f *Fetcher) ArchiveWithOptions(ctx context.Context, st *store.Store, dir s
 		result.Downloaded++
 	}
 	if !options.PreserveExpectedAttachments && (result.Downloaded > 0 || result.Reused > 0) {
-		if err := st.RecomputeRemoteImageAttachmentStatsContext(ctx, messageID); err != nil {
+		// The saved attachment rows are already committed. Their message
+		// statistics must match them even after the archive deadline or a
+		// cancellation; this is one local update.
+		if err := st.RecomputeRemoteImageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("update remote image metadata: %w", err))
 		}
 	}

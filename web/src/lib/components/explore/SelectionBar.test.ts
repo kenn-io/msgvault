@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -63,20 +63,25 @@ describe('SelectionBar', () => {
     expect(screen.getByRole('status').textContent).toBe('');
   });
 
-  it('labels predicate selection as all matching rather than a finite URL selection', () => {
+  it.each([
+    [50000, [], 'All 50,000 selected', 'All 50,000 matching items selected'],
+    [50, ['message:1'], 'All 50 selected, except 1', 'All 50 matching items selected, except 1'],
+    [undefined, [], 'All matching selected', 'All matching items selected'],
+  ] as const)('labels predicate selection with total %s and exclusions %s', (totalCount, exclusions, label, announced) => {
     const selection = new ExploreSelectionState();
     selection.selectAllMatching({
       mode: 'all_matching',
       predicate: { query: 'synthetic', search_mode: 'full_text' },
-      exclusions: [],
+      exclusions: [...exclusions],
       cacheRevision: 'cache-1',
       searchProvenance: { lexical_index_revision: 'fts-1' },
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     });
-    render(SelectionBar, { selection, totalCount: 50000 });
+    render(SelectionBar, { selection, totalCount });
 
-    expect(screen.getByRole('status').textContent).toContain('All 50,000 matching items selected');
+    expect(screen.getByRole('status').textContent).toBe(announced);
+    expect(screen.getByText(label, { selector: '.selection-count' })).toBeDefined();
   });
 
   it('promotes visible selection to a pinned all-matching selection', async () => {
@@ -96,66 +101,55 @@ describe('SelectionBar', () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching' }));
 
     expect(selection.mode).toBe('all_matching');
     expect(selection.snapshot()).toMatchObject({ cacheRevision: 'cache-1' });
   });
 
-  it('shows executable actions only when preflight supplies a target and a handler', () => {
+  it('shows count and estimated size together while announcing only the count', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onExport: () => undefined });
+    render(SelectionBar, { selection, preflight: { ...preflight(), estimated_bytes: 128 * 1024 * 1024 } });
 
-    expect(screen.getByRole('button', { name: 'Export selection' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
+    expect(screen.getByText('2 selected', { selector: '.selection-count' }).textContent).toBe('2 selected · 128.0 MB');
+    expect(screen.getByRole('status').textContent).toBe('2 selected');
   });
 
-  it('shows preflight-supplied per-action reasons without inferring support from rows', () => {
+  it('explains disabled actions on hover and keyboard focus', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
     render(SelectionBar, {
-      selection,
-      totalCount: 2,
+      selection, onExport: vi.fn(), onReviewDeletion: vi.fn(),
       preflight: preflight([
-        { action: 'export', reason: 'selection_contains_items_without_exportable_files' },
-        { action: 'open_in_source', reason: 'selection_contains_items_that_cannot_be_opened_in_source' },
+        { action: 'export', reason: 'browser_export_requires_single_message' },
+        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
       ]),
     });
-
-    expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
-    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
+    for (const [name, reason, trigger] of [
+      ['Export selection', 'Export works for one message at a time.', fireEvent.mouseEnter],
+      ['Review deletion…', 'None of the selected items can be deleted from their source.', fireEvent.focusIn],
+    ] as const) {
+      const control = screen.getByRole('button', { name }) as HTMLButtonElement;
+      expect(control.disabled).toBe(true);
+      expect(screen.queryByText(reason)).toBeNull();
+      const wrapper = control.closest('.kit-tooltip-trigger')!;
+      await trigger(wrapper);
+      expect((await screen.findByRole('tooltip')).textContent).toBe(reason);
+    }
   });
 
-  it('lists a disabled open-in-source item with a plain reason and no raw code', async () => {
+  it('runs export and deletion review for the selected items', async () => {
     const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, {
-      selection,
-      totalCount: 2,
-      preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
-      onOpenInSource: () => undefined,
-    });
+    selection.selectVisible(['message:1', 'message:2']);
+    const onExport = vi.fn();
+    const onReviewDeletion = vi.fn();
+    render(SelectionBar, { selection, preflight: preflight(), onExport, onReviewDeletion });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-
-    const item = screen.getByRole('menuitem', {
-      name: 'Open selection in source Your sources don’t provide links to open these items.'
-    });
-    expect(item.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByText(/trusted_source_link_unavailable/)).toBeNull();
-  });
-
-  it('opens the selection in source from the overflow menu when preflight allows it', async () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    const onOpenInSource = vi.fn();
-    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onOpenInSource });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open selection in source' }));
-
-    expect(onOpenInSource).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole('button', { name: 'Export selection' }));
+    expect(onExport).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
+    expect(onReviewDeletion).toHaveBeenCalledExactlyOnceWith('explicit');
   });
 
   it('renders nothing while nothing is selected', () => {
@@ -181,44 +175,16 @@ describe('SelectionBar', () => {
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     };
-    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
+    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion, preflight: preflight() });
 
     expect(screen.getByRole('status').textContent).toContain('3 selected');
+    expect((screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement).disabled).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('explicit');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('all_matching');
-  });
-
-  it('disables Review for deletion with the staging reason as a sentence', () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, {
-      selection,
-      totalCount: 2,
-      onReviewDeletion: vi.fn(),
-      preflight: preflight([
-        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
-      ]),
-    });
-
-    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
-    expect(review.disabled).toBe(true);
-    const reason = screen.getByText('None of the selected items can be deleted from their source.');
-    expect(review.getAttribute('aria-describedby')).toBe(reason.id);
-    expect(reason.getAttribute('title')).toBe('selection_contains_items_that_cannot_be_deleted_from_source');
-  });
-
-  it('keeps Review for deletion enabled when staging is available', () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, { selection, totalCount: 2, onReviewDeletion: vi.fn(), preflight: preflight() });
-
-    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
-    expect(review.disabled).toBe(false);
-    expect(review.getAttribute('aria-describedby')).toBeNull();
   });
 
   it('keeps meeting context independent from raw-export preflight eligibility', async () => {
@@ -247,7 +213,6 @@ describe('SelectionBar', () => {
       canExportMeetings: true,
     });
 
-    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
@@ -289,14 +254,14 @@ describe('SelectionBar', () => {
     const renderBar = (canExportMeetings?: boolean) => {
       const selection = new ExploreSelectionState();
       selection.selectVisible(['message:1']);
-      render(SelectionBar, {
+      const view = render(SelectionBar, {
         selection,
         totalCount: 2,
         client: createAPIClient(vi.fn<typeof fetch>()),
         meetingSelection,
         canExportMeetings,
       });
-      return selection;
+      return { selection, view };
     };
 
     it('hides meeting export for selections that cannot contain meetings', () => {
@@ -318,16 +283,63 @@ describe('SelectionBar', () => {
       expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
     });
 
-    it('closes the meeting context controls when the bar hides', async () => {
-      const selection = renderBar(true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
-
+    it('claims Escape and returns focus to the meeting button', async () => {
+      const selection = new ExploreSelectionState();
       selection.selectVisible(['message:1']);
+      let request: Request | undefined;
+      render(SelectionBar, {
+        selection, meetingSelection, canExportMeetings: true,
+        client: createAPIClient(input => {
+          request = input as Request;
+          return new Promise<Response>(() => {});
+        }),
+      });
+      const trigger = screen.getByRole('button', { name: 'Meeting context…' });
+      await fireEvent.click(trigger);
+      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+      await waitFor(() => expect(request).toBeDefined());
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.dispatchEvent(escape);
       await tick();
+      expect(escape.defaultPrevented).toBe(true);
+      expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      expect(request!.signal.aborted).toBe(true);
+    });
 
-      expect(screen.getByRole('button', { name: 'Meeting context…' }).getAttribute('aria-expanded')).toBe('false');
-      expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+    it('hides on focus leaving', async () => {
+      renderBar(true);
+      const trigger = screen.getByRole('button', { name: 'Meeting context…' });
+      trigger.focus();
+      await fireEvent.click(trigger);
+      const outside = document.createElement('button');
+      document.body.append(outside);
+      try {
+        outside.focus();
+        await tick();
+        expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+      } finally { outside.remove(); }
+    });
+
+    it('closes the meeting context controls when the bar hides or eligibility changes', async () => {
+      const { selection, view } = renderBar(true);
+      for (const cause of ['clear', 'ineligible']) {
+        await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+        if (cause === 'clear') {
+          await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+        } else {
+          await view.rerender({ canExportMeetings: false });
+        }
+        expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+        const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        document.dispatchEvent(escape);
+        expect(escape.defaultPrevented).toBe(false);
+
+        selection.selectVisible(['message:1']);
+        await view.rerender({ canExportMeetings: true });
+        expect(screen.getByRole('button', { name: 'Meeting context…' }).getAttribute('aria-expanded')).toBe('false');
+        expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+      }
     });
   });
 });

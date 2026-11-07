@@ -45,6 +45,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(
 		source.ID, "activity-cli@example.com", "manual"))
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "activity-cli-thread", "Activity CLI")
 	require.NoError(err)
 	ownerID, err := st.EnsureParticipant(
@@ -101,7 +102,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	require.NoError(command.Execute())
 	assert.Contains(output.String(), "Projected 2 event(s) in 2 batch(es)")
 
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var timezone, localDate string
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(`
@@ -143,7 +144,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	command.SetOut(&output)
 	command.SetArgs([]string{"build"})
 	require.NoError(command.Execute())
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var count int
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(
@@ -160,7 +161,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	command.SetArgs([]string{"build", "--backstop"})
 	require.NoError(command.Execute())
 	assert.Contains(output.String(), "Projected 1 event(s)")
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(

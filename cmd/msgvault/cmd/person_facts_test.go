@@ -49,7 +49,7 @@ func TestStoreAPIAdapterServesPersonFactRoutes(t *testing.T) {
 		"/api/v1/person-fact-targets",
 		fmt.Sprintf("/api/v1/people/%d/fact-pins", person.ID),
 	} {
-		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
 

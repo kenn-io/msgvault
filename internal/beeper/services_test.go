@@ -1,7 +1,6 @@
 package beeper
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,7 +63,7 @@ func TestResolveBridgeServiceLadder(t *testing.T) {
 			resolver := newBridgeServiceResolver(st)
 
 			service, ok, err := resolver.resolve(
-				context.Background(), test.accountID, test.network, test.userID)
+				t.Context(), test.accountID, test.network, test.userID)
 			require.NoError(err, "resolve")
 			require.True(ok, "bridge must classify")
 			assert.Equal(test.wantSlug, service.Slug)
@@ -78,7 +77,7 @@ func TestResolveUnknownBridgeRegistersItLosslessly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	resolver := newBridgeServiceResolver(st)
 
 	service, ok, err := resolver.resolve(ctx, "example-bridge", "Example Bridge", "@example-bridge_alice:beeper.local")
@@ -114,7 +113,7 @@ func TestResolveUnknownBridgeUsesUserIDPrefixWithOpaqueAccountID(t *testing.T) {
 	resolver := newBridgeServiceResolver(st)
 
 	service, ok, err := resolver.resolve(
-		context.Background(), "acct-opaque-7", "Mystery Bridge",
+		t.Context(), "acct-opaque-7", "Mystery Bridge",
 		"@mysterybridge_alice:beeper.local",
 	)
 	require.NoError(err, "resolve unknown bridge")
@@ -129,7 +128,7 @@ func TestResolveUnknownBridgeCacheSeparatesUserIDPrefixes(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	resolver := newBridgeServiceResolver(st)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	first, ok, err := resolver.resolve(
 		ctx, "acct-opaque-8", "Mystery Bridge", "@bridge-a_alice:beeper.local")
@@ -150,7 +149,7 @@ func TestResolveConfiguredAccountServicePrecedesUserIDPrefix(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	configured, created, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
 		Slug:                 "acct-custom",
 		DisplayLabel:         "Configured Account Service",
@@ -174,7 +173,7 @@ func TestResolvePersistedOpaqueFallbackDoesNotHideUserIDPrefix(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	fallback, ok, err := newBridgeServiceResolver(st).resolve(
 		ctx, "acct-persisted", "", "@-invalid_alice:beeper.local")
@@ -198,7 +197,7 @@ func TestResolveInvalidBridgePrefixFallsBackToAccountID(t *testing.T) {
 	resolver := newBridgeServiceResolver(st)
 
 	service, ok, err := resolver.resolve(
-		context.Background(), "acct-fallback", "", "@-invalid_alice:beeper.local")
+		t.Context(), "acct-fallback", "", "@-invalid_alice:beeper.local")
 	require.NoError(err, "resolve bridge with invalid prefix")
 	require.True(ok)
 	assert.Equal("acct-fallback", service.Slug,
@@ -212,7 +211,7 @@ func TestResolveUnclassifiableBridgeIsNotGuessed(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	resolver := newBridgeServiceResolver(st)
 
-	service, ok, err := resolver.resolve(context.Background(), "!!!", "", "alice")
+	service, ok, err := resolver.resolve(t.Context(), "!!!", "", "alice")
 	require.NoError(err, "resolve must not fail the import")
 	assert.False(ok, "an unusable account id leaves the observation unclassified")
 	assert.Nil(service)
@@ -268,7 +267,7 @@ func TestServiceScopeFollowsPolicyAndNeverFabricates(t *testing.T) {
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 
-			service, err := st.ResolveCommunicationServiceContext(context.Background(), test.slugOrAlias)
+			service, err := st.ResolveCommunicationServiceContext(t.Context(), test.slugOrAlias)
 			require.NoError(err, "resolve %s", test.slugOrAlias)
 
 			kind, value := serviceScope(service, test.accountID, test.userID)

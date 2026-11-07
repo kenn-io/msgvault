@@ -362,7 +362,7 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 	const identifier = "private-timeout@example.test"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  &identityResolveErrorStore{Store: st, err: context.DeadlineExceeded},
+		Store:  &identityResolveErrorStore{MessageStore: st, MessageIdentityStore: st, err: context.DeadlineExceeded},
 		Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
 	})
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{
@@ -380,7 +380,8 @@ func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
 }
 
 type identityResolveErrorStore struct {
-	*store.Store
+	MessageStore
+	MessageIdentityStore
 
 	err error
 }
@@ -592,9 +593,9 @@ func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T
 	requirements.NoError(err)
 	sourceB, err := st.GetOrCreateSource("imap", "archive-b@example.com")
 	requirements.NoError(err)
-	conversationA, err := st.EnsureConversation(sourceA.ID, "thread-a", "Thread A")
+	conversationA, err := st.EnsureConversation(t.Context(), sourceA.ID, "thread-a", "Thread A")
 	requirements.NoError(err)
-	conversationB, err := st.EnsureConversation(sourceB.ID, "thread-b", "Thread B")
+	conversationB, err := st.EnsureConversation(t.Context(), sourceB.ID, "thread-b", "Thread B")
 	requirements.NoError(err)
 	messages := []struct {
 		sourceID       int64
@@ -654,7 +655,7 @@ func TestExploreFullTextMailingListFiltersFindMatchesBeyondUnfilteredCap(t *test
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	requirements.NoError(err)
 
 	messages := []struct {
@@ -1725,7 +1726,7 @@ func TestExploreFullTextUsesRealSQLiteFTS5Candidates(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	requirements.NoError(err)
 	messages := []struct {
 		sourceID string
@@ -1813,7 +1814,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}
-		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
+		_, err := db.ExecContext(t.Context(), fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(t, err, "write %s", table.dir)
 	}
 	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir, identityCacheFixtureOptions{})
@@ -1826,7 +1827,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine
@@ -1912,7 +1913,7 @@ func newExploreSearchFixture(t *testing.T, subjects []string) (*store.Store, *qu
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.org")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "explore", "Explore")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "explore", "Explore")
 	require.NoError(err)
 	var messages strings.Builder
 	for i, subject := range subjects {

@@ -33,7 +33,7 @@ func TestAttachmentReviewFTSOverflowCommitsOriginal(t *testing.T) {
 		fmt.Fprintf(&body, "body%05d ", i)
 	}
 	var vector string
-	err := e.Store.DB().QueryRow(`SELECT to_tsvector('simple', $1) || to_tsvector('simple', $2)`, subject.String(), body.String()).Scan(&vector)
+	err := e.Store.DB().QueryRowContext(t.Context(), `SELECT to_tsvector('simple', $1) || to_tsvector('simple', $2)`, subject.String(), body.String()).Scan(&vector)
 	var overflow *pgconn.PgError
 	require.ErrorAs(err, &overflow)
 	require.Equal("54000", overflow.Code)
@@ -52,7 +52,7 @@ func TestAttachmentReviewFTSOverflowCommitsOriginal(t *testing.T) {
 	require.NoError(err)
 	assert.True(bytes.Equal(raw, saved), "overflow must not discard or alter RAW")
 	var terminal bool
-	require.NoError(e.Store.DB().QueryRow(`SELECT search_fts = ''::tsvector AND indexing_version = $1 FROM messages WHERE id = $2`,
+	require.NoError(e.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts = ''::tsvector AND indexing_version = $1 FROM messages WHERE id = $2`,
 		store.CurrentFTSIndexingVersion, ids["fts-overflow"]).Scan(&terminal))
 	assert.True(terminal)
 	needs := e.Store.NeedsFTSBackfill()
@@ -151,7 +151,7 @@ func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
 				assert.Zero(result.Errors)
 				assert.Equal(1, result.Downloaded+result.Reused)
 				var count int
-				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
 				assert.Equal(wantCount, count, "preserve only MIME occurrences backed by active debt")
 				refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
 				require.NoError(err)
@@ -170,7 +170,7 @@ func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(int64(1), summary.Errors)
 				var count int
-				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
 				assert.Equal(2, count, "a failed repair must retain the expected count after backfill")
 				require.NoError(os.Remove(blocked))
 				reopenAcquisitionStore(t, e)
@@ -178,7 +178,7 @@ func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
 				require.NoError(err)
 				assert.Zero(summary.Errors)
 				assert.Empty(e.Mock.GetMessageCalls)
-				require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+				require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
 				assert.Equal(2, count)
 				refs, err := e.Store.MessageMIMEAttachmentsContext(t.Context(), id)
 				require.NoError(err)
@@ -338,7 +338,7 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				e, f, ids := recoveryLabelsEnv(t)
 				api := e.Syncer.client
-				source := gmailCoverageSource(t, e)
+				source := gmailCoverageSource(t.Context(), t, e)
 				if kind == syncItemKindRemoteImageError {
 					raw := revisionHTMLMIME()
 					parsed, err := mime.Parse(raw)
@@ -367,7 +367,7 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 				for range 2 {
 					ctx, cancel := context.WithCancel(t.Context())
 					f.cancel = cancel
-					summary, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t, e), nil)
+					summary, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t.Context(), t, e), nil)
 					cancel()
 					switch fault {
 					case "":
@@ -390,7 +390,7 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 					require.NoError(err)
 					assert.Equal([]int64{labelID}, labels)
 					if fault != "" {
-						assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+						assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 						prior, err := e.Store.GetLatestCheckpointedSync(source.ID)
 						require.NoError(err)
 						cp, err := decodeRecoveryCheckpoint(prior.CursorBefore.String)
@@ -405,14 +405,14 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 				}
 				removeFault()
 				f.fault = ""
-				_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+				_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 				require.NoError(err)
 				labelID, err := e.Store.LabelIDContext(t.Context(), source.ID, "INBOX")
 				require.NoError(err)
 				labels, err := e.Store.MessageLabelIDsContext(t.Context(), ids["trash"])
 				require.NoError(err)
 				assert.Equal([]int64{labelID}, labels)
-				assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				assert.Equal(4, f.rawGets, "recovery must not reacquire retained messages")
 			})
 		}
@@ -425,10 +425,10 @@ func TestAttachmentReviewLegacyRecoveryCheckpointRestartsLabels(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			e, f, ids := recoveryLabelsEnv(t)
 			api := e.Syncer.client
-			source := gmailCoverageSource(t, e)
+			source := gmailCoverageSource(t.Context(), t, e)
 			runID, err := e.Store.StartSync(source.ID, "full")
 			require.NoError(err)
-			_, err = e.Store.DB().Exec(e.Store.Rebind("UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?"),
+			_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind("UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?"),
 				store.GmailHistoryRecoveryRequestFingerprint+":spam-trash:v1:labels:v1", runID)
 			require.NoError(err)
 			state := &syncState{recoveryPhase: phase, handoffCursor: "1500", checkpoint: &store.Checkpoint{}}
@@ -453,7 +453,7 @@ func TestAttachmentReviewLegacyRecoveryCheckpointRestartsLabels(t *testing.T) {
 			require.NoError(err)
 			assert.Equal([]int64{labelID}, labels, "the skipped first page needs authoritative labels too")
 			assert.Equal([]string{"1500"}, f.historyStarts, "retain the old safe History boundary")
-			assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			assert.Equal(4, f.rawGets)
 			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 			require.NoError(err)

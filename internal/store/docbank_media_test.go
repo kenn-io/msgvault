@@ -27,7 +27,7 @@ type beeperAudio struct {
 func newBeeperMediaFixture(t *testing.T) *storetest.Fixture {
 	t.Helper()
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE sources SET source_type = 'beeper', identifier = ? WHERE id = ?`), "signal", f.Source.ID)
 	require.NoError(t, err)
 	return f
@@ -50,7 +50,7 @@ func addBeeperAudio(t *testing.T, st *store.Store, sourceID, conversationID int6
 		RoleSource: store.AttachmentRoleSourceImporterSemantics,
 	}))
 	var attachmentID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ? AND content_hash = ?`), messageID, hash).Scan(&attachmentID))
 	return beeperAudio{messageID: messageID, attachmentID: attachmentID, sourceMessageID: sourceMessageID, hash: hash, raw: raw}
 }
@@ -103,7 +103,7 @@ func TestBeeperMediaKeyChangeKeepsSharedDelivery(t *testing.T) {
 	retainAudio(t, f.Store, a, "first-occurrence")
 	retainAudio(t, f.Store, b, "second-occurrence")
 	// Make the old delivery due first without depending on clock precision.
-	_, err := f.Store.DB().Exec(`UPDATE beeper_media_deliveries
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries
 		SET next_action_at = '2000-01-01 00:00:00' WHERE processing_key = 'old-key'`)
 	require.NoError(err)
 	a.ProcessingKey = "new-key"
@@ -226,7 +226,7 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 	require.NoError(err)
 	assert.True(applied)
 	var phase, operationState, coverage string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, operation_state, coverage_state FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), mapping.DestinationKey, mapping.ProcessingKey).
 		Scan(&phase, &operationState, &coverage))
@@ -250,7 +250,7 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(oldOperation.OperationID, newOperation.OperationID)
 	var oldState, oldSource string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state, source_id FROM beeper_media_occurrences
 		WHERE destination_key = ? AND revision = ?`), "destination-a", "revision-old").Scan(&oldState, &oldSource))
 	assert.Equal("revoked", oldState)
@@ -281,7 +281,7 @@ func TestBeeperMediaReconsiderBlocked(t *testing.T) {
 	}
 
 	require.NoError(f.Store.ReconsiderBlockedBeeperMediaOperations(t.Context(), "reconsider"))
-	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 		SELECT source_message_id, retention_state, next_action_at IS NOT NULL
 		FROM beeper_media_occurrences WHERE destination_key = ?`), "reconsider")
 	require.NoError(err)
@@ -323,7 +323,7 @@ func TestBeeperMediaUnsupportedDelivery(t *testing.T) {
 	}
 	deliveries := func() map[string]string {
 		t.Helper()
-		rows, err := f.Store.DB().Query(f.Store.Rebind(`
+		rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 			SELECT processing_key, phase, error_code, next_action_at IS NOT NULL
 			FROM beeper_media_deliveries WHERE destination_key = ?`), "unsupported")
 		require.NoError(err)
@@ -384,7 +384,7 @@ func TestBeeperMediaWithdrawnDelivery(t *testing.T) {
 		t.Helper()
 		var phase, code string
 		var scheduled bool
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 			SELECT phase, error_code, next_action_at IS NOT NULL
 			FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`),
 			"withdrawn", "shared-key").Scan(&phase, &code, &scheduled))
@@ -425,7 +425,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	old := audio.mapping("revocation", "old", "old-key")
 	newer := audio.mapping("revocation", "new", "new-key")
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), old))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'pending-process', supplied_input_id = 'input-old',
 		    next_action_at = CURRENT_TIMESTAMP
@@ -433,10 +433,10 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), newer))
 	var state, phase, code string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state FROM beeper_media_occurrences
 		WHERE destination_key = ? AND revision = ?`), old.DestinationKey, old.Revision).Scan(&state))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), old.DestinationKey, old.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("revoked", state)
@@ -444,7 +444,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	assert.Equal("no_live_occurrence", code)
 
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), old))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), old.DestinationKey, old.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("pending-process", phase)
@@ -453,21 +453,21 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	bulk := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "bulk", strings.Repeat("b", 64))
 	bulkMapping := bulk.mapping("revocation-bulk", "r1", "bulk-key")
 	retainAudio(t, f.Store, bulkMapping, "bulk-occurrence")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'pending-artifact', next_action_at = CURRENT_TIMESTAMP
 		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey)
 	require.NoError(err)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, bulk.sourceMessageID))
 	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), bulkMapping.DestinationKey))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("blocked", phase)
 	assert.Equal("no_live_occurrence", code)
 	require.NoError(f.Store.ClearMessageDeletedFromSource(f.Source.ID, bulk.sourceMessageID))
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), bulkMapping))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), bulkMapping.DestinationKey, bulkMapping.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("pending-artifact", phase)
@@ -492,17 +492,17 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceAudio.sourceMessageID))
 	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), pendingMapping.DestinationKey))
 	var pendingState, sourceState string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state FROM beeper_media_occurrences
 		WHERE destination_key = ? AND source_message_id = ?`), pendingMapping.DestinationKey,
 		pendingMapping.SourceMessageID).Scan(&pendingState))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state FROM beeper_media_occurrences
 		WHERE destination_key = ? AND source_message_id = ?`), sourceMapping.DestinationKey,
 		sourceMapping.SourceMessageID).Scan(&sourceState))
 	assert.Equal("revoked", pendingState)
 	assert.Equal("revoked", sourceState)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), pendingMapping.DestinationKey,
 		pendingMapping.ProcessingKey).Scan(&phase, &code))
@@ -519,13 +519,13 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	gapMapping.ErrorCode = "source_raw_invalid"
 	gapMapping.NextActionAt = time.Time{}
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), gapMapping))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), gapMapping.DestinationKey, gapMapping.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("blocked", phase)
 	assert.Equal("source_raw_invalid", code)
 	var receiptSourceID, receiptOccurrenceID string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state, source_id, occurrence_id FROM beeper_media_occurrences
 		WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`), retainedGap.DestinationKey,
 		retainedGap.OccurrenceRef, retainedGap.Revision).Scan(&state, &receiptSourceID, &receiptOccurrenceID))
@@ -533,7 +533,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	assert.Equal("source-"+retainedGap.SourceSHA256[:4], receiptSourceID)
 	assert.Equal("gap-occurrence", receiptOccurrenceID)
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), retainedGap))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT phase, error_code FROM beeper_media_deliveries
 		WHERE destination_key = ? AND processing_key = ?`), gapMapping.DestinationKey, gapMapping.ProcessingKey).Scan(&phase, &code))
 	assert.Equal("pending-artifact", phase)
@@ -543,7 +543,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	observingMapping := observing.mapping("revocation-observing", "r1", "observing-key")
 	retainAudio(t, f.Store, observingMapping, "observing-occurrence")
 	dueAt := time.Now().UTC().Add(-time.Minute)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'observing', processing_operation_id = '11111111-1111-4111-8111-111111111111',
 		    source_id = 'source-cccc', source_version_id = 'version',
@@ -570,7 +570,7 @@ func TestBeeperMediaUnchangedReconciliationDoesNotWrite(t *testing.T) {
 	requireOuter.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requireOuter.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "default-thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "default-thread", "Thread")
 	requireOuter.NoError(err)
 	readOnly, err := store.OpenReadOnly(path)
 	requireOuter.NoError(err)
@@ -606,10 +606,10 @@ func TestBeeperMediaLiveMappings(t *testing.T) {
 	retainAudio(t, f.Store, secondMapping, "occurrence-2")
 	assert.Equal([]string{"m1=occurrence-1", "m2=occurrence-2"}, liveMessageIDs(t, f.Store))
 
-	_, err := f.Store.MergeDuplicates(second.messageID, []int64{first.messageID}, "batch-hide")
+	_, err := f.Store.MergeDuplicates(t.Context(), second.messageID, []int64{first.messageID}, "batch-hide")
 	require.NoError(err)
 	assert.Equal([]string{"m2=occurrence-2"}, liveMessageIDs(t, f.Store))
-	_, err = f.Store.UndoDedup("batch-hide")
+	_, err = f.Store.UndoDedup(t.Context(), "batch-hide")
 	require.NoError(err)
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), firstMapping))
 	assert.Equal([]string{"m1=occurrence-1", "m2=occurrence-2"}, liveMessageIDs(t, f.Store))
@@ -621,7 +621,7 @@ func TestBeeperMediaLiveMappings(t *testing.T) {
 	assert.Equal([]string{"m1=occurrence-1", "m2=occurrence-2"}, liveMessageIDs(t, f.Store))
 
 	// Same-key byte replacement withdraws only the replaced occurrence.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
 		strings.Repeat("e", 64), second.attachmentID)
 	require.NoError(err)
 	assert.Equal([]string{"m1=occurrence-1"}, liveMessageIDs(t, f.Store))
@@ -632,13 +632,13 @@ func TestBeeperMediaLiveMappings(t *testing.T) {
 	assert.Equal([]string{"m1=occurrence-1"}, liveMessageIDs(t, f.Store))
 
 	// Hard deletion removes the last live occurrence.
-	_, err = f.Store.MergeDuplicates(second.messageID, []int64{first.messageID}, "batch-delete")
+	_, err = f.Store.MergeDuplicates(t.Context(), second.messageID, []int64{first.messageID}, "batch-delete")
 	require.NoError(err)
 	_, err = f.Store.DeleteDedupedBatch("batch-delete")
 	require.NoError(err)
 	assert.Empty(liveMessageIDs(t, f.Store))
 	var revoked int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM beeper_media_occurrences WHERE retention_state = 'revoked'`).Scan(&revoked))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM beeper_media_occurrences WHERE retention_state = 'revoked'`).Scan(&revoked))
 	assert.Equal(2, revoked)
 }
 
@@ -650,7 +650,7 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.BeeperMediaScan{DestinationKey: "missing"}, initial)
 	var checkpoints int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM archive_metadata WHERE key = 'beeper_media_scan:missing'`).Scan(&checkpoints))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM archive_metadata WHERE key = 'beeper_media_scan:missing'`).Scan(&checkpoints))
 	assert.Zero(checkpoints, "the first audio checkpoint load writes nothing")
 	var audios []beeperAudio
 	for i := range 101 {
@@ -659,10 +659,10 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	}
 	gmail, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
-	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	gmailConversation, err := f.Store.EnsureConversation(t.Context(), gmail.ID, "gmail-thread", "Thread")
 	require.NoError(err)
 	addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-audio", strings.Repeat("f", 64))
-	_, err = f.Store.MergeDuplicates(audios[1].messageID, []int64{audios[0].messageID}, "hidden")
+	_, err = f.Store.MergeDuplicates(t.Context(), audios[1].messageID, []int64{audios[0].messageID}, "hidden")
 	require.NoError(err)
 
 	page, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 100)
@@ -737,7 +737,7 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 	f := newBeeperMediaFixture(t)
 	gmail, err := f.Store.GetOrCreateSource("gmail", "rod@example.com")
 	require.NoError(err)
-	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	gmailConversation, err := f.Store.EnsureConversation(t.Context(), gmail.ID, "gmail-thread", "Thread")
 	require.NoError(err)
 	states := []string{"", "stored", "pending", "failed", "skipped"}
 	want := make(map[int64]string)
@@ -745,9 +745,9 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation,
 			fmt.Sprintf("gmail-%s-%d", state, i), fmt.Sprintf("%064x", i+1))
 		if state == "" {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), audio.attachmentID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), audio.attachmentID)
 		} else {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id = ?`),
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id = ?`),
 				state, audio.attachmentID)
 		}
 		require.NoError(err)
@@ -756,15 +756,15 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 		}
 	}
 	zeroBytes := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-zero-bytes", fmt.Sprintf("%064x", 9))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET size = 0 WHERE id = ?`), zeroBytes.attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET size = 0 WHERE id = ?`), zeroBytes.attachmentID)
 	require.NoError(err)
 	// Legacy Beeper audio has a NULL state; only rows with archived bytes count.
 	legacyStored := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-legacy-stored", strings.Repeat("a", 64))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), legacyStored.attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), legacyStored.attachmentID)
 	require.NoError(err)
 	want[legacyStored.attachmentID] = ""
 	legacyMissing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-legacy-missing", strings.Repeat("c", 64))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`),
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`),
 		legacyMissing.attachmentID)
 	require.NoError(err)
 
@@ -784,11 +784,11 @@ func TestBeeperMediaMergeSkipsPreservedAudioWithOldProviderReference(t *testing.
 	f := newBeeperMediaFixture(t)
 
 	conversationIdentity := "!merge:beeper.local"
-	historicalConversation, err := f.Store.EnsureConversation(f.Source.ID, conversationIdentity, "Thread")
+	historicalConversation, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, conversationIdentity, "Thread")
 	require.NoError(err)
 	destination, err := f.Store.GetOrCreateSource("beeper", "signal-main")
 	require.NoError(err)
-	destinationConversation, err := f.Store.EnsureConversation(destination.ID, conversationIdentity, "Thread")
+	destinationConversation, err := f.Store.EnsureConversation(t.Context(), destination.ID, conversationIdentity, "Thread")
 	require.NoError(err)
 
 	hash := strings.Repeat("a", 64)
@@ -797,13 +797,13 @@ func TestBeeperMediaMergeSkipsPreservedAudioWithOldProviderReference(t *testing.
 	senderID, err := f.Store.EnsureParticipant("sender@example.test", "Example Sender", "example.test")
 	require.NoError(err)
 	sentAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE messages SET sender_id = ?, sent_at = ? WHERE id IN (?, ?)
 	`), senderID, sentAt, historical.messageID, live.messageID)
 	require.NoError(err)
 
 	// Preserve the old filename while the live occurrence keeps its own name.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename = 'historical-audio.ogg' WHERE id = ?`), historical.attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename = 'historical-audio.ogg' WHERE id = ?`), historical.attachmentID)
 	require.NoError(err)
 	merged, err := f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 		FromSourceID: f.Source.ID, IntoSourceID: destination.ID,
@@ -814,7 +814,7 @@ func TestBeeperMediaMergeSkipsPreservedAudioWithOldProviderReference(t *testing.
 	var copiedID int64
 	var copiedPartKey string
 	var copiedProviderAttachmentID string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT attachment.id, attachment.source_part_key, attachment.source_attachment_id
 		FROM attachments attachment
 		JOIN source_merge_preserved_attachments marker ON marker.attachment_id = attachment.id
@@ -839,7 +839,7 @@ func TestBeeperMediaMergeSkipsPreservedAudioWithOldProviderReference(t *testing.
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), stale))
 	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), stale.DestinationKey))
 	var state, errorCode string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT retention_state, error_code FROM beeper_media_occurrences
 		WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?
 	`), stale.DestinationKey, stale.OccurrenceRef, stale.Revision).Scan(&state, &errorCode))
@@ -861,19 +861,19 @@ func TestBeeperMediaSchemaReopen(t *testing.T) {
 	st := open()
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "default-thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "default-thread", "Thread")
 	require.NoError(err)
 	audio := addBeeperAudio(t, st, source.ID, conversation, "message-1", strings.Repeat("a", 64))
-	_, err = st.DB().Exec(`DROP TABLE beeper_media_deliveries`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE beeper_media_deliveries`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`DROP TABLE beeper_media_occurrences`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE beeper_media_occurrences`)
 	require.NoError(err)
 	require.NoError(st.Close())
 
 	// An archive written before this route opens with the new tables.
 	st = open()
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	assert.Equal(1, messages)
 	mapping := audio.mapping("destination", "revision", "processing")
 	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), mapping))
@@ -884,7 +884,7 @@ func TestBeeperMediaSchemaReopen(t *testing.T) {
 	invalid := mapping
 	invalid.OccurrenceRef, invalid.SourceSHA256 = "msgvault:invalid", "not-a-digest"
 	require.Error(st.ReconcileBeeperMediaMapping(t.Context(), invalid))
-	_, err = st.DB().Exec(`INSERT INTO beeper_media_occurrences
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO beeper_media_occurrences
 		(destination_key, occurrence_ref, revision, source_type, source_identifier, source_conversation_id,
 		 source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
 		 occurrence_json, request_filename, request_mime_type)
@@ -900,8 +900,8 @@ func TestBeeperMediaSchemaReopen(t *testing.T) {
 	require.True(ok)
 	assert.Equal(pending.OperationID, replayed.OperationID)
 	var occurrences, deliveries int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM beeper_media_occurrences`).Scan(&occurrences))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM beeper_media_deliveries`).Scan(&deliveries))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM beeper_media_occurrences`).Scan(&occurrences))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM beeper_media_deliveries`).Scan(&deliveries))
 	assert.Equal(1, occurrences)
 	assert.Equal(1, deliveries)
 }
@@ -920,7 +920,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	retentionState := func(audio beeperAudio) string {
 		t.Helper()
 		var state string
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT retention_state FROM beeper_media_occurrences
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT retention_state FROM beeper_media_occurrences
 			WHERE destination_key = 'reader' AND occurrence_ref = ?`), "msgvault:"+audio.sourceMessageID).Scan(&state))
 		return state
 	}
@@ -938,31 +938,31 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		ContentVersionID: "content", DeliveryProfile: "supplied-transcript", DeliveryPhase: "pending-artifact", BytesArchived: true,
 	}, occurrences[0])
 	date := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", date, retained.messageID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", date, retained.messageID)
 	require.NoError(err)
 	occurrences = list(retained.messageID)
 	assert.Equal("Quarterly review", occurrences[0].ContainingTitle)
 	require.NotNil(occurrences[0].OccurredAt)
 	assert.True(date.Equal(*occurrences[0].OccurredAt))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject = '', sent_at = NULL WHERE id = ?`), retained.messageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET subject = '', sent_at = NULL WHERE id = ?`), retained.messageID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations SET title = '' WHERE id = ?`), f.ConvID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET title = '' WHERE id = ?`), f.ConvID)
 	require.NoError(err)
 	occurrences = list(retained.messageID)
 	assert.Empty(occurrences[0].ContainingTitle)
 	assert.Nil(occurrences[0].OccurredAt)
 	internalDate := date.Add(-time.Hour)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ?, internal_date = ? WHERE id = ?`), date, internalDate, retained.messageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ?, internal_date = ? WHERE id = ?`), date, internalDate, retained.messageID)
 	require.NoError(err)
 	occurrences = list(retained.messageID)
 	require.NotNil(occurrences[0].OccurredAt)
 	assert.True(date.Equal(*occurrences[0].OccurredAt))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET received_at = NULL WHERE id = ?`), retained.messageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET received_at = NULL WHERE id = ?`), retained.messageID)
 	require.NoError(err)
 	occurrences = list(retained.messageID)
 	require.NotNil(occurrences[0].OccurredAt)
 	assert.True(internalDate.Equal(*occurrences[0].OccurredAt))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
 		operation_state = 'succeeded', supplied_input_id = 'input-key' WHERE destination_key = 'reader' AND processing_key = 'key'`))
 	require.NoError(err)
 	occurrences = list(retained.messageID)
@@ -1008,13 +1008,13 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	hidden := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "hidden", strings.Repeat("5", 64))
 	retainAudio(t, f.Store, hidden.mapping("reader", "r1", ""), "occurrence-5")
 	require.Len(list(hidden.messageID), 1)
-	_, err = f.Store.MergeDuplicates(retained.messageID, []int64{hidden.messageID}, "batch-hide")
+	_, err = f.Store.MergeDuplicates(t.Context(), retained.messageID, []int64{hidden.messageID}, "batch-hide")
 	require.NoError(err)
 	assert.Empty(list(hidden.messageID))
 
 	replaced := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "replaced", strings.Repeat("6", 64))
 	retainAudio(t, f.Store, replaced.mapping("reader", "r1", ""), "occurrence-6")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
 		strings.Repeat("7", 64), replaced.attachmentID)
 	require.NoError(err)
 	listed = list(replaced.messageID)
@@ -1026,7 +1026,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	// those is a recording. Audio blocked after retention began stays, whatever the code.
 	gmail, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
-	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	gmailConversation, err := f.Store.EnsureConversation(t.Context(), gmail.ID, "gmail-thread", "Thread")
 	require.NoError(err)
 	for _, file := range []struct {
 		name, mime, mediaType, code string
@@ -1038,7 +1038,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		{"header.bin", "application/octet-stream", "", "unsupported_media", false, false},
 	} {
 		video := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-"+file.name, digestString(file.name))
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ?
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ?
 			WHERE id = ?`), file.name, file.mime, file.mediaType, video.attachmentID)
 		require.NoError(err)
 		mapping := video.mapping("reader", "r1", "")
@@ -1078,20 +1078,20 @@ func TestMessageMediaOccurrences(t *testing.T) {
 			local, err := f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
 			require.NoError(err)
 			require.Len(local, 1, "multiple mappings classify one attachment")
-			_, err = f.Store.MergeDuplicates(retained.messageID, []int64{video.messageID}, "hide-generic")
+			_, err = f.Store.MergeDuplicates(t.Context(), retained.messageID, []int64{video.messageID}, "hide-generic")
 			require.NoError(err)
 			local, err = f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
 			require.NoError(err)
 			assert.Empty(local)
 		}
 		if file.name == "header.bin" {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
 				digestString("replacement"), video.attachmentID)
 			require.NoError(err)
 			local, err := f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
 			require.NoError(err)
 			assert.Empty(local, "the old header classification does not follow replaced bytes")
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
 				video.hash, video.attachmentID)
 			require.NoError(err)
 			require.NoError(f.Store.MarkMessageDeleted(gmail.ID, video.sourceMessageID))
@@ -1111,19 +1111,19 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	} {
 		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-stored-"+file.name,
 			digestString("stored-"+file.name))
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ''
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ''
 			WHERE id = ?`), file.name, file.mime, audio.attachmentID)
 		require.NoError(err)
 		listed = list(audio.messageID)
 		require.Len(listed, 1, file.name)
 		assert.True(listed[0].BytesArchived, file.name)
 		if file.name == "note.ogg" {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_role = 'unknown' WHERE id = ?`), audio.attachmentID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_role = 'unknown' WHERE id = ?`), audio.attachmentID)
 			require.NoError(err)
 			listed = list(audio.messageID)
 			require.Len(listed, 1)
 			assert.True(listed[0].BytesArchived)
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET identifier = '' WHERE id = ?`), gmail.ID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE sources SET identifier = '' WHERE id = ?`), gmail.ID)
 			require.NoError(err)
 			listed = list(audio.messageID)
 			require.Len(listed, 1)
@@ -1136,7 +1136,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	// placeholder path is not.
 	slack, err := f.Store.GetOrCreateSource("slack", "T01:U01")
 	require.NoError(err)
-	slackConversation, err := f.Store.EnsureConversation(slack.ID, "slack-channel", "Channel")
+	slackConversation, err := f.Store.EnsureConversation(t.Context(), slack.ID, "slack-channel", "Channel")
 	require.NoError(err)
 	for _, alias := range []struct {
 		sourceAttachmentID, state, placeholder string
@@ -1157,7 +1157,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		case "none":
 			storagePath = ""
 		}
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments
 			SET content_hash = '', storage_path = ?, attachment_state = NULLIF(?, ''), source_attachment_id = ?,
 			    filename = 'voice.ogg', mime_type = 'audio/ogg'
 			WHERE id = ?`), storagePath, alias.state, alias.sourceAttachmentID, audio.attachmentID)
@@ -1169,7 +1169,7 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	}
 
 	legacyMissing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "legacy-missing-reader", strings.Repeat("c", 64))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`), legacyMissing.attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`), legacyMissing.attachmentID)
 	require.NoError(err)
 	listed = list(legacyMissing.messageID)
 	require.Len(listed, 1)

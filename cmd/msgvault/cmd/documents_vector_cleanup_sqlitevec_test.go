@@ -34,7 +34,7 @@ func TestRunConfiguredDocumentVectorGenerationCleansRetiredWhenEmbeddingsDisable
 	}}))
 	require.NoError(backend.Close())
 
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 		INSERT INTO document_vector_publications
 			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
 			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
@@ -59,7 +59,8 @@ func TestRunConfiguredDocumentVectorGenerationCleansRetiredWhenEmbeddingsDisable
 	require.NoError(err)
 	t.Cleanup(func() { _ = backend.Close() })
 	var remaining int
-	require.NoError(backend.DB().QueryRow(
+	require.NoError(backend.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM document_vector_embeddings WHERE token = ?`, token,
 	).Scan(&remaining))
 	assert.Zero(remaining)

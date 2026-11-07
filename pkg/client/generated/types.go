@@ -2859,6 +2859,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HasMore          *bool                    `json:"has_more,omitempty"`
 	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
@@ -4829,6 +4830,7 @@ type EntryRow struct {
 	ParticipantIds             []int64      `json:"participant_ids,omitempty"`
 	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
 	Preview                    string       `json:"preview" validate:"required"`
+	SenderLabel                *string      `json:"sender_label,omitzero"`
 	SourceID                   int64        `json:"source_id"`
 	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
 	SourceType                 string       `json:"source_type" validate:"required"`
@@ -5816,6 +5818,7 @@ type FileSearchRow struct {
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                  `json:"participant_labels,omitempty"`
 	SearchExplain      *FileSearchExplain        `json:"search_explain,omitempty"`
+	SenderLabel        *string                   `json:"sender_label,omitzero"`
 	SizeBytes          int64                     `json:"size_bytes"`
 	SourceID           int64                     `json:"source_id"`
 	SourceIdentifier   string                    `json:"source_identifier" validate:"required"`
@@ -6497,18 +6500,20 @@ func (h HybridSearchMatch) Validate() error {
 }
 
 type HybridSearchResponse struct {
-	Accelerator      *string                 `json:"accelerator,omitzero"`
-	Generation       HybridGenerationSummary `json:"generation"`
-	HasMore          bool                    `json:"has_more"`
-	Mode             string                  `json:"mode" validate:"required"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Query            string                  `json:"query" validate:"required"`
-	Results          []HybridSearchItem      `json:"results" validate:"required"`
-	Returned         int64                   `json:"returned"`
-	ScopeLabel       *string                 `json:"scope_label,omitzero"`
-	ScopeSourceCount *int64                  `json:"scope_source_count,omitempty"`
-	Timings          HybridSearchTimings     `json:"timings"`
-	TookMs           int64                   `json:"took_ms"`
+	Accelerator           *string                 `json:"accelerator,omitzero"`
+	CandidateLimitReached *int64                  `json:"candidate_limit_reached,omitempty"`
+	Generation            HybridGenerationSummary `json:"generation"`
+	HasMore               bool                    `json:"has_more"`
+	Mode                  string                  `json:"mode" validate:"required"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Query                 string                  `json:"query" validate:"required"`
+	RankingLimitReached   *int64                  `json:"ranking_limit_reached,omitempty"`
+	Results               []HybridSearchItem      `json:"results" validate:"required"`
+	Returned              int64                   `json:"returned"`
+	ScopeLabel            *string                 `json:"scope_label,omitzero"`
+	ScopeSourceCount      *int64                  `json:"scope_source_count,omitempty"`
+	Timings               HybridSearchTimings     `json:"timings"`
+	TookMs                int64                   `json:"took_ms"`
 }
 
 func (h HybridSearchResponse) Validate() error {
@@ -12225,6 +12230,7 @@ type PersonFileSearchRow struct {
 	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
 	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
 	SearchExplain      *FileSearchExplain              `json:"search_explain,omitempty"`
+	SenderLabel        *string                         `json:"sender_label,omitzero"`
 	SizeBytes          int64                           `json:"size_bytes"`
 	SourceID           int64                           `json:"source_id"`
 	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`

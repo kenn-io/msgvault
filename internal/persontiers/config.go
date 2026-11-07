@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 // Config holds the windows, thresholds and exclusions of the tier rules. Start
@@ -57,7 +59,7 @@ func DefaultConfig() Config {
 			"notification", "notifications", "mailer-daemon", "postmaster",
 			"bounce", "bounces", "newsletter", "digest", "alerts", "calendar-notification",
 		},
-		ExcludeDomainPatterns: []string{"resource.calendar.google.com"},
+		ExcludeDomainPatterns: []string{calevent.RoomDomain},
 		MinCallSeconds:        120,
 		Tier1:                 Tier1Thresholds{2, 2, 6, 3, 2, 2},
 		Tier2:                 Tier2Thresholds{1, 1, 3, 2},

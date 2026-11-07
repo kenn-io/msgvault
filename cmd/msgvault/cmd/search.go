@@ -295,6 +295,11 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if len(resp.Results) == 0 && resp.HybridAvailable {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "No full-text matches. Try --mode hybrid for an intent search with your active embeddings.")
 	}
+	if resp.HasMore {
+		defer func() {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more messages match; use --offset %d for the next page\n", searchOffset+len(resp.Results))
+		}()
+	}
 	// JSON mode must stay machine-parseable even with zero results:
 	// emit an empty array, never prose.
 	if searchJSON {

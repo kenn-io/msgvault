@@ -33,7 +33,7 @@ func newSyncMatrixCmd() *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ func newSyncMatrixCmd() *cobra.Command {
 }
 
 func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, account string, full bool, progress func(string), out io.Writer) error {
-	sources, err := s.ListSources(sourceTypeMatrix)
+	sources, err := s.ListSourcesContext(ctx, sourceTypeMatrix)
 	if err != nil {
 		return fmt.Errorf("list Matrix sources: %w", err)
 	}
@@ -79,7 +79,7 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 		var homeserver string
 		skippedRetired := false
 		syncErr := matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {
-			current, lookupErr := s.GetSourceByID(source.ID)
+			current, lookupErr := s.GetSourceByIDContext(ctx, source.ID)
 			if lookupErr != nil {
 				return fmt.Errorf("reload Matrix source before sync: %w", lookupErr)
 			}

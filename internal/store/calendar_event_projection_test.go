@@ -23,7 +23,7 @@ func calendarFixture(t *testing.T, st *Store, key, raw string) (*MessagePersistD
 	t.Helper()
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
 	data := &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: "Example event"},
@@ -190,7 +190,7 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 		requirements.NoError(err)
 	}
 	requirements.NoError(st.Close())
-	reopened, err := OpenForTest(st.dbPath)
+	reopened, err := OpenForTest(t.Context(), st.dbPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
 	requirements.NoError(reopened.InitSchemaContext(t.Context()))
@@ -199,13 +199,40 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 	assertions.Equal("event-example", rows[0].Event.ProviderEventID)
 }
 
+func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "leap-year-upgrade", `{"id":"leap-year-series","start":{"dateTime":"2040-12-27T10:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2040-12-27T11:00:00-05:00","timeZone":"America/New_York"},"recurrence":["RRULE:FREQ=DAILY;UNTIL=20410101T150000Z"]}`)
+	// Version 1 truncated this series at its first occurrence. Preserve the
+	// event hash and completed migration to reproduce an existing archive.
+	_, err := st.db.Exec(`UPDATE calendar_events SET projection_version = 1, recurrence_end_at = ? WHERE message_id = ?`, time.Date(2040, 12, 27, 16, 0, 0, 0, time.UTC), id)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = 'calendar_event_projection_v1'`)
+	requirements.NoError(err)
+	from := time.Date(2040, 12, 31, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	assertions.Empty(page.Occurrences)
+	requirements.NoError(st.Close())
+	reopened, err := OpenForTest(t.Context(), st.dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
+	requirements.NoError(reopened.InitSchemaContext(t.Context()))
+	page, err = reopened.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(id, page.Occurrences[0].MessageID)
+	assertions.Equal("2040-12-31T15:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2040-12-31T16:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+}
+
 func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite subset copy")
 	}
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")
-	st, err := OpenForTest(path)
+	st, err := OpenForTest(t.Context(), path)
 	requirements.NoError(err)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	_, id := calendarFixture(t, st, "subset", calendarRaw)
@@ -214,9 +241,9 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
 	dest := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubset(path, dest, 100, false)
+	_, err = CopySubset(t.Context(), path, dest, 100, false)
 	requirements.NoError(err)
-	copied, err := OpenForTest(filepath.Join(dest, "msgvault.db"))
+	copied, err := OpenForTest(t.Context(), filepath.Join(dest, "msgvault.db"))
 	requirements.NoError(err)
 	defer func() { requirements.NoError(copied.Close()) }()
 	rows := calendarRows(t, copied, id)
@@ -249,7 +276,9 @@ func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
 	}}
 	st := gatedMeetingProjectionStore(t, base, gate)
 	done := make(chan error, 1)
-	go func() { done <- st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`) }()
+	go func() {
+		done <- st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`)
+	}()
 	select {
 	case <-reached:
 	case <-ctx.Done():

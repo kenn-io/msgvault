@@ -22,7 +22,7 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 		{"beeper", "beeper:", (*store.Store).ReplaceMessageBeeperAttachments},
 		{"inline", "inline:", (*store.Store).ReplaceMessageInlineProviderAttachments},
 		{"teams-inline", "teams:inline:", func(st *store.Store, messageID int64, refs []store.AttachmentRef) error {
-			return st.ReplaceMessageInlineAttachments(messageID, refs, true)
+			return st.ReplaceMessageInlineAttachments(t.Context(), messageID, refs, true)
 		}},
 		{"teams-links", "teams:link:", (*store.Store).ReplaceMessageLinkAttachments},
 	} {
@@ -56,10 +56,10 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 			}
 			requirements.NoError(tc.replace(f.Store, messageID, []store.AttachmentRef{keep, drop}))
 			var keepID, dropID int64
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 				`SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
 				messageID, keep.SourceAttachmentID).Scan(&keepID))
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 				`SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
 				messageID, drop.SourceAttachmentID).Scan(&dropID))
 			// A later row also prevents SQLite from reusing the deleted maximum ID.
@@ -103,9 +103,9 @@ func TestAttachmentResyncInvalidatesThumbnailsAndReconcilesDocument(t *testing.T
 		messageID, []store.AttachmentRef{ref},
 	))
 	var attachmentID int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&attachmentID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ? WHERE id = ?`),
 		strings.Repeat("c", 64), "cc/"+strings.Repeat("c", 64), attachmentID)
 	requirements.NoError(err)
@@ -116,7 +116,7 @@ func TestAttachmentResyncInvalidatesThumbnailsAndReconcilesDocument(t *testing.T
 	_, err = reconciler.Reconcile(t.Context())
 	requirements.NoError(err)
 	var occurrenceKey, occurrenceHash string
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT occurrence_key, canonical_blob_hash FROM document_occurrences
 		WHERE attachment_id = ?`), attachmentID).Scan(&occurrenceKey, &occurrenceHash))
 	assert.Equal(t, strings.Repeat("a", 64), occurrenceHash)
@@ -138,7 +138,7 @@ func TestAttachmentResyncInvalidatesThumbnailsAndReconcilesDocument(t *testing.T
 				messageID, []store.AttachmentRef{ref},
 			))
 			var thumbnailHash, thumbnailPath sql.NullString
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE id = ?`),
 				attachmentID).
 				Scan(&thumbnailHash, &thumbnailPath))
@@ -154,7 +154,7 @@ func TestAttachmentResyncInvalidatesThumbnailsAndReconcilesDocument(t *testing.T
 			requirements.NoError(err)
 			assertions.Positive(result.ChangesConsumed)
 			var updatedKey string
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT occurrence_key, canonical_blob_hash FROM document_occurrences
 				WHERE attachment_id = ?`), attachmentID).Scan(&updatedKey, &occurrenceHash))
 			assertions.Equal(occurrenceKey, updatedKey)
@@ -179,7 +179,7 @@ func TestReplaceAttachmentsRetainsProviderIDWhenAssigningPartKey(t *testing.T) {
 				}))
 			var attachmentID int64
 			var initialKey sql.NullString
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT id, source_part_key FROM attachments WHERE message_id = ?`), messageID).
 				Scan(&attachmentID, &initialKey))
 			requirements.False(initialKey.Valid)

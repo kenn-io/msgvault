@@ -20,11 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install ripgrep
         run: |
-          kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update
+          # CI only needs Ubuntu packages; runner-added repositories can fail independently.
+          kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update
           kit-retry 3 5 sudo apt-get install -y ripgrep
 
       - uses: astral-sh/setup-uv@v10.3.3

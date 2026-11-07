@@ -2,6 +2,7 @@ package secretcommand
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 
 // Run implements the test-only external store protocol without private store
 // dependencies. Tests assert stored bytes and production results, not fake calls.
-func Run() {
+func Run(ctx context.Context) {
 	args := os.Args
 	if len(args) < 2 {
 		os.Exit(2)
@@ -116,7 +117,7 @@ func Run() {
 		_ = os.WriteFile(filepath.Join(root, "started"), nil, 0600) //nolint:gosec // root is the fixture's private temp directory.
 		time.Sleep(2 * time.Minute)
 	case "hold-pipe":
-		child := exec.Command(os.Args[0], "wait") //nolint:gosec // Launch only this fixture executable.
+		child := exec.CommandContext(ctx, os.Args[0], "wait") //nolint:gosec // Launch only this fixture executable.
 		child.Stdout = os.Stdout
 		if child.Start() != nil {
 			os.Exit(2)

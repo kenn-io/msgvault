@@ -14,7 +14,7 @@ import (
 func TestMessageExportConversationsQuerySeeksBySourceSQLite(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "message-export-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "message-export-plan.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())

@@ -116,7 +116,7 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 			&row.MessageType, &row.ConversationType, &row.Title, &row.Preview,
 			&participantIDsJSON, &participantLabelsJSON, &strongestMatchedMessageID, &row.MessageCount,
 			&row.HasAttachments, &row.AttachmentCount, &row.AttachmentSize,
-			&row.DeletedFromSource, &response.TotalCount, &counterpartParticipantID,
+			&row.DeletedFromSource, &response.TotalCount, &counterpartParticipantID, &row.SenderLabel,
 		); err != nil {
 			return nil, fmt.Errorf("scan analytical entry: %w", err)
 		}
@@ -579,13 +579,18 @@ func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGl
 ), counted AS (
     SELECT *, COUNT(*) OVER () AS total_count
     FROM logical_entries
+), page AS MATERIALIZED (
+    SELECT * FROM counted
+    ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
+    LIMIT ? OFFSET ?
+), page_senders AS (
+    %s
 ), clusters AS (
     SELECT participant_id, canonical_id FROM read_parquet('%s')
 ), owners AS (
     SELECT DISTINCT participant_id FROM read_parquet('%s')
 ), canon AS (
-    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+    %s
 ), owner_canon AS (
     SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
 ), owner_participant_ids AS (
@@ -622,18 +627,21 @@ SELECT
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
                   AND NOT (is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(participant_ids) AS u(pid)
-              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
+              WHERE pid IN (SELECT participant_id FROM canon)
+                AND pid NOT IN (SELECT participant_id FROM owner_participant_ids)
                 AND NOT (is_from_me AND EXISTS (
                     SELECT 1 FROM canon participant_canon
                     WHERE participant_canon.participant_id = pid
                       AND participant_canon.canonical_id = message_owner.canonical_id
                 )))
-    END AS counterpart_participant_id
-FROM counted
+    END AS counterpart_participant_id,
+    COALESCE(senders.sender_label, '') AS sender_label
+FROM page
+LEFT JOIN page_senders senders ON senders.sender_message_id = page.anchor_message_id AND page.entry_kind <> 'conversation'
 LEFT JOIN message_owner_canon message_owner
-  ON message_owner.message_id = counted.anchor_message_id
-ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
-LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
+  ON message_owner.message_id = page.anchor_message_id
+ORDER BY occurred_at DESC, source_id ASC, entry_key ASC`,
+		sqlPageSenderLabels("SELECT anchor_message_id FROM page WHERE entry_kind <> 'conversation'"), clustersGlob, ownersGlob, identityindex.CanonicalParticipantsSQL("participants", "clusters"))
 }
 
 func buildExploreCountSQL(conditions, candidateRankExpression string) string {
@@ -723,6 +731,8 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     SELECT source_id, conversation_id, message_id
     FROM %s
     WHERE (%s) AND (%s)
+), page_senders AS (
+    %s
 ), page_messages AS (
     SELECT p.entry_key, p.anchor_message_id AS message_id
     FROM page p WHERE p.entry_kind <> 'conversation'
@@ -768,8 +778,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
 ), owners AS (
     SELECT DISTINCT participant_id FROM read_parquet('%s')
 ), canon AS (
-    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+    %s
 ), owner_canon AS (
     SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
 ), owner_participant_ids AS (
@@ -806,21 +815,25 @@ SELECT
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
                   AND NOT (p.is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(COALESCE(f.participant_ids, []::BIGINT[])) AS u(pid)
-              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids)
+              WHERE pid IN (SELECT participant_id FROM canon)
+                AND pid NOT IN (SELECT participant_id FROM owner_participant_ids)
                 AND NOT (p.is_from_me AND EXISTS (
                     SELECT 1 FROM canon participant_canon
                     WHERE participant_canon.participant_id = pid
                       AND participant_canon.canonical_id = message_owner.canonical_id
                 )))
-    END AS counterpart_participant_id
+    END AS counterpart_participant_id,
+    COALESCE(senders.sender_label, '') AS sender_label
 FROM page p
+LEFT JOIN page_senders senders ON senders.sender_message_id = p.anchor_message_id AND p.entry_kind <> 'conversation'
 LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
 LEFT JOIN message_owner_canon message_owner ON message_owner.message_id = p.anchor_message_id
 ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
 		population, populationConditions, sqlIsChatPredicate("message_type", "conversation_type"),
+		sqlPageSenderLabels("SELECT anchor_message_id FROM page WHERE entry_kind <> 'conversation'"),
 		sqlAnalyticalEntriesParticipantLabel("pt"),
 		sqlIsChatPredicate("message_type", "conversation_type"), population, populationConditions,
-		clustersGlob, ownersGlob)
+		clustersGlob, ownersGlob, identityindex.CanonicalParticipantsSQL("participants", "clusters"))
 }
 
 func buildExploreLogicalSQL(conditions string) string {

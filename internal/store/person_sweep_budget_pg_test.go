@@ -74,8 +74,10 @@ func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) 
 		markStarted := false
 		claimFinished := make(chan struct{})
 		markFinished := make(chan struct{})
+		// Cleanup runs after t.Context() is canceled.
 		t.Cleanup(func() {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 			if claimStarted {
 				waitForPostgreSQLTestGoroutine(t, claimFinished)
@@ -83,9 +85,11 @@ func TestPersonSweepPostgreSQLMarkStartedSurvivesReclaimLockCycle(t *testing.T) 
 			if markStarted {
 				waitForPostgreSQLTestGoroutine(t, markFinished)
 			}
-			_, _ = f.store.DB().ExecContext(context.Background(),
+			_, _ = f.store.DB().ExecContext(
+				context.WithoutCancel(t.Context()),
 				`DROP TRIGGER IF EXISTS park_reclaimed_batch_update ON person_sweep_batches`)
-			_, _ = f.store.DB().ExecContext(context.Background(),
+			_, _ = f.store.DB().ExecContext(
+				context.WithoutCancel(t.Context()),
 				`DROP FUNCTION IF EXISTS park_reclaimed_batch_update()`)
 			_ = holder.Close()
 		})

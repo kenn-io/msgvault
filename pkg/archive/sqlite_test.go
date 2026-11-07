@@ -27,7 +27,7 @@ func TestSQLiteArchiveReadsExistingMail(t *testing.T) {
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "reader@example.com")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "mail-thread", "Observatory")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "mail-thread", "Observatory")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "mail-1", MessageType: "email",
@@ -70,9 +70,9 @@ func TestSQLiteArchiveRequiresSourceLifecycleSetup(t *testing.T) {
 	require.NoError(err)
 	// Version 8 predates source lifecycle tables. Keep that historical marker
 	// literal so omitting the version bump makes runtime opening fail this test.
-	_, err = st.DB().Exec("UPDATE archive_metadata SET value = '8' WHERE key = 'schema_version'")
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '8' WHERE key = 'schema_version'")
 	require.NoError(err)
-	_, err = st.DB().Exec("DROP TABLE source_settings")
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE source_settings")
 	require.NoError(err)
 
 	runtime, err := archive.OpenSQLite(t.Context(), path)
@@ -81,10 +81,10 @@ func TestSQLiteArchiveRequiresSourceLifecycleSetup(t *testing.T) {
 	}
 	require.ErrorContains(err, "run setup")
 	var version string
-	require.NoError(st.DB().QueryRow("SELECT value FROM archive_metadata WHERE key = 'schema_version'").Scan(&version))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT value FROM archive_metadata WHERE key = 'schema_version'").Scan(&version))
 	assert.Equal("8", version, "runtime opening must not certify an upgrade")
 	var tables int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE name = 'source_settings'").Scan(&tables))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name = 'source_settings'").Scan(&tables))
 	assert.Zero(tables, "runtime opening must not create the missing table")
 
 	require.NoError(archive.SetupSQLite(t.Context(), path))
@@ -133,7 +133,7 @@ func TestSQLiteRuntimeCollectsAcrossCredentialReplacement(t *testing.T) {
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Announcements")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "Announcements")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "1704110400.000001", MessageType: "slack",
@@ -176,7 +176,7 @@ func TestOpenSQLiteRequiresSetupForChatMembers(t *testing.T) {
 		// Schema version 11 is the last one without the chat member index.
 		"UPDATE archive_metadata SET value = '11' WHERE key = 'schema_version'",
 	} {
-		_, err = st.DB().Exec(statement)
+		_, err = st.DB().ExecContext(t.Context(), statement)
 		require.NoError(err, statement)
 	}
 	require.NoError(st.Close())

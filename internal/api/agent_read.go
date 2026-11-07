@@ -164,7 +164,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 		if apiErr != nil {
 			return apiErr
 		}
-		scope, err := resolveCLIStatsScope(bindCLIStoreContext(r.Context(), st), q.Get("account"), q.Get("collection"))
+		scope, err := resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), st), q.Get("account"), q.Get("collection"))
 		if err != nil {
 			return agentReadDenied(permission)
 		}

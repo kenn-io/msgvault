@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -40,7 +39,7 @@ func createScoringCandidates(t *testing.T, st *store.Store, count int) []int64 {
 	for i := range addresses {
 		addresses[i] = mime.Address{Email: fmt.Sprintf("score-%04d@example.test", i), Domain: "example.test"}
 	}
-	participants, err := st.EnsureParticipantsBatch(addresses)
+	participants, err := st.EnsureParticipantsBatch(t.Context(), addresses)
 	require.NoError(t, err)
 	values := make([]string, count)
 	args := make([]any, 0, 2*count)
@@ -410,7 +409,7 @@ func TestIdentityMatchJudgmentConcurrentClaimsHaveDistinctOwners(t *testing.T) {
 	for _, owner := range []string{"worker-a", "worker-b"} {
 		wg.Go(func() {
 			<-start
-			lease, err := st.ClaimNextIdentityMatchJudgmentContext(context.Background(), owner, time.Minute)
+			lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), owner, time.Minute)
 			results <- result{lease: lease, err: err}
 		})
 	}

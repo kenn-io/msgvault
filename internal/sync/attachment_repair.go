@@ -126,7 +126,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		if location.Pack == nil {
 			// A readable loose file can be residue from a failed directory sync.
 			// Durable dedup verifies and syncs it without replacing valid bytes.
-			receipt, err := export.StoreAttachmentFileDurable(s.opts.AttachmentsDir, &att)
+			receipt, err := export.StoreAttachmentFileDurable(ctx, s.opts.AttachmentsDir, &att)
 			if receipt.Created {
 				created[receipt.StoragePath] = receipt
 			}

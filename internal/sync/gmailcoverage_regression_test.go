@@ -27,7 +27,7 @@ func gmailCoverageEnv(t *testing.T) *TestEnv {
 	require.NoError(t, st.InitSchema())
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
-	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: context.Background()}
+	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: t.Context()}
 	t.Cleanup(func() { require.NoError(t, e.Store.Close()) })
 	return e
 }
@@ -40,25 +40,25 @@ func gmailCoverageReopen(t *testing.T, e *TestEnv) {
 	e.Store = st
 	e.Syncer = New(api, st, nil)
 }
-func gmailCoverageSource(t *testing.T, e *TestEnv) *store.Source {
+func gmailCoverageSource(ctx context.Context, t *testing.T, e *TestEnv) *store.Source {
 	t.Helper()
-	s, err := e.Store.GetSourceByIdentifier(testEmail)
+	s, err := e.Store.GetSourceByIdentifier(ctx, testEmail)
 	require.NoError(t, err)
 	return s
 }
 func gmailCoverageAbsent(t *testing.T, e *TestEnv, id string) {
 	t.Helper()
-	s := gmailCoverageSource(t, e)
+	s := gmailCoverageSource(t.Context(), t, e)
 	m, err := e.Store.MessageExistsBatch(s.ID, []string{id})
 	require.NoError(t, err)
 	require.Empty(t, m)
 	var raws int
-	require.NoError(t, e.Store.DB().QueryRow("SELECT count(*) FROM message_raw").Scan(&raws))
+	require.NoError(t, e.Store.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM message_raw").Scan(&raws))
 	t.Logf("missing=%s total_raws=%d cursor=%s", id, raws, s.SyncCursor.String)
 }
 func gmailCoverageRaw(t *testing.T, e *TestEnv, id string) {
 	t.Helper()
-	s := gmailCoverageSource(t, e)
+	s := gmailCoverageSource(t.Context(), t, e)
 	m, err := e.Store.MessageExistsBatch(s.ID, []string{id})
 	require.NoError(t, err)
 	require.Contains(t, m, id)
@@ -159,6 +159,10 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 	default:
 		return nil, fmt.Errorf("unexpected synthetic endpoint: %s", r.URL)
 	}
+	return gmailJSONResponse(r, status, body)
+}
+
+func gmailJSONResponse(r *http.Request, status int, body any) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -170,11 +174,7 @@ func TestGmailCoverageScenario3(t *testing.T) {
 
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000, failPage: true}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	// nil source uses DefaultClient and does not construct any OAuth credential.
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	first, err := e.Syncer.Full(e.Context, testEmail)
 	require.Error(err)
 	require.Nil(first)
@@ -188,13 +188,13 @@ func TestGmailCoverageScenario3(t *testing.T) {
 	gmailCoverageRaw(t, e, "normal2")
 	gmailCoverageRaw(t, e, "spam")
 	gmailCoverageRaw(t, e, "trash")
-	_, err = e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+	_, err = e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	gmailCoverageRaw(t, e, "spam")
 	// Expired history drives real full + complete snapshot + catchup paths.
 	f.history = 1001
 	f.expire = true
-	recovered, err := e.Syncer.IncrementalWithHistoryRecovery(e.Context, gmailCoverageSource(t, e), nil)
+	recovered, err := e.Syncer.IncrementalWithHistoryRecovery(e.Context, gmailCoverageSource(t.Context(), t, e), nil)
 	require.NoError(err)
 	require.Zero(recovered.Errors)
 	gmailCoverageReopen(t, e)

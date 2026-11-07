@@ -22,7 +22,7 @@ import (
 func closedLocalDaemonURL(t *testing.T) string {
 	t.Helper()
 	requirements := require.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	requirements.NoError(err)
 	address := "http://" + listener.Addr().String()
 	requirements.NoError(listener.Close())
@@ -82,7 +82,7 @@ func TestLocalDaemonRecoveryMessageURLsUseCurrentEndpoint(t *testing.T) {
 	assertions.Equal(http.StatusNoContent, response.StatusCode)
 	requirements.NoError(response.Body.Close())
 
-	assertions.Equal(replacement.URL+"/messages/42", client.messageWebURL(context.Background(), 42))
+	assertions.Equal(replacement.URL+"/messages/42", client.messageWebURL(t.Context(), 42))
 }
 
 func TestLocalDaemonRecoveryReplaysBodyAndRefreshesCredentials(t *testing.T) {
@@ -315,7 +315,9 @@ func TestLocalDaemonRecoveryLeavesOtherOriginsAlone(t *testing.T) {
 		require.Fail(t, "outside origins must not trigger local discovery")
 		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
 	})
-	response, err := client.httpClient.Get(server.URL + "/outside")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/outside", nil)
+	requirements.NoError(err)
+	response, err := client.httpClient.Do(request)
 	requirements.NoError(err)
 	assertions.Equal(http.StatusNoContent, response.StatusCode)
 	requirements.NoError(response.Body.Close())
@@ -335,7 +337,7 @@ func TestLocalDaemonRecoveryRootCancellationStopsDiscovery(t *testing.T) {
 		return LocalDaemonEndpoint{}, ctx.Err()
 	})
 	done := make(chan error, 1)
-	go func() { _, err := client.GetHealth(context.Background()); done <- err }()
+	go func() { _, err := client.GetHealth(t.Context()); done <- err }()
 	<-entered
 	cancel()
 	assertions.ErrorIs(<-done, context.Canceled)

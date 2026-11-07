@@ -16,7 +16,7 @@ import (
 
 func savedState(t *testing.T, st *store.Store, source *store.Source) *syncState {
 	t.Helper()
-	last, err := st.GetLastSuccessfulSyncByType(source.ID, SourceType)
+	last, err := st.GetLastSuccessfulSyncByType(t.Context(), source.ID, SourceType)
 	require.NoError(t, err)
 	require.NotNil(t, last)
 	state, err := parseSyncState(last.CursorAfter.String)
@@ -196,7 +196,7 @@ func TestCallsAreRecheckedOnlyInsideTheWindow(t *testing.T) {
 	api.TakeRequests()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
-	body, err := st.GetMessageBodyText(meetingID)
+	body, err := st.GetMessageBodyText(t.Context(), meetingID)
 	require.NoError(err)
 	assert.Equal("Synthetic transcript received during downtime", body)
 	assert.Contains(api.TakeRequests(), "messages 42 901 902")
@@ -401,7 +401,7 @@ func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
 				must.NoError(err)
 			}
 			for _, id := range targets {
-				body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, strconv.FormatInt(id, 10)))
+				body, err := st.GetMessageBodyText(t.Context(), contractArchivedMessageID(t, st, strconv.FormatInt(id, 10)))
 				must.NoError(err)
 				checks.Contains(body, transcript)
 			}

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,7 +13,7 @@ func TestMergeAccountRequiresExplicitConfirmation(t *testing.T) {
 		"--into", "destination@example.test",
 	})
 
-	err := command.ExecuteContext(context.Background())
+	err := command.ExecuteContext(t.Context())
 	require.ErrorContains(t, err, "merge retires the historical source")
 	require.ErrorContains(t, err, "--yes")
 }

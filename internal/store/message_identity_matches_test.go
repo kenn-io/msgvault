@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"log/slog"
 	"strings"
@@ -30,7 +29,7 @@ func newMessageIdentityFixture(t *testing.T) messageIdentityFixture {
 	fx := storetest.New(t)
 	other, err := fx.Store.GetOrCreateSource("gmail", "other-source@example.test")
 	require.NoError(t, err, "create second source")
-	otherConversationID, err := fx.Store.EnsureConversation(other.ID, "other-thread", "Other Thread")
+	otherConversationID, err := fx.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other Thread")
 	require.NoError(t, err, "create second-source conversation")
 
 	sendAs := fx.EnsureParticipant("send-as@example.test", "Send As", "example.test")
@@ -196,7 +195,7 @@ func TestResolveAccountIdentityContextReturnsStoredIdentityAndAllParticipants(t 
 	fx := storetest.New(t)
 	primary := fx.EnsureParticipant("owner@example.test", "Primary", "example.test")
 	var alias int64
-	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+	require.NoError(fx.Store.DB().QueryRowContext(t.Context(), fx.Store.Rebind(`
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES ('Alias', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
@@ -228,19 +227,19 @@ func TestResolveAccountIdentityContextRequiresExactSourceConfirmation(t *testing
 	require.NoError(fx.Store.AddAccountIdentity(other.ID, "owner@example.test", "manual"))
 
 	_, err = fx.Store.ResolveAccountIdentityContext(
-		context.Background(), fx.Source.ID, "OWNER@example.test")
+		t.Context(), fx.Source.ID, "OWNER@example.test")
 	require.ErrorIs(err, store.ErrAccountIdentityNotFound)
 
 	_, err = fx.Store.ResolveAccountIdentityContext(
-		context.Background(), other.ID, "missing@example.test")
+		t.Context(), other.ID, "missing@example.test")
 	require.ErrorIs(err, store.ErrAccountIdentityNotFound)
 
 	require.NoError(fx.Store.AddAccountIdentity(other.ID, "@Me:example.test", "manual"))
 	_, err = fx.Store.ResolveAccountIdentityContext(
-		context.Background(), other.ID, "@me:example.test")
+		t.Context(), other.ID, "@me:example.test")
 	require.ErrorIs(err, store.ErrAccountIdentityNotFound)
 	resolved, err := fx.Store.ResolveAccountIdentityContext(
-		context.Background(), other.ID, "@Me:example.test")
+		t.Context(), other.ID, "@Me:example.test")
 	require.NoError(err)
 	assert.Equal("@Me:example.test", resolved.Identifier)
 	assert.NotNil(resolved.ParticipantIDs)
@@ -258,7 +257,7 @@ func TestMatchMessageIdentitiesMatchesAttributionForPhoneIdentity(t *testing.T) 
 	fx := storetest.New(t)
 	const phone = "+15550100001"
 
-	participantID, err := fx.Store.EnsureParticipantByPhone(phone, "Phone Owner", "whatsapp")
+	participantID, err := fx.Store.EnsureParticipantByPhone(t.Context(), phone, "Phone Owner", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone")
 	require.NoError(fx.Store.AddAccountIdentity(fx.Source.ID, phone, "manual"))
 
@@ -275,7 +274,8 @@ func TestMatchMessageIdentitiesMatchesAttributionForPhoneIdentity(t *testing.T) 
 	assert.Equal([]string{phone}, matches[messageID].Sender,
 		"identifier-backed phone identity must badge the sender")
 
-	_, err = fx.Store.DB().Exec(
+	_, err = fx.Store.DB().ExecContext(
+		t.Context(),
 		fx.Store.Rebind("DELETE FROM participant_identifiers WHERE participant_id = ?"),
 		participantID,
 	)
@@ -304,7 +304,7 @@ func TestMatchMessageIdentitiesNonEmailIdentifierIsCaseSensitive(t *testing.T) {
 	newBridgeSender := func(name, identifierValue, sourceMessageID string) int64 {
 		t.Helper()
 		var senderID int64
-		require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+		require.NoError(fx.Store.DB().QueryRowContext(t.Context(), fx.Store.Rebind(`
 			INSERT INTO participants (display_name, created_at, updated_at)
 			VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 			RETURNING id
@@ -343,7 +343,7 @@ func TestMatchMessageIdentitiesEmailTypedIdentifierIsCaseInsensitive(t *testing.
 	fx := storetest.New(t)
 
 	var senderID int64
-	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+	require.NoError(fx.Store.DB().QueryRowContext(t.Context(), fx.Store.Rebind(`
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES ('Alias User', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
@@ -377,7 +377,7 @@ func TestResolveAccountIdentityMatchesAttributionForPhoneIdentity(t *testing.T) 
 	fx := storetest.New(t)
 	const phone = "+15550100001"
 
-	participantID, err := fx.Store.EnsureParticipantByPhone(phone, "Phone Owner", "whatsapp")
+	participantID, err := fx.Store.EnsureParticipantByPhone(t.Context(), phone, "Phone Owner", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone")
 	require.NoError(fx.Store.AddAccountIdentity(fx.Source.ID, phone, "manual"))
 
@@ -386,7 +386,8 @@ func TestResolveAccountIdentityMatchesAttributionForPhoneIdentity(t *testing.T) 
 	assert.Contains(resolved.ParticipantIDs, participantID,
 		"participant_identifiers row for the phone must resolve, matching attribution")
 
-	_, err = fx.Store.DB().Exec(
+	_, err = fx.Store.DB().ExecContext(
+		t.Context(),
 		fx.Store.Rebind("DELETE FROM participant_identifiers WHERE participant_id = ?"),
 		participantID,
 	)
@@ -436,7 +437,7 @@ func TestResolveAccountIdentityEmailRemainsCaseInsensitive(t *testing.T) {
 	fx := storetest.New(t)
 	owner := fx.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	var alias int64
-	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+	require.NoError(fx.Store.DB().QueryRowContext(t.Context(), fx.Store.Rebind(`
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES ('Alias', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
@@ -546,7 +547,7 @@ func TestMessageAttributionPrefersNonEmptyEnvelopeOverCurrentParticipantAliases(
 	})
 	require.NoError(err)
 
-	isFromMe, err := fx.Store.GetMessageIsFromMe(messageID)
+	isFromMe, err := fx.Store.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err)
 	assert.False(isFromMe,
 		"a non-empty envelope must suppress current participant aliases")
@@ -557,7 +558,7 @@ func TestMessageAttributionPrefersNonEmptyEnvelopeOverCurrentParticipantAliases(
 	require.NoError(err)
 	require.NoError(fx.Store.ReplaceMessageRecipients(
 		legacyID, "from", []int64{sender}, []string{"Owner"}))
-	legacyIsFromMe, err := fx.Store.GetMessageIsFromMe(legacyID)
+	legacyIsFromMe, err := fx.Store.GetMessageIsFromMe(t.Context(), legacyID)
 	require.NoError(err)
 	assert.True(legacyIsFromMe,
 		"a row without an envelope snapshot must use the participant fallback")
@@ -592,7 +593,7 @@ func TestMatchMessageIdentitiesSuppressesSenderFallbackWhenAnyEnvelopeExists(t *
 	})
 	require.NoError(err, "persist message with mixed From envelope rows")
 
-	isFromMe, err := fx.Store.GetMessageIsFromMe(messageID)
+	isFromMe, err := fx.Store.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err)
 	require.False(isFromMe, "the populated envelope is authoritative for attribution")
 
@@ -621,13 +622,13 @@ func TestUpsertMessageAttributionMirrorsPrimaryEmailGuard(t *testing.T) {
 	guardedMessage.SenderID = sql.NullInt64{Int64: guarded, Valid: true}
 	guardedID, err := fx.Store.UpsertMessage(guardedMessage)
 	require.NoError(err)
-	guardedIsFromMe, err := fx.Store.GetMessageIsFromMe(guardedID)
+	guardedIsFromMe, err := fx.Store.GetMessageIsFromMe(t.Context(), guardedID)
 	require.NoError(err)
 	assert.False(guardedIsFromMe,
 		"a primary email must suppress alternate email identifiers, matching the canonical predicate")
 
 	var aliasOnly int64
-	require.NoError(fx.Store.DB().QueryRow(fx.Store.Rebind(`
+	require.NoError(fx.Store.DB().QueryRowContext(t.Context(), fx.Store.Rebind(`
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES ('Alias Only', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
@@ -639,7 +640,7 @@ func TestUpsertMessageAttributionMirrorsPrimaryEmailGuard(t *testing.T) {
 	fallbackMessage.SenderID = sql.NullInt64{Int64: aliasOnly, Valid: true}
 	fallbackID, err := fx.Store.UpsertMessage(fallbackMessage)
 	require.NoError(err)
-	fallbackIsFromMe, err := fx.Store.GetMessageIsFromMe(fallbackID)
+	fallbackIsFromMe, err := fx.Store.GetMessageIsFromMe(t.Context(), fallbackID)
 	require.NoError(err)
 	assert.True(fallbackIsFromMe,
 		"an email identifier still claims ownership when no primary email exists")
@@ -659,7 +660,7 @@ func TestReplaceFromRecipientsRefreshesAttribution(t *testing.T) {
 
 	messageID := persistEnvelopeMessage(
 		t, fx, "granular-refresh", "from", colleague, "owner-alias@example.test")
-	before, err := fx.Store.GetMessageIsFromMe(messageID)
+	before, err := fx.Store.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err)
 	require.True(before, "the owner-alias envelope attributes the message")
 
@@ -667,7 +668,7 @@ func TestReplaceFromRecipientsRefreshesAttribution(t *testing.T) {
 		messageID, "from", []int64{colleague}, []string{"Colleague"}),
 		"granular re-import replaces the From rows without an envelope snapshot")
 
-	after, err := fx.Store.GetMessageIsFromMe(messageID)
+	after, err := fx.Store.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err)
 	assert.False(after,
 		"losing the owning envelope must recompute attribution in the same transaction")
@@ -711,7 +712,7 @@ func TestMatchMessageIdentitiesKeepsNonEmailIdentifierAfterParticipantMerge(t *t
 	)
 
 	emailParticipant := fx.EnsureParticipant(email, "Email Owner", "example.test")
-	phoneParticipant, err := fx.Store.EnsureParticipantByPhone(phone, "Phone Owner", "whatsapp")
+	phoneParticipant, err := fx.Store.EnsureParticipantByPhone(t.Context(), phone, "Phone Owner", "whatsapp")
 	require.NoError(err, "create phone participant")
 
 	message := fx.NewMessage().WithSubject("merged email and phone identity").Build()

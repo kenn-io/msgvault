@@ -130,16 +130,12 @@ func removeDaemonRuntime(dataDir string) {
 	}
 }
 
-func findDaemonRuntime(dataDir string) *DaemonRuntime {
-	rt, err := findCompatibleDaemonRuntime(dataDir)
+func findDaemonRuntime(ctx context.Context, dataDir string) *DaemonRuntime {
+	rt, err := findCompatibleDaemonRuntimeContext(ctx, dataDir)
 	if err != nil {
 		return nil
 	}
 	return rt
-}
-
-func findCompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, error) {
-	return findCompatibleDaemonRuntimeContext(context.Background(), dataDir)
 }
 
 func findCompatibleDaemonRuntimeContext(ctx context.Context, dataDir string) (*DaemonRuntime, error) {
@@ -177,8 +173,8 @@ func findAnyDaemonRuntimeContext(ctx context.Context, dataDir string) *DaemonRun
 	return rt
 }
 
-func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error) {
-	rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir, func(_ *DaemonRuntime, compatErr error) bool {
+func findIncompatibleDaemonRuntime(ctx context.Context, dataDir string) (*DaemonRuntime, bool, error) {
+	rt, found, err := findRespondingDaemonRuntime(ctx, dataDir, func(_ *DaemonRuntime, compatErr error) bool {
 		return compatErr != nil
 	})
 	if err != nil {
@@ -192,7 +188,7 @@ func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error)
 // to lifecycle decisions: the ownership lock and a matching public ping show
 // that a daemon still owns the data directory, but do not authorize sending an
 // API key or signaling its PID.
-func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, error) {
+func findLegacyDaemonRuntimeForLifecycle(ctx context.Context, dataDir string) (*DaemonRuntime, bool, error) {
 	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect daemon ownership: %w", err)
@@ -200,11 +196,10 @@ func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, 
 	if !ownershipHeld {
 		return nil, false, nil
 	}
-	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	records, err := listLiveDaemonRuntimeRecordsContext(ctx, dataDir)
 	if err != nil {
 		return nil, false, err
 	}
-	ctx := context.Background()
 	for _, rec := range records {
 		identity := runtimeRecordIdentity(rec)
 		if identity != createTimeSkew && identity != createTimeUnknown {
@@ -296,6 +291,11 @@ func listLiveDaemonRuntimeRecordsContext(ctx context.Context, dataDir string) ([
 	records, err := store.List()
 	if err != nil {
 		return nil, fmt.Errorf("list daemon runtimes: %w", err)
+	}
+	if len(records) == 0 {
+		// Probing takes the ownership lock briefly. Leave startup free to claim
+		// it while there are no runtime records to validate.
+		return records, nil
 	}
 	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
 	if err != nil {

@@ -15,7 +15,6 @@
   --link-ink: var(--accent-blue);
   --focus-color: var(--accent-blue);
   --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
-  --selected-border: var(--accent-blue);
   --artifact-ink: var(--accent-purple);
   --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
   --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));

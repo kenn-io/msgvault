@@ -71,7 +71,7 @@ func TestArchiverRecordsPhoneOnlyAttendee(t *testing.T) {
 
 	var count int
 	var email string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT count(*), COALESCE(MAX(mr.email_address), '')
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -80,13 +80,13 @@ func TestArchiverRecordsPhoneOnlyAttendee(t *testing.T) {
 	assert.Equal(1, count, "duplicate attendee rows resolve to one recipient")
 	assert.Empty(email)
 	var toCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT count(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`),
 		result.MessageID).Scan(&toCount))
 	assert.Equal(1, toCount, "name-only attendees are not recipients")
 	if st.FTS5Available() && !st.IsPostgreSQL() {
 		var toAddr string
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT to_addr FROM messages_fts WHERE message_id = ?`), result.MessageID).Scan(&toAddr))
 		assert.Contains(toAddr, "+16045550100")
 	}
@@ -105,11 +105,11 @@ func TestArchiverAttributesPhoneOrganizerToOwner(t *testing.T) {
 
 	first, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
 	require.NoError(err)
-	fromMe, err := st.GetMessageIsFromMe(first.MessageID)
+	fromMe, err := st.GetMessageIsFromMe(t.Context(), first.MessageID)
 	require.NoError(err)
 	assert.True(fromMe)
 	var sourceFromMe, identityFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT source_is_from_me, identity_is_from_me FROM messages WHERE id = ?`,
 	), first.MessageID).Scan(&sourceFromMe, &identityFromMe))
 	assert.False(sourceFromMe, "removing the owner identity must be able to clear is_from_me")
