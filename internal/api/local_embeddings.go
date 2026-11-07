@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 const localEmbeddingsEndpointPath = "/api/v1/embeddings/local"
@@ -60,7 +61,15 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if running || (progress.Error != "" && !status.Enabled) {
+	if !running && progress.Error != "" && status.Enabled {
+		_, backend, cfg := s.vectorComponents()
+		if backend != nil {
+			if _, err := vector.ResolveActiveForFingerprint(r.Context(), backend, cfg.GenerationFingerprint()); err == nil {
+				progress.Error = ""
+			}
+		}
+	}
+	if running || progress.Error != "" {
 		status.Error = progress.Error
 	}
 	status.Running = running

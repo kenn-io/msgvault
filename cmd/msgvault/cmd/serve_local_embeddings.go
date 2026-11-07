@@ -125,9 +125,6 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
-	if !loaded.Vector.Embeddings.LocalOnly && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
-		return errors.New("search by meaning already uses a configured provider")
-	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
 		return err
@@ -206,18 +203,18 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	state.cfg = &runtimeConfig
 	nextCtx := withInvocation(runtimeCtx, &state)
 	workCtx := withInvocation(ctx, &state)
-	vecCfg, err := resolvedVectorConfig(workCtx, c.store, runtimeConfig.Vector)
-	if err != nil {
-		return err
-	}
-	if !useOllama {
-		vecCfg.Embeddings.Endpoint = builtinEndpoint
-	}
 	var vf *vectorFeatures
 	freshRuntime := live == nil
 	if freshRuntime {
 		vf, err = setupVectorFeaturesForRun(nextCtx, c.store, c.dbPath, false, c.openers...)
 	} else {
+		vecCfg, resolveErr := resolvedVectorConfig(workCtx, c.store, runtimeConfig.Vector)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if !useOllama {
+			vecCfg.Embeddings.Endpoint = builtinEndpoint
+		}
 		vf, err = live.configureText(nextCtx, &state, vecCfg)
 	}
 	if err != nil {

@@ -331,7 +331,7 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			assert.Equal(tc.wantProvider, status.Provider)
-			require.ErrorContains(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "already uses a configured provider")
+			require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 			after, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			assert.Equal(before, after)
@@ -676,14 +676,18 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 	f.server.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusAccepted, response.Code, response.Body.String())
 	var status api.LocalEmbeddingsStatus
-	require.Eventually(func() bool {
+	readStatus := func() {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
 		request.Header.Set("Authorization", "Bearer owner")
 		request.RemoteAddr = "127.0.0.1:1234"
 		response := httptest.NewRecorder()
 		f.server.Router().ServeHTTP(response, request)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
+		status = api.LocalEmbeddingsStatus{}
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+	}
+	require.Eventually(func() bool {
+		readStatus()
 		return !status.Running
 	}, 10*time.Second, 10*time.Millisecond)
 	require.True(status.Enabled, "the provider is published before the first index is built")
@@ -691,4 +695,13 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 	require.NoError(err)
 	require.NotNil(building)
 	require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
+	f.onEmbedding = nil
+	f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
+	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+	require.NoError(err)
+	require.Equal(building.ID, active.ID)
+	require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
+	readStatus()
+	require.Empty(status.Error, "a matching usable index resolves the old setup failure")
 }

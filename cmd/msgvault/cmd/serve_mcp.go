@@ -131,6 +131,7 @@ func installServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server
 	if opts.HybridSearcher == nil {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: client}
 		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: client}
+		opts.EmbeddingStatus = client
 	}
 	if err := ctx.Err(); err != nil {
 		_ = client.Close()

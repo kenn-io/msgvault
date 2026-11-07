@@ -653,7 +653,7 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-The native daemon MCP listener always registers semantic and similar-message search tools. Before text search is enabled, these tools return the daemon's unavailable response. Turning on search by meaning enables them without restarting MCP.
+The native daemon MCP listener always registers semantic search, similar-message search, and embedding status tools. Before text search is enabled, these tools return the daemon's unavailable response. Turning on search by meaning enables them without restarting MCP.
 
 Other embedded MCP servers register vector tools from the backends supplied by their
 caller. Standalone daemon-backed MCP reads one authenticated health response during
@@ -665,7 +665,7 @@ fields are available, and the daemon serves the visual route from schema
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
 
-A successful authenticated health response with API schema `3.21.0` or newer also registers `get_embeddings_status`.
+Standalone daemon-backed MCP also registers `get_embeddings_status` when authenticated health reports a vector lane and API schema `3.21.0` or newer.
 
 Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,

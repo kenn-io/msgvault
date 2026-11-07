@@ -78,7 +78,7 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 					close(controller.release)
 					synctest.Wait()
 					controller.enabled.Store(true)
-					checks.Empty(status().Error)
+					checks.Equal("build interrupted", status().Error)
 				case "retry after failure":
 					close(controller.release)
 					synctest.Wait()
