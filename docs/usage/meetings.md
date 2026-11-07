@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-06"
+last_edited: "2026-11-07"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -63,8 +63,10 @@ specified; `-o -` also uses stdout. Both formats show available speakers as
 `Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
 SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
 `<`, braces, and backslashes in text or labels because players can interpret
-them as markup or formatting controls. SRT also refuses lines that begin with a
-number and contain `-->`, which players can treat as another cue. Use
+them as markup or formatting controls. SRT also refuses complete timing headers
+at the start of a payload line,
+including signed timestamps, which players can treat as another cue. Ordinary
+numeric arrows such as `2025 --> 2026` remain literal. Use
 `--format vtt` for those transcripts.
 Interior blank cue lines, multiline speaker labels, and NUL characters cause an
 explicit error.

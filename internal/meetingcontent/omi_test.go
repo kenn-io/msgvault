@@ -24,7 +24,7 @@ func TestDecodeOmiSectionsActionsAndSpeakers(t *testing.T) {
 	assert.Equal("Synthetic User", content.Transcript.Segments[0].Speaker)
 	assert.Equal("Speaker 2", content.Transcript.Segments[1].Speaker)
 	require.NotNil(content.Transcript.Segments[0].EndOffsetSeconds)
-	assert.Equal(2.0, *content.Transcript.Segments[0].EndOffsetSeconds)
+	assert.InDelta(2.0, *content.Transcript.Segments[0].EndOffsetSeconds, 1e-9)
 	require.Len(content.SourceParticipants, 2)
 	assert.Empty(content.SourceParticipants[0].Email)
 	assert.Equal(DurationProvider, content.DurationBasis)

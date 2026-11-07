@@ -4,18 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
-// RenderSubtitles exports complete retained cue intervals without changing entry.
-// Absolute-only transcripts start at their earliest cue; explicit offsets retain
-// their recording coordinates. Cue ends are never estimated.
-func RenderSubtitles(entry Entry, format string) (string, error) {
-	if format != "srt" && format != "vtt" {
-		return "", fmt.Errorf("unsupported subtitle format %q: use srt or vtt", format)
-	}
+// Each decimal conversion permits leading C whitespace and a sign. Match a
+// complete timing prefix: readers accept trailing coordinates or other data.
+const subtitleInteger = `[ \t\r\n\f\x0b]*[+-]?[0-9]+`
+const subtitleClock = subtitleInteger + ":" + subtitleInteger + ":" + subtitleInteger + "[,.]" + subtitleInteger
+
+var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*-->` + subtitleClock)
+
+// renderSubtitles preserves complete retained intervals without changing entry.
+func renderSubtitles(entry Entry, format string) (string, error) {
 	transcript := entry.Content.Transcript
 	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
 		return "", fmt.Errorf("subtitle timing unavailable: complete structured transcript required (state %s, reason %s)", transcript.State, transcript.Reason)
@@ -114,9 +117,7 @@ func RenderSubtitles(entry Entry, format string) (string, error) {
 		} else {
 			unsafe := strings.ContainsAny(text, "<{}\\")
 			for line := range strings.SplitSeq(text, "\n") {
-				line = strings.TrimSpace(line)
-				// SRT readers can start another cue at a timing line without a blank.
-				unsafe = unsafe || len(line) > 0 && line[0] >= '0' && line[0] <= '9' && strings.Contains(line, "-->")
+				unsafe = unsafe || srtTimingHeader.MatchString(line)
 			}
 			if unsafe {
 				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve literal markup or timing/control syntax; use --format vtt", i+1)

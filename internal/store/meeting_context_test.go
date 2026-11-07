@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"math"
+	"os"
 	"strconv"
 	"testing"
 
@@ -124,8 +125,9 @@ func jsonNumberForMeetingTest(value int64) string {
 
 func TestMeetingSubtitleContextLoadsTranscriptAndDeduplicates(t *testing.T) {
 	fixture := newMeetingQueryFixture(t)
-	raw := `{"summary_markdown":"summary","transcript":[{"speaker":{"name":"R&D"},"text":"Hello 世界","start_time":"2026-01-01T00:00:02Z","end_time":"2026-01-01T00:00:04Z"}]}`
-	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, raw)
+	raw, err := os.ReadFile("../meetingcontent/testdata/granola-timed.json")
+	require.NoError(t, err)
+	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, string(raw))
 	for _, format := range []meetingcontent.Format{"srt", "vtt"} {
 		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
 		require.NoError(t, err)

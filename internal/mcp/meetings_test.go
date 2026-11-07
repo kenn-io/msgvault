@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -201,7 +202,8 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	checks.Nil(emptyMetrics.Totals.AverageKnownSeconds)
 	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
 	require.NoError(t, err)
-	raw := []byte(`{"summary_markdown":"summary","transcript":[{"speaker":{"name":"R&D"},"text":"Hello 世界","start_time":"2026-01-01T00:00:02Z","end_time":"2026-01-01T00:00:04Z"}]}`)
+	raw, err := os.ReadFile("../meetingcontent/testdata/granola-timed.json")
+	require.NoError(t, err)
 	archived, err := meetingarchive.New(st).Upsert(t.Context(), meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle-mcp", SourceConversationID: "subtitle-mcp", Title: "Synthetic", Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Email: "subtitle@example.test"}}, meetingarchive.UpsertOptions{})
 	require.NoError(t, err)
 	for _, format := range []string{"srt", "vtt"} {

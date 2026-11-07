@@ -17,7 +17,7 @@ func Render(archiveUID string, entries []Entry, options PacketOptions) (*PacketR
 		if len(entries) != 1 {
 			return nil, fmt.Errorf("%w: exactly one meeting is required", ErrInvalidSubtitles)
 		}
-		content, err := RenderSubtitles(entries[0], string(options.Format))
+		content, err := renderSubtitles(entries[0], string(options.Format))
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidSubtitles, err)
 		}
