@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -80,17 +81,17 @@ func runImportLinkedIn(cmd *cobra.Command, sourcePath string, opts linkedin.Opti
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Repeat the import to continue.")
+	defer stop()
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Repeat the import to continue.")
-	defer stop()
 	summary, importErr := linkedin.Import(ctx, st, sourcePath, opts)
 	var migrationErr error
 	if summary != nil {
-		migrationErr = runPostSourceCreateMigrationsForInvocation(st, state)
+		migrationErr = runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(ctx), st, state)
 	}
 	if err := errors.Join(importErr, migrationErr, rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state)); err != nil {
 		return err

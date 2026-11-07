@@ -12,7 +12,7 @@ func TestLinkedInVisibleAsTextConversation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	db := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := db.DB.Exec(`
+	_, err := db.DB.ExecContext(t.Context(), `
  INSERT INTO sources(id,source_type,identifier) VALUES(7,'linkedin_export','example');
  INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type,title) VALUES(701,7,'post:example','public_comments','Example post');
  INSERT INTO participants(id,display_name) VALUES(11,'Alex Example');

@@ -57,7 +57,7 @@ func count(t *testing.T, st *store.Store, query string) int {
 	t.Helper()
 	require := require.New(t)
 	var n int
-	require.NoError(st.DB().QueryRow(query).Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&n))
 	return n
 }
 
@@ -91,7 +91,7 @@ func TestImportExport(t *testing.T) {
 			assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM labels WHERE name = 'INBOX'"))
 			assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM participant_contact_observations WHERE original_value = 'morgan@example.com'"))
 			var body string
-			require.NoError(st.DB().QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_message_id LIKE 'comment:%')`).Scan(&body))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_message_id LIKE 'comment:%')`).Scan(&body))
 			assert.Equal("A \"quoted\" reply\nNext line", body)
 			again, err := Import(t.Context(), st, path, opts)
 			require.NoError(err)
@@ -323,7 +323,7 @@ func TestImportLinklessCommentsNeverReplyToThemselves(t *testing.T) {
 	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM messages"))
 	assert.Zero(count(t, st, "SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL"))
 	var id int64
-	require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	require.NoError(st.SetMessageReplyContext(t.Context(), id, id))
 	_, err := Import(t.Context(), st, dir, opts)
 	require.NoError(err)
