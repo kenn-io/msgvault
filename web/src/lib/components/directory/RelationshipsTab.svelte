@@ -20,11 +20,12 @@
     client: APIClient;
     controller: DirectoryEntityController;
     personID: number;
+    personName?: string;
     catalogOnly?: boolean;
     onOpenPerson?: (id: number) => void;
   }
 
-  let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
+  let { client, controller, personID, personName, catalogOnly = false, onOpenPerson }: Props = $props();
   const imports = new RelationshipReviewController(untrack(() => client));
   $effect(() => { const id = personID; if (!catalogOnly && controller.relationships) untrack(() => imports.personID === id ? void imports.load() : imports.applyPerson(id)); });
   onDestroy(() => imports.destroy());
@@ -39,6 +40,9 @@
   $effect(() => {
     if (deletingRelationship || deletingType) return appShortcuts.pushScope('directory-relationships');
   });
+
+  const pending = $derived(imports.rows.filter(row => row.status === 'pending'));
+  const reviewed = $derived(imports.rows.filter(row => row.status !== 'pending'));
 
   const typeLabel = (type: RelationshipType) => type.is_symmetric ? type.forward_label : `${type.forward_label} / ${type.reverse_label}`;
   const byLabel = (left: RelationshipType, right: RelationshipType) => typeLabel(left).localeCompare(typeLabel(right));
@@ -123,7 +127,7 @@
       </div>
     </header>
 
-    {#if controller.errors.relationships}
+    {#if controller.errors.relationships && relationshipEditor === undefined}
       <div class="refresh-error" role="alert">
         <p>{controller.errors.relationships}</p>
         <Button size="sm" label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
@@ -147,12 +151,17 @@
     {/if}
     {#if imports.loading}<p role="status">Loading imported connections…</p>{/if}
     {#if imports.error}<p role="alert">{imports.error}<Button label="Retry imported connections" size="sm" onclick={() => void imports.retry()} /></p>{/if}
-    {#each imports.rows as row (row.id)}
-      <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, historySource(row.source), sentenceCase(row.value_kind), row.updated_at && formatContactDate(row.updated_at), row.reviewed_at && formatContactDate(row.reviewed_at)].filter(Boolean).join(' · ')}>
-        {row.raw_related_value}
+    {#snippet importedRow(row: typeof imports.rows[number])}
+      {@const unresolvedUID = row.raw_related_value.startsWith('urn:uuid:')}
+      <DetailRow description={[row.status !== 'pending' && sentenceCase(row.status), unresolvedUID && row.raw_related_value, row.raw_related_type, `from ${historySource(row.source)}`, sentenceCase(row.value_kind), row.updated_at && formatContactDate(row.updated_at), row.reviewed_at && formatContactDate(row.reviewed_at)].filter(Boolean).join(' · ')}>
+        {unresolvedUID ? 'Unknown contact' : row.raw_related_value}
         {#if row.matched_person_id && !controller.relationships.some(view => row.status === 'accepted' && view.counterpart_person_id === row.matched_person_id)}<Button label="Open person" size="sm" onclick={() => onOpenPerson?.(row.matched_person_id!)} />{/if}
       </DetailRow>
-    {/each}
+    {/snippet}
+    {#if pending.length > 0}
+      <section class="suggestions"><h4>Suggested ({pending.length})</h4>{#each pending as row (row.id)}{@render importedRow(row)}{/each}</section>
+    {/if}
+    {#if reviewed.length > 0}<section class="suggestions"><h4>Reviewed ({reviewed.length})</h4>{#each reviewed as row (row.id)}{@render importedRow(row)}{/each}</section>{/if}
   {:else}
     <header><h3>Connection types</h3><Button size="sm" label="Add type" onclick={() => relationshipTypeEditor = null} /></header>
     {#if controller.relationshipTypesLoading}<p class="muted" role="status">Loading relationship types…</p>
@@ -181,7 +190,7 @@
 </section>
 
 {#if relationshipEditor !== undefined}
-  <PersonRelationshipEditor {client} {controller} {personID} relationship={relationshipEditor ?? undefined}
+  <PersonRelationshipEditor {client} {controller} {personID} {personName} relationship={relationshipEditor ?? undefined}
     onDone={() => { relationshipEditor = undefined; }} onClose={() => { relationshipEditor = undefined; }} />
 {/if}
 {#if relationshipTypeEditor !== undefined}
@@ -210,6 +219,8 @@
   h3, p, ul { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .suggestions { margin-top: var(--space-3); }
+  h4 { margin: 0; font-size: var(--font-size-sm); }
   .records { display: grid; }
   .types { display: grid; padding: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-md); list-style: none; }
   .types li { display: flex; align-items: center; gap: var(--control-gap); min-height: var(--control-h-lg); padding: var(--space-1) var(--pane-pad-x); }

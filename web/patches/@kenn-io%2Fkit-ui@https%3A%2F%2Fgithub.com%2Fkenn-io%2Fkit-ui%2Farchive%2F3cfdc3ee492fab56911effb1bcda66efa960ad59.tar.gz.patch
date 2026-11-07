@@ -1,0 +1,103 @@
+diff --git a/src/lib/components/Typeahead.svelte b/src/lib/components/Typeahead.svelte
+index 64c34c2458b7107a78399a4822db64eb1fc58c81..c3956d504b9e8033bb7d45552d172dacf9290635 100644
+--- a/src/lib/components/Typeahead.svelte
++++ b/src/lib/components/Typeahead.svelte
+@@ -22,6 +22,8 @@
+     inputAttributes?: TypeaheadInputAttributes;
+     title?: string;
+     emptyLabel?: string;
++    /** Start keyboard selection on a choice instead of an expanded group. */
++    highlightFirstOption?: boolean;
+     disabled?: boolean;
+     /** Prepend a row that selects `""`; the trigger falls back to
+      * `fallbackLabel` when nothing matches the value. */
+@@ -36,6 +38,8 @@
+     /** Force the list above/below the trigger; "auto" (default) flips near
+      * the viewport bottom. */
+     placement?: "auto" | "top" | "bottom";
++    /** Align the panel's horizontal edges with this element. */
++    panelAnchor?: HTMLElement;
+     /** Dim text rendered before the value on the closed trigger. */
+     triggerPrefix?: string;
+     /** Replace the option rows with a loading row (async option sources). */
+@@ -71,12 +75,14 @@
+     inputAttributes = {},
+     title,
+     emptyLabel = "No matches",
++    highlightFirstOption = false,
+     disabled = false,
+     allowClear = false,
+     clearLabel = "None",
+     allowCustom = false,
+     customLabel = 'Use "{query}"',
+     placement = "auto",
++    panelAnchor,
+     triggerPrefix = "",
+     loading = false,
+     loadingLabel = "Loading…",
+@@ -138,6 +144,11 @@
+     // A caller's button stays visible while open, so the list hangs off it.
+     const rect = (trigger && triggerEl ? triggerEl : containerEl).getBoundingClientRect();
+     const anchor = new DOMRect(rect.x / zoom, rect.y / zoom, rect.width / zoom, rect.height / zoom);
++    if (panelAnchor) {
++      const bounds = panelAnchor.getBoundingClientRect();
++      anchor.x = bounds.x / zoom;
++      anchor.width = bounds.width / zoom;
++    }
+     const viewportWidth = window.innerWidth / zoom;
+     // CSS vw ignores ancestor zoom, so the stylesheet's width cap reads this
+     // instead. Set it before measuring so min-width resolves against it.
+@@ -162,5 +173,5 @@
+   // current. No dismissable() here: the typeahead closes on blur instead.
+   $effect(() => {
+     if (!open) return;
+-    return autoReposition(() => [panelEl, triggerEl, containerEl], positionPanel);
++    return autoReposition(() => [panelEl, triggerEl, containerEl, panelAnchor], positionPanel);
+   });
+@@ -212,5 +223,6 @@
+   const filterQuery = $derived(remote ? "" : query.trim().toLowerCase());
+   const rows = $derived(buildRows(options, 0, filterQuery, false));
++  const firstOptionIndex = $derived(highlightFirstOption ? Math.max(0, rows.findIndex((row) => !row.group)) : 0);
+   const grouped = $derived(options.some((o) => o.children));
+   const clearOffset = $derived(allowClear ? 1 : 0);
+   const exactOption = $derived(findByName(options, query.trim()));
+@@ -287,7 +299,7 @@
+     // <body> and would fire focusout on the container. Suppress dismissal
+     // until we've handed focus to the input.
+     opening = true;
+-    highlightIndex = !remote && customValue !== "" ? customOffset : clearOffset;
++    highlightIndex = !remote && customValue !== "" ? customOffset : clearOffset + firstOptionIndex;
+     await tick();
+     positionPanel();
+     inputEl?.focus();
+@@ -561,7 +573,7 @@
+         : customValue !== ""
+           ? customOffset
+           : rows.length > 0
+-            ? clearOffset
++            ? clearOffset + firstOptionIndex
+             : 0;
+     }}
+     onkeydown={handleKeydown}
+diff --git a/types/components/Typeahead.svelte.d.ts b/types/components/Typeahead.svelte.d.ts
+index 4619bb1777c3d9c79761cb7d5bfa88f75d1fc564..ce3fae9a09b58031f34f0a0c1ea0ad9d821eb591 100644
+--- a/types/components/Typeahead.svelte.d.ts
++++ b/types/components/Typeahead.svelte.d.ts
+@@ -10,6 +10,8 @@ interface Props {
+     inputAttributes?: TypeaheadInputAttributes;
+     title?: string;
+     emptyLabel?: string;
++    /** Start keyboard selection on a choice instead of an expanded group. */
++    highlightFirstOption?: boolean;
+     disabled?: boolean;
+     /** Prepend a row that selects `""`; the trigger falls back to
+      * `fallbackLabel` when nothing matches the value. */
+@@ -24,6 +26,8 @@ interface Props {
+     /** Force the list above/below the trigger; "auto" (default) flips near
+      * the viewport bottom. */
+     placement?: "auto" | "top" | "bottom";
++    /** Align the panel's horizontal edges with this element. */
++    panelAnchor?: HTMLElement;
+     /** Dim text rendered before the value on the closed trigger. */
+     triggerPrefix?: string;
+     /** Replace the option rows with a loading row (async option sources). */

@@ -45,7 +45,7 @@
     </PersonFields>
     {#if entity}
       <OrganizationEmploymentTab controller={entity} {personID} {organizationRequest} />
-      <RelationshipsTab {client} controller={entity} {personID} {onOpenPerson} />
+      <RelationshipsTab {client} controller={entity} {personID} personName={profile.person?.display_name} {onOpenPerson} />
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
     <PersonOpenLoops {client} {personID} refreshKey={String(profile.person?.revision)} />

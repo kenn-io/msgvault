@@ -35,6 +35,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@kenn-io/kit-ui@https://github.com/kenn-io/kit-ui/archive/3cfdc3ee492fab56911effb1bcda66efa960ad59.tar.gz": "patches/@kenn-io%2Fkit-ui@https%3A%2F%2Fgithub.com%2Fkenn-io%2Fkit-ui%2Farchive%2F3cfdc3ee492fab56911effb1bcda66efa960ad59.tar.gz.patch",
+  },
   "packages": {
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@5.1.11", "", { "dependencies": { "@asamuzakjp/generational-cache": "^1.0.1", "@csstools/css-calc": "^3.2.0", "@csstools/css-color-parser": "^4.1.0", "@csstools/css-parser-algorithms": "^4.0.0", "@csstools/css-tokenizer": "^4.0.0" } }, "sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg=="],
 

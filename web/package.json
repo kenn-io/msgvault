@@ -43,5 +43,8 @@
     "typescript": "5.9.3",
     "vite": "8.1.6",
     "vitest": "4.1.11"
+  },
+  "patchedDependencies": {
+    "@kenn-io/kit-ui@https://github.com/kenn-io/kit-ui/archive/3cfdc3ee492fab56911effb1bcda66efa960ad59.tar.gz": "patches/@kenn-io%2Fkit-ui@https%3A%2F%2Fgithub.com%2Fkenn-io%2Fkit-ui%2Farchive%2F3cfdc3ee492fab56911effb1bcda66efa960ad59.tar.gz.patch"
   }
 }
