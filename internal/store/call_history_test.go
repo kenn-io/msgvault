@@ -77,7 +77,7 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 		assert.Equal(tc.text, subject.String)
 		assert.False(snippet.Valid)
 		assert.Equal(tc.text, title)
-		body, err := st.GetMessageBodyTextContext(t.Context(), id)
+		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(err)
 		assert.Empty(body)
 		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(tc.direction+" seconds"), 0, 10)
@@ -160,9 +160,9 @@ func TestCallReimportPreservesLabels(t *testing.T) {
 	o, sourceID := validCallObservation(t, st)
 	id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
-	labelID, err := st.EnsureLabel(sourceID, "important", "Important", "user")
+	labelID, err := st.EnsureLabel(t.Context(), sourceID, "important", "Important", "user")
 	require.NoError(err)
-	require.NoError(st.AddMessageLabels(id, []int64{labelID}))
+	require.NoError(st.AddMessageLabels(t.Context(), id, []int64{labelID}))
 
 	again, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 	require.NoError(err)
@@ -178,7 +178,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	st := storetest.New(t).Store
 	src, err := st.GetOrCreateSource(callhistory.SourceType, (callhistory.Evidence{Provider: "signal", Account: "example"}).SourceIdentifier())
 	requirements.NoError(err)
-	peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
 	requirements.NoError(err)
 	o := callhistory.Observation{
 		RecordID: "native-1",
