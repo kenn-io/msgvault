@@ -403,7 +403,8 @@ import (
 // 3.46.0 adds measured CLI full-text pagination and semantic ranking cap overflow.
 // 3.47.0 adds retry hints to CLI and fast search.
 // 3.48.0 adds owner-only local message search activation and progress.
-const APISchemaVersion = "3.48.0"
+// 3.49.0 adds provider-neutral message import.
+const APISchemaVersion = "3.49.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1120,6 +1121,23 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if message := schemas["ImportedMessage"]; message != nil {
+		// As with Meeting, the public schema keeps the title-or-body and
+		// single-body rules; the Go client gets a plain struct. A string keeps
+		// the caller's UTC offset, and metadata values stay arbitrary JSON.
+		message.AllOf = nil
+		if sentAt := message.Properties["sent_at"]; sentAt != nil {
+			setCodegenGoType(sentAt, "string")
+		}
+		if metadata := message.Properties["metadata"]; metadata != nil {
+			if values, ok := metadata.AdditionalProperties.(*huma.Schema); ok {
+				setCodegenGoType(values, "any")
+			}
+		}
+	}
+	if sender := schemas["MessageImportSender"]; sender != nil {
+		sender.AnyOf = nil
+	}
 	if totals := schemas["DurationTotals"]; totals != nil {
 		if average := totals.Properties["average_known_seconds"]; average != nil {
 			setCodegenGoType(average, "*float64")
@@ -1129,8 +1147,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
 	for schemaName, property := range map[string]string{
-		"MeetingPerson": emailProperty,
-		"Source":        "account_email",
+		"MeetingPerson":       emailProperty,
+		"Source":              "account_email",
+		"MessageImportSource": "account_email",
 	} {
 		if schema := schemas[schemaName]; schema != nil {
 			if email := schema.Properties[property]; email != nil {
@@ -1402,6 +1421,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		setEnumNames(response.Properties["status"], []any{
 			"MeetingImportResponseStatusCreated",
 			"MeetingImportResponseStatusUpdated",
+		})
+	}
+	if response := schemas["MessageImportResponse"]; response != nil {
+		setEnumNames(response.Properties["status"], []any{
+			"MessageImportResponseStatusCreated",
+			"MessageImportResponseStatusUpdated",
 		})
 	}
 	if request := schemas["MeetingActionsRequest"]; request != nil {

@@ -37,6 +37,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -948,6 +949,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
+	messageImporter := messageimport.NewImporter(s, messageimport.Hooks{
+		AfterSourceSetup: func() error {
+			return runPostSourceCreateMigrationsForInvocation(ctx, s, state)
+		},
+		RefreshCache: refreshCacheAfterWrite,
+	}).WithLogger(logger)
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
@@ -962,6 +969,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
+		messageImporter:        messageImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
 		cacheJobs:              cacheJobs,
 		personEnrichmentConfig: cfg.People.Enrichment,
@@ -1884,6 +1892,7 @@ type storeAPIAdapter struct {
 	draftCacheRefresh     func(context.Context, string) error
 	attachmentMaintenance *attachmentMaintenance
 	meetingImporter       *meetingimport.Importer
+	messageImporter       *messageimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
@@ -1957,6 +1966,7 @@ var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+var _ api.MessageImporter = (*storeAPIAdapter)(nil)
 var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -2232,6 +2242,16 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+func (a *storeAPIAdapter) ImportMessage(
+	ctx context.Context,
+	req messageimport.Request,
+) (messageimport.Result, error) {
+	if a == nil || a.messageImporter == nil {
+		return messageimport.Result{}, messageimport.ErrUnavailable
+	}
+	return a.messageImporter.Import(ctx, req)
 }
 
 // ImportMuesliRecording uses the shared attachment writer; Docbank discovers it
