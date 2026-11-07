@@ -65,6 +65,12 @@
     opacity: 1;
   }
 
+  @media (max-width: 640px) {
+    .detail-row:has(.actions) { flex-wrap: wrap; }
+    .detail-row:has(.actions) .value { flex-basis: 100%; }
+    .actions { flex-wrap: wrap; max-width: 100%; }
+  }
+
   @media (hover: none) {
     .actions {
       opacity: 1;

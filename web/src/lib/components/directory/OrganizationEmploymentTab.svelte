@@ -8,6 +8,7 @@
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import EmploymentEditor from './EmploymentEditor.svelte';
+  import EmploymentEndPopover from './EmploymentEndPopover.svelte';
   import OrganizationEditor from './OrganizationEditor.svelte';
 
   interface Props {
@@ -19,7 +20,7 @@
   let { controller, personID, organizationRequest = undefined }: Props = $props();
   let organizationEditor = $state<(Pick<Organization, 'id'> & Partial<Organization>) | null | undefined>(undefined);
   let employmentEditor = $state<Employment | null | undefined>(undefined);
-  let employmentAction = $state<'edit' | 'end'>('edit');
+  let endingEmployment = $state<{ employment: Employment; trigger: HTMLElement }>();
   let deletingEmployment = $state<Employment>();
   let deleteConflictCurrent = $state<Employment>();
   let deleteMessage = $state('');
@@ -72,7 +73,6 @@
     actionMessage = '';
     actionConflictCurrent = undefined;
     if (controller.organizations.length === 0) await controller.refreshOrganizations();
-    employmentAction = 'edit';
     employmentEditor = null;
   }
 
@@ -145,8 +145,8 @@
             {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
             {#snippet actions()}
               {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
-              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
-              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }}><Pencil size={14} /></IconButton>
+              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" ariaExpanded={endingEmployment?.employment.id === employment.id} onclick={(event) => { endingEmployment = { employment, trigger: event.currentTarget as HTMLButtonElement }; }} />{/if}
+              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentEditor = employment; }}><Pencil size={14} /></IconButton>
               <IconButton size="sm" ariaLabel="Delete employment" onclick={() => openDelete(employment)}><X size={14} /></IconButton>
             {/snippet}
           </DetailRow>
@@ -166,17 +166,25 @@
 
 </section>
 
+{#if endingEmployment}
+  {#key endingEmployment.employment.id}
+  <EmploymentEndPopover {controller} employment={endingEmployment.employment} trigger={endingEmployment.trigger} onClose={() => { endingEmployment = undefined; }} />
+  {/key}
+{/if}
 {#if organizationEditor !== undefined}
   <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined}
     onDone={() => { organizationEditor = undefined; }} onClose={() => { organizationEditor = undefined; }} />
 {/if}
 {#if employmentEditor !== undefined}
-  <EmploymentEditor controller={controller} {personID} employment={employmentEditor ?? undefined} action={employmentAction}
+  <EmploymentEditor controller={controller} {personID} employment={employmentEditor ?? undefined}
     onDone={() => { employmentEditor = undefined; }} onClose={() => { employmentEditor = undefined; }} />
 {/if}
 {#if deletingEmployment}
-  <Modal title="Delete employment" ariaLabel="Delete employment" closeLabel="Close delete employment" onclose={closeDelete}>
+  <Modal closable={true} title="Delete employment" ariaLabel="Delete employment" closeLabel="Close delete employment" onclose={closeDelete}>
+    <div class="delete-body">
     <p>Delete {employmentLabel(deletingEmployment)} at {organizationName(deletingEmployment.organization_id)}?</p>
+    <p>This permanently removes the employment record.</p>
+    {#if deletingEmployment.is_current}<p>End employment to keep it as past work.</p>{/if}
     {#if deleteMessage}
       <div role="alert">
         <p>{deleteMessage}</p>
@@ -185,7 +193,8 @@
         {/if}
       </div>
     {/if}
-    {#snippet footer()}<Button label="Cancel" disabled={acting} onclick={closeDelete} /><Button tone="danger" surface="solid" label="Confirm delete employment" disabled={acting} onclick={() => void removeEmployment()} />{/snippet}
+    </div>
+    {#snippet footer()}<Button label="Cancel" disabled={acting} onclick={closeDelete} /><Button tone="danger" surface="solid" label="Delete" ariaLabel="Delete" disabled={acting} onclick={() => void removeEmployment()} />{/snippet}
   </Modal>
 {/if}
 
@@ -196,6 +205,7 @@
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   .records { display: grid; }
+  .delete-body { display: grid; gap: var(--field-gap); }
   .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .org-link:hover { text-decoration: underline; }

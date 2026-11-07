@@ -4,6 +4,118 @@ import { requestOf, pathOf, organization, organizationProfile, envelope, richOrg
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
+  it('saves details, aliases, and categories with one action and retries only unsaved changes', async () => {
+    let saved = organizationProfile();
+    let patches = 0;
+    let puts = 0;
+    const onDone = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
+      if (request.method === 'PATCH') {
+        patches++;
+        saved = { ...saved, organization: { ...saved.organization, name: 'Draft company' } };
+        return Response.json(saved.organization, { headers: { ETag: '"organization-21-r2"' } });
+      }
+      if (request.method === 'PUT') {
+        puts++;
+        const body = await request.json();
+        expect(body.names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Draft alias' })]));
+        expect(body.categories).toEqual(expect.arrayContaining([expect.objectContaining({ category: 'Research' })]));
+        if (puts === 1) return Response.json({ message: 'Profile unavailable' }, { status: 400 });
+        return Response.json(saved, { headers: { ETag: '"organization-21-r3"' } });
+      }
+      throw new Error(`unexpected ${request.method}`);
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft company' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(puts).toBe(1));
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('remain unsaved');
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Draft company');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(patches).toBe(1);
+    expect(puts).toBe(2);
+  });
+
+  it('retries loading an organization from its inline error action', async () => {
+    let reads = 0;
+    const { controller } = controllerWith(async () => ++reads === 1
+      ? Response.json({ message: 'Organization load unavailable' }, { status: 400 })
+      : Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retry organization load' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Synthetic Works'));
+    expect(reads).toBe(2);
+  });
+
+  it('creates aliases and categories with the organization and reuses it after a profile failure', async () => {
+    let creates = 0;
+    let puts = 0;
+    const created = { ...organization(), name: 'New org', primary_domain: null, description: null };
+    const onDone = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') {
+        creates++;
+        return Response.json(created, { status: 201, headers: { ETag: '"organization-21-r1"' } });
+      }
+      if (request.method === 'GET') return Response.json({ ...organizationProfile(), organization: created }, { headers: { ETag: '"organization-21-r1"' } });
+      if (request.method === 'PUT') {
+        puts++;
+        const body = await request.json();
+        expect(body.names).toContainEqual(expect.objectContaining({ name: 'New alias' }));
+        expect(body.categories).toContainEqual(expect.objectContaining({ category: 'Research' }));
+        if (puts === 1) return Response.json({ message: 'Profile unavailable' }, { status: 400 });
+        return Response.json({ ...organizationProfile(), organization: created }, { headers: { ETag: '"organization-21-r2"' } });
+      }
+      throw new Error(`unexpected ${request.method}`);
+    });
+    render(OrganizationEditor, { controller, onDone });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New org' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'New alias' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await screen.findByText(/Aliases and categories remain unsaved/);
+    expect(onDone).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(created));
+    expect(creates).toBe(1);
+    expect(puts).toBe(2);
+  });
+
+  it.each(['details', 'aliases', 'categories'])('preserves untouched comma values when saving %s', async field => {
+    const saved = {
+      ...organizationProfile(),
+      names: [{ ...organizationProfile().names[0], name: 'Example, Inc.' }],
+      categories: [{ organization_id: 21, category: 'Research, development', category_normalized: 'research, development', envelope: envelope(40) }]
+    };
+    const onDone = vi.fn();
+    const writes: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
+      writes.push(request.clone());
+      return Response.json(request.method === 'PATCH' ? { ...saved.organization, name: 'Renamed' } : saved, { headers: { ETag: '"organization-21-r2"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    const name = await screen.findByRole('textbox', { name: 'Organization name' });
+    await fireEvent.input(field === 'details' ? name : screen.getByRole('textbox', { name: `Organization ${field}` }), { target: { value: field === 'details' ? 'Renamed' : 'Changed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    if (field === 'details') {
+      expect(writes.map(request => request.method)).toEqual(['PATCH']);
+    } else {
+      const body = await writes.find(request => request.method === 'PUT')!.json();
+      if (field === 'categories') expect(body.names).toEqual([expect.objectContaining({ name: 'Example, Inc.' })]);
+      if (field === 'aliases') expect(body.categories).toEqual([expect.objectContaining({ category: 'Research, development' })]);
+    }
+  });
+
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -44,6 +156,7 @@ describe('OrganizationEditor', () => {
         organizations = [organization(21, 3, 'Renamed Synthetic Org')];
         return Response.json({ ...organizations[0], retired_at: '2026-08-02T00:00:00Z' }, { headers: { ETag: '"organization-21-r3"' } });
       }
+      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/organizations/21' && request.method === 'DELETE') { organizations = []; return new Response(null, { status: 204 }); }
       throw new Error(`unexpected ${request.method} ${path}`);
     });
@@ -53,6 +166,7 @@ describe('OrganizationEditor', () => {
     try {
       if (operation === 'delete') {
         await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', false));
         await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
       } else {
         const name = await screen.findByRole('textbox', { name: 'Organization name' });
@@ -111,7 +225,7 @@ describe('OrganizationEditor', () => {
     const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
     await fireEvent.input(aliases, { target: { value: 'User Draft Alias' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'User Draft Category' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
 
     if (conflict) {
@@ -126,7 +240,7 @@ describe('OrganizationEditor', () => {
       expect(alert.textContent).toContain('Concurrent logo');
       expect(aliases).toHaveProperty('value', 'User Draft Alias');
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
       await waitFor(() => expect(puts).toBe(2));
     }
     const body = await requests.filter(request => request.method === 'PUT').at(-1)!.json();
@@ -156,6 +270,57 @@ describe('OrganizationEditor', () => {
     expect(body.identifiers).toEqual([expect.objectContaining({ identifier_kind: 'registry', identifier_value: 'REG-42', source_ref: 'card-42', vcard_property: 'X-REGISTRY' })]);
     expect(body.media).toEqual(expect.arrayContaining([expect.objectContaining({ content_hash: 'sha256:synthetic' }), expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]));
     for (const media of body.media) expect(media.data).toBeUndefined();
+  });
+
+  it.each([1, 200])('blocks deletion for %s past employment records and limits named people', async count => {
+    const requests: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input); requests.push(request);
+      const path = pathOf(request);
+      if (path.endsWith('/employments')) return Response.json({ employments: Array.from({ length: count }, (_, i) => ({ person_id: Math.max(1, i), is_current: false })) });
+      if (path === '/api/v1/people/3') return Response.json({ message: 'Name unavailable' }, { status: 400 });
+      if (path.startsWith('/api/v1/people/')) return Response.json({ display_name: `Example Person ${path.split('/').at(-1)}` });
+      return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
+    await screen.findByText(count === 1 ? 'Synthetic Org has 1 employment record. Remove it first.' : 'Synthetic Org has at least 200 employment records. Remove them first.');
+    expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
+    expect(screen.getByText('Example Person 1')).toBeDefined();
+    if (count === 200) expect(screen.getByText('and 198 more')).toBeDefined();
+    const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
+    expect(query.get('limit')).toBe('200');
+    expect(query.has('current_only')).toBe(false);
+    expect(requests.filter(request => pathOf(request).startsWith('/api/v1/people/'))).toHaveLength(Math.min(count, 3));
+  });
+
+  it('retains the draft through failed deletion checks, retry, and a server refusal', async () => {
+    let checks = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request).endsWith('/employments')) {
+        if (++checks === 1) return Response.json({ message: 'Check failed' }, { status: 400 });
+        return Response.json({ employments: checks > 2 ? [{ person_id: 7 }] : [] });
+      }
+      if (pathOf(request) === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
+      if (request.method === 'DELETE') return Response.json({ message: 'Employment added elsewhere' }, { status: 409 });
+      return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Kept draft' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete organization' }));
+    await screen.findByText('Check failed');
+    expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry employment check' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
+    await screen.findByText('This organization changed elsewhere.');
+    await screen.findByText('Synthetic Org has 1 employment record. Remove it first.');
+    expect(checks).toBe(3);
+    expect(screen.queryByRole('region', { name: 'Current saved organization' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Confirm delete organization' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel organization deletion' }));
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Kept draft');
   });
 
   it('keeps an editor open during submission', async () => {
