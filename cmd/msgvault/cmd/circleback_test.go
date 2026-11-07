@@ -54,7 +54,7 @@ func TestProbeCircleback_OfficialArgumentsAndSchemas(t *testing.T) {
 	}
 	var out bytes.Buffer
 
-	err := runCirclebackProbe(context.Background(), &out, session)
+	err := runCirclebackProbe(t.Context(), &out, session)
 
 	require.NoError(err)
 	require.Len(session.calls, 1, "probe must make exactly one sample call")
@@ -105,7 +105,7 @@ func TestFinishScheduledCirclebackImportUsesDetachedRefreshContext(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tc.cancelNow {
 				cancel()
@@ -143,7 +143,7 @@ func TestFinishScheduledCirclebackImportReturnsRefreshError(t *testing.T) {
 	refreshErr := errors.New("refresh failed")
 
 	run := meetingSyncRun{provider: "circleback", identifier: "work", writes: 1, err: importErr}
-	err := run.finishScheduled(context.Background(), "circleback:work",
+	err := run.finishScheduled(t.Context(), "circleback:work",
 		func(context.Context, string) error { return refreshErr })
 
 	require.ErrorIs(t, err, importErr)
@@ -155,7 +155,7 @@ func TestConfiguredCirclebackMissingRegisteredSourceStopsBeforeConnect(t *testin
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	ctx, cancel := context.WithCancel(testInvocationContext(
-		context.Background(),
+		t.Context(),
 		config.NewDefaultConfig(),
 		invocationOptions{},
 	))

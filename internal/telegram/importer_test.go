@@ -23,12 +23,12 @@ func TestImportTextWithoutAttachmentWrites(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_media_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected attachment stats write'; END $$`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_media_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected attachment stats write'; END $$`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION fail_media_stats()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION fail_media_stats()`)
 		require.NoError(err)
 	} else {
-		_, err := st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages BEGIN SELECT RAISE(ABORT, 'unexpected attachment stats write'); END`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages BEGIN SELECT RAISE(ABORT, 'unexpected attachment stats write'); END`)
 		require.NoError(err)
 	}
 	root := t.TempDir()
@@ -37,7 +37,7 @@ func TestImportTextWithoutAttachmentWrites(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	var count int
-	require.NoError(st.DB().QueryRow("SELECT attachment_count FROM messages").Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT attachment_count FROM messages").Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -51,10 +51,10 @@ func TestImportPeerCollision(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(2, summary.MessagesAdded)
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM conversations").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&n))
 	assert.Equal(2, n)
 	for _, key := range []string{"user555:1", "channel555:1"} {
-		require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), key).Scan(&n))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), key).Scan(&n))
 		assert.Equal(1, n)
 	}
 }
@@ -75,7 +75,7 @@ func TestImportConversationPerExportedChat(t *testing.T) {
 				assert.Zero(summary.MessagesAdded)
 				var id int64
 				var title, kind string
-				require.NoError(st.DB().QueryRow("SELECT id, title, conversation_type FROM conversations WHERE source_conversation_id = 'user2'").Scan(&id, &title, &kind))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id, title, conversation_type FROM conversations WHERE source_conversation_id = 'user2'").Scan(&id, &title, &kind))
 				assert.Equal("Example chat", title)
 				assert.Equal("direct_chat", kind)
 				if originalID == 0 {
@@ -96,12 +96,12 @@ func TestImportCrossPeerAndLaterReplies(t *testing.T) {
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	var parent string
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:2").Scan(&parent))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:2").Scan(&parent))
 	assert.Equal("channel9:-999999999", parent)
 	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":4,"type":"message","text":"later parent","date_unixtime":"1610909872"}]},{"id":8,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(err, "date_unixtime")
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:3").Scan(&parent))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:3").Scan(&parent))
 	assert.Equal("channel7:4", parent)
 }
 
@@ -138,7 +138,7 @@ func TestImportCancelledAfterChatResumes(t *testing.T) {
 	require.ErrorIs(err, context.Canceled)
 	assert.EqualValues(2, summary.MessagesAdded)
 	var parent string
-	require.NoError(st.DB().QueryRow("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = 'user2:1'").Scan(&parent))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = 'user2:1'").Scan(&parent))
 	assert.Equal("user2:2", parent)
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
@@ -165,7 +165,7 @@ func TestImportReplacementExportAfterFailure(t *testing.T) {
 		assert.False(summary.WasResumed)
 		assert.EqualValues(2, summary.MessagesAdded)
 		var n int
-		require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE source_message_id = 'user2:2'").Scan(&n))
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE source_message_id = 'user2:2'").Scan(&n))
 		assert.Equal(1, n)
 	})
 	t.Run("same size, changed mtime", func(t *testing.T) {
@@ -204,12 +204,12 @@ func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
 	var path string
-	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT storage_path FROM attachments").Scan(&path))
 	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, path))
 	require.NoError(err)
 	assert.Equal("attachment bytes", string(data))
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT attachment_count FROM messages").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT attachment_count FROM messages").Scan(&n))
 	assert.Equal(1, n)
 }
 
@@ -226,7 +226,7 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 		assert.Equal(i < 2, summary.LimitReached)
 	}
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(3, n)
 }
 
@@ -295,13 +295,13 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 		{"SELECT count(*) FROM conversations WHERE message_count > 0", 4},
 	} {
 		var n int
-		require.NoError(st.DB().QueryRow(tc.query).Scan(&n))
+		require.NoError(st.DB().QueryRowContext(t.Context(), tc.query).Scan(&n))
 		assert.Equal(tc.want, n, tc.query)
 	}
 	var text string
 	var messageID int64
-	require.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'user7000000000000555555:102'").Scan(&messageID))
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), messageID).Scan(&text))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id = 'user7000000000000555555:102'").Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), messageID).Scan(&text))
 	assert.Equal("see https://example.org/docs and @alice", text)
 	// Fully stored rows must survive a re-import even if copying is impossible.
 	require.NoError(os.Remove(filepath.Join(root, "sticker.webp")))
@@ -320,14 +320,14 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(1, summary.MessagesAdded)
-	require.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'user7000000000000555555:101'").Scan(&messageID))
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), messageID).Scan(&text))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id = 'user7000000000000555555:101'").Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), messageID).Scan(&text))
 	assert.Equal("Plain string hello", text)
 	var edited bool
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT is_edited FROM messages WHERE id = ?"), messageID).Scan(&edited))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT is_edited FROM messages WHERE id = ?"), messageID).Scan(&edited))
 	assert.True(edited)
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE filename = 'different.jpg'").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments WHERE filename = 'different.jpg'").Scan(&n))
 	assert.Zero(n)
 }
 
@@ -355,15 +355,15 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 			assert.Zero(summary.MessagesAdded)
 			assert.Equal(1, summary.AttachmentsStored)
 			var n int
-			require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments").Scan(&n))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments").Scan(&n))
 			assert.Equal(1, n)
-			require.NoError(st.DB().QueryRow("SELECT attachment_count FROM messages").Scan(&n))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT attachment_count FROM messages").Scan(&n))
 			assert.Equal(1, n)
 			var sender string
-			require.NoError(st.DB().QueryRow("SELECT pi.identifier_value FROM participant_identifiers pi JOIN messages m ON m.sender_id = pi.participant_id WHERE pi.identifier_type = 'telegram'").Scan(&sender))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT pi.identifier_value FROM participant_identifiers pi JOIN messages m ON m.sender_id = pi.participant_id WHERE pi.identifier_type = 'telegram'").Scan(&sender))
 			assert.Equal("user2", sender)
 			var path string
-			require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT storage_path FROM attachments").Scan(&path))
 			bytes, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, path))
 			require.NoError(err)
 			assert.Equal("photo bytes", string(bytes))
@@ -410,7 +410,7 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				assert.Contains(warnings.String(), "level=WARN")
 				assert.Contains(warnings.String(), "media path must be local to the export")
 				var missing int
-				require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
 				assert.Equal(1, missing)
 			}
 			if kind == "directory" || kind == "symlink" {
@@ -426,7 +426,7 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			} else {
 				require.Error(err)
 				var n int
-				require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 				assert.Zero(n)
 			}
 			if kind == "escape" || kind == "absolute" {
@@ -461,9 +461,9 @@ func TestImportFutureCheckpointRefused(t *testing.T) {
 	require.NoError(err)
 	var payload string
 	var id int64
-	require.NoError(st.DB().QueryRow("SELECT id,cursor_before FROM sync_runs").Scan(&id, &payload))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id,cursor_before FROM sync_runs").Scan(&id, &payload))
 	payload = strings.Replace(payload, `"version":1`, `"version":999`, 1)
-	_, err = st.DB().Exec(st.Rebind("UPDATE sync_runs SET cursor_before = ? WHERE id = ?"), payload, id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE sync_runs SET cursor_before = ? WHERE id = ?"), payload, id)
 	require.NoError(err)
 	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(err, "--no-resume")
@@ -481,19 +481,19 @@ func TestImportCompletionErrorsReported(t *testing.T) {
 	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"hello"}]}`))
 	// Refuse only sync finalization, after the message transaction succeeds.
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_sync_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_sync_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_sync_completion BEFORE UPDATE OF status ON sync_runs FOR EACH ROW WHEN (NEW.status = 'completed') EXECUTE FUNCTION fail_sync_completion()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_sync_completion BEFORE UPDATE OF status ON sync_runs FOR EACH ROW WHEN (NEW.status = 'completed') EXECUTE FUNCTION fail_sync_completion()`)
 		require.NoError(err)
 	} else {
-		_, err := st.DB().Exec(`CREATE TRIGGER fail_sync_completion BEFORE UPDATE OF status ON sync_runs WHEN NEW.status = 'completed' BEGIN SELECT RAISE(ABORT, 'completion unavailable'); END`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_sync_completion BEFORE UPDATE OF status ON sync_runs WHEN NEW.status = 'completed' BEGIN SELECT RAISE(ABORT, 'completion unavailable'); END`)
 		require.NoError(err)
 	}
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
 	require.ErrorContains(err, "completion unavailable")
 	assert.EqualValues(1, summary.MessagesAdded)
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(1, n)
 }
 
@@ -508,7 +508,7 @@ func TestImportUnsupportedAndEmptyText(t *testing.T) {
 	assert.EqualValues(3, summary.MessagesAdded)
 	assert.EqualValues(2, summary.UnsupportedEntriesSkipped)
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE source_message_id = 'user2:3' AND snippet IS NULL").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE source_message_id = 'user2:3' AND snippet IS NULL").Scan(&n))
 	assert.Equal(1, n)
 }
 
@@ -525,7 +525,7 @@ func TestImportContactVCard(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
 	var path string
-	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments WHERE source_part_key = 'contact_vcard'").Scan(&path))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT storage_path FROM attachments WHERE source_part_key = 'contact_vcard'").Scan(&path))
 	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, path))
 	require.NoError(err)
 	assert.Equal(vcard, string(data))
@@ -541,7 +541,7 @@ func TestImportUnsupportedStructuredEntries(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(3, summary.UnsupportedEntriesSkipped)
 	assert.EqualValues(3, summary.MessagesAdded)
-	rows, err := st.DB().Query("SELECT source_message_id FROM messages ORDER BY source_message_id")
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT source_message_id FROM messages ORDER BY source_message_id")
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var keys []string
@@ -553,7 +553,7 @@ func TestImportUnsupportedStructuredEntries(t *testing.T) {
 	require.NoError(rows.Err())
 	assert.Equal([]string{"user2:4", "user2:5", "user2:6"}, keys)
 	var metadata string
-	require.NoError(st.DB().QueryRow("SELECT metadata FROM messages WHERE source_message_id = 'user2:4'").Scan(&metadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages WHERE source_message_id = 'user2:4'").Scan(&metadata))
 	assert.JSONEq(`{"forwarded_from":"Example Channel"}`, metadata)
 }
 
@@ -568,7 +568,7 @@ func TestImportParticipantNameBackfill(t *testing.T) {
 			_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
 			require.NoError(err)
 			var name string
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_type = 'telegram' AND pi.identifier_value = ?"), sender).Scan(&name))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_type = 'telegram' AND pi.identifier_value = ?"), sender).Scan(&name))
 			assert.Equal("Example Sender", name)
 		})
 	}
@@ -611,7 +611,7 @@ func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
 	require.NoError(err)
 	foreignSync, err := st.StartSyncContext(t.Context(), summary.SourceID, "sync-telegram")
 	require.NoError(err)
-	require.NoError(st.PauseSyncWithCheckpoint(foreignSync, &store.Checkpoint{PageToken: `{"version":999}`}))
+	require.NoError(st.PauseSyncWithCheckpoint(t.Context(), foreignSync, &store.Checkpoint{PageToken: `{"version":999}`}))
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.True(summary.WasResumed)
@@ -626,7 +626,7 @@ func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
 	first, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	// An export imported before identity linking has participants and messages only.
-	_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM participant_contact_observations")
 	require.NoError(err)
 	bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Bob Sample")
 	require.NoError(err)
@@ -645,7 +645,7 @@ func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
 	assert.Zero(summary.MessagesAdded)
 	assert.Equal(first.MessagesAdded, summary.MessagesSkipped)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM participant_contact_observations WHERE source_id = ?"), first.SourceID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM participant_contact_observations WHERE source_id = ?"), first.SourceID).Scan(&count))
 	assert.Equal(4, count, "every export user's identity is recorded again")
 	participant, err := st.EnsureParticipantByIdentifier("telegram", "user7000000000000666666", "Bob Sample")
 	require.NoError(err)
@@ -665,7 +665,7 @@ func TestImportLinksArchivedPeerWithoutMessages(t *testing.T) {
 	require.NoError(err)
 	require.EqualValues(1, first.MessagesAdded)
 	// Older imports archived the peer as a recipient without identity observations.
-	_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM participant_contact_observations")
 	require.NoError(err)
 	peer, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
 	require.NoError(err)
@@ -716,14 +716,14 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 				condition = "TRUE"
 			}
 			if st.IsPostgreSQL() {
-				_, err = st.DB().Exec(`CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+				_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
 					BEGIN RAISE EXCEPTION 'forced identity failure'; END $$`)
 				require.NoError(err)
-				_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
-					FOR EACH ROW WHEN (` + condition + `) EXECUTE FUNCTION fail_telegram_identity()`)
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
+					FOR EACH ROW WHEN (`+condition+`) EXECUTE FUNCTION fail_telegram_identity()`)
 			} else {
-				_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
-					WHEN ` + condition + ` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON `+table+`
+					WHEN `+condition+` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
 			}
 			require.NoError(err)
 			root := t.TempDir()
@@ -732,7 +732,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			require.ErrorContains(err, "forced identity failure")
 			assert.Zero(summary.MessagesAdded)
 			var count int
-			require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&count))
 			assert.Zero(count)
 			members, err := st.ClusterMembers(participant)
 			require.NoError(err)
@@ -742,7 +742,7 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 			if st.IsPostgreSQL() {
 				drop += " ON " + table
 			}
-			_, err = st.DB().Exec(drop)
+			_, err = st.DB().ExecContext(t.Context(), drop)
 			require.NoError(err)
 			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
 			require.NoError(err)

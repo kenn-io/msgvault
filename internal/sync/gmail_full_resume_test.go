@@ -119,7 +119,7 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 				if wantBoundary == "" {
 					return
 				}
-				require.Equal("900", gmailCoverageSource(t, e).SyncCursor.String, "interruption must not publish")
+				require.Equal("900", gmailCoverageSource(t.Context(), t, e).SyncCursor.String, "interruption must not publish")
 				reopenAcquisitionStore(t, e)
 				e.Syncer = New(api, e.Store, opts)
 				f.history += 100
@@ -128,9 +128,9 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			wantHistoryStart := uint64(1000)
 			wantHistoryStarts := []uint64{1000}
 			if scenario.incrementalBetween {
-				_, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+				_, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 				require.NoError(err)
-				require.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
+				require.Equal("1100", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				reopenAcquisitionStore(t, e)
 				e.Syncer = New(api, e.Store, opts)
 				wantHistoryStart = 1100
@@ -147,15 +147,15 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			assert.NotContains(f.listTokens, "", "exercise continuation, not a fresh scan")
 			reopenAcquisitionStore(t, e)
 			e.Syncer = New(api, e.Store, nil) // The following incremental is unrestricted.
-			assert.Equal(strconv.FormatUint(wantHistoryStart, 10), gmailCoverageSource(t, e).SyncCursor.String)
-			_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+			assert.Equal(strconv.FormatUint(wantHistoryStart, 10), gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+			_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 			require.NoError(err)
 			reopenAcquisitionStore(t, e)
 			for id := range f.arrivals {
 				assertAcquisitionPresent(t, e, id)
 			}
 			assert.Equal(wantHistoryStarts, f.historyStarts, "History must cover the gap across every interruption")
-			assert.Equal(strconv.FormatUint(f.history, 10), gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal(strconv.FormatUint(f.history, 10), gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 		})
 	}
 }
@@ -176,7 +176,7 @@ func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 	e.Syncer = New(api, e.Store, nil)
 	f.history, f.stopAt = 1100, ""
 	f.listTokens, f.expire = nil, true
-	summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+	summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 	require.NoError(err)
 	assert.False(summary.WasResumed)
 	require.NotEmpty(f.listTokens)

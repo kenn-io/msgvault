@@ -50,7 +50,7 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	require.NoError(err)
 	assert.Equal(int64(1), second.MeetingsUpdated)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
 	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
 	require.NoError(err)
 	require.Len(recipients, 2)

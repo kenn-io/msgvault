@@ -53,7 +53,7 @@ func serveTrackedNoContent(t *testing.T, tracker *IdleTracker) *httptest.Respons
 	rec := httptest.NewRecorder()
 	tracker.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	})).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	return rec
 }
 

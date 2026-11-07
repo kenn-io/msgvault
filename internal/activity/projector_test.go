@@ -58,7 +58,7 @@ func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
 	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "from", []int64{owner}, []string{"Owner"}))
 	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "to", []int64{counterpart}, []string{"Counterpart"}))
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
-	require.NoError(f.Store.AddMessageLabels(unsentID, []int64{labels["DRAFT"]}))
+	require.NoError(f.Store.AddMessageLabels(t.Context(), unsentID, []int64{labels["DRAFT"]}))
 	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
 	require.NoError(err)
 	_, err = projector.RunOnce(t.Context())
@@ -99,11 +99,11 @@ func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
 		t, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), false)
 	unchangedID := f.CreateMessage("already-stamped")
 	undatedID := f.CreateMessage("undated-bodyless")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET last_modified = NULL WHERE id <> ?`), unchangedID)
 	require.NoError(err)
 	unchangedStamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET last_modified = ? WHERE id = ?`), unchangedStamp, unchangedID)
 	require.NoError(err)
 	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
@@ -113,12 +113,12 @@ func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
 	require.ErrorContains(err, fmt.Sprintf("message %d", messageID))
 	// Reproduce an archive that already ran the original backfill but has
 	// since imported bodyless messages through a column without a DEFAULT.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "messages_last_modified_null_repair")
 	require.NoError(err)
 	require.NoError(f.Store.InitSchema())
 	var stamp time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT last_modified FROM messages WHERE id = ?`), unchangedID).Scan(&stamp))
 	assert.Equal(unchangedStamp, stamp.UTC(), "repair must preserve existing timestamps")
 
@@ -716,6 +716,7 @@ func TestConcurrentDifferentTimezoneWorkersRejectStaleGeneration(t *testing.T) {
 	source, err := primary.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err)
 	conversationID, err := primary.EnsureConversation(
+		t.Context(),
 		source.ID, "timezone-race", "Timezone Race")
 	require.NoError(err)
 	f := &storetest.Fixture{
@@ -1142,7 +1143,8 @@ func (r *recomputeRevisionRacingStore) StaleContactStatePersonsContext(
 		return personIDs, err
 	}
 	r.once.Do(func() {
-		r.err = r.AddAccountIdentity(
+		r.err = r.AddAccountIdentityContext(
+			ctx,
 			r.sourceID, "recompute-epoch-owner@example.com", "manual")
 	})
 	return personIDs, r.err
@@ -1153,7 +1155,8 @@ func (r *identityRacingProjectorStore) ProjectActivityBatchContext(
 	items []store.ActivityProjection,
 ) (store.ActivityProjectionResult, error) {
 	r.once.Do(func() {
-		r.err = r.AddAccountIdentity(
+		r.err = r.AddAccountIdentityContext(
+			ctx,
 			items[0].Token.SourceID, "epoch-race-owner@example.com", "manual")
 	})
 	if r.err != nil {
@@ -1292,21 +1295,22 @@ func newConcurrentActivityStores(t *testing.T) (*store.Store, *store.Store) {
 		require.NoError(t, err)
 		second, err = store.Open(testURL)
 		require.NoError(t, err)
+		// Cleanup runs after t.Context() is canceled.
 		t.Cleanup(func() {
 			_ = first.Close()
 			_ = second.Close()
 			cleanup, cleanupErr := sql.Open("pgx", databaseURL)
 			if cleanupErr == nil {
-				_, _ = cleanup.Exec("DROP SCHEMA " + schema + " CASCADE")
+				_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schema+" CASCADE")
 				_ = cleanup.Close()
 			}
 		})
 	} else {
 		databasePath := filepath.Join(t.TempDir(), "activity-concurrency.db")
 		var err error
-		first, err = store.OpenForTest(databasePath)
+		first, err = store.OpenForTest(t.Context(), databasePath)
 		require.NoError(t, err)
-		second, err = store.OpenForTest(databasePath)
+		second, err = store.OpenForTest(t.Context(), databasePath)
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			_ = first.Close()
@@ -1556,16 +1560,16 @@ func TestConversationExpansionHonorsPreemptionAndBatchBudget(t *testing.T) {
 	member := f.EnsureParticipant("new-member@example.com", "New Member", "example.com")
 	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
 	var before, after int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT SUM(revision) FROM activity_projection_queue`).Scan(&before))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(revision) FROM activity_projection_queue`).Scan(&before))
 	ctx, preempt := jobctx.WithPreemption(t.Context())
 	preempt()
 	result, err := initial.RunOnce(ctx)
 	require.ErrorIs(err, ErrWorkRemaining)
 	assert.Zero(result.Batches)
-	require.NoError(f.Store.DB().QueryRow(`SELECT SUM(revision) FROM activity_projection_queue`).Scan(&after))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(revision) FROM activity_projection_queue`).Scan(&after))
 	assert.Equal(before, after, "preemption leaves membership expansion untouched")
 	var pending int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
 	assert.Equal(1, pending)
 
 	limited, err := NewProjector(f.Store, Options{Timezone: "UTC", MaxBatches: 1})
@@ -1573,6 +1577,6 @@ func TestConversationExpansionHonorsPreemptionAndBatchBudget(t *testing.T) {
 	result, err = limited.RunOnce(t.Context())
 	require.ErrorIs(err, ErrWorkRemaining)
 	assert.Zero(result.Processed, "expansion consumes the only batch before projection")
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
 	assert.Zero(pending)
 }

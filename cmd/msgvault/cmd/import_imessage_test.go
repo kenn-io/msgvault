@@ -47,7 +47,7 @@ func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
 
 			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments, config.IMessageConfig{}.MediaPolicy())
 			requirements.NoError(err)
-			client, err := imessage.NewClient(chatPath, opts...)
+			client, err := imessage.NewClient(t.Context(), chatPath, opts...)
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			_, err = client.Import(t.Context(), s, src.ID)
@@ -199,7 +199,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			home := t.TempDir()
 			path, chat := testutil.NewIMessageChatDB(t)
-			_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+			_, err := chat.ExecContext(t.Context(), `CREATE TABLE attachment (filename TEXT);
  CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
  INSERT INTO message (date, text, is_from_me) VALUES (700000000, 'outgoing', 1)`)
 			require.NoError(err)
@@ -212,7 +212,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
 			var owner string
-			require.NoError(st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
 			assert.Equal("owner@example.test", owner)
 			require.NoError(st.Close())
 
@@ -236,7 +236,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			st, err = store.Open(cfg.DatabaseDSN())
 			require.NoError(err)
 			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
 			assert.Equal("owner@example.test", owner)
 		})
 	}
@@ -260,7 +260,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			home := t.TempDir()
 			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.toml), 0o600))
 			chatPath, chat := testutil.NewIMessageAttachmentChatDB(t)
-			_, err := chat.Exec(`UPDATE attachment SET total_bytes=?`, 2<<20)
+			_, err := chat.ExecContext(t.Context(), `UPDATE attachment SET total_bytes=?`, 2<<20)
 			require.NoError(err)
 			root := t.TempDir()
 			require.NoError(os.MkdirAll(filepath.Join(root, "Attachments"), 0o700))
@@ -274,7 +274,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			src, err := resolveImessageSource(st)
 			require.NoError(err)
 			var messageID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), src.ID, "1").Scan(&messageID))
 			refs, err := st.MessageIMessageAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)

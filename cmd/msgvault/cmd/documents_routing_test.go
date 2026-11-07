@@ -136,7 +136,7 @@ func TestDoclingStatusInDaemonRunnerLeavesStartupMigrationsPending(t *testing.T)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	var identities int
-	requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM account_identities").Scan(&identities))
 	assert.Zero(t, identities, "status must not run the legacy identity migration")
 }
 

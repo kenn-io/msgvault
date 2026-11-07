@@ -95,14 +95,14 @@ func TestMergeSourcesRequiresCompleteMIMEAttachments(t *testing.T) {
 				require.Equal(attachments[i], string(parsed.Attachments[0].Content))
 				providerID := fmt.Sprintf("message-%d", i)
 				require.NoError(IngestRawMessage(t.Context(), st, src.ID, src.Identifier, dir, nil, providerID, fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, logger))
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, providerID).Scan(&ids[i]))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, providerID).Scan(&ids[i]))
 				gotRaw, err := st.GetMessageRaw(ids[i])
 				require.NoError(err)
 				require.Equal(raw, gotRaw)
 				var count, metadataCount int
 				var has bool
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), ids[i]).Scan(&count))
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT has_attachments,attachment_count FROM messages WHERE id = ?`), ids[i]).Scan(&has, &metadataCount))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), ids[i]).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT has_attachments,attachment_count FROM messages WHERE id = ?`), ids[i]).Scan(&has, &metadataCount))
 				if tc.failed {
 					require.Zero(count)
 					require.Zero(metadataCount)
@@ -123,7 +123,7 @@ func TestMergeSourcesRequiresCompleteMIMEAttachments(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(tc.hidden, merged.DuplicatesHidden)
 			var visible int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL`), live.ID).Scan(&visible))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL`), live.ID).Scan(&visible))
 			assert.Equal(2-tc.hidden, visible)
 			engine := dedup.NewEngine(st, dedup.Config{
 				AccountSourceIDs: []int64{live.ID}, Account: live.Identifier,
@@ -139,10 +139,10 @@ func TestMergeSourcesRequiresCompleteMIMEAttachments(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(tc.dedupHidden, summary.MessagesRemoved)
 			if tc.hidden == 0 && tc.dedupHidden == 0 {
-				_, err := st.MergeDuplicates(ids[1], []int64{ids[0]}, "direct-merged-mime-attachments")
+				_, err := st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "direct-merged-mime-attachments")
 				require.ErrorContains(err, "would hide historical content")
 			}
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL`), live.ID).Scan(&visible))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL`), live.ID).Scan(&visible))
 			assert.Equal(2-tc.hidden-int64(tc.dedupHidden), visible)
 			for i, id := range ids {
 				raw, err := st.GetMessageRaw(id)

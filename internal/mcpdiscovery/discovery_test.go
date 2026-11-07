@@ -16,7 +16,7 @@ func TestPublishedListenerStatusAndCleanup(t *testing.T) {
 	require := require.New(t)
 	dir := t.TempDir()
 	require.NoError(os.Chmod(dir, 0o700))
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(listener.Close()) })
 	cleanup, err := Publish(dir, listener.Addr().String(), "test-listener-token", "http://127.0.0.1:4321")

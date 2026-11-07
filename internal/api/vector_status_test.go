@@ -116,7 +116,7 @@ func TestSimilarSearchStale503(t *testing.T) {
 	srv := NewServerWithOptions(opts)
 	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"; run `msgvault embeddings build --full-rebuild`")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -142,7 +142,7 @@ func TestHealthReportsStaleVectorStatus(t *testing.T) {
 	// The unauthenticated /health carries the status but hides the detail
 	// (it can name configured account identifiers); the authenticated
 	// /api/v1/health carries the full detail.
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -155,7 +155,7 @@ func TestHealthReportsStaleVectorStatus(t *testing.T) {
 	assert.Contains(body.Vector.Error, "authenticated health")
 
 	rec = httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil))
 	require.Equal(http.StatusOK, rec.Code)
 	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
 	require.NotNil(body.Vector)
@@ -196,7 +196,7 @@ func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
 				},
 			}
 			srv := NewServerWithOptions(testServerOptions(t, backend))
-			defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+			defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
 			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
 			done := make(chan string, 1)
 			go func() {
@@ -247,7 +247,7 @@ func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
 				close(done)
 			}()
 			<-started
-			require.NoError(t, srv.Shutdown(context.Background()))
+			require.NoError(t, srv.Shutdown(t.Context()))
 			synctest.Wait()
 			select {
 			case <-done:
@@ -270,7 +270,7 @@ func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
 			},
 		}
 		srv := NewServerWithOptions(testServerOptions(t, backend))
-		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
 		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -285,7 +285,7 @@ func TestMarkVectorIndexStaleCoalescesConcurrentDiagnosis(t *testing.T) {
 		assert := assert.New(t)
 		backend := &resolvingVectorBackend{fingerprint: "model-b"}
 		srv := NewServerWithOptions(testServerOptions(t, backend))
-		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
 		var checks atomic.Int32
 		release := make(chan struct{})
 		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
@@ -328,14 +328,14 @@ func TestVectorStaleFirstDiagnosisInsideThrottle(t *testing.T) {
 			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return rebuilt, nil })
 
 			rec := httptest.NewRecorder()
-			srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 			require.Equal(http.StatusOK, rec.Code)
 			backend.fingerprint = rebuilt
 			rec = httptest.NewRecorder()
 			if name == "explore" {
 				srv.writeExploreVectorError(t.Context(), rec, vector.ErrIndexStale)
 			} else {
-				srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=budget&mode=vector", nil))
+				srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=budget&mode=vector", nil))
 			}
 			require.Equal(http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 			assert.Contains(rec.Body.String(), "index_stale")
@@ -365,7 +365,7 @@ func TestVectorStaleAdviceRefresh(t *testing.T) {
 				require := require.New(t)
 				backend := &resolvingVectorBackend{fingerprint: "model-old"}
 				srv := NewServerWithOptions(testServerOptions(t, backend))
-				defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+				defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 				var logs bytes.Buffer
 				srv.logger = slog.New(slog.NewTextHandler(&logs, nil))
 				srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
@@ -382,7 +382,7 @@ func TestVectorStaleAdviceRefresh(t *testing.T) {
 				time.Sleep(time.Minute)
 				for range 2 {
 					rec := httptest.NewRecorder()
-					srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+					srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil))
 					require.Equal(http.StatusOK, rec.Code)
 					var health HealthResponse
 					require.NoError(json.Unmarshal(rec.Body.Bytes(), &health))
@@ -428,7 +428,7 @@ func TestHealthClearsStaleAfterReactivation(t *testing.T) {
 	status, _ := srv.VectorStatus()
 	require.Equal(VectorStatusStale, status, "precondition: latched stale")
 
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -458,7 +458,7 @@ func TestScopeDriftStaleSurvivesRefresh(t *testing.T) {
 	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	srv.SetVectorScopeDrift("configured embedding scope now resolves to \"src-9\" but vector search was initialized with \"src-7\"")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -513,21 +513,21 @@ func TestVectorSearchEndpointsGateOnScopeDrift(t *testing.T) {
 	t.Run("hybrid search", func(t *testing.T) {
 		srv := newDriftedServer(t)
 		rec := httptest.NewRecorder()
-		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=hybrid", nil))
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=hello&mode=hybrid", nil))
 		assertIndexStale(t, rec)
 	})
 
 	t.Run("similar search", func(t *testing.T) {
 		srv := newDriftedServer(t)
 		rec := httptest.NewRecorder()
-		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
 		assertIndexStale(t, rec)
 	})
 
 	t.Run("explore semantic including cached snapshot", func(t *testing.T) {
 		srv := newDriftedServer(t)
 		rec := httptest.NewRecorder()
-		_, _, ok := srv.resolveExploreVectorSearch(context.Background(), rec, ExploreHTTPRequest{
+		_, _, ok := srv.resolveExploreVectorSearch(t.Context(), rec, ExploreHTTPRequest{
 			Query: "hello", SearchMode: exploreSearchModeSemantic, CandidateSnapshotID: "cached-snapshot",
 		})
 		assert.False(t, ok, "a drifted scope must not resolve a semantic search spec")
@@ -560,7 +560,7 @@ func TestVectorSearchPreflightDetectsScopeDrift(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
 	require.Equal(http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	var body struct {
 		Error string `json:"error"`
@@ -574,7 +574,7 @@ func TestVectorSearchPreflightDetectsScopeDrift(t *testing.T) {
 	assert.Contains(errMsg, "src-9")
 
 	rec = httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/similar?message_id=1", nil))
 	require.Equal(http.StatusServiceUnavailable, rec.Code)
 	assert.Equal(1, checks, "a latched stale must not re-run the check")
 }
@@ -603,7 +603,7 @@ func TestVectorSearchPreflightThrottlesScopeCheck(t *testing.T) {
 
 	for range 3 {
 		rec := httptest.NewRecorder()
-		srv.vectorSearchPreflight(context.Background(), rec)
+		srv.vectorSearchPreflight(t.Context(), rec)
 	}
 	assert.Equal(1, checks, "the scope check runs at most once per interval")
 	status, _ := srv.VectorStatus()
@@ -635,7 +635,7 @@ func TestHealthFlipsReadyToStaleAfterForeignActivation(t *testing.T) {
 
 	health := func() string {
 		rec := httptest.NewRecorder()
-		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 		require.Equal(http.StatusOK, rec.Code)
 		var body HealthResponse
 		require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
@@ -688,7 +688,7 @@ func TestHealthDetectsScopeDrift(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 	require.Equal(http.StatusOK, rec.Code)
 	var body HealthResponse
 	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
@@ -716,7 +716,7 @@ func TestHealthKeepsStaleWhenStillMismatched(t *testing.T) {
 	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	srv.SetVectorStale("active=\"still-old:1\" configured=\"new:2\"")
 
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -772,7 +772,7 @@ func TestSimilarSearchStatusAware503(t *testing.T) {
 				srv.SetVectorInitError(tt.initErr)
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
 			rec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(rec, req)
 
@@ -795,7 +795,7 @@ func TestHybridSearchInitializing503(t *testing.T) {
 	opts.Store = &mockStore{}
 	srv := NewServerWithOptions(opts)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=hybrid", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=hello&mode=hybrid", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -834,7 +834,7 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 				srv.SetVectorInitError(tt.initErr)
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(rec, req)
 
@@ -893,7 +893,7 @@ func TestAuthenticatedHealthReportsVectorLanes(t *testing.T) {
 			srv := NewServerWithOptions(opts)
 
 			publicRec := httptest.NewRecorder()
-			srv.Router().ServeHTTP(publicRec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			srv.Router().ServeHTTP(publicRec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 			require.Equal(http.StatusOK, publicRec.Code)
 			var public map[string]any
 			require.NoError(json.Unmarshal(publicRec.Body.Bytes(), &public))
@@ -906,7 +906,7 @@ func TestAuthenticatedHealthReportsVectorLanes(t *testing.T) {
 				assert.False(ok, "disabled health should omit vector status")
 			}
 
-			authReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			authReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 			authReq.Header.Set("X-Api-Key", "secret-key")
 			authRec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(authRec, authReq)
@@ -945,7 +945,7 @@ func TestStatsReportsVectorStatus(t *testing.T) {
 			srv.vectorStatus = tt.status
 			srv.vectorMu.Unlock()
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
 			rec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(rec, req)
 
@@ -964,7 +964,7 @@ func TestStatsReportsTextVectorMessageScope(t *testing.T) {
 	vectorCfg.Embed.Scope.MessageTypes = []string{"sms", "mms"}
 	srv.SetVectorFeatures(nil, nil, &fakeVectorBackend{}, vectorCfg)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -986,7 +986,7 @@ func TestHealthReportsAnalyticsMode(t *testing.T) {
 	opts.AnalyticsMode = AnalyticsModeSQLFallback
 	srv := NewServerWithOptions(opts)
 
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rec, req)
 
@@ -997,7 +997,7 @@ func TestHealthReportsAnalyticsMode(t *testing.T) {
 
 	bare := NewServerWithOptions(testServerOptions(t, nil))
 	rec = httptest.NewRecorder()
-	bare.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	bare.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 	require.Equal(http.StatusOK, rec.Code)
 	assert.NotContains(rec.Body.String(), "analytics_engine",
 		"field must be omitted when no mode was configured")

@@ -53,7 +53,7 @@ func openPGTestDB(t *testing.T) *sql.DB {
 	setup, err := sql.Open("pgx", url)
 	require.NoError(t, err, "open setup")
 	defer func() { _ = setup.Close() }()
-	_, err = setup.Exec("CREATE SCHEMA " + schemaName)
+	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoError(t, err, "create schema")
 
 	testURL := url
@@ -69,6 +69,7 @@ func openPGTestDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("pgx", testURL)
 	require.NoError(t, err, "open")
 
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		_ = db.Close()
 		cleanup, err := sql.Open("pgx", url)
@@ -76,7 +77,7 @@ func openPGTestDB(t *testing.T) *sql.DB {
 			return
 		}
 		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
+		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
 	})
 
 	testSetupPGSchema(t, db)
@@ -89,7 +90,7 @@ func openPGTestDB(t *testing.T) *sql.DB {
 // ALTER TABLE IF NOT EXISTS / CREATE TABLE IF NOT EXISTS.
 func testSetupPGSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE messages (
 			id BIGINT PRIMARY KEY,
 			message_type TEXT NOT NULL DEFAULT 'email',
@@ -122,7 +123,7 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 // schema, mirroring the SQLite testhelper of the same shape.
 func seedOneMessage(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(t, err, "seed message")
 }
 
@@ -132,7 +133,7 @@ func newBackendForTest(t *testing.T) (*Backend, context.Context, *sql.DB) {
 	t.Helper()
 	db := openPGTestDB(t)
 	seedOneMessage(t, db)
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := Open(ctx, Options{DB: db, Dimension: 768})
 	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
@@ -156,7 +157,7 @@ func unitVec(dim, axis int) []float32 {
 func seedAndEmbed(t *testing.T, b *Backend, db *sql.DB, vecs map[int64][]float32) vector.GenerationID {
 	t.Helper()
 	require.NotEmpty(t, vecs, "seedAndEmbed: no vectors supplied")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ids := make([]int64, 0, len(vecs))
 	for id := range vecs {

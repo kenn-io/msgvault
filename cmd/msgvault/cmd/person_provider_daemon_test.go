@@ -164,7 +164,7 @@ func TestSavedPersonProviderCheckForwardsExactCredentialThroughDaemon(t *testing
 				args = append(args, "--if-fingerprint", test.fingerprint)
 			}
 			body := mustJSON(t, api.CLIRunRequest{Args: args, Env: map[string]string{test.key: secret}})
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			daemon.Router().ServeHTTP(response, request)
@@ -393,7 +393,7 @@ func TestPeopleInferenceSettingsWithDaemonStore(t *testing.T) {
 	})
 	const profilePath = "/api/v1/settings/people-inference/providers/local"
 	request := func(method, path, body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 		r.RemoteAddr = "127.0.0.1:12345"
 		r.Header.Set("If-Match", created.ETag)
 		r.Header.Set("Content-Type", "application/json")

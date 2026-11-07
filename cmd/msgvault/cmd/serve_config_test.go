@@ -141,7 +141,7 @@ func TestServeResolvesRealLoopbackInterface(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(net.ParseIP(bind))
 	assert.True(net.ParseIP(bind).IsLoopback())
-	listener, err := listenServeAPI("iface:"+name, 0)
+	listener, err := listenServeAPI(t.Context(), "iface:"+name, 0)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(listener.Close()) })
 	addr, ok := listener.Addr().(*net.TCPAddr)

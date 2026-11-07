@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -43,10 +42,10 @@ func TestSearchPeopleAppliesPersonDisplayNameOverride(t *testing.T) {
 	name := "Alice Curated"
 	addPersonOverride(b, alias, 10, &name)
 	e := b.BuildEngine()
-	rows, err := e.SearchPeople(context.Background(), PersonSearchRequest{})
+	rows, err := e.SearchPeople(t.Context(), PersonSearchRequest{})
 	requirements.NoError(err)
 	requirements.Len(rows.Rows, 1)
-	detail, err := e.GetPerson(context.Background(), alice, Context{}, []int64{alice, alias})
+	detail, err := e.GetPerson(t.Context(), alice, Context{}, []int64{alice, alias})
 	requirements.NoError(err)
 	for _, row := range []*PersonSummary{&rows.Rows[0], detail} {
 		requirements.NotNil(row)
@@ -65,14 +64,14 @@ func TestPersonOverrideLabelMatchesAcrossIndexedAndLegacyPaths(t *testing.T) {
 	name := "Alice Curated"
 	addPersonOverride(b, alias, 10, &name)
 	e := b.BuildEngine()
-	indexed, err := e.SearchPeople(context.Background(), PersonSearchRequest{})
+	indexed, err := e.SearchPeople(t.Context(), PersonSearchRequest{})
 	requirements.NoError(err)
-	legacy, err := e.searchPeopleLegacy(context.Background(), PersonSearchRequest{}, nil, nil, false)
+	legacy, err := e.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, nil, nil, false)
 	requirements.NoError(err)
 	requirements.Len(indexed.Rows, 1)
 	requirements.Len(legacy.Rows, 1)
 	assertions.Equal(indexed.Rows[0].DisplayLabel, legacy.Rows[0].DisplayLabel)
-	exact, err := e.searchPeopleLegacy(context.Background(), PersonSearchRequest{}, &alice, []int64{alice, alias}, false)
+	exact, err := e.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, &alice, []int64{alice, alias}, false)
 	requirements.NoError(err)
 	requirements.Len(exact.Rows, 1)
 	assertions.Equal(name, exact.Rows[0].DisplayLabel)
@@ -88,9 +87,9 @@ func TestSearchPeopleMatchesCuratedNameAndPreservesObservedAliases(t *testing.T)
 	addPersonOverride(b, alias, 10, &name)
 	e := b.BuildEngine()
 	for _, term := range []string{name, "Alice Observed", "alice.alias@example.com", "alice_handle"} {
-		indexed, err := e.SearchPeople(context.Background(), PersonSearchRequest{Query: term})
+		indexed, err := e.SearchPeople(t.Context(), PersonSearchRequest{Query: term})
 		requirements.NoError(err)
-		legacy, err := e.searchPeopleLegacy(context.Background(), PersonSearchRequest{Query: term}, nil, nil, false)
+		legacy, err := e.searchPeopleLegacy(t.Context(), PersonSearchRequest{Query: term}, nil, nil, false)
 		requirements.NoError(err)
 		assertions.Len(indexed.Rows, 1, term)
 		assertions.Len(legacy.Rows, 1, term)
@@ -106,7 +105,7 @@ func TestRelationshipsListUsesPersonDisplayName(t *testing.T) {
 	name := "Alice Curated"
 	addPersonOverride(b, alias, 10, &name)
 	e := b.BuildEngine()
-	result, err := e.Relationships(context.Background(), RelationshipsRequest{Limit: 10, ShowAll: true})
+	result, err := e.Relationships(t.Context(), RelationshipsRequest{Limit: 10, ShowAll: true})
 	requirements.NoError(err)
 	requirements.Len(result.Rows, 1)
 	assertions.Equal(name, result.Rows[0].DisplayLabel)
@@ -132,9 +131,9 @@ func TestPersonOverrideDeterministicAcrossConflictingBindings(t *testing.T) {
 				if i > 0 {
 					e = b.BuildEngine()
 				}
-				indexed, err := e.SearchPeople(context.Background(), PersonSearchRequest{})
+				indexed, err := e.SearchPeople(t.Context(), PersonSearchRequest{})
 				requirements.NoError(err)
-				legacy, err := e.searchPeopleLegacy(context.Background(), PersonSearchRequest{}, nil, nil, false)
+				legacy, err := e.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, nil, nil, false)
 				requirements.NoError(err)
 				requirements.Len(indexed.Rows, 1)
 				requirements.Len(legacy.Rows, 1)
@@ -177,16 +176,16 @@ func TestPersonOverrideLeavesUnboundAndBlankNameLabelsUnchanged(t *testing.T) {
 				b.AddFrom(m, id, "")
 			}
 			e := b.BuildEngine()
-			result, err := e.SearchPeople(context.Background(), PersonSearchRequest{})
+			result, err := e.SearchPeople(t.Context(), PersonSearchRequest{})
 			requirements.NoError(err)
 			requirements.Len(result.Rows, len(names))
 			for _, row := range result.Rows {
 				assertions.Equal(names[row.ID-1], row.DisplayLabel)
 				assertions.Equal(row.ID != 1, row.PartialLabel)
 				var oldLabel string
-				requirements.NoError(e.db.QueryRow("SELECT "+sqlPersonDisplayLabelExpr("NULLIF(TRIM(p.display_name), '')", "p")+" FROM participants p WHERE id = ?", row.ID).Scan(&oldLabel))
+				requirements.NoError(e.db.QueryRowContext(t.Context(), "SELECT "+sqlPersonDisplayLabelExpr("NULLIF(TRIM(p.display_name), '')", "p")+" FROM participants p WHERE id = ?", row.ID).Scan(&oldLabel))
 				assertions.Equal(oldLabel, row.DisplayLabel)
-				legacy, err := e.searchPeopleLegacy(context.Background(), PersonSearchRequest{}, &row.ID, nil, false)
+				legacy, err := e.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, &row.ID, nil, false)
 				requirements.NoError(err)
 				requirements.Len(legacy.Rows, 1)
 				assertions.Equal(oldLabel, legacy.Rows[0].DisplayLabel)
@@ -218,7 +217,7 @@ func TestPersonProfileRevisionComesFromStoreNotCache(t *testing.T) {
 		person, err = st.UpdatePersonDisplayName(person.ID, person.Revision, &name)
 		requirements.NoError(err)
 	}
-	cached, err := e.GetPerson(context.Background(), alice, Context{}, []int64{alice, alias})
+	cached, err := e.GetPerson(t.Context(), alice, Context{}, []int64{alice, alias})
 	requirements.NoError(err)
 	requirements.NotNil(cached)
 	assertions.Nil(cached.Profile)

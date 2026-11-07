@@ -18,7 +18,7 @@ func TestVCardContactUpgradesBeeperParticipantByPhone(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	resolver := newParticipantResolver(st)
 
-	weakID, err := resolver.resolveID("@alice:beeper.local", "")
+	weakID, err := resolver.resolveID(t.Context(), "@alice:beeper.local", "")
 	require.NoError(err)
 
 	path := filepath.Join(t.TempDir(), "beeper-contact.vcf")
@@ -37,7 +37,7 @@ func TestVCardContactUpgradesBeeperParticipantByPhone(t *testing.T) {
 	require.Len(contacts[0].Phones, 1)
 	require.Len(contacts[0].Emails, 1)
 
-	richID, err := resolver.resolveUser(&User{
+	richID, err := resolver.resolveUser(t.Context(), &User{
 		ID:          "@alice:beeper.local",
 		PhoneNumber: contacts[0].Phones[0],
 		Email:       contacts[0].Emails[0],
@@ -46,7 +46,7 @@ func TestVCardContactUpgradesBeeperParticipantByPhone(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(weakID, richID)
 
-	resolvedAgain, err := resolver.resolveID("@alice:beeper.local", "")
+	resolvedAgain, err := resolver.resolveID(t.Context(), "@alice:beeper.local", "")
 	require.NoError(err)
 	assert.Equal(richID, resolvedAgain)
 }
@@ -78,7 +78,7 @@ func TestVCardEmailReusesExistingBeeperParticipant(t *testing.T) {
 	require.Empty(contacts[0].Phones)
 	require.Equal([]string{"bob@example.com"}, contacts[0].Emails)
 
-	resolvedID, err := resolver.resolveUser(&User{
+	resolvedID, err := resolver.resolveUser(t.Context(), &User{
 		ID:       "@bob:beeper.local",
 		Email:    contacts[0].Emails[0],
 		FullName: contacts[0].FullName,

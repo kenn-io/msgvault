@@ -91,7 +91,7 @@ func TestMuesliRecordingOwnerBoundaryAndSizeCap(t *testing.T) {
 			cfg := &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, MuesliRecordingMaxBytes: tt.cap}}
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
 			url := fmt.Sprintf("%s?identifier=recorder&account_email=user%%40example.com&message_id=42&sha256=%s&size=%s", muesliRecordingEndpointPath, hash, size)
-			req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(recording))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, url, bytes.NewReader(recording))
 			req.Header.Set("Content-Type", tt.media)
 			req.Header.Set("X-Api-Key", tt.key)
 			out := httptest.NewRecorder()
@@ -142,7 +142,7 @@ func TestMuesliRecordingReceivesBodyBeforeTakingOperationGate(t *testing.T) {
 		Logger:        testLogger(),
 		OperationGate: gate,
 	})
-	req := httptest.NewRequest(http.MethodPost, url, body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, url, body)
 	req.Header.Set("Content-Type", "audio/wav")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	resp := httptest.NewRecorder()
@@ -180,7 +180,7 @@ func TestMuesliRecordingRejectsDelegatedToken(t *testing.T) {
 	server.agentGrants = registry
 	_, secret, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "muesli", Identifier: "recorder"}}, time.Time{})
 	require.NoError(err)
-	req := httptest.NewRequest(http.MethodPost, muesliRecordingEndpointPath, strings.NewReader("audio"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, muesliRecordingEndpointPath, strings.NewReader("audio"))
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	out := httptest.NewRecorder()
 	server.Router().ServeHTTP(out, req)

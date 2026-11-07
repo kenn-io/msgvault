@@ -212,11 +212,11 @@ func TestContextAwareReadsHonorCancellation(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 	msgID := seedMessage(t, st, source.ID, convID, "msg-ctx", "Ctx test", "snippet")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, _, err = st.ListMessagesContext(ctx, 0, 10, nil)
@@ -242,7 +242,7 @@ func TestGetMessageCcBcc(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 	msgID := seedMessage(t, st, source.ID, convID, "msg-cc-bcc", "CC/BCC test", "snippet")
 
@@ -258,7 +258,8 @@ func TestGetMessageCcBcc(t *testing.T) {
 		{3, "cc2@example.com"},
 		{4, "bcc@example.com"},
 	} {
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO participants (id, email_address, domain, created_at, updated_at)
 			 VALUES (?, ?, 'example.com', datetime('now'), datetime('now'))`,
 			p.id, p.email,
@@ -276,7 +277,8 @@ func TestGetMessageCcBcc(t *testing.T) {
 		{3, "cc"},
 		{4, "bcc"},
 	} {
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type)
 			 VALUES (?, ?, ?)`,
 			msgID, r.participantID, r.recipientType,
@@ -306,7 +308,7 @@ func TestListMessagesCcBcc(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 	msgID := seedMessage(t, st, source.ID, convID, "msg-list-cc", "List CC test", "snippet")
 
@@ -320,7 +322,8 @@ func TestListMessagesCcBcc(t *testing.T) {
 		{10, "cc@example.com"},
 		{11, "bcc@example.com"},
 	} {
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO participants (id, email_address, domain, created_at, updated_at)
 			 VALUES (?, ?, 'example.com', datetime('now'), datetime('now'))`,
 			p.id, p.email,
@@ -334,7 +337,8 @@ func TestListMessagesCcBcc(t *testing.T) {
 		{10, "cc"},
 		{11, "bcc"},
 	} {
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type)
 			 VALUES (?, ?, ?)`, msgID, r.participantID, r.recipientType,
 		)
@@ -365,12 +369,12 @@ func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("synctech-sms", "+15550000001")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "text:1,2", "Alice")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "text:1,2", "Alice")
 	require.NoError(err, "EnsureConversation")
 
-	phoneSenderID, err := st.EnsureParticipantByPhone("+15551234567", "Alice", "synctech-sms")
+	phoneSenderID, err := st.EnsureParticipantByPhone(t.Context(), "+15551234567", "Alice", "synctech-sms")
 	require.NoError(err, "EnsureParticipantByPhone")
-	ownerID, err := st.EnsureParticipantByPhone("+15550000001", "Me", "synctech-sms")
+	ownerID, err := st.EnsureParticipantByPhone(t.Context(), "+15550000001", "Me", "synctech-sms")
 	require.NoError(err, "EnsureParticipantByPhone(owner)")
 	shortCodeID, err := st.EnsureParticipantByIdentifier("synctech-sms", "22000", "ShortCode Alerts")
 	require.NoError(err, "EnsureParticipantByIdentifier")
@@ -415,7 +419,7 @@ func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
 	// row exists in message_recipients. The store-backed SELECT used
 	// to join participants only through mr.participant_id, so this
 	// message rendered with a blank From.
-	waSenderID, err := st.EnsureParticipantByPhone("+15559998888", "Carol", "whatsapp")
+	waSenderID, err := st.EnsureParticipantByPhone(t.Context(), "+15559998888", "Carol", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone(whatsapp)")
 	waID, err := st.UpsertMessage(&Message{
 		ConversationID:  convID,
@@ -477,7 +481,7 @@ func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
 func sourceMessageIDForTest(t *testing.T, st *Store, id int64) string {
 	t.Helper()
 	var sourceMsgID string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), id).Scan(&sourceMsgID),
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), id).Scan(&sourceMsgID),
 		"lookup source_message_id")
 	return sourceMsgID
 }
@@ -488,7 +492,7 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 	// Create a source and conversation
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(t, err, "EnsureConversation")
 
 	// Seed messages: one with literal %, one with literal _, one plain,
@@ -557,7 +561,7 @@ func TestSearchMessagesLikePaginationStability(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 
 	const n = 5

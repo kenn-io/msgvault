@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL snapshot regression")
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	before, err := st.GetPersonContext(ctx, personID)
 	require.NoError(err)

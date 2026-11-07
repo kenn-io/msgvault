@@ -109,7 +109,7 @@ func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
 
 func TestSharedChatClassificationSQL(t *testing.T) {
 	t.Parallel()
-	engine, err := NewDuckDBEngine("", "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, engine.Close())
@@ -134,7 +134,8 @@ func TestSharedChatClassificationSQL(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			var sqlResult bool
-			err := engine.db.QueryRow(
+			err := engine.db.QueryRowContext(
+				t.Context(),
 				"SELECT "+sqlIsChatPredicate("message_type", "conversation_type")+
 					" FROM (VALUES (?::VARCHAR, ?::VARCHAR)) AS input(message_type, conversation_type)",
 				test.messageType,
@@ -200,7 +201,7 @@ func TestExploreKeepsSemanticMatchStateConstantPerLogicalRow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := engine.Explore(context.Background(), ExploreRequest{Search: tt.search})
+			result, err := engine.Explore(t.Context(), ExploreRequest{Search: tt.search})
 			requirements.NoError(err)
 			requirements.Len(result.Rows, 1)
 			assertExploreBoundedStrongestMatch(t, result.Rows[0], tt.wantStrongest)
@@ -221,7 +222,7 @@ func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testin
 		})
 	}
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	requirements.NoError(err)
 	requirements.Len(result.Rows, 1)
 	requirements.Equal(int64(10_000), result.Rows[0].MessageCount)
@@ -340,7 +341,7 @@ func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
 
 	var got []int64
 	batchCalls := 0
-	result, err := engine.ExploreCoverage(context.Background(), ExploreCoverageRequest{
+	result, err := engine.ExploreCoverage(t.Context(), ExploreCoverageRequest{
 		Context:   Context{SourceIDs: []int64{selected}},
 		BatchSize: 128,
 	}, func(messageIDs []int64) error {
@@ -372,7 +373,7 @@ func TestExploreCoverageStopsOnVisitError(t *testing.T) {
 
 	visitErr := errors.New("intersection backend failed")
 	visitCalls := 0
-	_, err := engine.ExploreCoverage(context.Background(), ExploreCoverageRequest{BatchSize: 2},
+	_, err := engine.ExploreCoverage(t.Context(), ExploreCoverageRequest{BatchSize: 2},
 		func([]int64) error {
 			visitCalls++
 			return visitErr
@@ -387,7 +388,7 @@ func TestExploreCoverageHonorsCancellation(t *testing.T) {
 	source := b.AddSource("selected@example.com")
 	b.AddMessage(MessageOpt{SourceID: source})
 	engine := b.BuildEngine()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := engine.ExploreCoverage(ctx, ExploreCoverageRequest{BatchSize: 10}, func([]int64) error { return nil })
@@ -447,7 +448,7 @@ func TestExploreLogicalRowUnitsAndStableArchiveOrdering(t *testing.T) {
 	b.AddFrom(deleted, alice, "Alice")
 
 	engine := b.BuildEngine()
-	response, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 20}})
+	response, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 20}})
 	require.NoError(err)
 	require.Len(response.Rows, 7)
 	assert.NotEmpty(response.CacheRevision)
@@ -481,7 +482,7 @@ func TestExploreFlattensTitleOnlyWhenFallenBackToSnippet(t *testing.T) {
 	b.AddFrom(fallback, alice, "Alice")
 
 	engine := b.BuildEngine()
-	response, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 20}})
+	response, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 20}})
 	require.NoError(err)
 	require.Len(response.Rows, 2)
 	assert.Equal("Re: 2 ** 3 == 8?", response.Rows[0].Title, "a real subject with markdown-like characters must not be altered")
@@ -507,7 +508,7 @@ func TestExploreAppliesContextBeforeChatAggregation(t *testing.T) {
 	}
 
 	engine := b.BuildEngine()
-	response, err := engine.Explore(context.Background(), ExploreRequest{
+	response, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{alice}}, Page: PageSpec{Limit: 10},
 	})
 	require.NoError(err)
@@ -539,7 +540,7 @@ func TestExploreIdentityDirectionSeparatesSenderAndRecipientWithinSource(t *test
 
 	engine := b.BuildEngine()
 	explore := func(direction IdentityDirection) *ExploreResponse {
-		result, err := engine.Explore(context.Background(), ExploreRequest{
+		result, err := engine.Explore(t.Context(), ExploreRequest{
 			Context: Context{Identity: &IdentityPredicate{
 				SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: direction,
 			}},
@@ -586,7 +587,7 @@ func TestExploreIdentitySenderUsesDirectSenderOnlyWithoutFromRows(t *testing.T) 
 	b.AddFrom(directConflict, explicitFromID, "Explicit")
 	b.AddMessage(MessageOpt{SourceID: source, Subject: "direct fallback", SenderID: &identityID, SentAt: base.Add(-2 * time.Hour)})
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Identity: &IdentityPredicate{
 			SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
 		}},
@@ -624,7 +625,7 @@ func TestExploreIdentityPredicateAppliesBeforeChatAggregation(t *testing.T) {
 		{direction: IdentityDirectionRecipient, wantCount: 1},
 		{direction: IdentityDirectionAny, wantCount: 2},
 	} {
-		result, err := engine.Explore(context.Background(), ExploreRequest{
+		result, err := engine.Explore(t.Context(), ExploreRequest{
 			Context: Context{Identity: &IdentityPredicate{
 				SourceID: source, ParticipantIDs: []int64{identityID}, Direction: test.direction,
 			}},
@@ -665,27 +666,27 @@ func TestExploreIdentityPredicateValidatesSourceIDsParticipantsAndDirection(t *t
 		t.Run(test.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			_, err := engine.Explore(context.Background(), ExploreRequest{Context: test.context})
+			_, err := engine.Explore(t.Context(), ExploreRequest{Context: test.context})
 			requirements.Error(err)
 			requirements.ErrorContains(err, test.wantError)
 			assertions.ErrorIs(err, ErrInvalidExploreRequest)
 		})
 	}
 
-	valid, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+	valid, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{
 		Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny},
 	}})
 	requirements.NoError(err, "the source-pinned predicate is valid without a redundant SourceIDs field")
 	assertions.Equal(int64(1), valid.TotalCount)
 
-	matchingSource, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+	matchingSource, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{
 		SourceIDs: []int64{source},
 		Identity:  &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny},
 	}})
 	requirements.NoError(err)
 	assertions.Equal(int64(1), matchingSource.TotalCount)
 
-	matchNone, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+	matchNone, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{
 		Identity: &IdentityPredicate{SourceID: source, MatchNone: true, Direction: IdentityDirectionAny},
 	}})
 	requirements.NoError(err, "a confirmed identity without observed participants is a valid empty filter")
@@ -722,7 +723,7 @@ func TestExploreIdentityFilterPrefersEnvelopeAddressOverMergedParticipant(t *tes
 
 	engine := b.BuildEngine()
 	explore := func(direction IdentityDirection, emailIdentifier string) *ExploreResponse {
-		result, err := engine.Explore(context.Background(), ExploreRequest{
+		result, err := engine.Explore(t.Context(), ExploreRequest{
 			Context: Context{Identity: &IdentityPredicate{
 				SourceID:        source,
 				ParticipantIDs:  []int64{survivorID},
@@ -773,7 +774,7 @@ func TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope(t *te
 	directChat := b.AddMessage(MessageOpt{SourceID: source, Subject: "direct chat", SenderID: &identityID, SentAt: base.Add(-2 * time.Hour)})
 	_ = directChat
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Identity: &IdentityPredicate{
 			SourceID:        source,
 			ParticipantIDs:  []int64{identityID},
@@ -809,7 +810,7 @@ func TestExploreIdentitySenderSuppressesFallbackWhenAnyEnvelopeExists(t *testing
 	legacy := b.AddMessage(MessageOpt{SourceID: source, Subject: "legacy only", SentAt: base.Add(-time.Hour)})
 	b.AddFrom(legacy, identityID, "Identity")
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Identity: &IdentityPredicate{
 			SourceID:        source,
 			ParticipantIDs:  []int64{identityID},
@@ -844,7 +845,7 @@ func TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence(t *testi
 	directOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "direct only", SenderID: &survivorID, SentAt: base.Add(-2 * time.Hour)})
 	_ = directOnly
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Identity: &IdentityPredicate{
 			SourceID:        source,
 			EmailIdentifier: "alias-a@example.com",
@@ -877,7 +878,7 @@ func TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack(t *testi
 	unrelated := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated", SentAt: base.Add(-time.Hour)})
 	b.AddFrom(unrelated, otherID, "Other")
 
-	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Identity: &IdentityPredicate{
 			SourceID:        source,
 			ParticipantIDs:  []int64{identityID},
@@ -913,19 +914,19 @@ func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(
 		SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
 	}}
 
-	page, err := engine.Explore(context.Background(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1}})
+	page, err := engine.Explore(t.Context(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1}})
 	requirements.NoError(err)
 	requirements.Len(page.Rows, 1)
 	assertions.Equal("matching first", page.Rows[0].Title)
 	assertions.Equal(int64(2), page.TotalCount)
 
-	offset, err := engine.Explore(context.Background(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1, Offset: 1}})
+	offset, err := engine.Explore(t.Context(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1, Offset: 1}})
 	requirements.NoError(err)
 	requirements.Len(offset.Rows, 1)
 	assertions.Equal("matching second", offset.Rows[0].Title)
 	assertions.Equal(int64(2), offset.TotalCount)
 
-	grouped, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	grouped, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{Context: identityContext}, Dimension: "year",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -933,14 +934,14 @@ func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(
 	requirements.Len(grouped.Rows, 1)
 	assertions.Equal(int64(2), grouped.Rows[0].Count)
 
-	selection, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	selection, err := engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{Context: identityContext},
 	})
 	requirements.NoError(err)
 	assertions.Equal(int64(2), selection.Count)
 	assertions.Equal(int64(1), selection.FileCount)
 
-	exploreFiles, err := engine.ExploreFiles(context.Background(), ExploreFilesRequest{
+	exploreFiles, err := engine.ExploreFiles(t.Context(), ExploreFilesRequest{
 		Explore: ExploreRequest{Context: identityContext}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -958,7 +959,7 @@ func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(
 		{name: "hybrid", search: SearchSpec{Mode: SearchHybrid, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, LexicalIndexRevision: "fts5:test", VectorGeneration: &generation}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, searchErr := engine.Explore(context.Background(), ExploreRequest{
+			result, searchErr := engine.Explore(t.Context(), ExploreRequest{
 				Context: identityContext, Search: test.search, Page: PageSpec{Limit: 10},
 			})
 			require.NoError(t, searchErr)
@@ -967,7 +968,7 @@ func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(
 		})
 	}
 
-	matchCounts, err := engine.ExploreMatchCounts(context.Background(), ExploreMatchCountsRequest{
+	matchCounts, err := engine.ExploreMatchCounts(t.Context(), ExploreMatchCountsRequest{
 		Explore: ExploreRequest{Context: identityContext, Search: SearchSpec{
 			Mode: SearchFullText, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, LexicalIndexRevision: "fts5:test",
 		}},
@@ -1000,7 +1001,7 @@ func TestExploreIdentityPredicateScopesRelationshipTimeline(t *testing.T) {
 	b.AddFrom(otherSource, identityID, "Identity")
 	b.AddTo(otherSource, counterpartID, "Counterpart")
 
-	result, err := b.BuildEngine().RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+	result, err := b.BuildEngine().RelationshipTimeline(t.Context(), RelationshipTimelineRequest{
 		CanonicalID: counterpartID,
 		Context: Context{SourceIDs: []int64{sourceA}, Identity: &IdentityPredicate{
 			SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
@@ -1031,7 +1032,7 @@ func TestExploreIdentityPredicateScopesPeopleGrouping(t *testing.T) {
 	b.AddFrom(nonmatching, otherID, "Other")
 	b.AddTo(nonmatching, counterpartID, "Counterpart")
 
-	result, err := b.BuildEngine().SearchPeople(context.Background(), PersonSearchRequest{
+	result, err := b.BuildEngine().SearchPeople(t.Context(), PersonSearchRequest{
 		Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
 			SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
 		}}},
@@ -1064,7 +1065,7 @@ func TestExploreKeepsDurableCallsAsIndividualItemsInsideChatConversations(t *tes
 		})
 	}
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	require.NoError(err)
 	require.Len(response.Rows, 3, "durable call and voicemail records must not collapse into a chat row")
 	for _, row := range response.Rows {
@@ -1089,7 +1090,7 @@ func TestExploreAggregatesRCSFragmentsIntoOneConversation(t *testing.T) {
 		})
 	}
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	require.NoError(err)
 	require.Len(response.Rows, 1)
 	assert.Equal(EntryConversation, response.Rows[0].Kind)
@@ -1121,19 +1122,19 @@ func TestExploreIncludesDirectSendersAndConversationMembership(t *testing.T) {
 	b.AddConversationParticipant(conversationID, bob)
 	b.AddConversationParticipant(conversationID, carol)
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	require.NoError(err)
 	require.Len(response.Rows, 1)
 	assert.Equal([]int64{alice, bob, carol}, response.Rows[0].ParticipantIDs)
 	assert.Equal([]string{"Alice", "Bob", "Carol"}, response.Rows[0].ParticipantLabels)
 
-	memberResponse, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	memberResponse, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{carol}},
 	})
 	require.NoError(err)
 	require.Len(memberResponse.Rows, 1, "conversation membership must participate in person context")
 
-	domainResponse, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	domainResponse, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{Domains: []string{"members.example"}},
 	})
 	require.NoError(err)
@@ -1184,7 +1185,7 @@ func TestExploreReturnsSearchIndexProvenance(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response, err := engine.Explore(context.Background(), ExploreRequest{Search: tt.search})
+			response, err := engine.Explore(t.Context(), ExploreRequest{Search: tt.search})
 			require.NoError(err)
 			assert.Equal(tt.wantLexical, response.SearchProvenance.LexicalIndexRevision)
 			assert.Equal(tt.wantVector, response.SearchProvenance.VectorGeneration)
@@ -1226,7 +1227,7 @@ func TestExploreRejectsModeInapplicableSearchFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := engine.Explore(context.Background(), ExploreRequest{Search: tt.search})
+			_, err := engine.Explore(t.Context(), ExploreRequest{Search: tt.search})
 			require.ErrorIs(t, err, ErrInvalidExploreRequest)
 		})
 	}
@@ -1236,7 +1237,7 @@ func TestExploreEmptyAnalyticsDirReturnsTypedAbsentCache(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
-	_, err := (&DuckDBEngine{}).Explore(context.Background(), ExploreRequest{})
+	_, err := (&DuckDBEngine{}).Explore(t.Context(), ExploreRequest{})
 	require.Error(err)
 	require.ErrorIs(err, ErrCacheUnavailable)
 	var unavailable *CacheUnavailableError
@@ -1294,7 +1295,7 @@ func TestExploreRejectsUnresolvedSearchCandidatesAndProvenance(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := engine.Explore(context.Background(), ExploreRequest{Search: tt.search})
+			_, err := engine.Explore(t.Context(), ExploreRequest{Search: tt.search})
 			require.ErrorIs(t, err, ErrInvalidExploreRequest)
 		})
 	}
@@ -1314,7 +1315,7 @@ func TestExploreResolvedEmptySearchCandidatesReturnNoRows(t *testing.T) {
 		{Mode: SearchHybrid, CandidateMessageIDs: []int64{}, LexicalIndexRevision: "fts5:24", VectorGeneration: &generation},
 	}
 	for _, search := range searches {
-		response, err := engine.Explore(context.Background(), ExploreRequest{Search: search})
+		response, err := engine.Explore(t.Context(), ExploreRequest{Search: search})
 		require.NoError(t, err)
 		assert.Empty(t, response.Rows)
 		assert.Zero(t, response.TotalCount)
@@ -1339,7 +1340,7 @@ func TestExploreRejectsUnsupportedPresentationAndSort(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := engine.Explore(context.Background(), tt.request)
+			_, err := engine.Explore(t.Context(), tt.request)
 			require.ErrorIs(t, err, ErrInvalidExploreRequest)
 		})
 	}
@@ -1351,7 +1352,7 @@ func TestExploreAcceptsExplicitTableDateDescending(t *testing.T) {
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID})
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Presentation: Presentation("table"),
 		Sort:         []SortSpec{{Field: "sent_at", Direction: "desc"}},
 	})
@@ -1366,7 +1367,7 @@ func TestExplorePreservesTotalCountBeyondLastPage(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "Only row"})
 	engine := b.BuildEngine()
 
-	response, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 10}})
+	response, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 1, Offset: 10}})
 	require.NoError(t, err)
 	assert.Empty(t, response.Rows)
 	assert.Equal(t, int64(1), response.TotalCount)
@@ -1425,7 +1426,7 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerOnly(t *testing.T) {
 	b.AddFrom(msgID, ownerID, "Owner")
 	b.AddTo(msgID, ownerID, "Owner")
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	require.NoError(err)
 	require.Len(response.Rows, 1)
 	assert.Nil(t, response.Rows[0].CounterpartParticipantID)
@@ -1461,7 +1462,7 @@ func TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource(t *testing.T) {
 	b.AddFrom(selfMailID, personalID, "Owner Personal")
 	b.AddTo(selfMailID, workID, "Owner Work")
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
 		Context: Context{SourceIDs: []int64{srcB}},
 	})
 	require.NoError(err)
@@ -1496,7 +1497,7 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerUnknown(t *testing.T) {
 	b.AddFrom(msgID, senderID, "Alice")
 	b.AddTo(msgID, recipientID, "Bob")
 
-	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{})
+	response, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{})
 	require.NoError(err)
 	require.Len(response.Rows, 1)
 	assert.Nil(t, response.Rows[0].CounterpartParticipantID)
@@ -1526,7 +1527,7 @@ func TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters(t *testing
 	toAliasSecond := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(2 * time.Hour)})
 	b.AddTo(toAliasSecond, alias, "Alice (Work)")
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	filter := Context{ParticipantIDs: []int64{canonical}}
 
@@ -1576,7 +1577,7 @@ func TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion(t *testing.T
 	b.AddFrom(both, alice, "Alice")
 	b.AddTo(both, bob, "Bob")
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	response, err := engine.Explore(ctx, ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{alice}, AdditionalParticipantGroups: [][]int64{{bob}}},
@@ -1618,7 +1619,7 @@ func TestExploreAdditionalDomainGroupsIntersectRatherThanUnion(t *testing.T) {
 	b.AddFrom(both, alice, "Alice")
 	b.AddTo(both, bob, "Bob")
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	response, err := engine.Explore(ctx, ExploreRequest{
 		Context: Context{
@@ -1659,7 +1660,7 @@ func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *test
 	b.AddFrom(aliceAndBobCanonical, alice, "Alice")
 	b.AddTo(aliceAndBobCanonical, bobCanonical, "Bob")
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Filtering by Alice AND the alias must still match the entry recorded
 	// against Bob's canonical identity.

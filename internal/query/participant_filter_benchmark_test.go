@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,7 +14,7 @@ import (
 // message in the archive. Each sub-benchmark also reports min-memory-MB.
 func BenchmarkParticipantFilter(b *testing.B) {
 	engine := buildBenchData(b)
-	ctx := context.Background()
+	ctx := b.Context()
 	person := ExploreRequest{Context: Context{ParticipantIDs: []int64{1}}}
 
 	b.Run("entries", func(b *testing.B) {

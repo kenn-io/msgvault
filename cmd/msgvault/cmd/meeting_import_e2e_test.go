@@ -43,7 +43,8 @@ func postMeetingImport(
 	body string,
 ) api.MeetingImportResponse {
 	t.Helper()
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/import/meeting",
 		bytes.NewBufferString(body),
@@ -79,7 +80,8 @@ func TestMeetingImportAPIToStoreUpdatesCanonicalMessage(t *testing.T) {
 	created := postMeetingImport(t, srv, meetingImportE2EBody)
 	assert.Equal(meetingimport.StatusCreated, created.Status)
 
-	getReq := httptest.NewRequest(
+	getReq := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/v1/messages/%d", created.MessageID),
 		nil,
@@ -107,7 +109,8 @@ func TestMeetingImportAPIToStoreUpdatesCanonicalMessage(t *testing.T) {
 	assert.Equal(meetingimport.StatusUpdated, updated.Status)
 	assert.Equal(created.MessageID, updated.MessageID)
 
-	getReq = httptest.NewRequest(
+	getReq = httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/v1/messages/%d", updated.MessageID),
 		nil,
@@ -145,7 +148,8 @@ func TestMeetingImportReturnsSuccessWhenCacheRefreshFails(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 	)
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/import/meeting",
 		bytes.NewBufferString(meetingImportE2EBody),
@@ -161,7 +165,7 @@ func TestMeetingImportReturnsSuccessWhenCacheRefreshFails(t *testing.T) {
 	assert.NotZero(created.MessageID)
 
 	var persisted int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM messages
 		WHERE id = ? AND source_message_id = ? AND message_type = ?

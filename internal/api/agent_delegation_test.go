@@ -69,7 +69,7 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 	require.NoError(t, err)
 
 	makeRequest := func(method, path string) *http.Request {
-		req := httptest.NewRequest(method, path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		return req
 	}
@@ -126,7 +126,7 @@ func TestOwnerPathsUnchangedWithoutAgentHeader(t *testing.T) {
 	srv, _ := newTestServerWithAgentGrants(t)
 
 	t.Run("owner API key without agent header gets normal response", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
 		req.Header.Set("X-Api-Key", "owner-key")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -134,7 +134,7 @@ func TestOwnerPathsUnchangedWithoutAgentHeader(t *testing.T) {
 	})
 
 	t.Run("no auth without agent header returns 401 as before", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -156,7 +156,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	// getHealth is in allowedDelegatedOps, so a VALID token returns 200.
 	// Any bad shape must return 401 instead.
 	makeHealthReq := func(setup func(*http.Request)) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 		setup(req)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -251,7 +251,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	var id int64
 	for _, account := range []string{"allowed@example.test", "outside@example.test"} {
 		subject := "glacier " + account
-		source, messageID, err := testutil.CreateIndexedSourceMessage(st, account, "message", subject, subject)
+		source, messageID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, account, "message", subject, subject)
 		requirements.NoError(err)
 		participant, err := st.EnsureParticipant(account, "", "example.test")
 		requirements.NoError(err)
@@ -267,11 +267,12 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 	requirements.NoError(os.WriteFile(path, []byte("permitted bytes"), 0600))
-	requirements.NoError(st.UpsertAttachment(id, "permitted.bin", "application/octet-stream", filepath.ToSlash(path), hash, 15))
+	requirements.NoError(st.UpsertAttachment(t.Context(), id, "permitted.bin", "application/octet-stream", filepath.ToSlash(path), hash, 15))
 	var attachmentID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Cleanup(srv.agentGrants.Close)
 	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
@@ -303,7 +304,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		allowed[op] = true
 	}
 	specRec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(specRec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	srv.Router().ServeHTTP(specRec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 	requirements.Equal(http.StatusOK, specRec.Code)
 	var spec struct {
 		Paths map[string]map[string]struct {
@@ -330,7 +331,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 				testPath = read.path
 				assertions.Equal("get", method)
 			}
-			req := httptest.NewRequest(strings.ToUpper(method), testPath, nil)
+			req := httptest.NewRequestWithContext(t.Context(), strings.ToUpper(method), testPath, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			req.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", requests/65536, (requests/256)%256, requests%256)
 			requests++
@@ -384,7 +385,7 @@ func TestDelegationNotReachableOverHTTP(t *testing.T) {
 
 	for _, route := range denied {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			req := httptest.NewRequest(route.method, route.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -415,14 +416,14 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 	require.NoError(t, err)
 
 	t.Run("delegated request is gate eligible, owner predicate returns false", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		assert.True(t, srv.requestGateEligible(req), "delegated request must be gate eligible")
 		assert.False(t, srv.apiRequestAuthorized(req), "delegated request must not satisfy the owner predicate")
 	})
 
 	t.Run("unauthenticated request is not gate eligible", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", nil)
 		assert.False(t, srv.requestGateEligible(req), "unauthenticated request must not be gate eligible")
 	})
 
@@ -438,7 +439,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 			})
 			defer func() {
 				synctest.Wait()
-				require.NoError(t, srv.Shutdown(context.Background()), "shutdown")
+				require.NoError(t, srv.Shutdown(t.Context()), "shutdown")
 			}()
 
 			reg := agentgrant.NewRegistry()
@@ -458,7 +459,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 			defer releaseHold()
 
 			body := `{"args":["draft-reply","--from","alice@example.com"]}`
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			w := httptest.NewRecorder()
@@ -484,7 +485,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 		defer done()
 
 		body := `{"args":["draft-reply","--from","alice@example.com"]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -514,7 +515,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 		require.True(ok, "must acquire the gate to hold it for this subtest")
 		defer done()
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/accounts", nil)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -541,12 +542,12 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 	t.Run("delegated non-draft-reply does not register as gate waiter", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
+		holderDone, ok := gate.BeginRequestWorkContext(t.Context(), "owner-msgvault-sync")
 		require.True(ok)
 		defer holderDone()
 
 		body := `{"args":["sync","alice@example.com"]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -599,7 +600,7 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) { //nolint:parallelte
 	require.NoError(err)
 
 	// Acquire gate with an identifiable holder label.
-	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
+	holderDone, ok := gate.BeginRequestWorkContext(t.Context(), "owner-msgvault-sync")
 	require.True(ok)
 	defer holderDone()
 
@@ -609,7 +610,7 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) { //nolint:parallelte
 	t.Cleanup(func() { operationGateWaitLimit = orig })
 
 	body := `{"args":["draft-reply","--from","alice@example.com"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
@@ -637,7 +638,7 @@ func TestDelegationDefaultOff(t *testing.T) {
 	})
 	require.Nil(t, srv.agentGrants, "agentGrants must be nil when AgentAccess is unset in config")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, "mva1_some_token_value_for_test")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)

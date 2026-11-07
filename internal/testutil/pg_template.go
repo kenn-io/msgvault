@@ -202,7 +202,7 @@ func buildTemplate(dbURL string) (string, string, *sql.Conn, error) {
 		return "", "", nil, fmt.Errorf("create template database: %w", err)
 	}
 	if err := initTemplate(ctx, admin, dbURL, name); err != nil {
-		dropOwnedDatabase(admin, name)
+		dropOwnedDatabase(ctx, admin, name)
 		release()
 
 		return "", "", nil, err
@@ -233,7 +233,7 @@ func initTemplate(ctx context.Context, admin *sql.DB, dbURL, name string) error 
 		return err
 	}
 
-	st, err := store.Open(withDatabase(dbURL, name))
+	st, err := store.OpenContext(ctx, withDatabase(dbURL, name))
 	if err != nil {
 		return fmt.Errorf("open template database: %w", err)
 	}
@@ -246,7 +246,7 @@ func initTemplate(ctx context.Context, admin *sql.DB, dbURL, name string) error 
 			return fmt.Errorf("install extension %s in template: %w", extension, err)
 		}
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		_ = st.Close()
 
 		return fmt.Errorf("init template schema: %w", err)
@@ -341,8 +341,8 @@ func ownedDatabaseParts(name string) (scope, token string, ok bool) {
 // msgvault_test_ schema cannot be named here whatever a caller passes in.
 // FORCE terminates a straggling session — a pool that has not finished
 // closing — rather than leaking the database over it.
-func dropOwnedDatabase(admin *sql.DB, name string) {
-	_ = dropOwnedDatabaseOn(context.Background(), admin, name)
+func dropOwnedDatabase(ctx context.Context, admin *sql.DB, name string) {
+	_ = dropOwnedDatabaseOn(ctx, admin, name)
 }
 
 // execer is the part of *sql.DB and *sql.Conn a drop needs.

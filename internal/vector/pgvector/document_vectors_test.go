@@ -60,10 +60,10 @@ func TestDocumentBackendConcurrentFirstPutSerializesGenerationDimensionPostgres(
 		require.NotZero(t, winnerDimension, "round %d admitted no writer", round)
 
 		var authorityDimension, rowCount, minDimension, maxDimension int
-		require.NoError(t, db.QueryRow(`
+		require.NoError(t, db.QueryRowContext(t.Context(), `
 			SELECT dimension FROM document_vector_backend_generations WHERE generation_id = $1`,
 			int64(generationID)).Scan(&authorityDimension))
-		require.NoError(t, db.QueryRow(`
+		require.NoError(t, db.QueryRowContext(t.Context(), `
 			SELECT COUNT(*), MIN(dimension), MAX(dimension)
 			FROM document_vector_embeddings WHERE generation_id = $1`,
 			int64(generationID)).Scan(&rowCount, &minDimension, &maxDimension))
@@ -89,9 +89,9 @@ func TestDocumentBackendGenerationAuthorityRollsBackWithBatchPostgres(t *testing
 	})
 	require.ErrorIs(t, err, document.ErrInvalidVector)
 	var generations, embeddings int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM document_vector_backend_generations WHERE generation_id = 802`).Scan(&generations))
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM document_vector_embeddings WHERE generation_id = 802`).Scan(&embeddings))
 	assert.Zero(t, generations, "failed token batch rolls back generation authority")
 	assert.Zero(t, embeddings, "failed token batch rolls back embeddings")
@@ -138,19 +138,20 @@ func TestDocumentBackendSearchPageReadsBeyondHNSWBudgetPostgres(t *testing.T) {
 
 func TestDocumentBackendContractPostgres(t *testing.T) {
 	db := openPGTestDB(t)
-	parent, err := Open(context.Background(), Options{DB: db, Dimension: 3})
+	parent, err := Open(t.Context(), Options{DB: db, Dimension: 3})
 	require.NoError(t, err)
 	backend := parent.DocumentBackend()
 	testPGDocumentBackendContract(t, backend, func(token string) int {
 		t.Helper()
 		var count int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM document_vector_embeddings WHERE token = $1`, token).Scan(&count))
 		return count
 	})
 
 	var definition string
-	require.NoError(t, db.QueryRow(`SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indexrelid = $1::regclass`,
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indexrelid = $1::regclass`,
 		DocumentVectorIndexName(3)).Scan(&definition))
 	assert.Contains(t, definition, "vector_cosine_ops")
 	assert.Contains(t, definition, "WHERE (dimension = 3)")
@@ -158,7 +159,7 @@ func TestDocumentBackendContractPostgres(t *testing.T) {
 
 func testPGDocumentBackendContract(t *testing.T, backend document.Backend, tokenCount func(string) int) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	gen1 := document.GenerationID(11)
 	gen2 := document.GenerationID(12)
 	require.NoError(t, backend.PutUnpublished(ctx, gen1, 3, nil))

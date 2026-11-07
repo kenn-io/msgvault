@@ -151,7 +151,7 @@ func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliat
 	assert := assert.New(t)
 	require := require.New(t)
 	mainStore := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
-	_, err := mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 12 WHERE singleton = 1`)
+	_, err := mainStore.DB().ExecContext(t.Context(), `UPDATE embedding_change_clock SET sequence = 12 WHERE singleton = 1`)
 	require.NoError(err)
 
 	publisher := &convergenceProgressPublisher{progress: vector.DocumentProgress{
@@ -232,7 +232,7 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	_ = testCtx
 
 	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
-	_, err := mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
+	_, err := mainStore.DB().ExecContext(t.Context(), `UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
 	require.NoError(err)
 	require.NoError(sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
@@ -301,7 +301,7 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 		testCtx, semanticProfile.Fingerprint, "test",
 	)
 	require.NoError(err)
-	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
+	_, err = mainStore.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000002", "Synthetic Missing Person")
 	require.NoError(err)
 	require.NoError(sqlitevec.RegisterExtension())
@@ -469,7 +469,7 @@ func TestEmbeddingsListRequiresUpgradeWithoutWritingOldMetadata(t *testing.T) {
 	defer func() { require.NoError(backend.Close()) }()
 	_, err = backend.CreateGeneration(ctx, "example-model", 4, "example")
 	require.NoError(err)
-	_, err = main.DB().Exec("DELETE FROM applied_migrations WHERE name='embed_gen_backfill_active_v1'")
+	_, err = main.DB().ExecContext(t.Context(), "DELETE FROM applied_migrations WHERE name='embed_gen_backfill_active_v1'")
 	require.NoError(err)
 	cmd := &cobra.Command{Use: "list"}
 	cmd.SetContext(ctx)
@@ -477,7 +477,7 @@ func TestEmbeddingsListRequiresUpgradeWithoutWritingOldMetadata(t *testing.T) {
 	require.ErrorContains(err, "requires an upgrade")
 	require.ErrorContains(err, "enable [vector]", "a restart alone skips vector upgrades while vector search is off")
 	var marked bool
-	require.NoError(main.DB().QueryRow("SELECT EXISTS (SELECT 1 FROM applied_migrations WHERE name='embed_gen_backfill_active_v1')").Scan(&marked))
+	require.NoError(main.DB().QueryRowContext(t.Context(), "SELECT EXISTS (SELECT 1 FROM applied_migrations WHERE name='embed_gen_backfill_active_v1')").Scan(&marked))
 	assert.False(marked)
 }
 
@@ -496,7 +496,7 @@ func TestEmbeddingsListReportsOldSchemaWithoutMigrating(t *testing.T) {
 	defer func() { require.NoError(backend.Close()) }()
 	_, err = backend.CreateGeneration(ctx, "example-model", 4, "example")
 	require.NoError(err)
-	_, err = backend.DB().Exec("ALTER TABLE index_generations DROP COLUMN seeded_at")
+	_, err = backend.DB().ExecContext(t.Context(), "ALTER TABLE index_generations DROP COLUMN seeded_at")
 	require.NoError(err)
 	cmd := &cobra.Command{Use: "list"}
 	cmd.SetContext(ctx)
@@ -504,6 +504,6 @@ func TestEmbeddingsListReportsOldSchemaWithoutMigrating(t *testing.T) {
 	require.ErrorContains(err, "requires an upgrade")
 	require.NotContains(err.Error(), "enable [vector]")
 	require.ErrorContains(err, "msgvault daemon restart")
-	_, err = backend.DB().Exec("SELECT seeded_at FROM index_generations")
+	_, err = backend.DB().ExecContext(t.Context(), "SELECT seeded_at FROM index_generations")
 	require.ErrorContains(err, "no such column", "listing must leave the old schema unchanged")
 }

@@ -97,7 +97,7 @@ func TestNotFoundHistoryRangeKeepsPendingHistory(t *testing.T) {
 	require.ErrorIs(err, ErrNotFound)
 	require.ErrorContains(err, "chatwoot conversation 1")
 
-	state, err := NewImporter(st, api.client(t)).resumeState(source.ID)
+	state, err := NewImporter(st, api.client(t)).resumeState(t.Context(), source.ID)
 	require.NoError(err)
 	require.Contains(state.Conversations, "1")
 	assert.NotEmpty(state.Conversations["1"].Pending)
@@ -152,7 +152,7 @@ func TestSavedConversationFromAnotherAccountIsRejected(t *testing.T) {
 	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 	require.ErrorContains(err, "saved conversation scope mismatch")
-	state, err := NewImporter(st, api.client(t)).resumeState(source.ID)
+	state, err := NewImporter(st, api.client(t)).resumeState(t.Context(), source.ID)
 	require.NoError(err)
 	require.Contains(state.Conversations, "1")
 	assert.Contains(state.Conversations["1"].Artifacts, "11", "a rejected conversation keeps its saved work")

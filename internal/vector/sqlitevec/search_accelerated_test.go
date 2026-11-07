@@ -37,7 +37,7 @@ func TestAcceleratedSearchReranksFiltersAndDeduplicates(t *testing.T) {
 	assert.Equal(t, acceleratorKind, meta.Accelerator)
 	assert.True(t, meta.PoolSaturated)
 
-	_, err = mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 1`)
+	_, err = mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 1`)
 	require.NoError(t, err)
 	hits, _, err = backend.SearchWithMetadata(t.Context(), generationID,
 		[]float32{1, 0, 0, 0}, 2, vector.Filter{SourceIDs: []int64{2, 3}})
@@ -105,7 +105,7 @@ func TestAcceleratedSearchUsesExactPathForSmallStructuredPopulation(t *testing.T
 	}
 	require.NoError(t, backend.Upsert(t.Context(), generationID, chunks))
 	installReadyFlatAccelerator(t, backend, generationID, 4)
-	_, err := mainDB.Exec(`UPDATE messages SET source_id = 1000 WHERE id <= 5`)
+	_, err := mainDB.ExecContext(t.Context(), `UPDATE messages SET source_id = 1000 WHERE id <= 5`)
 	require.NoError(t, err)
 
 	filter := vector.Filter{SourceIDs: []int64{1000}}
@@ -135,7 +135,7 @@ func TestAcceleratedSearchUsesExactPathForBoundedStructuredPopulation(t *testing
 	}
 	require.NoError(t, backend.Upsert(t.Context(), generationID, chunks))
 	installReadyFlatAccelerator(t, backend, generationID, 4)
-	_, err := mainDB.Exec(`UPDATE messages SET source_id = 1000 WHERE id <= 300`)
+	_, err := mainDB.ExecContext(t.Context(), `UPDATE messages SET source_id = 1000 WHERE id <= 300`)
 	require.NoError(t, err)
 
 	filter := vector.Filter{SourceIDs: []int64{1000}}
@@ -204,7 +204,7 @@ func TestAcceleratedSearchWidensAndReportsWorkCeiling(t *testing.T) {
 	}
 	require.NoError(t, backend.Upsert(t.Context(), generationID, chunks))
 	installReadyFlatAccelerator(t, backend, generationID, 4)
-	_, err := mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	_, err := mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
 	require.NoError(t, err)
 
 	hits, meta, err := backend.SearchWithMetadata(t.Context(), generationID,
@@ -214,7 +214,7 @@ func TestAcceleratedSearchWidensAndReportsWorkCeiling(t *testing.T) {
 	assert.Equal(t, int64(41), hits[0].MessageID)
 	assert.True(t, meta.PoolSaturated)
 
-	_, err = mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP`)
+	_, err = mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP`)
 	require.NoError(t, err)
 	hits, meta, err = backend.SearchWithMetadata(t.Context(), generationID,
 		unitVec(4, 0), 5, vector.Filter{})
@@ -233,7 +233,7 @@ func TestSearchDelegatesToReadyAccelerator(t *testing.T) {
 	}
 	require.NoError(t, backend.Upsert(t.Context(), generationID, chunks))
 	installReadyFlatAccelerator(t, backend, generationID, 4)
-	_, err := mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	_, err := mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
 	require.NoError(t, err)
 
 	hits, err := backend.Search(t.Context(), generationID, unitVec(4, 0), 5, vector.Filter{})
@@ -261,7 +261,7 @@ func TestAcceleratedSearchFallsBackWhenAcceleratorIsStale(t *testing.T) {
 		{MessageID: 2, Vector: unitVec(4, 1)},
 	}))
 	installReadyFlatAccelerator(t, backend, generationID, 4)
-	_, err := backend.db.Exec(`UPDATE vector_accelerators SET state = 'stale' WHERE generation_id = ?`,
+	_, err := backend.db.ExecContext(t.Context(), `UPDATE vector_accelerators SET state = 'stale' WHERE generation_id = ?`,
 		int64(generationID))
 	require.NoError(t, err)
 
@@ -314,7 +314,7 @@ func TestAcceleratedSearchWidensNProbeForSelectiveFilter(t *testing.T) {
 	for i := 1; i <= 4096; i++ {
 		chunks = append(chunks, vector.Chunk{MessageID: int64(i), Vector: clusteredTestVector(int64(i), 8)})
 		if i <= 11 {
-			_, err = tx.Exec(`UPDATE messages SET source_id = 3 WHERE id = ?`, i)
+			_, err = tx.ExecContext(t.Context(), `UPDATE messages SET source_id = 3 WHERE id = ?`, i)
 			require.NoError(t, err)
 		}
 	}
@@ -391,7 +391,7 @@ func openAcceleratedSearchBackend(
 	mainDB, err := sql.Open("sqlite3", mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mainDB.Close()) })
-	_, err = mainDB.Exec(`CREATE TABLE messages (
+	_, err = mainDB.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		source_id INTEGER,
 		conversation_id INTEGER,
@@ -403,7 +403,7 @@ func openAcceleratedSearchBackend(
 	tx, err := mainDB.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	for i := 1; i <= messageCount; i++ {
-		_, err := tx.Exec(`INSERT INTO messages (id, source_id, conversation_id)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, conversation_id)
 			VALUES (?, ?, ?)`, i, i, i)
 		require.NoError(t, err)
 	}
@@ -427,9 +427,9 @@ func TestAcceleratedSearchLogsFailureAndReturnsExactResults(t *testing.T) {
 		{MessageID: 1, Vector: unitVec(4, 0)}, {MessageID: 2, Vector: unitVec(4, 1)},
 	}))
 	installReadyFlatAccelerator(t, backend, gen, 4)
-	_, err := backend.db.Exec(`DROP TABLE ` + acceleratorTableName(gen))
+	_, err := backend.db.ExecContext(t.Context(), `DROP TABLE `+acceleratorTableName(gen))
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`CREATE TABLE ` + acceleratorTableName(gen) + ` (embedding BLOB)`)
+	_, err = backend.db.ExecContext(t.Context(), `CREATE TABLE `+acceleratorTableName(gen)+` (embedding BLOB)`)
 	require.NoError(t, err)
 	var logs bytes.Buffer
 	previous := slog.Default()

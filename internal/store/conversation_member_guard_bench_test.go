@@ -14,7 +14,7 @@ func BenchmarkMemberInsertLargeChat(b *testing.B) {
 		b.Run(strconv.Itoa(size), func(b *testing.B) {
 			for _, stats := range []string{"no-stats", "analyzed"} {
 				b.Run(stats, func(b *testing.B) {
-					s, err := OpenForTest(filepath.Join(b.TempDir(), "member-guard.db"))
+					s, err := OpenForTest(b.Context(), filepath.Join(b.TempDir(), "member-guard.db"))
 					require.NoError(b, err)
 					b.Cleanup(func() { require.NoError(b, s.Close()) })
 					require.NoError(b, s.InitSchema())

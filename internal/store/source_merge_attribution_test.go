@@ -79,7 +79,7 @@ func TestMergeSourcesRebuildsAccountAttribution(t *testing.T) {
 			from: []string{"live@example.test"}, to: []string{"list@example.test"}})
 		_, path := attribution(t, live.st, id)
 		require.Equal("sent", path.String)
-		_, err := live.st.EnsureLabelsBatch(history.source.ID, map[string]store.LabelInfo{
+		_, err := live.st.EnsureLabelsBatch(t.Context(), history.source.ID, map[string]store.LabelInfo{
 			"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 		})
 		require.NoError(err)
@@ -96,9 +96,9 @@ func TestMergeSourcesRebuildsAccountAttribution(t *testing.T) {
 		assert := assert.New(t)
 		live := newAttrFixture(t, "gcal", "live-calendar")
 		history := newAttrFixtureOn(t, live.st, "gcal", "history-calendar")
-		require.NoError(live.st.UpdateSourceSyncConfig(live.source.ID,
+		require.NoError(live.st.UpdateSourceSyncConfig(t.Context(), live.source.ID,
 			`{"account_email":"live@example.test","calendar_id":"primary"}`))
-		require.NoError(live.st.UpdateSourceSyncConfig(history.source.ID,
+		require.NoError(live.st.UpdateSourceSyncConfig(t.Context(), history.source.ID,
 			`{"account_email":"history@example.test","calendar_id":"primary"}`))
 		live.confirm("live@example.test")
 		history.confirm("history@example.test")
@@ -126,18 +126,18 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 			live := newAttrFixture(t, "imap", "imaps://live%40example.test@mail.example.test:993")
 			history := newAttrFixtureOn(t, live.st, "imap", "imaps://history%40example.test@mail.example.test:993")
 			id := history.persist(attrMail{from: []string{"history@example.test"}, to: []string{"recipient@example.test"}})
-			_, err := activityExec(live.st, `UPDATE messages SET sent_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+			_, err := activityExec(t.Context(), live.st, `UPDATE messages SET sent_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 			require.NoError(err)
-			_, err = activityExec(live.st, `INSERT INTO imap_message_memberships
+			_, err = activityExec(t.Context(), live.st, `INSERT INTO imap_message_memberships
 				(source_id, mailbox, uidvalidity, uid, message_id, flags)
 				VALUES (?, 'Scratch', 7, 1, ?, ?)`, history.source.ID, id, `["\\Draft"]`)
 			require.NoError(err)
 			if sentEvidence == "label" {
-				labels, err := live.st.EnsureLabelsBatch(history.source.ID, map[string]store.LabelInfo{
+				labels, err := live.st.EnsureLabelsBatch(t.Context(), history.source.ID, map[string]store.LabelInfo{
 					"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 				})
 				require.NoError(err)
-				require.NoError(live.st.AddMessageLabels(id, []int64{labels["sent"]}))
+				require.NoError(live.st.AddMessageLabels(t.Context(), id, []int64{labels["sent"]}))
 			}
 			if sentEvidence == "origin" {
 				require.NoError(live.st.SetMessageMetadata(id, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
@@ -147,7 +147,7 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 			require.Len(before, 1)
 			require.Equal(sentEvidence == "none", before[0].Unsent)
 			var originalIsSent sql.NullBool
-			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&originalIsSent))
+			require.NoError(activityQueryRow(t.Context(), live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&originalIsSent))
 
 			_, err = live.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 				FromSourceID: history.source.ID, IntoSourceID: live.source.ID,
@@ -160,20 +160,20 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 			assert.Equal(sentEvidence == "none", after[0].Unsent)
 			assert.Equal(sentEvidence != "none", after[0].Eligible)
 			var isSent sql.NullBool
-			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
+			require.NoError(activityQueryRow(t.Context(), live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
 			assert.Equal(originalIsSent, isSent)
 
-			labels, err := live.st.EnsureLabelsBatch(live.source.ID, map[string]store.LabelInfo{
+			labels, err := live.st.EnsureLabelsBatch(t.Context(), live.source.ID, map[string]store.LabelInfo{
 				"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 			})
 			require.NoError(err)
-			require.NoError(live.st.AddMessageLabels(id, []int64{labels["sent"]}))
+			require.NoError(live.st.AddMessageLabels(t.Context(), id, []int64{labels["sent"]}))
 			after, err = live.st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
 			require.NoError(err)
 			require.Len(after, 1)
 			assert.False(after[0].Unsent)
 			assert.True(after[0].Eligible, "Sent evidence makes the former draft contact activity")
-			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
+			require.NoError(activityQueryRow(t.Context(), live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
 			assert.Equal(originalIsSent, isSent)
 		})
 	}
@@ -196,20 +196,20 @@ func TestMergeSourcesPreservesLabelSystemRoles(t *testing.T) {
 			history := newAttrFixtureOn(t, live.st, "imap", "imaps://history%40example.test@mail.example.test:993")
 			live.confirm("live@example.test")
 			history.confirm("history@example.test")
-			liveLabels, err := live.st.EnsureLabelsBatch(live.source.ID, map[string]store.LabelInfo{
+			liveLabels, err := live.st.EnsureLabelsBatch(t.Context(), live.source.ID, map[string]store.LabelInfo{
 				"live-folder": {Name: "Sent", Type: "system", SystemRole: test.destinationRole},
 				// Without another trusted Sent folder, sender fallback masks a lost role.
 				"live-sent": {Name: "Sent Items", Type: "system", SystemRole: store.LabelSystemRoleSent},
 			})
 			require.NoError(err)
-			historyLabels, err := live.st.EnsureLabelsBatch(history.source.ID, map[string]store.LabelInfo{
+			historyLabels, err := live.st.EnsureLabelsBatch(t.Context(), history.source.ID, map[string]store.LabelInfo{
 				"history-sent": {Name: test.historyLabel, Type: "system", SystemRole: store.LabelSystemRoleSent},
 			})
 			require.NoError(err)
 			historyLabelID := historyLabels["history-sent"]
 			archiveName := fmt.Sprintf("msgvault-archive:%d:label:%d", history.source.ID, historyLabelID)
 			if test.occupiedArchiveNames {
-				_, err = live.st.EnsureLabelsBatch(live.source.ID, map[string]store.LabelInfo{
+				_, err = live.st.EnsureLabelsBatch(t.Context(), live.source.ID, map[string]store.LabelInfo{
 					"occupied-archive": {Name: archiveName, Type: "user"},
 					"occupied-suffix":  {Name: archiveName + ":archive", Type: "user"},
 				})
@@ -266,7 +266,7 @@ func TestMergeSourcesPreservesLabelSystemRoles(t *testing.T) {
 			var labelSourceID int64
 			var labelName, role string
 			var providerID sql.NullString
-			require.NoError(live.st.DB().QueryRow(live.st.Rebind(
+			require.NoError(live.st.DB().QueryRowContext(t.Context(), live.st.Rebind(
 				`SELECT source_id, name, COALESCE(system_role, ''), source_label_id FROM labels WHERE id = ?`), wantLabelID).
 				Scan(&labelSourceID, &labelName, &role, &providerID))
 			assert.Equal(live.source.ID, labelSourceID)
@@ -313,27 +313,27 @@ func TestMergeSourcesPreservesGmailLabelRoles(t *testing.T) {
 			if test.providerID == "DRAFT" {
 				destinationID = "DRAFT"
 			}
-			liveLabels, err := live.st.EnsureLabelsBatch(live.source.ID, map[string]store.LabelInfo{
+			liveLabels, err := live.st.EnsureLabelsBatch(t.Context(), live.source.ID, map[string]store.LabelInfo{
 				destinationID: {Name: destinationID, Type: "system", SystemRole: test.destinationRole},
 			})
 			require.NoError(err)
-			labelID, err := live.st.EnsureLabel(history.source.ID, test.providerID, test.incomingName, "system")
+			labelID, err := live.st.EnsureLabel(t.Context(), history.source.ID, test.providerID, test.incomingName, "system")
 			require.NoError(err)
 			if test.incomingRole != "" {
-				_, err = live.st.EnsureLabelsBatch(history.source.ID, map[string]store.LabelInfo{
+				_, err = live.st.EnsureLabelsBatch(t.Context(), history.source.ID, map[string]store.LabelInfo{
 					test.providerID: {Name: test.incomingName, Type: "system", SystemRole: test.incomingRole},
 				})
 				require.NoError(err)
 			}
 			if sourceType == "imap" {
 				// Keep sender fallback from masking an ordinary label's lack of role.
-				_, err = live.st.EnsureLabelsBatch(history.source.ID, map[string]store.LabelInfo{
+				_, err = live.st.EnsureLabelsBatch(t.Context(), history.source.ID, map[string]store.LabelInfo{
 					"other-sent": {Name: "Sent Items", Type: "system", SystemRole: store.LabelSystemRoleSent},
 				})
 				require.NoError(err)
 			}
 			var roleBefore sql.NullString
-			require.NoError(live.st.DB().QueryRow(live.st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), labelID).Scan(&roleBefore))
+			require.NoError(live.st.DB().QueryRowContext(t.Context(), live.st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), labelID).Scan(&roleBefore))
 			require.Equal(test.incomingRole != "", roleBefore.Valid)
 			id := history.persist(attrMail{
 				raw:  "From: history@example.test\r\nTo: friend@example.test\r\n\r\nhistorical body",
@@ -347,7 +347,7 @@ func TestMergeSourcesPreservesGmailLabelRoles(t *testing.T) {
 			}
 			require.Equal(wantPath, pathBefore.String)
 			var draftBefore bool
-			require.NoError(live.st.DB().QueryRow(live.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftBefore))
+			require.NoError(live.st.DB().QueryRowContext(t.Context(), live.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftBefore))
 			require.Equal(test.wantDraft, draftBefore)
 
 			_, err = live.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
@@ -376,13 +376,13 @@ func TestMergeSourcesPreservesGmailLabelRoles(t *testing.T) {
 			}
 			var roleAfter string
 			var providerAfter sql.NullString
-			require.NoError(live.st.DB().QueryRow(live.st.Rebind(`SELECT COALESCE(system_role, ''), source_label_id FROM labels WHERE id = ?`), labelIDs[0]).Scan(&roleAfter, &providerAfter))
+			require.NoError(live.st.DB().QueryRowContext(t.Context(), live.st.Rebind(`SELECT COALESCE(system_role, ''), source_label_id FROM labels WHERE id = ?`), labelIDs[0]).Scan(&roleAfter, &providerAfter))
 			if !test.wantCoalesced {
 				assert.Equal(test.wantRole, roleAfter)
 			}
 			assert.Equal(wantProviderID, providerAfter)
 			var draftAfter bool
-			require.NoError(live.st.DB().QueryRow(live.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftAfter))
+			require.NoError(live.st.DB().QueryRowContext(t.Context(), live.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftAfter))
 			assert.Equal(test.wantDraft, draftAfter)
 		})
 	}

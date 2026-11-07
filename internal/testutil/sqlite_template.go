@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,9 +26,9 @@ var sqliteTemplate struct {
 
 // sqliteTemplateBytes returns the bytes of a freshly initialized SQLite
 // database, building it on first use.
-func sqliteTemplateBytes() ([]byte, error) {
+func sqliteTemplateBytes(ctx context.Context) ([]byte, error) {
 	sqliteTemplate.once.Do(func() {
-		sqliteTemplate.data, sqliteTemplate.err = buildSQLiteTemplate()
+		sqliteTemplate.data, sqliteTemplate.err = buildSQLiteTemplate(ctx)
 	})
 
 	return sqliteTemplate.data, sqliteTemplate.err
@@ -38,7 +39,7 @@ func sqliteTemplateBytes() ([]byte, error) {
 // process. Close folds the WAL back into the main file; a WAL still holding
 // data afterwards would make the snapshot incomplete, so that is a build
 // failure rather than a fixture handed out with missing tables.
-func buildSQLiteTemplate() ([]byte, error) {
+func buildSQLiteTemplate(ctx context.Context) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "msgvault-sqlite-template-")
 	if err != nil {
 		return nil, fmt.Errorf("template scratch dir: %w", err)
@@ -46,11 +47,11 @@ func buildSQLiteTemplate() ([]byte, error) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	path := filepath.Join(dir, "template.db")
-	st, err := store.OpenForTest(path)
+	st, err := store.OpenForTest(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("open template: %w", err)
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		_ = st.Close()
 
 		return nil, fmt.Errorf("init template schema: %w", err)
