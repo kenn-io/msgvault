@@ -65,7 +65,7 @@ describe('AppShell', () => {
       expect(await screen.findByRole('dialog', { name: 'Add source' })).toBeDefined();
       expect(state.current.workspace).toBe('sources');
       await fireEvent.keyDown(document, { key: 'Escape' });
-      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources', exact: true })));
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources' })));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -83,7 +83,7 @@ describe('AppShell', () => {
     });
     const rendered = render(AppShell, { client, state });
     try {
-      await waitFor(() => expect(start.mock.contexts[0]?.jobs.loaded).toBe(true));
+      await waitFor(() => expect((start.mock.contexts[0] as ShellData | undefined)?.jobs.loaded).toBe(true));
       expect(await screen.findByText('No items match this view')).toBeDefined();
       expect(screen.queryByText('No mail yet')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
