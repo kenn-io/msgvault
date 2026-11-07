@@ -1578,6 +1578,69 @@ the source message has since been deleted. See
 
 ---
 
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
+
+---
+
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
