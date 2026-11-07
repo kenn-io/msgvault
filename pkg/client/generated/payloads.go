@@ -178,6 +178,8 @@ type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest
 
+type AssessPersonPostalAddressBody = PostalAddressAssessmentRequest
+
 type CreatePersonAgendaItemBody = PersonAgendaCreateRequest
 
 type LinkPersonAgendaItemBody = PersonAgendaLinkRequest

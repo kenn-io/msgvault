@@ -2751,6 +2751,18 @@ type PatchPersonErrorResponseJSON503 = ErrorResponse
 
 type PatchPersonErrorResponseJSONDefault = ErrorResponse
 
+type AssessPersonPostalAddressResponse = Assessment
+
+type AssessPersonPostalAddressErrorResponse = ErrorResponse
+
+type AssessPersonPostalAddressErrorResponseJSON = ErrorResponse
+
+type AssessPersonPostalAddressErrorResponseJSON404 = ErrorResponse
+
+type AssessPersonPostalAddressErrorResponseJSON503 = ErrorResponse
+
+type AssessPersonPostalAddressErrorResponseJSONDefault = ErrorResponse
+
 type ListPersonAgendaResponse = PersonAgendaResult
 
 type ListPersonAgendaErrorResponse = ErrorResponse
@@ -6587,6 +6599,18 @@ type PatchPersonResp struct {
 	JSON428      *PatchPersonErrorResponseJSON428
 	JSON503      *PatchPersonErrorResponseJSON503
 	JSONDefault  *PatchPersonErrorResponseJSONDefault
+}
+
+type AssessPersonPostalAddressResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *AssessPersonPostalAddressResponse
+	JSON400      *AssessPersonPostalAddressErrorResponse
+	JSON401      *AssessPersonPostalAddressErrorResponseJSON
+	JSON404      *AssessPersonPostalAddressErrorResponseJSON404
+	JSON503      *AssessPersonPostalAddressErrorResponseJSON503
+	JSONDefault  *AssessPersonPostalAddressErrorResponseJSONDefault
 }
 
 type ListPersonAgendaResp struct {

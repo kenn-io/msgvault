@@ -483,6 +483,43 @@ func (a AppendPersonNoteRequest) Validate() error {
 	return errors
 }
 
+type Assessment struct {
+	CheckedAt   *time.Time `json:"checked_at,omitempty"`
+	Fingerprint string     `json:"fingerprint" validate:"required"`
+	Original    Input      `json:"original"`
+	Proposed    Input      `json:"proposed"`
+	Provider    *string    `json:"provider,omitzero"`
+	ReasonCodes []string   `json:"reason_codes" validate:"required"`
+	Status      string     `json:"status" validate:"required"`
+}
+
+func (a Assessment) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Fingerprint, "required"); err != nil {
+		errors = errors.Append("Fingerprint", err)
+	}
+	if v, ok := any(a.Original).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Original", err)
+		}
+	}
+	if v, ok := any(a.Proposed).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Proposed", err)
+		}
+	}
+	if err := typesValidator.Var(a.ReasonCodes, "required"); err != nil {
+		errors = errors.Append("ReasonCodes", err)
+	}
+	if err := typesValidator.Var(a.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AttachmentInfo struct {
 	ContentHash *string                `json:"content_hash,omitzero"`
 	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
@@ -7087,6 +7124,29 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type Input struct {
+	AddressKind        string  `json:"address_kind" validate:"required"`
+	CountryCode        *string `json:"country_code,omitzero"`
+	CountryName        *string `json:"country_name,omitzero"`
+	ExtendedAddress    *string `json:"extended_address,omitzero"`
+	ExtendedComponents *string `json:"extended_components,omitzero"`
+	FreeText           *string `json:"free_text,omitzero"`
+	GeoURI             *string `json:"geo_uri,omitzero"`
+	Label              *string `json:"label,omitzero"`
+	Locality           *string `json:"locality,omitzero"`
+	OriginalValue      *string `json:"original_value,omitzero"`
+	PlaceURI           *string `json:"place_uri,omitzero"`
+	PostOfficeBox      *string `json:"post_office_box,omitzero"`
+	PostalCode         *string `json:"postal_code,omitzero"`
+	Region             *string `json:"region,omitzero"`
+	StreetAddress      *string `json:"street_address,omitzero"`
+	Timezone           *string `json:"timezone,omitzero"`
+}
+
+func (i Input) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
 type KataEvidenceLinkRequest struct {
 	Evidence []Reference `json:"evidence" validate:"required"`
 }
@@ -10676,6 +10736,7 @@ func (p Person) Validate() error {
 
 type PersonAddress struct {
 	AddressKind        string        `json:"address_kind" validate:"required"`
+	Assessment         *Assessment   `json:"assessment,omitempty"`
 	CountryCode        *string       `json:"country_code,omitzero"`
 	CountryName        *string       `json:"country_name,omitzero"`
 	Envelope           ValueEnvelope `json:"envelope"`
@@ -10699,6 +10760,13 @@ func (p PersonAddress) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
 		errors = errors.Append("AddressKind", err)
+	}
+	if p.Assessment != nil {
+		if v, ok := any(p.Assessment).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Assessment", err)
+			}
+		}
 	}
 	if v, ok := any(p.Envelope).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -10725,6 +10793,7 @@ type PersonAddressInputRequest struct {
 	GeoURI             *string            `json:"geo_uri,omitzero"`
 	Label              *string            `json:"label,omitzero"`
 	Locality           *string            `json:"locality,omitzero"`
+	OriginalInput      *Input             `json:"original_input,omitempty"`
 	OriginalValue      *string            `json:"original_value,omitzero"`
 	PlaceURI           *string            `json:"place_uri,omitzero"`
 	PostOfficeBox      *string            `json:"post_office_box,omitzero"`
@@ -10742,6 +10811,13 @@ func (p PersonAddressInputRequest) Validate() error {
 	if v, ok := any(p.Envelope).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Envelope", err)
+		}
+	}
+	if p.OriginalInput != nil {
+		if v, ok := any(p.OriginalInput).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginalInput", err)
+			}
 		}
 	}
 	if len(errors) == 0 {
@@ -11723,23 +11799,25 @@ func (p PersonEnrichmentProviderUpdate) Validate() error {
 }
 
 type PersonFactClaim struct {
-	ClaimKey           string           `json:"claim_key" validate:"required"`
-	Confidence         ConfidenceInputs `json:"confidence"`
-	CreatedAt          time.Time        `json:"created_at" validate:"required"`
-	EvidenceIds        []int64          `json:"evidence_ids" validate:"required"`
-	GenerationID       int64            `json:"generation_id"`
-	ID                 int64            `json:"id"`
-	NormalizedValue    *string          `json:"normalized_value,omitzero"`
-	Origin             string           `json:"origin" validate:"required"`
-	ProgramFingerprint string           `json:"program_fingerprint" validate:"required"`
-	ProgramID          string           `json:"program_id" validate:"required"`
-	ProgramVersion     string           `json:"program_version" validate:"required"`
-	Relation           string           `json:"relation" validate:"required"`
-	SubmittedValue     string           `json:"submitted_value" validate:"required"`
-	Target             TargetRef        `json:"target"`
-	ValidFrom          *time.Time       `json:"valid_from,omitempty"`
-	ValidUntil         *time.Time       `json:"valid_until,omitempty"`
-	ValueFingerprint   *string          `json:"value_fingerprint,omitzero"`
+	ClaimKey           string               `json:"claim_key" validate:"required"`
+	Confidence         ConfidenceInputs     `json:"confidence"`
+	CreatedAt          time.Time            `json:"created_at" validate:"required"`
+	EvidenceIds        []int64              `json:"evidence_ids" validate:"required"`
+	Failure            *ValidationFailure   `json:"failure,omitempty"`
+	GenerationID       int64                `json:"generation_id"`
+	ID                 int64                `json:"id"`
+	NormalizedValue    *string              `json:"normalized_value,omitzero"`
+	Origin             string               `json:"origin" validate:"required"`
+	PostalReview       *PostalAddressReview `json:"postal_review,omitempty"`
+	ProgramFingerprint string               `json:"program_fingerprint" validate:"required"`
+	ProgramID          string               `json:"program_id" validate:"required"`
+	ProgramVersion     string               `json:"program_version" validate:"required"`
+	Relation           string               `json:"relation" validate:"required"`
+	SubmittedValue     string               `json:"submitted_value" validate:"required"`
+	Target             TargetRef            `json:"target"`
+	ValidFrom          *time.Time           `json:"valid_from,omitempty"`
+	ValidUntil         *time.Time           `json:"valid_until,omitempty"`
+	ValueFingerprint   *string              `json:"value_fingerprint,omitzero"`
 }
 
 func (p PersonFactClaim) Validate() error {
@@ -11758,8 +11836,22 @@ func (p PersonFactClaim) Validate() error {
 	if err := typesValidator.Var(p.EvidenceIds, "required"); err != nil {
 		errors = errors.Append("EvidenceIds", err)
 	}
+	if p.Failure != nil {
+		if v, ok := any(p.Failure).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Failure", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(p.Origin, "required"); err != nil {
 		errors = errors.Append("Origin", err)
+	}
+	if p.PostalReview != nil {
+		if v, ok := any(p.PostalReview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PostalReview", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(p.ProgramFingerprint, "required"); err != nil {
 		errors = errors.Append("ProgramFingerprint", err)
@@ -13943,6 +14035,53 @@ type PingInfo struct {
 	Pid     *int64  `json:"pid,omitempty"`
 	Service *string `json:"service,omitzero"`
 	Version *string `json:"version,omitzero"`
+}
+
+type PostalAddressAssessmentRequest struct {
+	Address       Input `json:"address"`
+	AllowExternal *bool `json:"allow_external,omitempty"`
+}
+
+func (p PostalAddressAssessmentRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Address).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Address", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PostalAddressReview struct {
+	Assessment            *Assessment `json:"assessment,omitempty"`
+	Eligible              bool        `json:"eligible"`
+	PersonRevision        int64       `json:"person_revision"`
+	ReasonCodes           []string    `json:"reason_codes" validate:"required"`
+	SupportingEvidenceIds []int64     `json:"supporting_evidence_ids" validate:"required"`
+}
+
+func (p PostalAddressReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Assessment != nil {
+		if v, ok := any(p.Assessment).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Assessment", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ReasonCodes, "required"); err != nil {
+		errors = errors.Append("ReasonCodes", err)
+	}
+	if err := typesValidator.Var(p.SupportingEvidenceIds, "required"); err != nil {
+		errors = errors.Append("SupportingEvidenceIds", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type Progress struct {
@@ -16843,6 +16982,16 @@ type VCardIdentity struct {
 	Pid      []string `json:"pid,omitempty"`
 	PropID   *string  `json:"prop_id,omitzero"`
 	Property *string  `json:"property,omitzero"`
+}
+
+type ValidationFailure struct {
+	Action string `json:"Action" validate:"required"`
+	Detail string `json:"Detail" validate:"required"`
+	Reason string `json:"Reason" validate:"required"`
+}
+
+func (v ValidationFailure) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
 type ValueEnvelope struct {

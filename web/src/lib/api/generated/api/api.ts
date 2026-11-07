@@ -13,6 +13,8 @@ import type {
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
   ApproveCardDAVPublicationPathParameters,
+  AssessPersonPostalAddressPathParameters,
+  Assessment,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -385,6 +387,7 @@ import type {
   PersonTierExplanation,
   PersonTierPreview,
   PersonTracking,
+  PostalAddressAssessmentRequest,
   PreviewCardDAVPublicationPathParameters,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
@@ -3028,6 +3031,25 @@ export const patchPerson = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: patchPersonRequest,
+    },
+    options,
+  );
+};
+/**
+ * Local assessment never contacts a provider. An explicit allow_external request uses an enabled provider for the owner only; results are transient and must be reviewed before saving.
+ * @summary Assess a draft postal address without saving it
+ */
+export const assessPersonPostalAddress = (
+  { id }: AssessPersonPostalAddressPathParameters,
+  postalAddressAssessmentRequest: PostalAddressAssessmentRequest,
+  options?: SecondParameter<typeof orvalFetch<Assessment>>,
+) => {
+  return orvalFetch<Assessment>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/addresses/assess`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: postalAddressAssessmentRequest,
     },
     options,
   );

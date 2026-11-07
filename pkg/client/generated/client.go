@@ -883,6 +883,10 @@ type ClientInterface interface {
 	PatchPerson(ctx context.Context, options *PatchPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonResponse, error)
 	PatchPersonWithResponse(ctx context.Context, options *PatchPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonResp, error)
 
+	// AssessPersonPostalAddress Assess a draft postal address without saving it
+	AssessPersonPostalAddress(ctx context.Context, options *AssessPersonPostalAddressRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssessPersonPostalAddressResponse, error)
+	AssessPersonPostalAddressWithResponse(ctx context.Context, options *AssessPersonPostalAddressRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssessPersonPostalAddressResp, error)
+
 	// ListPersonAgenda List a person's live Kata agenda
 	ListPersonAgenda(ctx context.Context, options *ListPersonAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonAgendaResponse, error)
 	ListPersonAgendaWithResponse(ctx context.Context, options *ListPersonAgendaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPersonAgendaResp, error)
@@ -14378,6 +14382,70 @@ func (c *Client) PatchPerson(ctx context.Context, options *PatchPersonRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AssessPersonPostalAddress Assess a draft postal address without saving it
+func (c *Client) AssessPersonPostalAddress(ctx context.Context, options *AssessPersonPostalAddressRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AssessPersonPostalAddressResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/{id}/addresses/assess",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*AssessPersonPostalAddressResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(AssessPersonPostalAddressErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "AssessPersonPostalAddressErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(AssessPersonPostalAddressResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "AssessPersonPostalAddressResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/{id}/addresses/assess")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

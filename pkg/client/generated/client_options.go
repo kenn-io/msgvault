@@ -8368,6 +8368,59 @@ func (o *PatchPersonRequestOptions) GetHeader() (map[string]string, error) {
 	return runtime.AsMap[string](o.Header)
 }
 
+// AssessPersonPostalAddressRequestOptions is the options needed to make a request to AssessPersonPostalAddress.
+type AssessPersonPostalAddressRequestOptions struct {
+	PathParams *AssessPersonPostalAddressPath
+	Body       *AssessPersonPostalAddressBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *AssessPersonPostalAddressRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AssessPersonPostalAddressRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *AssessPersonPostalAddressRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AssessPersonPostalAddressRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AssessPersonPostalAddressRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListPersonAgendaRequestOptions is the options needed to make a request to ListPersonAgenda.
 type ListPersonAgendaRequestOptions struct {
 	PathParams *ListPersonAgendaPath

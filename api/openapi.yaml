@@ -527,6 +527,33 @@ components:
       required:
         - text
       type: object
+    Assessment:
+      additionalProperties: true
+      properties:
+        checked_at:
+          format: date-time
+          type: string
+        fingerprint:
+          type: string
+        original:
+          $ref: "#/components/schemas/Input"
+        proposed:
+          $ref: "#/components/schemas/Input"
+        provider:
+          type: string
+        reason_codes:
+          items:
+            type: string
+          type: array
+        status:
+          type: string
+      required:
+        - original
+        - proposed
+        - status
+        - reason_codes
+        - fingerprint
+      type: object
     AttachmentInfo:
       additionalProperties: true
       properties:
@@ -7402,6 +7429,44 @@ components:
         - candidates
         - applied
       type: object
+    Input:
+      additionalProperties: false
+      properties:
+        address_kind:
+          type: string
+        country_code:
+          type: string
+        country_name:
+          type: string
+        extended_address:
+          type: string
+        extended_components:
+          type: string
+        free_text:
+          type: string
+        geo_uri:
+          type: string
+        label:
+          type: string
+        locality:
+          type: string
+        original_value:
+          type: string
+        place_uri:
+          type: string
+        post_office_box:
+          type: string
+        postal_code:
+          type: string
+        region:
+          type: string
+        street_address:
+          type: string
+        timezone:
+          type: string
+      required:
+        - address_kind
+      type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
       properties:
@@ -11084,6 +11149,8 @@ components:
       properties:
         address_kind:
           type: string
+        assessment:
+          $ref: "#/components/schemas/Assessment"
         country_code:
           type: string
         country_name:
@@ -11148,6 +11215,8 @@ components:
           type: string
         locality:
           type: string
+        original_input:
+          $ref: "#/components/schemas/Input"
         original_value:
           type: string
         place_uri:
@@ -12041,6 +12110,8 @@ components:
             format: int64
             type: integer
           type: array
+        failure:
+          $ref: "#/components/schemas/ValidationFailure"
         generation_id:
           format: int64
           type: integer
@@ -12053,6 +12124,8 @@ components:
             - "null"
         origin:
           type: string
+        postal_review:
+          $ref: "#/components/schemas/PostalAddressReview"
         program_fingerprint:
           type: string
         program_id:
@@ -14092,6 +14165,41 @@ components:
           type: string
       required:
         - ok
+      type: object
+    PostalAddressAssessmentRequest:
+      additionalProperties: false
+      properties:
+        address:
+          $ref: "#/components/schemas/Input"
+        allow_external:
+          type: boolean
+      required:
+        - address
+      type: object
+    PostalAddressReview:
+      additionalProperties: true
+      properties:
+        assessment:
+          $ref: "#/components/schemas/Assessment"
+        eligible:
+          type: boolean
+        person_revision:
+          format: int64
+          type: integer
+        reason_codes:
+          items:
+            type: string
+          type: array
+        supporting_evidence_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - eligible
+        - reason_codes
+        - person_revision
+        - supporting_evidence_ids
       type: object
     Progress:
       additionalProperties: true
@@ -17065,6 +17173,20 @@ components:
         property:
           type: string
       type: object
+    ValidationFailure:
+      additionalProperties: true
+      properties:
+        Action:
+          type: string
+        Detail:
+          type: string
+        Reason:
+          type: string
+      required:
+        - Action
+        - Reason
+        - Detail
+      type: object
     ValueEnvelope:
       additionalProperties: true
       properties:
@@ -17301,7 +17423,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.48.0
+  version: 3.49.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -28309,6 +28431,66 @@ paths:
       security:
         - apiKey: []
       summary: Update a durable person's display name
+      tags:
+        - API
+  /api/v1/people/{id}/addresses/assess:
+    post:
+      description: Local assessment never contacts a provider. An explicit allow_external request uses an enabled provider for the owner only; results are transient and must be reviewed before saving.
+      operationId: assessPersonPostalAddress
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostalAddressAssessmentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Assessment"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Assess a draft postal address without saving it
       tags:
         - API
   /api/v1/people/{id}/agenda:
