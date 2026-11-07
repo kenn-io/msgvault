@@ -174,6 +174,8 @@ type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
 
+type PutPersonPhotoLinkBody = PersonPhotoLinkRequest
+
 type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest

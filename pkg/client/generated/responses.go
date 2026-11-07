@@ -2649,6 +2649,40 @@ type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
 type GetPersonByUIDErrorResponseJSONDefault = ErrorResponse
 
+type PutPersonPhotoLinkResponse = PersonPhotoLinkResponse
+
+type PutPersonPhotoLinkErrorResponse = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON404 = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON409 = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON412 = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON422 = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON500 = APIHTTPError
+
+type PutPersonPhotoLinkErrorResponseJSON503 = APIHTTPError
+
+type GetPersonPhotosResponse = PersonPhotosResponse
+
+type GetPersonPhotosErrorResponse = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON404 = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON409 = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON422 = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON500 = APIHTTPError
+
+type GetPersonPhotosErrorResponseJSON503 = APIHTTPError
+
 type FindContactCandidatesResponse = ContactCandidatePage
 
 type FindContactCandidatesErrorResponse = ErrorResponse
@@ -6450,6 +6484,35 @@ type GetPersonByUIDResp struct {
 	JSON409      *GetPersonByUIDErrorResponseJSON409
 	JSON503      *GetPersonByUIDErrorResponseJSON503
 	JSONDefault  *GetPersonByUIDErrorResponseJSONDefault
+}
+
+type PutPersonPhotoLinkResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PutPersonPhotoLinkResponse
+	JSON400      *PutPersonPhotoLinkErrorResponse
+	JSON401      *PutPersonPhotoLinkErrorResponseJSON
+	JSON404      *PutPersonPhotoLinkErrorResponseJSON404
+	JSON409      *PutPersonPhotoLinkErrorResponseJSON409
+	JSON412      *PutPersonPhotoLinkErrorResponseJSON412
+	JSON422      *PutPersonPhotoLinkErrorResponseJSON422
+	JSON500      *PutPersonPhotoLinkErrorResponseJSON500
+	JSON503      *PutPersonPhotoLinkErrorResponseJSON503
+}
+
+type GetPersonPhotosResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonPhotosResponse
+	JSON400      *GetPersonPhotosErrorResponse
+	JSON401      *GetPersonPhotosErrorResponseJSON
+	JSON404      *GetPersonPhotosErrorResponseJSON404
+	JSON409      *GetPersonPhotosErrorResponseJSON409
+	JSON422      *GetPersonPhotosErrorResponseJSON422
+	JSON500      *GetPersonPhotosErrorResponseJSON500
+	JSON503      *GetPersonPhotosErrorResponseJSON503
 }
 
 type FindContactCandidatesResp struct {

@@ -975,6 +975,15 @@ func (g GetPersonByUIDQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetPersonPhotosQuery struct {
+	UID    string  `json:"uid" validate:"required,max=256,min=1"`
+	Cursor *string `json:"cursor,omitempty" validate:"omitempty,max=4096"`
+}
+
+func (g GetPersonPhotosQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type FindContactCandidatesQuery struct {
 	// Query Literal name tokens; all tokens must match. 1..256 UTF-8 bytes, at most 16 tokens. Wildcards are literal.
 	Query   string `json:"query" validate:"required"`

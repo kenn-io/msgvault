@@ -13216,6 +13216,116 @@ func (p PersonNetwork) Validate() error {
 	return errors
 }
 
+type PersonPhotoEvidence struct {
+	AssertionID          string                  `json:"assertion_id" validate:"required"`
+	ContentVersionID     string                  `json:"content_version_id" validate:"required"`
+	Occurrences          []MediaAttachmentResult `json:"occurrences" validate:"required"`
+	OccurrencesTruncated bool                    `json:"occurrences_truncated"`
+}
+
+func (p PersonPhotoEvidence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AssertionID, "required"); err != nil {
+		errors = errors.Append("AssertionID", err)
+	}
+	if err := typesValidator.Var(p.ContentVersionID, "required"); err != nil {
+		errors = errors.Append("ContentVersionID", err)
+	}
+	if err := typesValidator.Var(p.Occurrences, "required"); err != nil {
+		errors = errors.Append("Occurrences", err)
+	}
+	for i, item := range p.Occurrences {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Occurrences[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonPhotoLinkRequest struct {
+	LinkedUID *string                     `json:"linked_uid,omitzero" validate:"omitempty,max=256"`
+	PersonID  string                      `json:"person_id" validate:"required,max=128,min=1"`
+	Revision  int64                       `json:"revision" validate:"gte=1"`
+	State     PersonPhotoLinkRequestState `json:"state" validate:"required"`
+	UID       string                      `json:"uid" validate:"required,max=256,min=1"`
+}
+
+func (p PersonPhotoLinkRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.LinkedUID != nil {
+		if err := typesValidator.Var(p.LinkedUID, "omitempty,max=256"); err != nil {
+			errors = errors.Append("LinkedUID", err)
+		}
+	}
+	if err := typesValidator.Var(p.PersonID, "required,max=128,min=1"); err != nil {
+		errors = errors.Append("PersonID", err)
+	}
+	if err := typesValidator.Var(p.Revision, "gte=1"); err != nil {
+		errors = errors.Append("Revision", err)
+	}
+	if v, ok := any(p.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if err := typesValidator.Var(p.UID, "required,max=256,min=1"); err != nil {
+		errors = errors.Append("UID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonPhotoLinkResponse struct {
+	LinkedUID string `json:"linked_uid" validate:"required"`
+	Revision  int64  `json:"revision"`
+	State     string `json:"state" validate:"required"`
+	UID       string `json:"uid" validate:"required"`
+}
+
+func (p PersonPhotoLinkResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonPhotosResponse struct {
+	LinkState  string                `json:"link_state" validate:"required"`
+	NextCursor *string               `json:"next_cursor,omitzero"`
+	PersonID   *string               `json:"person_id,omitzero"`
+	Photos     []PersonPhotoEvidence `json:"photos" validate:"required"`
+	Truncated  bool                  `json:"truncated"`
+	UID        string                `json:"uid" validate:"required"`
+}
+
+func (p PersonPhotosResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.LinkState, "required"); err != nil {
+		errors = errors.Append("LinkState", err)
+	}
+	if err := typesValidator.Var(p.Photos, "required"); err != nil {
+		errors = errors.Append("Photos", err)
+	}
+	for i, item := range p.Photos {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Photos[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.UID, "required"); err != nil {
+		errors = errors.Append("UID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonProfile struct {
 	DisplayName *string `json:"display_name,omitzero"`
 	ID          int64   `json:"id"`
