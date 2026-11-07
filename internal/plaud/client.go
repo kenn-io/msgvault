@@ -22,10 +22,22 @@ var wrapperStart = regexp.MustCompile(`<untrusted-user-data-([A-Za-z0-9_-]+)\s+s
 
 // Session reads Plaud data over MCP with rate limiting and transient retries.
 type Session struct {
-	cs         *mcp.ClientSession
-	limiter    *rate.Limiter
-	retryDelay time.Duration
+	cs      *mcp.ClientSession
+	limiter *rate.Limiter
+	// retryDelay starts the backoff for transient failures. Plaud's rate-limit
+	// window outlasts that backoff, so rejected calls wait from rateLimitDelay
+	// instead. Every delay is capped at maxRetryDelay.
+	retryDelay     time.Duration
+	rateLimitDelay time.Duration
+	maxRetryDelay  time.Duration
 }
+
+const (
+	retryAttempts     = 4
+	rateLimitAttempts = 6
+	// minCallRate is the slowest pace a rate-limited session drops to.
+	minCallRate = rate.Limit(0.25)
+)
 
 // ToolInfo describes a tool exposed by the connected Plaud MCP server.
 type ToolInfo struct {
@@ -44,7 +56,13 @@ func Connect(ctx context.Context, endpoint string, handler auth.OAuthHandler) (*
 	if err != nil {
 		return nil, fmt.Errorf("connect to plaud MCP: %w", err)
 	}
-	return &Session{cs: cs, limiter: rate.NewLimiter(2, 2), retryDelay: time.Second}, nil
+	return &Session{
+		cs:             cs,
+		limiter:        rate.NewLimiter(2, 2),
+		retryDelay:     time.Second,
+		rateLimitDelay: 5 * time.Second,
+		maxRetryDelay:  time.Minute,
+	}, nil
 }
 
 func (s *Session) Close() error {
@@ -117,20 +135,22 @@ func toolPayload(res *mcp.CallToolResult) (jsontext.Value, error) {
 }
 
 func (s *Session) call(ctx context.Context, name string, args map[string]any) (*mcp.CallToolResult, error) {
-	for attempt := range 4 {
+	for attempt := 0; ; attempt++ {
 		if err := s.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for plaud rate limit: %w", err)
 		}
 		res, err := s.cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
-		transient := false
+		transient, rateLimited := false, false
 		if err != nil {
 			var n net.Error
+			rateLimited = rateLimitFailure(err.Error())
 			transient = errors.As(err, &n) || transientFailure(err.Error())
 		}
 		if res != nil && res.IsError {
 			var messages []string
 			for _, c := range res.Content {
 				if t, ok := c.(*mcp.TextContent); ok {
+					rateLimited = rateLimited || rateLimitFailure(t.Text)
 					transient = transient || transientFailure(t.Text)
 					messages = append(messages, t.Text)
 				}
@@ -147,10 +167,16 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 		if err == nil {
 			return res, nil
 		}
-		if !transient || attempt == 3 {
+		attempts, delay := retryAttempts, s.retryDelay
+		if rateLimited {
+			s.slowDown()
+			attempts, delay = rateLimitAttempts, s.rateLimitDelay
+		}
+		if !transient || attempt+1 >= attempts {
 			return nil, fmt.Errorf("plaud tool %s: %w", name, err)
 		}
-		timer := time.NewTimer(s.retryDelay * time.Duration(1<<attempt))
+		delay = min(delay*time.Duration(1<<attempt), s.maxRetryDelay)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -158,7 +184,21 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 		case <-timer.C:
 		}
 	}
-	return nil, errors.New("plaud retry exhausted")
+}
+
+// slowDown halves the call rate for the rest of the session once Plaud
+// rejects a call, so later recordings do not run into the same limit.
+func (s *Session) slowDown() {
+	limit := max(s.limiter.Limit()/2, minCallRate)
+	if limit < s.limiter.Limit() {
+		s.limiter.SetLimit(limit)
+		s.limiter.SetBurst(1)
+	}
+}
+
+func rateLimitFailure(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "rate limit") || strings.Contains(message, "too many requests")
 }
 
 // The official tools carry upstream API status errors as text. The SDK also

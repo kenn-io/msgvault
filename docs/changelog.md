@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-07"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Plaud syncs wait longer and slow down when Plaud reports too many requests,
+  so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
+  how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
