@@ -311,7 +311,7 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			if rapid {
 				var floorErr *ThrottledError
 				require.ErrorAs(firstErr, &floorErr)
-				assert.NotErrorIs(firstErr, errWriteOutcomeUnknown, "a floor-blocked mutation was not sent")
+				require.NotErrorIs(firstErr, errWriteOutcomeUnknown, "a floor-blocked mutation was not sent")
 				assert.Zero(firstSends.Load())
 			} else {
 				require.NoError(firstErr)
