@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/persontiers"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -240,4 +241,151 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 
 	assert.Equal(1, signals.InboundLong, "this account's projection still counts the person")
 	assert.True(signals.Owner)
+}
+
+func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind               string
+		list, broadcast, deleted bool
+		want                     int
+	}{
+		{name: "email", kind: "email_thread", want: 1},
+		{name: "independent chat", kind: "chat", want: 2},
+		{name: "list first", kind: "email_thread", list: true, want: 1},
+		{name: "large audience first", kind: "email_thread", broadcast: true, want: 1},
+		{name: "deleted newest", kind: "email_thread", deleted: true, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			a := newAudienceFixture(t)
+			room, err := a.f.Store.EnsureConversationWithType(a.f.Source.ID, "copy-controls", tc.kind, "Copy controls")
+			require.NoError(err)
+			guest := a.f.EnsureParticipant("guest@example.com", "Guest", "example.com")
+			var newestID int64
+			for i := range 2 {
+				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
+				m.ConversationID = room
+				if tc.kind == "chat" {
+					m.MessageType = "chat"
+				}
+				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
+				key := "<copy-control@example.com>"
+				m.RFC822MessageID = sql.NullString{String: key, Valid: true}
+				if tc.list && i == 1 {
+					m.ListID = sql.NullString{String: "list.example.com", Valid: true}
+				}
+				id, err := a.f.Store.UpsertMessage(m)
+				require.NoError(err)
+				to := []int64{a.owner}
+				if tc.broadcast && i == 1 {
+					to = append(to, guest)
+				}
+				require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", to, nil))
+				if i == 1 {
+					newestID = id
+				}
+			}
+			projectTierSignals(t, a.f, "UTC", 1)
+			if tc.deleted {
+				var projected int
+				require.NoError(a.f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&projected))
+				require.Equal(2, projected, "both copies must exist in the projection before deletion")
+				_, err = a.f.Store.DB().ExecContext(t.Context(), a.f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), a.asOf, newestID)
+				require.NoError(err)
+			}
+			defer store.SetPersonTierRowPage(1)()
+			signals := tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
+			assert.Equal(tc.want, signals.InboundShort)
+			if tc.list || tc.broadcast || tc.deleted {
+				assert.Equal(a.asOf.AddDate(0, 0, -2).Format("2006-01-02"), signals.LastDate)
+			}
+		})
+	}
+}
+
+// Qualification and authorization precede logical-email collapse.
+func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ids         [2]string
+		sameMailbox bool
+		start       int
+		outbound    bool
+		want        [4]int // all sources, first mailbox, second mailbox, no sources
+	}{
+		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, -2, false, [4]int{1, 1, 1, 0}},
+		{"short-window boundary", [2]string{"<boundary@example.com>", "boundary@example.com"}, false, -90, false, [4]int{1, 0, 1, 0}},
+		{"missing IDs", [2]string{"", ""}, true, -2, false, [4]int{2, 2, 0, 0}},
+		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, -2, false, [4]int{2, 2, 0, 0}},
+		{"single outbound with copies", [2]string{}, false, 0, true, [4]int{5, 5, 5, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			a := newAudienceFixture(t)
+			second, err := a.f.Store.GetOrCreateSource("gmail", "second@example.com")
+			requirements.NoError(err)
+			requirements.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
+			room, err := a.f.Store.EnsureConversationWithType(second.ID, "canonical-copies", "email_thread", "Canonical copies")
+			requirements.NoError(err)
+			sources := []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}}
+			if tc.sameMailbox {
+				sources[1] = sources[0]
+			}
+			days := 1
+			if tc.outbound {
+				days = 6
+			}
+			for day := range days {
+				for i, source := range sources {
+					from, to := a.sender, a.owner
+					at := a.asOf.AddDate(0, 0, tc.start+i)
+					key := tc.ids[i]
+					if tc.outbound {
+						at = a.asOf.AddDate(0, 0, -day)
+						key = fmt.Sprintf("<logical-%d@example.com>", day)
+						if day == 0 {
+							from, to = a.owner, a.sender
+						}
+					}
+					m := a.f.NewMessage().WithSentAt(at).Build()
+					m.SourceID, m.ConversationID = source.id, source.room
+					m.SenderID = sql.NullInt64{Int64: from, Valid: true}
+					m.RFC822MessageID = sql.NullString{String: key, Valid: key != ""}
+					id, err := a.f.Store.UpsertMessage(m)
+					requirements.NoError(err)
+					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+				}
+			}
+			projectTierSignals(t, a.f, "UTC", 25)
+			defer store.SetPersonTierRowPage(1)()
+			for i, ids := range [][]int64{nil, {a.f.Source.ID}, {second.ID}, {}} {
+				ctx := t.Context()
+				if ids != nil {
+					ctx = sourcescope.WithSourceIDs(ctx, ids)
+				}
+				if tc.outbound {
+					preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
+					requirements.NoError(err)
+					if ids != nil && len(ids) == 0 {
+						assertions.Empty(preview.People)
+						continue
+					}
+					requirements.Len(preview.People, 1)
+					assertions.Equal(2, preview.People[0].Tier)
+				}
+				explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
+				requirements.NoError(err)
+				assertions.Equal(tc.want[i], explanation.Signals.InboundShort)
+				if tc.outbound {
+					assertions.Equal(1, explanation.Signals.OutboundShort)
+					assertions.Equal(6, explanation.Signals.ActiveDaysShort)
+				}
+				if tc.start == -90 && ids == nil {
+					assertions.Equal("2026-07-20", explanation.Signals.LastDate)
+				}
+			}
+		})
+	}
 }
